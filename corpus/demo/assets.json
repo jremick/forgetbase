@@ -1,0 +1,248 @@
+{
+  "assets": [
+    {
+      "stableId": "policy.ai-acceptable-use",
+      "type": "policy",
+      "ownerId": "user_admin",
+      "title": "AI Acceptable Use Policy",
+      "summary": "Baseline policy for approved AI tool use in a fictional SMB.",
+      "lifecycleState": "active",
+      "sensitivity": "public-demo",
+      "audience": ["all-staff", "ai-team"],
+      "status": "approved",
+      "reviewDueAt": "2027-01-31",
+      "sourceKind": "synthetic-demo",
+      "sourceRef": "corpus/demo/policy.ai-acceptable-use",
+      "allowedSurfaces": ["api", "cli", "mcp", "web", "export"],
+      "allowedExports": ["demo-agent-pack"],
+      "allowedActions": [],
+      "metadata": {
+        "persona": "ai-native-operator",
+        "domain": "governance"
+      },
+      "instruction": {
+        "instructionKind": "policy",
+        "targetAgents": ["coding-agent", "research-agent", "ops-agent"],
+        "body": "Before using an AI tool, classify the requested work by data sensitivity, approved surface, and action risk. Refuse to place restricted or confidential material in unapproved model contexts. Prefer retrieval with citations over unstated memory. Escalate if the user requests credential exposure, hidden policy bypass, or unapproved external posting.",
+        "inputContract": {
+          "required": ["task", "data_sensitivity", "requested_surface"]
+        },
+        "outputContract": {
+          "required": ["decision", "rationale", "citations"]
+        },
+        "constraints": [
+          "Do not expose secrets or credentials.",
+          "Do not post externally on behalf of a user without explicit approval.",
+          "Do not use restricted content in broad exports."
+        ],
+        "failureModes": [
+          "Treating a convenience request as consent to share private data.",
+          "Answering from memory when cited retrieval is required."
+        ],
+        "escalation": "Ask an admin to review requests involving confidential data or external publication."
+      },
+      "humanDocument": {
+        "format": "markdown",
+        "body": "# AI Acceptable Use Policy\n\nUse AI tools only on approved work, approved data, and approved surfaces. Keep secrets out of model context. Prefer cited retrieval when answering policy or operational questions. External posting and high-risk actions require explicit approval.",
+        "renderOptions": {
+          "audience": "all-staff"
+        }
+      },
+      "changeNote": "Initial synthetic policy."
+    },
+    {
+      "stableId": "guardrail.pii-redaction",
+      "type": "guardrail",
+      "ownerId": "user_admin",
+      "title": "PII Redaction Guardrail",
+      "summary": "Instruction for removing direct personal identifiers before model use.",
+      "lifecycleState": "active",
+      "sensitivity": "public-demo",
+      "audience": ["ai-team", "support-ops"],
+      "status": "approved",
+      "reviewDueAt": "2027-02-28",
+      "sourceKind": "synthetic-demo",
+      "sourceRef": "corpus/demo/guardrail.pii-redaction",
+      "allowedSurfaces": ["api", "cli", "mcp", "web", "export"],
+      "allowedExports": ["demo-agent-pack"],
+      "allowedActions": [],
+      "metadata": {
+        "persona": "support-automation-owner",
+        "domain": "privacy"
+      },
+      "instruction": {
+        "instructionKind": "guardrail",
+        "targetAgents": ["support-agent", "research-agent"],
+        "body": "Remove or mask direct personal identifiers before including support records in model context. Replace names, emails, phone numbers, addresses, account IDs, and ticket IDs with stable placeholders. Preserve the operational meaning needed to complete the task.",
+        "inputContract": {
+          "required": ["raw_text", "target_task"]
+        },
+        "outputContract": {
+          "required": ["redacted_text", "redaction_summary"]
+        },
+        "constraints": [
+          "Do not drop facts required to solve the support task.",
+          "Do not invent replacement details.",
+          "Keep placeholder labels consistent within the same request."
+        ],
+        "examples": [
+          "Replace jane@example.test with [customer_email_1]."
+        ],
+        "failureModes": [
+          "Masking only obvious names while leaving ticket IDs or email addresses.",
+          "Changing the operational meaning of a customer issue."
+        ],
+        "escalation": "Escalate if redaction would remove the evidence needed for a regulated complaint."
+      },
+      "humanDocument": {
+        "format": "markdown",
+        "body": "# PII Redaction Guardrail\n\nMask direct identifiers before AI use. Preserve the facts needed for the job. Use consistent placeholders and record what was redacted.",
+        "renderOptions": {
+          "audience": "support-ops"
+        }
+      },
+      "changeNote": "Initial synthetic guardrail."
+    },
+    {
+      "stableId": "playbook.incident-triage",
+      "type": "playbook",
+      "ownerId": "user_ops",
+      "title": "Incident Triage Playbook",
+      "summary": "Agent-first operational playbook for initial incident triage.",
+      "lifecycleState": "draft",
+      "sensitivity": "public-demo",
+      "audience": ["ops-team"],
+      "status": "reviewing",
+      "reviewDueAt": "2026-12-31",
+      "sourceKind": "synthetic-demo",
+      "sourceRef": "corpus/demo/playbook.incident-triage",
+      "allowedSurfaces": ["api", "cli", "mcp", "web"],
+      "allowedExports": [],
+      "allowedActions": ["create-incident-summary"],
+      "metadata": {
+        "persona": "technical-operations-lead",
+        "domain": "operations"
+      },
+      "instruction": {
+        "instructionKind": "playbook",
+        "targetAgents": ["ops-agent", "coding-agent"],
+        "body": "Classify the incident by customer impact, blast radius, reversibility, and evidence freshness. Build a concise timeline from observed facts only. Recommend the next diagnostic command or system read-back before proposing a fix.",
+        "inputContract": {
+          "required": ["symptom", "affected_system", "available_evidence"]
+        },
+        "outputContract": {
+          "required": ["severity", "timeline", "next_check", "risks"]
+        },
+        "constraints": [
+          "Do not claim root cause before evidence supports it.",
+          "Do not recommend destructive remediation without an explicit rollback path."
+        ],
+        "failureModes": [
+          "Skipping current-state verification.",
+          "Confusing a symptom with root cause."
+        ],
+        "escalation": "Escalate when customer-facing production impact is confirmed."
+      },
+      "humanDocument": {
+        "format": "markdown",
+        "body": "# Incident Triage Playbook\n\nStart with impact, blast radius, reversibility, and evidence freshness. Build a timeline from facts. Verify current state before fixing.",
+        "renderOptions": {
+          "audience": "ops-team"
+        }
+      },
+      "changeNote": "Initial synthetic playbook."
+    },
+    {
+      "stableId": "skill.pr-review-agent",
+      "type": "skill",
+      "ownerId": "user_engineering",
+      "title": "Pull Request Review Agent Skill",
+      "summary": "Agent instruction for prioritizing code review findings.",
+      "lifecycleState": "active",
+      "sensitivity": "public-demo",
+      "audience": ["engineering"],
+      "status": "approved",
+      "reviewDueAt": "2027-03-31",
+      "sourceKind": "synthetic-demo",
+      "sourceRef": "corpus/demo/skill.pr-review-agent",
+      "allowedSurfaces": ["api", "cli", "mcp", "web", "export"],
+      "allowedExports": ["demo-agent-pack"],
+      "allowedActions": [],
+      "metadata": {
+        "persona": "ai-native-engineer",
+        "domain": "software-delivery"
+      },
+      "instruction": {
+        "instructionKind": "skill",
+        "targetAgents": ["coding-agent"],
+        "body": "Review pull requests by leading with bugs, regressions, security issues, and missing tests. Ground each finding in a concrete file and line. Keep summaries secondary. Say clearly when no material issue is found.",
+        "inputContract": {
+          "required": ["diff", "project_context"]
+        },
+        "outputContract": {
+          "required": ["findings", "open_questions", "residual_risk"]
+        },
+        "constraints": [
+          "Do not nitpick style without behavioral risk.",
+          "Do not claim tests were run unless evidence is provided."
+        ],
+        "failureModes": [
+          "Overweighting summaries over actionable findings.",
+          "Missing a permission or data-leakage regression."
+        ]
+      },
+      "humanDocument": {
+        "format": "markdown",
+        "body": "# Pull Request Review Agent Skill\n\nPrioritize real defects and risks. Cite files and lines. Keep summary short. Be explicit about unverified areas.",
+        "renderOptions": {
+          "audience": "engineering"
+        }
+      },
+      "changeNote": "Initial synthetic skill."
+    },
+    {
+      "stableId": "template.agent-task-brief",
+      "type": "template",
+      "ownerId": "user_admin",
+      "title": "Agent Task Brief Template",
+      "summary": "Reusable structure for assigning work to an agentic system.",
+      "lifecycleState": "active",
+      "sensitivity": "public-demo",
+      "audience": ["ai-team", "power-users"],
+      "status": "approved",
+      "reviewDueAt": "2027-04-30",
+      "sourceKind": "synthetic-demo",
+      "sourceRef": "corpus/demo/template.agent-task-brief",
+      "allowedSurfaces": ["api", "cli", "mcp", "web", "export"],
+      "allowedExports": ["demo-agent-pack", "public-demo"],
+      "allowedActions": [],
+      "metadata": {
+        "persona": "individual-power-user",
+        "domain": "agent-operations"
+      },
+      "instruction": {
+        "instructionKind": "template",
+        "targetAgents": ["coding-agent", "research-agent", "ops-agent"],
+        "body": "When preparing an agent task brief, include goal, context, constraints, source of truth, non-goals, acceptance checks, stop conditions, and expected deliverables. Keep the brief short enough to be used directly in an agent harness.",
+        "inputContract": {
+          "required": ["goal", "context", "constraints"]
+        },
+        "outputContract": {
+          "required": ["brief"]
+        },
+        "constraints": [
+          "Do not include secrets.",
+          "Do not include ambiguous success criteria without naming the ambiguity."
+        ]
+      },
+      "humanDocument": {
+        "format": "markdown",
+        "body": "# Agent Task Brief Template\n\n- Goal\n- Context\n- Constraints\n- Source of truth\n- Non-goals\n- Acceptance checks\n- Stop conditions\n- Deliverables",
+        "renderOptions": {
+          "audience": "power-users"
+        }
+      },
+      "changeNote": "Initial synthetic template."
+    }
+  ]
+}

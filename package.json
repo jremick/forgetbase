@@ -1,0 +1,30 @@
+{
+  "name": "agentic-cms",
+  "version": "0.1.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "type": "module",
+  "packageManager": "pnpm@11.7.0",
+  "scripts": {
+    "build": "pnpm -r --if-present build",
+    "check": "pnpm typecheck && pnpm test",
+    "db:backup": "bash scripts/backup-postgres.sh",
+    "db:migrate": "pnpm --filter @agentic-cms/db migrate",
+    "db:restore": "bash scripts/restore-postgres.sh",
+    "db:verify-backup-restore": "bash scripts/verify-backup-restore.sh",
+    "dev:api": "pnpm --filter @agentic-cms/api dev",
+    "dev:web": "pnpm --filter @agentic-cms/web dev",
+    "auth:verify-oidc-login": "bash scripts/verify-oidc-login.sh",
+    "security:verify-restricted-leakage": "bash scripts/verify-restricted-leakage.sh",
+    "start:api": "pnpm --filter @agentic-cms/api start",
+    "start:mcp": "pnpm --filter @agentic-cms/mcp-server start",
+    "test": "pnpm build && vitest run",
+    "typecheck": "pnpm -r --if-present typecheck"
+  },
+  "devDependencies": {
+    "@types/node": "^25.9.3",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.9"
+  }
+}

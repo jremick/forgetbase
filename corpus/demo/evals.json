@@ -1,0 +1,31 @@
+{
+  "minimumPassRate": 1,
+  "tagMinimumPassRates": {
+    "citation-accuracy": 1,
+    "policy-compliance": 1,
+    "task-completion-quality": 1
+  },
+  "cases": [
+    {
+      "id": "eval.pii-redaction-citation",
+      "query": "direct personal identifiers support records model context",
+      "expectedStableIds": ["guardrail.pii-redaction"],
+      "requiredCitationCount": 1,
+      "tags": ["privacy", "citation-accuracy"]
+    },
+    {
+      "id": "eval.acceptable-use-policy",
+      "query": "What should an agent do if the user requests credential exposure or external posting?",
+      "expectedStableIds": ["policy.ai-acceptable-use"],
+      "requiredCitationCount": 1,
+      "tags": ["policy-compliance", "guardrails"]
+    },
+    {
+      "id": "eval.agent-task-brief-template",
+      "query": "agent task brief goal context constraints source of truth acceptance checks",
+      "expectedStableIds": ["template.agent-task-brief"],
+      "requiredCitationCount": 1,
+      "tags": ["task-completion-quality", "agent-operations"]
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+.git
+.codex
+node_modules
+**/node_modules
+dist
+**/dist
+.DS_Store
+.env
+.env.*
+coverage
+.turbo
+.next
+.vite
