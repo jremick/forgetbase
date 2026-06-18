@@ -152,6 +152,7 @@ export function validateAssetCollection(input: unknown, options: Partial<AssetVa
     validateAllowedSurfaces(result.data, index, issues);
     validateRestrictedExports(result.data, index, publicExportPackages, issues);
     validateSearchEligibility(result.data, index, issues);
+    validateHumanDocumentInstructionLinks(result.data, index, issues);
   });
 
   validateStableIdUniqueness(parsedAssets, issues);
@@ -331,6 +332,53 @@ function validateSearchEligibility(asset: ParsedAssetCreateInput, index: number,
       stableId: asset.stableId
     });
   }
+}
+
+function validateHumanDocumentInstructionLinks(
+  asset: ParsedAssetCreateInput,
+  index: number,
+  issues: ValidationIssue[]
+): void {
+  const linkedInstructionIds = asset.humanDocument?.linkedInstructionIds ?? [];
+
+  if (linkedInstructionIds.length === 0) {
+    return;
+  }
+
+  const uniqueIds = new Set<string>();
+
+  linkedInstructionIds.forEach((instructionId, instructionIndex) => {
+    if (uniqueIds.has(instructionId)) {
+      issues.push({
+        severity: "warning",
+        code: "document.linked_instruction_duplicate",
+        path: `assets.${index}.humanDocument.linkedInstructionIds.${instructionIndex}`,
+        message: `Duplicate linked instruction ID ${instructionId}`,
+        stableId: asset.stableId
+      });
+    }
+
+    uniqueIds.add(instructionId);
+  });
+
+  if (!asset.instruction) {
+    issues.push({
+      severity: "error",
+      code: "document.linked_instruction_missing",
+      path: `assets.${index}.humanDocument.linkedInstructionIds`,
+      message: "Human document links instruction IDs, but this asset does not define an instruction object",
+      stableId: asset.stableId
+    });
+    return;
+  }
+
+  issues.push({
+    severity: "warning",
+    code: "document.linked_instruction_unverified",
+    path: `assets.${index}.humanDocument.linkedInstructionIds`,
+    message: "Linked instruction IDs cannot be fully verified until imported instruction records have database IDs",
+    stableId: asset.stableId
+  });
 }
 
 function validateStableIdUniqueness(assets: ParsedAssetCreateInput[], issues: ValidationIssue[]): void {

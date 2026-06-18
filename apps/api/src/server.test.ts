@@ -2,7 +2,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { aiExportPackageSchema, healthResponseSchema } from "@agentic-cms/schema";
+import { aiExportPackageSchema, healthResponseSchema, okfExportPackageSchema } from "@agentic-cms/schema";
 import {
   InMemoryAgentActionExecutionRepository,
   InMemoryAuthRepository,
@@ -150,6 +150,45 @@ describe("API health route", () => {
     expect(response.statusCode).toBe(200);
     expect(response.headers["access-control-allow-origin"]).toBe("*");
     expect(response.headers["access-control-allow-credentials"]).toBeUndefined();
+  });
+
+  it("fails startup on invalid boolean environment values", async () => {
+    const previousValue = process.env.AGENTIC_CMS_REQUIRE_AUTHENTICATION;
+    process.env.AGENTIC_CMS_REQUIRE_AUTHENTICATION = "true ";
+    let validServer: ReturnType<typeof buildServer> | null = null;
+
+    try {
+      validServer = buildServer({ logger: false });
+      process.env.AGENTIC_CMS_REQUIRE_AUTHENTICATION = "definitely";
+      expect(() => buildServer({ logger: false })).toThrow("Invalid boolean environment value");
+    } finally {
+      await validServer?.close();
+      if (previousValue === undefined) {
+        delete process.env.AGENTIC_CMS_REQUIRE_AUTHENTICATION;
+      } else {
+        process.env.AGENTIC_CMS_REQUIRE_AUTHENTICATION = previousValue;
+      }
+    }
+  });
+
+  it("blocks unauthenticated bootstrap when global authentication is required", async () => {
+    server = buildServer({
+      logger: false,
+      authRepository: new InMemoryAuthRepository(),
+      requireAuthentication: true
+    });
+
+    const response = await server.inject({
+      method: "POST",
+      url: "/auth/bootstrap",
+      payload: {
+        email: "admin@example.test",
+        displayName: "Admin"
+      }
+    });
+
+    expect(response.statusCode).toBe(401);
+    expect(response.json().error).toBe("authentication_required");
   });
 });
 
@@ -3269,6 +3308,54 @@ describe("API asset registry routes", () => {
     });
   });
 
+  it("exposes vector and hybrid retrieval strategies through search", async () => {
+    const registryRepository = new InMemoryRegistryRepository();
+    const retrievalRepository = new InMemoryRetrievalRepository();
+    server = buildServer({ logger: false, registryRepository, retrievalRepository });
+    const asset = await registryRepository.createAsset({
+      stableId: "guardrail.vector-search-api",
+      type: "guardrail",
+      ownerId: "user_admin",
+      title: "Vector Search API",
+      summary: "Searchable vector strategy guidance for apivectortoken.",
+      lifecycleState: "active",
+      sensitivity: "public-demo",
+      audience: ["ai-team"],
+      status: "approved",
+      reviewDueAt: "2027-01-31",
+      allowedSurfaces: ["api", "cli", "mcp", "web", "export"],
+      allowedExports: ["demo-agent-pack"],
+      instruction: {
+        instructionKind: "guardrail",
+        body: "Use the vector retrieval strategy for deterministic embedding smoke tests."
+      }
+    });
+    await retrievalRepository.indexAsset(asset);
+
+    const vectorSearch = await server.inject({
+      method: "GET",
+      url: "/search?query=apivectortoken&strategy=vector"
+    });
+    const hybridSearch = await server.inject({
+      method: "GET",
+      url: "/search?query=apivectortoken&strategy=hybrid"
+    });
+
+    expect(vectorSearch.statusCode).toBe(200);
+    expect(vectorSearch.json().results[0]).toMatchObject({
+      asset: { stableId: "guardrail.vector-search-api" },
+      ranking: {
+        strategy: "vector-hash-v1",
+        vectorSimilarity: expect.any(Number)
+      }
+    });
+    expect(hybridSearch.statusCode).toBe(200);
+    expect(hybridSearch.json().results[0].ranking).toMatchObject({
+      strategy: "hybrid-hash-lexical-v1",
+      vectorWeight: expect.any(Number)
+    });
+  });
+
   it("keeps agent action execution disabled by default and gates approved internal actions", async () => {
     const authRepository = new InMemoryAuthRepository();
     const actionExecutionRepository = new InMemoryAgentActionExecutionRepository();
@@ -6155,6 +6242,14 @@ describe("API asset registry routes", () => {
       "/exports/ai-package",
       "/telemetry/summary"
     ]));
+    expect(
+      openApiResponse.json().paths["/search"].get.parameters
+        .map((parameter: { name: string }) => parameter.name)
+    ).toEqual(expect.arrayContaining(["query", "strategy", "limit"]));
+    expect(
+      openApiResponse.json().paths["/exports/ai-package"].get.parameters
+        .map((parameter: { name: string }) => parameter.name)
+    ).toEqual(expect.arrayContaining(["package", "format", "okfVersion", "limit"]));
 
     const exportResponse = await server.inject({
       method: "GET",
@@ -6168,6 +6263,28 @@ describe("API asset registry routes", () => {
     expect(exportPackage.assets.map((asset) => asset.stableId)).toEqual(["policy.export-public"]);
     expect(exportPackage.assets[0]?.citations[0]?.stableId).toBe("policy.export-public");
     expect(exportPackage.assets[0]?.instructions[0]?.body).toContain("public export instruction");
+    expect(exportPackage.assets[0]?.sourceVersion?.versionNumber).toBe(1);
+
+    const okfExportResponse = await server.inject({
+      method: "GET",
+      url: "/exports/ai-package?package=demo-agent-pack&format=okf&okfVersion=0.1"
+    });
+
+    expect(okfExportResponse.statusCode).toBe(200);
+    const okfExportPackage = okfExportPackageSchema.parse(okfExportResponse.json());
+    expect(okfExportPackage.format).toBe("okf");
+    expect(okfExportPackage.okfVersion).toBe("0.1");
+    expect(okfExportPackage.assetCount).toBe(1);
+    expect(okfExportPackage.deniedCount).toBe(1);
+    expect(okfExportPackage.files.map((file) => file.path)).toEqual(expect.arrayContaining([
+      "index.md",
+      "manifest.md",
+      "log.md"
+    ]));
+    const publicConcept = okfExportPackage.files.find((file) => file.path.startsWith("policies/"));
+    expect(publicConcept?.content).toContain("stable_id: \"policy.export-public\"");
+    expect(publicConcept?.content).toContain("source_version_number: 1");
+    expect(JSON.stringify(okfExportPackage)).not.toContain("Restricted export instruction");
   });
 });
 

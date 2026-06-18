@@ -133,17 +133,25 @@ const adminSearch = await request(`/search?query=${encodeURIComponent(token)}&li
 const readerExport = await request("/exports/ai-package?package=demo-agent-pack", {
   apiKey: readerKey.secret
 });
+const readerOkfExport = await request("/exports/ai-package?package=demo-agent-pack&format=okf&okfVersion=0.1", {
+  apiKey: readerKey.secret
+});
 
 const anonymousStableIds = resultStableIds(anonymousSearch);
 const readerStableIds = resultStableIds(readerSearch);
 const adminStableIds = resultStableIds(adminSearch);
 const exportStableIds = (readerExport.assets ?? []).map((asset) => asset.stableId);
+const okfExportText = JSON.stringify(readerOkfExport);
 
 assert(anonymousStableIds.length === 0, "Anonymous search returned restricted fixture results");
 assert(readerStableIds.length === 0, "Ungranted reader search returned restricted fixture results");
 assert(adminStableIds.includes(stableId), "Admin search did not return the restricted fixture; indexing may have failed");
 assert(!exportStableIds.includes(stableId), "Reader export included the restricted fixture");
 assert(readerExport.deniedCount >= 1, "Reader export did not report a denied restricted asset");
+assert(readerOkfExport.format === "okf", "Reader OKF export did not return an OKF package");
+assert(readerOkfExport.deniedCount >= 1, "Reader OKF export did not report a denied restricted asset");
+assert(!okfExportText.includes(stableId), "Reader OKF export included the restricted fixture stable ID");
+assert(!okfExportText.includes(token), "Reader OKF export included the restricted fixture token");
 
 console.log(JSON.stringify({
   ok: true,
@@ -154,6 +162,8 @@ console.log(JSON.stringify({
   readerSearchResults: readerStableIds.length,
   adminSearchIncludesFixture: adminStableIds.includes(stableId),
   readerExportAssetCount: readerExport.assetCount,
-  readerExportDeniedCount: readerExport.deniedCount
+  readerExportDeniedCount: readerExport.deniedCount,
+  readerOkfExportFileCount: readerOkfExport.files?.length ?? 0,
+  readerOkfExportDeniedCount: readerOkfExport.deniedCount
 }, null, 2));
 NODE

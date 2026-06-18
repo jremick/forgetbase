@@ -12,6 +12,7 @@ coverage/
 .vite/
 .cache/
 .playwright-mcp/
+.claude/
 .codex/adhd-helper/
 .maintainer/
 infra/docker/tls/*

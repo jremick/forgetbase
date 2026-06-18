@@ -1,6 +1,11 @@
+import { createHash } from "node:crypto";
 import { z } from "zod";
 
 export const agenticCmsVersion = "0.1.0";
+export const okfCurrentVersion = "0.1";
+export const okfSpecStatus = "draft";
+export const okfSpecCheckedAt = "2026-06-18";
+export const okfSpecSourceUrl = "https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md";
 
 export const assetTypeSchema = z.enum([
   "policy",
@@ -35,6 +40,8 @@ export const sensitivitySchema = z.enum([
 ]);
 
 export const surfaceSchema = z.enum(["api", "cli", "mcp", "web", "export"]);
+export const aiExportFormatSchema = z.enum(["json", "okf"]);
+export const okfVersionSchema = z.enum(["0.1"]);
 export const userRoleSchema = z.enum(["admin", "maintainer", "reader"]);
 export const userStatusSchema = z.enum(["active", "disabled"]);
 export const apiKeyScopeSchema = z.enum(["admin", "asset:read", "asset:write", "permission:write", "agent:execute"]);
@@ -682,7 +689,8 @@ export const auditEventListResponseSchema = z.object({
 export const searchInputSchema = z.object({
   tenantId: z.string().min(1).default("tenant_demo"),
   query: z.string().min(1),
-  limit: z.number().int().positive().max(50).default(10)
+  limit: z.number().int().positive().max(50).default(10),
+  strategy: z.enum(["lexical", "vector", "hybrid"]).default("lexical")
 });
 
 export const citationSchema = z.object({
@@ -698,13 +706,19 @@ export const citationSchema = z.object({
   snippet: z.string().min(1)
 });
 
-export const searchRankingStrategySchema = z.enum(["lexical-weighted-v1"]);
+export const searchRankingStrategySchema = z.enum([
+  "lexical-weighted-v1",
+  "vector-hash-v1",
+  "hybrid-hash-lexical-v1"
+]);
 
 export const searchRankingSchema = z.object({
   strategy: searchRankingStrategySchema,
   lexicalRank: z.number(),
   sourceKindWeight: z.number().positive(),
   exactPhraseBoost: z.number().nonnegative(),
+  vectorSimilarity: z.number().nonnegative().nullable(),
+  vectorWeight: z.number().nonnegative().nullable(),
   finalScore: z.number()
 });
 
@@ -1331,6 +1345,14 @@ export const exportPackageHumanDocumentSchema = z.object({
   body: z.string().min(1)
 });
 
+export const exportPackageSourceVersionSchema = z.object({
+  id: z.string().min(1),
+  versionNumber: z.number().int().positive(),
+  contentHash: z.string().min(1),
+  createdAt: z.string().min(1),
+  changeNote: z.string().nullable()
+});
+
 export const exportPackageAssetSchema = z.object({
   stableId: z.string().min(1),
   assetId: z.string().min(1),
@@ -1343,6 +1365,7 @@ export const exportPackageAssetSchema = z.object({
   lifecycleState: lifecycleStateSchema,
   sourceRef: z.string().nullable(),
   currentVersionId: z.string().nullable(),
+  sourceVersion: exportPackageSourceVersionSchema.nullable(),
   allowedSurfaces: z.array(surfaceSchema),
   allowedExports: z.array(z.string().min(1)),
   instructions: z.array(exportPackageInstructionSchema),
@@ -1358,6 +1381,365 @@ export const aiExportPackageSchema = z.object({
   deniedCount: z.number().int().nonnegative(),
   assets: z.array(exportPackageAssetSchema)
 });
+
+export const okfExportFileSchema = z.object({
+  path: z.string().min(1),
+  contentHash: z.string().min(1),
+  content: z.string().min(1)
+});
+
+export const okfExportPackageSchema = z.object({
+  format: z.literal("okf"),
+  packageName: z.string().min(1),
+  generatedAt: z.string().min(1),
+  tenantId: z.string().min(1),
+  okfVersion: okfVersionSchema,
+  spec: z.object({
+    name: z.literal("Open Knowledge Format"),
+    version: okfVersionSchema,
+    status: z.literal("draft"),
+    sourceUrl: z.string().url(),
+    checkedAt: z.string().min(1)
+  }),
+  assetCount: z.number().int().nonnegative(),
+  deniedCount: z.number().int().nonnegative(),
+  sourcePackageHash: z.string().min(1),
+  projectionHash: z.string().min(1),
+  rootIndexPath: z.literal("index.md"),
+  files: z.array(okfExportFileSchema).min(1)
+});
+
+export function buildOkfExportPackage(
+  input: z.infer<typeof aiExportPackageSchema>,
+  options: { okfVersion?: z.infer<typeof okfVersionSchema> } = {}
+): z.infer<typeof okfExportPackageSchema> {
+  const sourcePackage = aiExportPackageSchema.parse(input);
+  const okfVersion = okfVersionSchema.parse(options.okfVersion ?? okfCurrentVersion);
+  const conceptEntries = sourcePackage.assets
+    .slice()
+    .sort((left, right) => left.stableId.localeCompare(right.stableId))
+    .map((asset) => ({
+      asset,
+      path: conceptPathForAsset(asset)
+    }));
+  const files = [
+    buildOkfFile("index.md", buildOkfIndex(sourcePackage, okfVersion, conceptEntries)),
+    buildOkfFile("manifest.md", buildOkfManifest(sourcePackage, okfVersion, conceptEntries)),
+    buildOkfFile("log.md", buildOkfLog(sourcePackage)),
+    ...conceptEntries.map(({ asset, path }) => buildOkfFile(path, buildOkfConcept(asset, sourcePackage, okfVersion)))
+  ].sort((left, right) => left.path.localeCompare(right.path));
+
+  return okfExportPackageSchema.parse({
+    format: "okf",
+    packageName: sourcePackage.packageName,
+    generatedAt: sourcePackage.generatedAt,
+    tenantId: sourcePackage.tenantId,
+    okfVersion,
+    spec: {
+      name: "Open Knowledge Format",
+      version: okfVersion,
+      status: okfSpecStatus,
+      sourceUrl: okfSpecSourceUrl,
+      checkedAt: okfSpecCheckedAt
+    },
+    assetCount: sourcePackage.assetCount,
+    deniedCount: sourcePackage.deniedCount,
+    sourcePackageHash: hashText(stableJson(sourcePackage)),
+    projectionHash: hashFiles(files),
+    rootIndexPath: "index.md",
+    files
+  });
+}
+
+function buildOkfIndex(
+  sourcePackage: z.infer<typeof aiExportPackageSchema>,
+  okfVersion: z.infer<typeof okfVersionSchema>,
+  conceptEntries: Array<{ asset: z.infer<typeof exportPackageAssetSchema>; path: string }>
+): string {
+  const lines = [
+    frontmatter({ okf_version: okfVersion }),
+    `# Agentic CMS OKF Export: ${sourcePackage.packageName}`,
+    "",
+    `Generated: ${sourcePackage.generatedAt}`,
+    `Tenant: ${sourcePackage.tenantId}`,
+    `Assets: ${sourcePackage.assetCount}`,
+    `Denied assets: ${sourcePackage.deniedCount}`,
+    "",
+    "# Concepts"
+  ];
+
+  for (const { asset, path } of conceptEntries) {
+    lines.push(`* [${escapeMarkdownText(asset.title)}](${path}) - ${asset.summary ?? asset.stableId}`);
+  }
+
+  lines.push("", "# Bundle Files", "* [Manifest](manifest.md) - generation metadata and upgrade notes", "* [Update log](log.md) - export generation history");
+
+  return `${lines.join("\n")}\n`;
+}
+
+function buildOkfManifest(
+  sourcePackage: z.infer<typeof aiExportPackageSchema>,
+  okfVersion: z.infer<typeof okfVersionSchema>,
+  conceptEntries: Array<{ asset: z.infer<typeof exportPackageAssetSchema>; path: string }>
+): string {
+  const lines = [
+    frontmatter({
+      type: "Export Manifest",
+      title: `${sourcePackage.packageName} OKF Manifest`,
+      description: "Generation metadata for an Agentic CMS Open Knowledge Format export.",
+      tags: ["agentic-cms", "okf", "manifest"],
+      timestamp: sourcePackage.generatedAt,
+      okf_version: okfVersion
+    }),
+    `# ${sourcePackage.packageName} OKF Manifest`,
+    "",
+    "| Field | Value |",
+    "| --- | --- |",
+    `| OKF version | ${okfVersion} |`,
+    `| Spec status | ${okfSpecStatus} |`,
+    `| Spec source | ${okfSpecSourceUrl} |`,
+    `| Spec checked | ${okfSpecCheckedAt} |`,
+    `| Generated | ${sourcePackage.generatedAt} |`,
+    `| Tenant | ${sourcePackage.tenantId} |`,
+    `| Assets included | ${sourcePackage.assetCount} |`,
+    `| Assets denied by policy | ${sourcePackage.deniedCount} |`,
+    "",
+    "# Update Process",
+    "",
+    "1. Treat Agentic CMS asset versions as canonical.",
+    "2. Check the official OKF spec before adding support for a newer version.",
+    "3. Preserve existing generated bundles with their declared `okf_version`, source content hashes, and projection hash.",
+    "4. Generate a new bundle from the same source asset versions when upgrading the OKF projection.",
+    "5. Review the manifest and file diffs before replacing a previously distributed bundle.",
+    "",
+    "# Concept Files"
+  ];
+
+  for (const { asset, path } of conceptEntries) {
+    lines.push(`* [${escapeMarkdownText(asset.stableId)}](${path}) - source version ${asset.sourceVersion?.versionNumber ?? "unknown"}`);
+  }
+
+  return `${lines.join("\n")}\n`;
+}
+
+function buildOkfLog(sourcePackage: z.infer<typeof aiExportPackageSchema>): string {
+  const date = sourcePackage.generatedAt.slice(0, 10);
+
+  return [
+    "# Directory Update Log",
+    "",
+    `## ${date}`,
+    `* **Generation**: Generated OKF export for package \`${sourcePackage.packageName}\` with ${sourcePackage.assetCount} included asset(s) and ${sourcePackage.deniedCount} denied asset(s).`,
+    ""
+  ].join("\n");
+}
+
+function buildOkfConcept(
+  asset: z.infer<typeof exportPackageAssetSchema>,
+  sourcePackage: z.infer<typeof aiExportPackageSchema>,
+  okfVersion: z.infer<typeof okfVersionSchema>
+): string {
+  const timestamp = asset.sourceVersion?.createdAt ?? sourcePackage.generatedAt;
+  const frontmatterText = frontmatter({
+    type: okfTypeForAssetType(asset.type),
+    title: asset.title,
+    description: asset.summary ?? asset.title,
+    resource: `agentic-cms://assets/${asset.stableId}`,
+    tags: [
+      "agentic-cms",
+      asset.type,
+      `sensitivity-${asset.sensitivity}`,
+      `status-${asset.status}`,
+      `lifecycle-${asset.lifecycleState}`,
+      ...asset.audience.map((audience) => `audience-${slugify(audience)}`)
+    ],
+    timestamp,
+    okf_version: okfVersion,
+    stable_id: asset.stableId,
+    asset_id: asset.assetId,
+    source_version_id: asset.sourceVersion?.id ?? asset.currentVersionId ?? "",
+    source_version_number: asset.sourceVersion?.versionNumber ?? "",
+    source_content_hash: asset.sourceVersion?.contentHash ?? "",
+    allowed_surfaces: asset.allowedSurfaces,
+    allowed_exports: asset.allowedExports
+  });
+  const lines = [
+    frontmatterText,
+    `# ${asset.title}`,
+    "",
+    asset.summary ?? asset.title,
+    "",
+    "# Governance",
+    "",
+    "| Field | Value |",
+    "| --- | --- |",
+    `| Stable ID | \`${asset.stableId}\` |`,
+    `| Asset type | ${asset.type} |`,
+    `| Lifecycle | ${asset.lifecycleState} |`,
+    `| Status | ${asset.status} |`,
+    `| Sensitivity | ${asset.sensitivity} |`,
+    `| Audience | ${asset.audience.join(", ")} |`,
+    `| Source version | ${asset.sourceVersion?.versionNumber ?? "unknown"} |`,
+    `| Source content hash | \`${asset.sourceVersion?.contentHash ?? "unknown"}\` |`
+  ];
+
+  if (asset.instructions.length > 0) {
+    lines.push("", "# Instructions");
+
+    for (const instruction of asset.instructions) {
+      lines.push("", `## ${instruction.instructionKind}`, "", instruction.body);
+
+      if (instruction.constraints.length > 0) {
+        lines.push("", "### Constraints", ...instruction.constraints.map((constraint) => `* ${constraint}`));
+      }
+
+      if (instruction.failureModes.length > 0) {
+        lines.push("", "### Failure Modes", ...instruction.failureModes.map((failureMode) => `* ${failureMode}`));
+      }
+
+      if (instruction.escalation) {
+        lines.push("", "### Escalation", instruction.escalation);
+      }
+    }
+  }
+
+  if (asset.humanDocuments.length > 0) {
+    lines.push("", "# Human Documents");
+
+    for (const document of asset.humanDocuments) {
+      lines.push("", `## ${document.format}`, "", document.body);
+    }
+  }
+
+  lines.push("", "# Citations");
+
+  if (asset.citations.length === 0) {
+    lines.push("", "[1] Agentic CMS governed asset export metadata.");
+  } else {
+    asset.citations.forEach((citation, index) => {
+      lines.push(
+        `[${index + 1}] ${citation.title} (${citation.stableId}, chunk ${citation.chunkId})`
+      );
+    });
+  }
+
+  return `${lines.join("\n")}\n`;
+}
+
+function buildOkfFile(path: string, content: string): z.infer<typeof okfExportFileSchema> {
+  return {
+    path,
+    contentHash: hashText(content),
+    content
+  };
+}
+
+function conceptPathForAsset(asset: z.infer<typeof exportPackageAssetSchema>): string {
+  const directory = okfDirectoryForAssetType(asset.type);
+  const suffix = hashText(asset.stableId).slice(7, 15);
+
+  return `${directory}/${slugify(asset.stableId)}-${suffix}.md`;
+}
+
+function okfDirectoryForAssetType(assetType: z.infer<typeof assetTypeSchema>): string {
+  const directories: Record<z.infer<typeof assetTypeSchema>, string> = {
+    "agent-instruction": "instructions",
+    "eval-case": "evals",
+    guideline: "guidelines",
+    guardrail: "guardrails",
+    "human-document": "references",
+    playbook: "playbooks",
+    policy: "policies",
+    reference: "references",
+    skill: "skills",
+    sop: "sops",
+    "telemetry-policy": "telemetry-policies",
+    template: "templates",
+    "tool-instruction": "tool-guidance"
+  };
+
+  return directories[assetType];
+}
+
+function okfTypeForAssetType(assetType: z.infer<typeof assetTypeSchema>): string {
+  const types: Record<z.infer<typeof assetTypeSchema>, string> = {
+    "agent-instruction": "Instruction",
+    "eval-case": "Evaluation Case",
+    guideline: "Guideline",
+    guardrail: "Guardrail",
+    "human-document": "Reference",
+    playbook: "Playbook",
+    policy: "Policy",
+    reference: "Reference",
+    skill: "Skill",
+    sop: "SOP",
+    "telemetry-policy": "Telemetry Policy",
+    template: "Template",
+    "tool-instruction": "Tool Guidance"
+  };
+
+  return types[assetType];
+}
+
+function frontmatter(values: Record<string, unknown>): string {
+  const lines = Object.entries(values)
+    .filter(([, value]) => value !== undefined && value !== "")
+    .map(([key, value]) => `${key}: ${yamlValue(value)}`);
+
+  return `---\n${lines.join("\n")}\n---\n`;
+}
+
+function yamlValue(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => yamlScalar(item)).join(", ")}]`;
+  }
+
+  return yamlScalar(value);
+}
+
+function yamlScalar(value: unknown): string {
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+
+  if (value === null) {
+    return "null";
+  }
+
+  return JSON.stringify(String(value));
+}
+
+function slugify(value: string): string {
+  const slug = value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  return slug || "concept";
+}
+
+function escapeMarkdownText(value: string): string {
+  return value.replace(/\[/g, "\\[").replace(/\]/g, "\\]");
+}
+
+function hashText(value: string): string {
+  return `sha256:${createHash("sha256").update(value).digest("hex")}`;
+}
+
+function hashFiles(files: Array<z.infer<typeof okfExportFileSchema>>): string {
+  return hashText(files.map((file) => `${file.path}\n${file.contentHash}\n`).join(""));
+}
+
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableJson(item)).join(",")}]`;
+  }
+
+  if (value && typeof value === "object") {
+    return `{${Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, nestedValue]) => `${JSON.stringify(key)}:${stableJson(nestedValue)}`)
+      .join(",")}}`;
+  }
+
+  return JSON.stringify(value);
+}
 
 export const retrievalEventCreateInputSchema = z.object({
   tenantId: z.string().min(1).default("tenant_demo"),
@@ -1752,7 +2134,11 @@ export type SearchRanking = z.infer<typeof searchRankingSchema>;
 export type SearchRankingStrategy = z.infer<typeof searchRankingStrategySchema>;
 export type SearchResponse = z.infer<typeof searchResponseSchema>;
 export type SearchResult = z.infer<typeof searchResultSchema>;
+export type AiExportFormat = z.infer<typeof aiExportFormatSchema>;
 export type AiExportPackage = z.infer<typeof aiExportPackageSchema>;
+export type OkfVersion = z.infer<typeof okfVersionSchema>;
+export type OkfExportFile = z.infer<typeof okfExportFileSchema>;
+export type OkfExportPackage = z.infer<typeof okfExportPackageSchema>;
 export type AgentActionDecisionInput = z.input<typeof agentActionDecisionInputSchema>;
 export type AgentActionExecuteInput = z.input<typeof agentActionExecuteInputSchema>;
 export type AgentActionExecutionPolicy = z.infer<typeof agentActionExecutionPolicySchema>;

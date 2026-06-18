@@ -163,11 +163,13 @@ Search public demo assets:
 
 ```bash
 npx -y pnpm@11.7.0 --filter @agentic-cms/cli start -- search --query "PII redaction" --limit 3 --api-url http://127.0.0.1:3000
+npx -y pnpm@11.7.0 --filter @agentic-cms/cli start -- search --query "PII redaction" --limit 3 --strategy hybrid --api-url http://127.0.0.1:3000
 npx -y pnpm@11.7.0 --filter @agentic-cms/cli start -- agent query --query "PII redaction" --limit 3 --api-url http://127.0.0.1:3000
 curl --silent --show-error --fail "http://127.0.0.1:3000/search?query=PII%20redaction&limit=3"
+curl --silent --show-error --fail "http://127.0.0.1:3000/search?query=PII%20redaction&limit=3&strategy=vector"
 ```
 
-Search results include `ranking.strategy = lexical-weighted-v1`, the lexical rank, source-kind weight, exact-phrase boost, and final score. Admins can tune tenant source-kind weights and exact-phrase boost through the retrieval ranking policy. The current strategy stays self-hostable on Postgres full-text search while preserving a stable contract for later hybrid/vector ranking.
+Search results include `ranking.strategy`, lexical rank, source-kind weight, exact-phrase boost, optional vector similarity, optional vector weight, and final score. The default `lexical` strategy returns `lexical-weighted-v1`; `vector` returns `vector-hash-v1`; `hybrid` returns `hybrid-hash-lexical-v1`. Vector modes use deterministic local hash embeddings stored in `pgvector`, not an external semantic embedding provider. Admins can tune tenant source-kind weights and exact-phrase boost through the retrieval ranking policy.
 
 Search returns citation-bearing chunks. Restricted chunks are filtered unless the request has an authorized scoped API key and matching grant.
 
@@ -277,10 +279,12 @@ With Docker Compose API running:
 ```bash
 curl --silent --show-error --fail http://127.0.0.1:3000/openapi.json
 curl --silent --show-error --fail "http://127.0.0.1:3000/exports/ai-package?package=demo-agent-pack"
+curl --silent --show-error --fail "http://127.0.0.1:3000/exports/ai-package?package=demo-agent-pack&format=okf&okfVersion=0.1"
 npx -y pnpm@11.7.0 --filter @agentic-cms/cli start -- exports ai-package --package demo-agent-pack --api-url http://127.0.0.1:3000
+npx -y pnpm@11.7.0 --filter @agentic-cms/cli start -- exports ai-package --package demo-agent-pack --format okf --okf-version 0.1 --output-dir work/okf-demo-agent-pack --api-url http://127.0.0.1:3000
 ```
 
-The public demo export is available without an API key. Non-public export assets require a key with permission for the `export` action on the `export` surface.
+The public demo export is available without an API key. Non-public export assets require a key with permission for the `export` action on the `export` surface. OKF support is enabled by default as a versioned export format; see [OKF Exports](OKF_EXPORTS.md) for spec-update and regeneration rules.
 
 Run the restricted leakage verifier before release or after permission/export changes:
 
@@ -361,6 +365,7 @@ Operational runbooks:
 - [Rollback Runbook](runbooks/ROLLBACK.md)
 - [API Key Rotation Runbook](runbooks/API_KEY_ROTATION.md)
 - [Restricted Leakage Investigation Runbook](runbooks/RESTRICTED_LEAKAGE_INVESTIGATION.md)
+- [Railway Private Alpha Template](runbooks/DEPLOY_RAILWAY_PRIVATE_TEMPLATE.md)
 
 The restore verifier creates a backup, restores it into a temporary `agentic_cms_restore_*` database, compares core table counts, and drops the temporary database. See [Backup And Restore Runbook](runbooks/BACKUP_RESTORE.md) and [Rollback Runbook](runbooks/ROLLBACK.md).
 

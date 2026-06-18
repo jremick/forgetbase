@@ -47,7 +47,7 @@ Excluded:
 - connector credential governance beyond env-var and mounted-file references
 - hosted service features
 - SCIM, MFA enforcement, remembered-device trust policy, and certification-level compliance process
-- semantic/vector retrieval beyond the current vector-ready storage foundation
+- provider-quality semantic embeddings, semantic reranking, and hosted search beyond the current deterministic hash-vector `pgvector` foundation
 
 ## Required Before Public Alpha
 

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { Pool, QueryResult, QueryResultRow } from "pg";
 import {
   assetRecordSchema,
@@ -18,6 +19,9 @@ import {
   defaultRetrievalRankingPolicy,
   type RetrievalRankingPolicyRepository
 } from "./retrieval-ranking-policy.js";
+
+const HASH_EMBEDDING_DIMENSIONS = 1536;
+const DEFAULT_HYBRID_VECTOR_WEIGHT = 0.35;
 
 export interface IndexAssetResult {
   assetId: string;
@@ -75,9 +79,10 @@ export class PostgresRetrievalRepository implements RetrievalRepository {
               chunk_index,
               title,
               body,
-              citation
+              citation,
+              embedding
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::vector)
           `,
           [
             detail.asset.tenantId,
@@ -88,7 +93,8 @@ export class PostgresRetrievalRepository implements RetrievalRepository {
             chunk.chunkIndex,
             chunk.title,
             chunk.body,
-            JSON.stringify(chunk.citation)
+            JSON.stringify(chunk.citation),
+            vectorToSql(buildHashEmbedding(`${chunk.title}\n\n${chunk.body}`))
           ]
         );
       }
@@ -129,15 +135,18 @@ export class PostgresRetrievalRepository implements RetrievalRepository {
   async search(input: SearchInput): Promise<SearchResult[]> {
     const tenantId = input.tenantId ?? "tenant_demo";
     const limit = Math.min(Math.max(input.limit ?? 10, 1), 50);
+    const strategy = input.strategy ?? "lexical";
     const rankingPolicy = this.rankingPolicyRepository
       ? await this.rankingPolicyRepository.getPolicy(tenantId)
       : defaultRetrievalRankingPolicy(tenantId);
+    const queryEmbedding = vectorToSql(buildHashEmbedding(input.query));
     const result = await this.pool.query<SearchRow>(
       `
         WITH search_query AS (
           SELECT
             websearch_to_tsquery('english', $2) AS query,
-            lower($2) AS raw_query
+            lower($2) AS raw_query,
+            $8::vector AS query_embedding
         ),
         ranked_chunks AS (
           SELECT
@@ -159,17 +168,43 @@ export class PostgresRetrievalRepository implements RetrievalRepository {
               THEN $7::numeric
               ELSE 0
             END AS exact_phrase_boost,
+            CASE
+              WHEN asset_chunks.embedding IS NOT NULL
+              THEN greatest(0::numeric, 1::numeric - (asset_chunks.embedding <=> search_query.query_embedding)::numeric)
+              ELSE 0::numeric
+            END AS vector_similarity,
             assets.*
           FROM asset_chunks
           JOIN assets ON assets.id = asset_chunks.asset_id
           CROSS JOIN search_query
           WHERE asset_chunks.tenant_id = $1
-            AND asset_chunks.search_vector @@ search_query.query
+            AND (
+              ($9 = 'lexical' AND asset_chunks.search_vector @@ search_query.query)
+              OR ($9 = 'vector' AND asset_chunks.embedding IS NOT NULL)
+              OR ($9 = 'hybrid' AND (
+                asset_chunks.search_vector @@ search_query.query
+                OR asset_chunks.embedding IS NOT NULL
+              ))
+            )
+        ),
+        scored_chunks AS (
+          SELECT
+            *,
+            CASE $9
+              WHEN 'vector' THEN vector_similarity * source_kind_weight
+              WHEN 'hybrid' THEN ((lexical_rank * source_kind_weight) + exact_phrase_boost) + ($10::numeric * vector_similarity)
+              ELSE ((lexical_rank * source_kind_weight) + exact_phrase_boost)
+            END AS rank,
+            CASE $9
+              WHEN 'vector' THEN 'vector-hash-v1'
+              WHEN 'hybrid' THEN 'hybrid-hash-lexical-v1'
+              ELSE 'lexical-weighted-v1'
+            END AS ranking_strategy
+          FROM ranked_chunks
         )
         SELECT
-          *,
-          ((lexical_rank * source_kind_weight) + exact_phrase_boost) AS rank
-        FROM ranked_chunks
+          *
+        FROM scored_chunks
         ORDER BY rank DESC, stable_id ASC, chunk_index ASC
         LIMIT $3
       `,
@@ -180,7 +215,10 @@ export class PostgresRetrievalRepository implements RetrievalRepository {
         rankingPolicy.agentInstructionWeight,
         rankingPolicy.assetSummaryWeight,
         rankingPolicy.humanDocumentWeight,
-        rankingPolicy.exactPhraseBoost
+        rankingPolicy.exactPhraseBoost,
+        queryEmbedding,
+        strategy,
+        DEFAULT_HYBRID_VECTOR_WEIGHT
       ]
     );
 
@@ -307,7 +345,9 @@ export class InMemoryRetrievalRepository implements RetrievalRepository {
   async search(input: SearchInput): Promise<SearchResult[]> {
     const tenantId = input.tenantId ?? "tenant_demo";
     const limit = Math.min(Math.max(input.limit ?? 10, 1), 50);
+    const strategy = input.strategy ?? "lexical";
     const terms = input.query.toLowerCase().split(/\s+/).filter(Boolean);
+    const queryEmbedding = buildHashEmbedding(input.query);
     const rankingPolicy = this.rankingPolicyRepository
       ? await this.rankingPolicyRepository.getPolicy(tenantId)
       : defaultRetrievalRankingPolicy(tenantId);
@@ -317,11 +357,17 @@ export class InMemoryRetrievalRepository implements RetrievalRepository {
       .map((chunk) => {
         const lexicalRank = scoreChunk(chunk, terms);
         const exactPhraseBoost = exactPhraseMatches(chunk, input.query) ? rankingPolicy.exactPhraseBoost : 0;
+        const vectorSimilarity = strategy === "lexical"
+          ? null
+          : cosineSimilarity(queryEmbedding, buildHashEmbedding(`${chunk.title}\n\n${chunk.content}`));
         const ranking = buildSearchRanking({
+          strategy,
           lexicalRank,
           sourceKind: chunk.sourceKind,
           exactPhraseBoost,
-          sourceKindWeight: searchSourceKindWeight(chunk.sourceKind, rankingPolicy)
+          sourceKindWeight: searchSourceKindWeight(chunk.sourceKind, rankingPolicy),
+          vectorSimilarity,
+          vectorWeight: strategy === "hybrid" ? DEFAULT_HYBRID_VECTOR_WEIGHT : null
         });
 
         return {
@@ -494,10 +540,13 @@ function mapSearchRow(row: SearchRow): SearchResult {
     content: row.body,
     rank: Number(row.rank),
     ranking: buildSearchRanking({
+      strategy: row.ranking_strategy,
       lexicalRank: Number(row.lexical_rank),
       sourceKind: row.chunk_source_kind,
       exactPhraseBoost: Number(row.exact_phrase_boost),
-      sourceKindWeight: Number(row.source_kind_weight)
+      sourceKindWeight: Number(row.source_kind_weight),
+      vectorSimilarity: row.ranking_strategy === "lexical-weighted-v1" ? null : Number(row.vector_similarity),
+      vectorWeight: row.ranking_strategy === "hybrid-hash-lexical-v1" ? DEFAULT_HYBRID_VECTOR_WEIGHT : null
     }),
     citation
   });
@@ -617,21 +666,50 @@ function exactPhraseMatches(chunk: SearchResult, query: string): boolean {
 }
 
 function buildSearchRanking(input: {
+  strategy?: SearchInput["strategy"] | SearchRanking["strategy"];
   lexicalRank: number;
   sourceKind: ChunkSourceKind;
   exactPhraseBoost: number;
   sourceKindWeight?: number;
+  vectorSimilarity?: number | null;
+  vectorWeight?: number | null;
 }): SearchRanking {
+  const strategy = normalizeRankingStrategy(input.strategy ?? "lexical");
   const sourceKindWeight = input.sourceKindWeight ?? searchSourceKindWeight(input.sourceKind);
-  const finalScore = (input.lexicalRank * sourceKindWeight) + input.exactPhraseBoost;
+  const vectorSimilarity = input.vectorSimilarity ?? null;
+  const vectorWeight = input.vectorWeight ?? null;
+  const lexicalScore = (input.lexicalRank * sourceKindWeight) + input.exactPhraseBoost;
+  const finalScore = strategy === "vector-hash-v1"
+    ? (vectorSimilarity ?? 0) * sourceKindWeight
+    : strategy === "hybrid-hash-lexical-v1"
+      ? lexicalScore + ((vectorWeight ?? DEFAULT_HYBRID_VECTOR_WEIGHT) * (vectorSimilarity ?? 0))
+      : lexicalScore;
 
   return {
-    strategy: "lexical-weighted-v1",
+    strategy,
     lexicalRank: input.lexicalRank,
     sourceKindWeight,
     exactPhraseBoost: input.exactPhraseBoost,
+    vectorSimilarity,
+    vectorWeight,
     finalScore
   };
+}
+
+function normalizeRankingStrategy(strategy: SearchInput["strategy"] | SearchRanking["strategy"]): SearchRanking["strategy"] {
+  switch (strategy) {
+    case "vector":
+    case "vector-hash-v1":
+      return "vector-hash-v1";
+    case "hybrid":
+    case "hybrid-hash-lexical-v1":
+      return "hybrid-hash-lexical-v1";
+    case "lexical":
+    case "lexical-weighted-v1":
+      return "lexical-weighted-v1";
+    default:
+      return "lexical-weighted-v1";
+  }
 }
 
 function searchSourceKindWeight(
@@ -646,6 +724,48 @@ function searchSourceKindWeight(
     case "human-document":
       return policy.humanDocumentWeight;
   }
+}
+
+function buildHashEmbedding(text: string): number[] {
+  const vector = Array.from({ length: HASH_EMBEDDING_DIMENSIONS }, () => 0);
+  const tokens = text.toLowerCase().match(/[a-z0-9][a-z0-9_-]*/g) ?? [];
+
+  for (const token of tokens) {
+    const hash = createHash("sha256").update(token).digest();
+    const index = hash.readUInt32BE(0) % HASH_EMBEDDING_DIMENSIONS;
+    const sign = (hash[4] ?? 0) % 2 === 0 ? 1 : -1;
+    vector[index] = (vector[index] ?? 0) + sign;
+  }
+
+  const magnitude = Math.sqrt(vector.reduce((sum, value) => sum + (value * value), 0));
+
+  if (magnitude === 0) {
+    return vector;
+  }
+
+  return vector.map((value) => value / magnitude);
+}
+
+function cosineSimilarity(left: number[], right: number[]): number {
+  let score = 0;
+
+  for (let index = 0; index < Math.min(left.length, right.length); index += 1) {
+    score += (left[index] ?? 0) * (right[index] ?? 0);
+  }
+
+  return Math.max(0, score);
+}
+
+function vectorToSql(vector: number[]): string {
+  return `[${vector.map((value) => roundVectorValue(value)).join(",")}]`;
+}
+
+function roundVectorValue(value: number): string {
+  if (Object.is(value, -0)) {
+    return "0";
+  }
+
+  return value.toFixed(6).replace(/0+$/, "").replace(/\.$/, "") || "0";
 }
 
 function requireRow<T extends QueryResultRow>(result: QueryResult<T>): T {
@@ -708,6 +828,8 @@ interface SearchRow extends AssetRow {
   lexical_rank: string | number;
   source_kind_weight: string | number;
   exact_phrase_boost: string | number;
+  vector_similarity: string | number;
+  ranking_strategy: SearchRanking["strategy"];
 }
 
 interface RetrievalEventRow extends QueryResultRow {

@@ -2692,3 +2692,126 @@ Do not reject matching requests by default because the current action foundation
 ### Follow-Ups / Review
 
 Review when adding external action adapters, connector credential references, per-action payload schemas, rejection policies for sensitive payloads, redacted transcript review, sandbox execution, or hosted data-loss-prevention integrations.
+
+## 0090: Use Railway For Private Alpha Deployment Preparation
+
+### Context
+
+The project needs a private hosted target while UI improvements continue, but it should not be publicly accessible yet. The existing OSS deployment baseline is Docker Compose with Postgres, API, worker, web, and same-origin proxy overlays. The app requires Postgres with the `vector` extension available for migrations.
+
+### Options Considered
+
+- keep deployment local-only until public alpha
+- use Railway as a private container PaaS staging target
+- use Render for the first private hosted target
+- use Vercel with separate managed services
+- use a VPS/Coolify-style Compose host
+
+### Decision And Rationale
+
+Use Railway for the first private alpha deployment preparation. Create a private Railway project with `pgvector`, `api`, `worker`, and `web` services, but do not configure public domains. Run `pgvector/pgvector:pg17` with a persistent Railway volume and set `PGDATA` to a subdirectory inside the volume so Postgres does not initialize directly in the mount root.
+
+Keep app services source-disconnected until the Railway-specific Dockerfiles are committed or a deliberate local `railway up` deployment is requested. This avoids deploying stale GitHub code while still preparing the service and variable layout.
+
+### Consequences
+
+- The private alpha target can validate the container/PaaS path without exposing a public URL.
+- Railway private networking is the intended service-to-service path for `DATABASE_URL`.
+- App services are ready for local or GitHub-triggered deployment after the deployment Dockerfiles are in the chosen branch.
+- Public exposure still requires a separate approval step to add a same-origin proxy or public domain, configure HTTPS, set secure-cookie mode, and run leakage checks.
+- Railway is the private alpha target, not yet the committed long-term hosted-service architecture.
+
+### Follow-Ups / Review
+
+Review before generating any Railway public domain, adding a custom domain, enabling browser cookie login over HTTPS, importing non-demo content, or choosing the production hosted-service platform.
+
+## 0091: Support OKF As A Versioned Agent Export Projection
+
+### Context
+
+Google Cloud introduced Open Knowledge Format (OKF) v0.1 as a draft, vendor-neutral Markdown and YAML frontmatter format for agent-readable knowledge bundles. Agentic CMS already exposes permission-filtered AI export packages through API, SDK, CLI, and MCP, but the package shape was JSON-only.
+
+### Options Considered
+
+- ignore OKF until it stabilizes
+- replace the JSON AI package with OKF
+- add OKF as a versioned generated projection beside the existing JSON package
+- store OKF Markdown as the canonical content model
+
+### Decision And Rationale
+
+Add OKF as a versioned generated export projection. Keep Agentic CMS governed assets and asset versions as canonical, then generate OKF bundles with explicit `okfVersion`, source asset version metadata, source content hashes, and a projection hash.
+
+This keeps the product agent-native and interoperable without turning the core into a Markdown CMS or breaking existing JSON-package consumers.
+
+### Consequences
+
+- `/exports/ai-package` accepts `format=json|okf` and `okfVersion=0.1`.
+- OKF generation is enabled by default as an export format, but export permission filtering remains mandatory.
+- Existing generated OKF artifacts must be treated as immutable versioned projections; regenerate from canonical asset versions instead of editing generated Markdown in place.
+- Support for future OKF versions should be added side-by-side unless the official spec change is fully backward-compatible.
+
+### Follow-Ups / Review
+
+Review when OKF publishes a new minor or major version, when adding persisted export artifacts/object storage, when generating tar/zip bundles, or when downstream consumers require an OKF version other than `0.1`.
+
+## 0092: Add Deterministic Hash-Vector Retrieval Before Provider Embeddings
+
+### Context
+
+The schema and database already included a `vector(1536)` chunk embedding column, and the MVP scope called for `pgvector` retrieval. The implemented retrieval path was still lexical-only. Adding provider-quality embeddings now would require provider selection, cost controls, privacy review, reindex jobs, and failure policy.
+
+### Options Considered
+
+- leave the alpha as lexical-only with vector-ready storage
+- add external embedding provider generation immediately
+- add deterministic local hash embeddings and opt-in vector/hybrid strategies
+- add a separate search service
+
+### Decision And Rationale
+
+Add deterministic local hash embeddings during chunk indexing and expose opt-in `strategy=vector` and `strategy=hybrid` search modes beside the default lexical mode. Store the vectors in the existing `pgvector` column and return transparent ranking metadata as `vector-hash-v1` or `hybrid-hash-lexical-v1`.
+
+This makes the self-hosted core's vector path functional and testable without sending corpus text to an external provider or pretending to provide high-quality semantic retrieval.
+
+### Consequences
+
+- Existing search behavior remains lexical by default.
+- Reindexing assets backfills deterministic hash embeddings for existing chunks.
+- API, SDK, CLI, and MCP clients can request lexical, vector, or hybrid retrieval.
+- Hash-vector ranking is deterministic and local, but it is not provider-quality semantic embedding search.
+- Retrieval ranking policy still tunes lexical source-kind weights and exact-phrase boost; vector weighting is intentionally fixed until semantic retrieval policy is designed.
+
+### Follow-Ups / Review
+
+Review when adding provider embeddings, embedding model selection, vector reindex migration jobs, semantic reranking, eval-driven search optimization, per-tenant retrieval profiles, or a hosted search service.
+
+## 0093: Keep Public Prototype Setup Paths Closed
+
+### Context
+
+The private alpha can be exposed through a same-origin proxy for live prototype review, but setup endpoints and local build artifacts must not become public or leak into remote build contexts. The API had an optional global authentication gate, and malformed boolean env values previously fell back to defaults.
+
+### Options Considered
+
+- rely only on app-route permissions
+- make invalid boolean env values fail startup
+- block bootstrap at the public proxy
+- keep maintainer-specific Railway details in public docs
+
+### Decision And Rationale
+
+Fail startup on invalid boolean env values, require explicit `AGENTIC_CMS_REQUIRE_AUTHENTICATION=true` for public prototypes, and block `/api/auth/bootstrap` at the Railway proxy. Keep live Railway project IDs, personal workspace names, and prototype domains in maintainer-only files, with a sanitized public Railway template for reusable guidance.
+
+Also keep local private artifacts out of Docker/Railway build contexts through `.dockerignore`.
+
+### Consequences
+
+- Public prototype misconfiguration fails loudly instead of silently opening unauthenticated routes.
+- The same-origin proxy no longer forwards bootstrap setup requests.
+- Public docs describe the deployment pattern without publishing live target identifiers.
+- Local backups, TLS keys, maintainer notes, browser artifacts, and assistant artifacts are excluded from remote build contexts.
+
+### Follow-Ups / Review
+
+Review before changing the public prototype domain, enabling a hosted onboarding flow, adding setup tokens, or documenting a production hosted-service deployment path.

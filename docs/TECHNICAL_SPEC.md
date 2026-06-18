@@ -113,7 +113,7 @@ Current action implementation note: `/admin/action-execution-policy` stores tena
 
 ### Export Packages
 
-Current implementation note: Phase 5 exposes `/exports/ai-package` plus SDK, CLI, and MCP wrappers. The package is JSON, permission-filtered, citation-bearing, and optimized for agent connectors rather than human page rendering.
+Current implementation note: Phase 5 exposes `/exports/ai-package` plus SDK, CLI, and MCP wrappers. The default package is JSON, permission-filtered, citation-bearing, and optimized for agent connectors rather than human page rendering. The same route also supports `format=okf&okfVersion=0.1`, generating a versioned Open Knowledge Format projection with deterministic Markdown files, root `okf_version`, source asset version metadata, source content hashes, and a projection hash. OKF is enabled by default as an export format, but Agentic CMS asset versions remain canonical and export permission filtering remains mandatory before OKF generation.
 
 ### PII Redaction
 
@@ -322,7 +322,7 @@ Fields:
 - search_vector
 - embedding
 
-Current implementation note: Phase 4 stores chunks in Postgres with generated full-text vectors, citation JSON, and a nullable `vector(1536)` embedding column. The current retrieval path is permission-filtered Postgres full-text search with `lexical-weighted-v1` ranking metadata on every result. Ranking combines lexical rank, tenant-configurable source-kind weighting that defaults to favoring agent-instruction chunks over equal human-document matches, and a tenant-configurable exact-phrase boost. `/admin/retrieval-ranking-policy` exposes the weights through API, SDK, CLI, MCP, OpenAPI, and the operational web UI; changes are audited and default to the original `1.2` agent-instruction, `1.1` asset-summary, `1.0` human-document, and `0.25` exact-phrase boost behavior. Embedding generation, vector retrieval, semantic reranking, retrieval eval optimization, and search-service federation are pending.
+Current implementation note: Phase 4 stores chunks in Postgres with generated full-text vectors, citation JSON, and deterministic hash embeddings in a `vector(1536)` column. The default retrieval path is permission-filtered Postgres full-text search with `lexical-weighted-v1` ranking metadata. Callers can also request `strategy=vector` for `vector-hash-v1` ranking or `strategy=hybrid` for `hybrid-hash-lexical-v1` ranking through API, SDK, CLI, and MCP. The vector modes use local deterministic token hashing so the self-hosted core has a pgvector-backed path without calling an external embedding provider. Ranking combines lexical rank, tenant-configurable source-kind weighting that defaults to favoring agent-instruction chunks over equal human-document matches, exact-phrase boost, and vector similarity where requested. `/admin/retrieval-ranking-policy` exposes the lexical weights through API, SDK, CLI, MCP, OpenAPI, and the operational web UI; changes are audited and default to the original `1.2` agent-instruction, `1.1` asset-summary, `1.0` human-document, and `0.25` exact-phrase boost behavior. Provider-quality embedding generation, semantic reranking, retrieval eval optimization, and search-service federation are pending.
 
 ### Permission Grant
 

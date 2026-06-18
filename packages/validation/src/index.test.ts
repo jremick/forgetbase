@@ -178,4 +178,36 @@ describe("validateAssetCollection", () => {
       "export.restricted_leakage"
     ]));
   });
+
+  it("reports unresolved and invalid human document instruction links", () => {
+    const linkedWithInstruction = validateAssetCollection({
+      assets: [{
+        ...validAsset,
+        humanDocument: {
+          format: "markdown",
+          body: "# Validation Guardrail",
+          linkedInstructionIds: ["instruction-primary", "instruction-primary"]
+        }
+      }]
+    }, { asOf: "2026-06-16" });
+    const linkedWithoutInstruction = validateAssetCollection({
+      assets: [{
+        ...validAsset,
+        instruction: undefined,
+        humanDocument: {
+          format: "markdown",
+          body: "# Validation Guardrail",
+          linkedInstructionIds: ["instruction-primary"]
+        }
+      }]
+    }, { asOf: "2026-06-16" });
+
+    expect(linkedWithInstruction.ok).toBe(true);
+    expect(linkedWithInstruction.issues.map((issue) => issue.code)).toEqual(expect.arrayContaining([
+      "document.linked_instruction_duplicate",
+      "document.linked_instruction_unverified"
+    ]));
+    expect(linkedWithoutInstruction.ok).toBe(false);
+    expect(linkedWithoutInstruction.issues.map((issue) => issue.code)).toContain("document.linked_instruction_missing");
+  });
 });

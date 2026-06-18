@@ -1,10 +1,11 @@
 #!/usr/bin/env node
-import { readFile } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import { writeFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { dirname, resolve, sep } from "node:path";
 	import {
 	  agentActionExecutionPolicyInputSchema,
 	  agentActionTypeSchema,
+  aiExportFormatSchema,
 	  assetCreateInputSchema,
   assetPublishInputSchema,
   assetReviewInputSchema,
@@ -17,9 +18,11 @@ import { resolve } from "node:path";
   managedQueryModeSchema,
   managedQueryRetentionCaptureModeSchema,
   modelProviderSchema,
+  okfVersionSchema,
   piiRedactionRuleKindSchema,
 	  type AssetCreateInput,
 	  type AgentActionType,
+  type OkfExportPackage,
   type AssetPublishInput,
   type AssetReviewInput,
   type AssetUpdateInput,
@@ -436,18 +439,53 @@ async function handleExports(args: string[]): Promise<number> {
 
   const client = createClient(args, "cli");
   const packageName = readOption(args, "--package") ?? "demo-agent-pack";
+  const format = aiExportFormatSchema.parse(readOption(args, "--format") ?? "json");
+  const okfVersion = okfVersionSchema.parse(readOption(args, "--okf-version") ?? "0.1");
   const output = readOption(args, "--output");
-  const result = await client.exportAiPackage(packageName);
+  const outputDir = readOption(args, "--output-dir");
+  const result = format === "okf"
+    ? await client.exportAiPackage(packageName, { format: "okf", okfVersion })
+    : await client.exportAiPackage(packageName, { format: "json" });
   const json = JSON.stringify(result, null, 2);
 
   if (output) {
     await writeFile(resolveInputPath(output), `${json}\n`, "utf8");
     console.log(JSON.stringify({ output, assetCount: result.assetCount, deniedCount: result.deniedCount }, null, 2));
+  } else if (outputDir) {
+    if (format !== "okf") {
+      throw new Error("--output-dir requires --format okf");
+    }
+
+    const okfResult = result as OkfExportPackage;
+    await writeOkfBundle(outputDir, okfResult);
+    console.log(JSON.stringify({
+      outputDir,
+      fileCount: okfResult.files.length,
+      assetCount: okfResult.assetCount,
+      deniedCount: okfResult.deniedCount,
+      okfVersion: okfResult.okfVersion,
+      projectionHash: okfResult.projectionHash
+    }, null, 2));
   } else {
     console.log(json);
   }
 
   return 0;
+}
+
+async function writeOkfBundle(outputDir: string, bundle: OkfExportPackage): Promise<void> {
+  const root = resolveInputPath(outputDir);
+
+  for (const file of bundle.files) {
+    const outputPath = resolve(root, file.path);
+
+    if (outputPath !== root && !outputPath.startsWith(`${root}${sep}`)) {
+      throw new Error(`Refusing to write OKF file outside output directory: ${file.path}`);
+    }
+
+    await mkdir(dirname(outputPath), { recursive: true });
+    await writeFile(outputPath, file.content, "utf8");
+  }
 }
 
 async function handleValidate(args: string[]): Promise<number> {
@@ -480,10 +518,12 @@ async function handleSearch(args: string[]): Promise<number> {
   }
 
   const limitOption = readOption(args, "--limit");
+  const strategy = readOption(args, "--strategy");
   const client = createClient(args, "cli");
   console.log(JSON.stringify(await client.search({
     query,
-    limit: limitOption ? Number.parseInt(limitOption, 10) : undefined
+    limit: limitOption ? Number.parseInt(limitOption, 10) : undefined,
+    strategy: strategy as "lexical" | "vector" | "hybrid" | undefined
   }), null, 2));
   return 0;
 }
@@ -1330,7 +1370,7 @@ Usage:
   agentic-cms admin auth-providers [--api-key ...]
   agentic-cms admin auth-provider-set --provider oidc --issuer-url https://idp.example.com --client-id agentic-cms --client-secret-env-var OIDC_CLIENT_SECRET [--api-key ...]
   agentic-cms validate --file corpus/demo/assets.json [--as-of 2026-06-16] [--fail-on-warnings]
-  agentic-cms search --query "PII redaction" [--limit 10] [--api-key ...]
+  agentic-cms search --query "PII redaction" [--limit 10] [--strategy lexical|vector|hybrid] [--api-key ...]
   agentic-cms agent query --query "PII redaction" [--limit 5] [--mode deterministic-retrieval|provider-routed] [--provider openai|anthropic|openrouter] [--model MODEL] [--cache true|false] [--api-key ...]
 	  agentic-cms agent feedback --telemetry-event-id retrieval_1 --query "PII redaction" --outcome accepted [--factual-citation-accuracy 5] [--api-key ...]
 	  agentic-cms agent feedback-list [--limit 50] [--api-key ...]
@@ -1345,7 +1385,7 @@ Usage:
   agentic-cms telemetry retention [--api-key ...]
   agentic-cms telemetry retention-set [--retrieval-event-days 30|forever] [--audit-event-days 365|forever] [--feedback-days 90|forever] [--api-key ...]
   agentic-cms telemetry purge [--execute] [--api-key ...]
-  agentic-cms exports ai-package [--package demo-agent-pack] [--output export.json] [--api-key ...]
+  agentic-cms exports ai-package [--package demo-agent-pack] [--format json|okf] [--okf-version 0.1] [--output export.json] [--output-dir okf-bundle] [--api-key ...]
   agentic-cms assets list [--api-key ...] [--api-url http://127.0.0.1:3000]
   agentic-cms assets review-queue [--as-of 2026-06-16] [--include-approved true|false] [--limit 50] [--api-key ...]
   agentic-cms assets get <stable-id> [--api-key ...] [--api-url http://127.0.0.1:3000]

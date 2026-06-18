@@ -133,14 +133,15 @@ export function createMcpServer(options: CreateMcpServerOptions = {}): McpServer
       description: "Search governed Agentic CMS chunks with permission filtering and citations.",
       inputSchema: z.object({
         query: z.string().min(1),
-        limit: z.number().int().positive().max(50).default(10)
+        limit: z.number().int().positive().max(50).default(10),
+        strategy: z.enum(["lexical", "vector", "hybrid"]).default("lexical")
       })
     },
-    async ({ query, limit }) => ({
+    async ({ query, limit, strategy }) => ({
       content: [
         {
           type: "text",
-          text: JSON.stringify(await client.search({ query, limit }), null, 2)
+          text: JSON.stringify(await client.search({ query, limit, strategy }), null, 2)
         }
       ]
     })
@@ -1448,48 +1449,85 @@ export function createMcpServer(options: CreateMcpServerOptions = {}): McpServer
     "generate_ai_export",
     {
       title: "Generate AI export",
-      description: "Generate a permission-filtered AI export package for agent connectors.",
+      description: "Generate a permission-filtered AI export package for agent connectors, including OKF bundles.",
       inputSchema: z.object({
-        packageName: z.string().min(1).default("demo-agent-pack")
+        packageName: z.string().min(1).default("demo-agent-pack"),
+        format: z.enum(["json", "okf"]).default("json"),
+        okfVersion: z.enum(["0.1"]).default("0.1")
       })
     },
-    async ({ packageName }) => ({
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify(await client.exportAiPackage(packageName), null, 2)
-        }
-      ]
-    })
+    async ({ packageName, format, okfVersion }) => {
+      const generated = format === "okf"
+        ? await client.exportAiPackage(packageName, { format: "okf", okfVersion })
+        : await client.exportAiPackage(packageName, { format: "json" });
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(generated, null, 2)
+          }
+        ]
+      };
+    }
   );
 
   server.registerTool(
     "validate_context_access",
     {
       title: "Validate context access",
-      description: "Placeholder access check for future permission-aware retrieval.",
+      description: "Validate whether the configured MCP principal can fetch an asset through the MCP surface.",
       inputSchema: z.object({
-        stableId: z.string().min(1),
-        surface: z.enum(["api", "cli", "mcp", "web", "export"])
+        stableId: z.string().min(1)
       })
     },
-    async ({ stableId, surface }) => ({
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify(
+    async ({ stableId }) => {
+      try {
+        const asset = await client.getAsset(stableId);
+
+        return {
+          content: [
             {
-              stableId,
-              surface,
-              allowed: false,
-              reason: "Permission checks are enforced by API asset fetch and retrieval routes."
-            },
-            null,
-            2
-          )
+              type: "text",
+              text: JSON.stringify({
+                stableId,
+                surface: "mcp",
+                allowed: Boolean(asset),
+                reason: asset ? "asset_fetch_allowed" : "asset_not_found_or_not_visible",
+                asset: asset
+                  ? {
+                    stableId: asset.asset.stableId,
+                    sensitivity: asset.asset.sensitivity,
+                    lifecycleState: asset.asset.lifecycleState,
+                    status: asset.asset.status
+                  }
+                  : null
+              }, null, 2)
+            }
+          ]
+        };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+
+        if (message.includes("HTTP 401") || message.includes("HTTP 403") || message.includes("HTTP 404")) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({
+                  stableId,
+                  surface: "mcp",
+                  allowed: false,
+                  reason: "asset_not_found_or_not_visible"
+                }, null, 2)
+              }
+            ]
+          };
         }
-      ]
-    })
+
+        throw error;
+      }
+    }
   );
 
   server.registerTool(

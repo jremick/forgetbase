@@ -15,6 +15,7 @@ import {
   apiKeyRevokeResponseSchema,
   auditEventListResponseSchema,
   aiExportPackageSchema,
+  aiExportFormatSchema,
   assetCreateInputSchema,
   assetDetailSchema,
   assetListResponseSchema,
@@ -100,6 +101,8 @@ import {
   telemetryRetentionPurgeInputSchema,
   telemetryRetentionPurgeResultSchema,
   healthResponseSchema,
+  okfExportPackageSchema,
+  okfVersionSchema,
   type AgentActionDecisionInput,
   type AgentActionExecuteInput,
   type AgentActionExecutionPolicy,
@@ -113,6 +116,7 @@ import {
   type ApiKeyRotateInput,
   type ApiKeyRotateResponse,
   type AuditEvent,
+  type AiExportFormat,
   type AiExportPackage,
   type AssetCreateInput,
   type AssetDetail,
@@ -172,6 +176,8 @@ import {
   type ModelProviderConfig,
   type ModelProviderConfigInput,
   type ModelProviderHealth,
+  type OkfExportPackage,
+  type OkfVersion,
   type PermissionGrant,
   type PermissionGrantCreateInput,
   type PiiRedactionPolicy,
@@ -200,6 +206,11 @@ export interface AgenticCmsClientOptions {
   apiKey?: string;
   surface?: Surface;
   fetchImpl?: typeof fetch;
+}
+
+export interface ExportAiPackageOptions {
+  format?: AiExportFormat;
+  okfVersion?: OkfVersion;
 }
 
 export class AgenticCmsClient {
@@ -571,7 +582,8 @@ export class AgenticCmsClient {
     const parsed = searchInputSchema.parse(input);
     const params = new URLSearchParams({
       query: parsed.query,
-      limit: String(parsed.limit)
+      limit: String(parsed.limit),
+      strategy: parsed.strategy
     });
 
     return this.request(`/search?${params.toString()}`, searchResponseSchema);
@@ -888,12 +900,28 @@ export class AgenticCmsClient {
     });
   }
 
-  async exportAiPackage(packageName = "demo-agent-pack"): Promise<AiExportPackage> {
+  async exportAiPackage(packageName?: string, options?: ExportAiPackageOptions & { format?: "json" }): Promise<AiExportPackage>;
+  async exportAiPackage(packageName: string, options: ExportAiPackageOptions & { format: "okf" }): Promise<OkfExportPackage>;
+  async exportAiPackage(
+    packageName = "demo-agent-pack",
+    options: ExportAiPackageOptions = {}
+  ): Promise<AiExportPackage | OkfExportPackage> {
+    const format = aiExportFormatSchema.parse(options.format ?? "json");
     const params = new URLSearchParams({
-      package: packageName
+      package: packageName,
+      format
     });
 
+    if (format === "okf") {
+      params.set("okfVersion", okfVersionSchema.parse(options.okfVersion ?? "0.1"));
+      return this.request(`/exports/ai-package?${params.toString()}`, okfExportPackageSchema);
+    }
+
     return this.request(`/exports/ai-package?${params.toString()}`, aiExportPackageSchema);
+  }
+
+  async exportOkfPackage(packageName = "demo-agent-pack", okfVersion: OkfVersion = "0.1"): Promise<OkfExportPackage> {
+    return this.exportAiPackage(packageName, { format: "okf", okfVersion });
   }
 
   private async request<T>(path: string, schema: { parse(input: unknown): T }, init?: RequestInit): Promise<T> {

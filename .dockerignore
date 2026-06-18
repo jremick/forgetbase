@@ -1,5 +1,8 @@
 .git
 .codex
+.claude
+.maintainer
+.playwright-mcp
 node_modules
 **/node_modules
 dist
@@ -7,7 +10,10 @@ dist
 .DS_Store
 .env
 .env.*
+backups
 coverage
 .turbo
 .next
 .vite
+infra/docker/tls/*
+!infra/docker/tls/.gitkeep

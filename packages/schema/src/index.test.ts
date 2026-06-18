@@ -3,6 +3,7 @@ import {
   assetCreateInputSchema,
   assetSchema,
   authProviderConfigInputSchema,
+  buildOkfExportPackage,
   createHealthResponse,
   healthResponseSchema,
   managedQueryEvalInputSchema,
@@ -129,5 +130,63 @@ describe("schema package", () => {
     expect(config.defaultRole).toBe("reader");
     expect(config.scopes).toEqual(["openid", "profile", "email"]);
     expect(config.clientSecretEnvVar).toBe("ENTRA_CLIENT_SECRET");
+  });
+
+  it("builds versioned OKF export bundles from AI export packages", () => {
+    const bundle = buildOkfExportPackage({
+      packageName: "demo-agent-pack",
+      generatedAt: "2026-06-18T00:00:00.000Z",
+      tenantId: "tenant_demo",
+      assetCount: 1,
+      deniedCount: 0,
+      assets: [
+        {
+          stableId: "policy.okf-export",
+          assetId: "asset_okf",
+          type: "policy",
+          title: "OKF Export Policy",
+          summary: "Public package material for OKF export.",
+          audience: ["ai-team"],
+          status: "approved",
+          sensitivity: "public-demo",
+          lifecycleState: "active",
+          sourceRef: null,
+          currentVersionId: "version_okf_1",
+          sourceVersion: {
+            id: "version_okf_1",
+            versionNumber: 1,
+            contentHash: "sha256:source",
+            createdAt: "2026-06-18T00:00:00.000Z",
+            changeNote: "Initial version"
+          },
+          allowedSurfaces: ["api", "cli", "mcp", "web", "export"],
+          allowedExports: ["demo-agent-pack"],
+          instructions: [
+            {
+              id: "instruction_okf",
+              instructionKind: "policy",
+              targetAgents: [],
+              body: "Use OKF for portable agent knowledge.",
+              constraints: ["Preserve source version metadata."],
+              failureModes: [],
+              escalation: null
+            }
+          ],
+          humanDocuments: [],
+          citations: []
+        }
+      ]
+    });
+
+    expect(bundle.okfVersion).toBe("0.1");
+    expect(bundle.rootIndexPath).toBe("index.md");
+    expect(bundle.files.map((file) => file.path)).toEqual(expect.arrayContaining([
+      "index.md",
+      "log.md",
+      "manifest.md"
+    ]));
+    expect(bundle.files.find((file) => file.path.startsWith("policies/"))?.content)
+      .toContain('source_version_number: 1');
+    expect(bundle.projectionHash).toMatch(/^sha256:/);
   });
 });

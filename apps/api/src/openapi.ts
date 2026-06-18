@@ -434,6 +434,7 @@ export function buildOpenApiDocument() {
           security: [],
           parameters: [
             queryParameter("query", true),
+            queryParameter("strategy", false),
             queryParameter("limit", false)
           ],
           responses: {
@@ -816,6 +817,8 @@ export function buildOpenApiDocument() {
           security: [],
           parameters: [
             queryParameter("package", false),
+            queryParameter("format", false),
+            queryParameter("okfVersion", false),
             queryParameter("limit", false)
           ],
           responses: {

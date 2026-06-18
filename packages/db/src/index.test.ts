@@ -841,6 +841,49 @@ describe("InMemoryRetrievalRepository", () => {
     expect(results[0]?.ranking.sourceKindWeight).toBe(2);
     expect(results[1]?.ranking.sourceKindWeight).toBe(1);
   });
+
+  it("supports deterministic hash-vector and hybrid retrieval strategies", async () => {
+    const registryRepository = new InMemoryRegistryRepository();
+    const retrievalRepository = new InMemoryRetrievalRepository();
+    const targetAsset = await registryRepository.createAsset({
+      ...sampleAsset,
+      stableId: "guardrail.vector-target",
+      summary: "Vector retrieval target guidance with vectormatchtoken."
+    });
+    const otherAsset = await registryRepository.createAsset({
+      ...sampleAsset,
+      stableId: "guardrail.vector-other",
+      summary: "Unrelated guidance for a separate operating mode."
+    });
+
+    await retrievalRepository.indexAsset(targetAsset);
+    await retrievalRepository.indexAsset(otherAsset);
+
+    const vectorResults = await retrievalRepository.search({
+      query: "vectormatchtoken",
+      strategy: "vector",
+      limit: 2
+    });
+    const hybridResults = await retrievalRepository.search({
+      query: "vectormatchtoken",
+      strategy: "hybrid",
+      limit: 2
+    });
+
+    expect(vectorResults[0]?.asset.stableId).toBe("guardrail.vector-target");
+    expect(vectorResults[0]?.ranking).toMatchObject({
+      strategy: "vector-hash-v1",
+      lexicalRank: expect.any(Number),
+      vectorSimilarity: expect.any(Number),
+      vectorWeight: null
+    });
+    expect(hybridResults[0]?.asset.stableId).toBe("guardrail.vector-target");
+    expect(hybridResults[0]?.ranking).toMatchObject({
+      strategy: "hybrid-hash-lexical-v1",
+      vectorSimilarity: expect.any(Number),
+      vectorWeight: expect.any(Number)
+    });
+  });
 });
 
 describe("InMemoryManagedQueryFeedbackRepository", () => {
@@ -2124,6 +2167,45 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("PostgresRegistryRepository", ()
     ]);
     expect(results[0]?.ranking.sourceKindWeight).toBe(2);
     expect((await rankingPolicyRepository.getPolicy(tenantId)).humanDocumentWeight).toBe(2);
+  });
+
+  it("persists hash embeddings and supports Postgres vector retrieval", async () => {
+    const registryRepository = new PostgresRegistryRepository(pool);
+    const retrievalRepository = new PostgresRetrievalRepository(pool);
+    const tenantId = `tenant_vector_${Date.now()}`;
+    const stableId = `guardrail.vector-${Date.now()}`;
+    const uniqueToken = `vectortoken${Date.now()}`;
+    const asset = await registryRepository.createAsset({
+      ...sampleAsset,
+      tenantId,
+      stableId,
+      summary: `Vector retrieval smoke test guidance for ${uniqueToken}.`
+    });
+
+    await retrievalRepository.indexAsset(asset);
+    const embeddingCount = await pool.query<{ count: string }>(
+      "SELECT count(*)::text AS count FROM asset_chunks WHERE asset_id = $1 AND embedding IS NOT NULL",
+      [asset.asset.id]
+    );
+    const vectorResults = await retrievalRepository.search({
+      tenantId,
+      query: uniqueToken,
+      strategy: "vector",
+      limit: 5
+    });
+    const hybridResults = await retrievalRepository.search({
+      tenantId,
+      query: uniqueToken,
+      strategy: "hybrid",
+      limit: 5
+    });
+
+    expect(Number.parseInt(embeddingCount.rows[0]?.count ?? "0", 10)).toBeGreaterThan(0);
+    expect(vectorResults[0]?.asset.stableId).toBe(stableId);
+    expect(vectorResults[0]?.ranking.strategy).toBe("vector-hash-v1");
+    expect(vectorResults[0]?.ranking.vectorSimilarity).toBeGreaterThan(0);
+    expect(hybridResults[0]?.asset.stableId).toBe(stableId);
+    expect(hybridResults[0]?.ranking.strategy).toBe("hybrid-hash-lexical-v1");
   });
 
   it("persists managed query feedback records", async () => {

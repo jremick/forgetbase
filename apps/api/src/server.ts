@@ -10,6 +10,7 @@ import fastify, {
 import { createRemoteJWKSet, jwtVerify, type JWTPayload } from "jose";
 import {
 	  aiExportPackageSchema,
+	  aiExportFormatSchema,
 	  agentActionDecisionInputSchema,
 	  agentActionExecuteInputSchema,
 	  agentActionExecutionPolicyInputSchema,
@@ -108,7 +109,10 @@ import {
   telemetryRetentionPurgeInputSchema,
   telemetryRetentionPurgeResultSchema,
   createHealthResponse,
+  buildOkfExportPackage,
   healthResponseSchema,
+  okfExportPackageSchema,
+  okfVersionSchema,
 	  type ApiKeyScope,
 	  type AgentActionExecutionPolicy,
 	  type AgentActionRequest,
@@ -249,6 +253,7 @@ export interface BuildServerOptions extends FastifyServerOptions {
   loginSessionIdleTimeoutSeconds?: number | null;
   loginSessionAbsoluteMaxAgeSeconds?: number | null;
   loginRefreshTokenMaxAgeSeconds?: number | null;
+  requireAuthentication?: boolean;
 }
 
 export interface OidcDiscoveryDocument {
@@ -369,6 +374,9 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
   const loginSessionIdleTimeoutSeconds = readLoginSessionIdleTimeoutSeconds(options.loginSessionIdleTimeoutSeconds);
   const loginSessionAbsoluteMaxAgeSeconds = readLoginSessionAbsoluteMaxAgeSeconds(options.loginSessionAbsoluteMaxAgeSeconds);
   const loginRefreshTokenMaxAgeSeconds = readLoginRefreshTokenMaxAgeSeconds(options.loginRefreshTokenMaxAgeSeconds);
+  const requireAuthentication = options.requireAuthentication ??
+    readOptionalEnvBoolean(process.env.AGENTIC_CMS_REQUIRE_AUTHENTICATION) ??
+    false;
 
   server.addHook("onRequest", async (request, reply) => {
     const origin = request.headers.origin;
@@ -393,6 +401,22 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
 
     if (request.method === "OPTIONS") {
       return reply.code(204).send();
+    }
+  });
+
+  server.addHook("preHandler", async (request, reply) => {
+    if (!requireAuthentication || request.method === "OPTIONS" || isPublicAuthenticationPath(request.url)) {
+      return;
+    }
+
+    if (!authRepository) {
+      return reply.code(503).send({ error: "auth_unavailable" });
+    }
+
+    const principal = await requirePrincipal(request, reply, authRepository, loginSessionIdleTimeoutSeconds);
+
+    if (!principal) {
+      return;
     }
   });
 
@@ -2430,7 +2454,13 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
       return reply.code(503).send({ error: "retrieval_unavailable" });
     }
 
-    const query = request.query as { query?: string; q?: string; limit?: string; tenantId?: string };
+    const query = request.query as {
+      query?: string;
+      q?: string;
+      limit?: string;
+      tenantId?: string;
+      strategy?: string;
+    };
     const surface = readSurface(request);
     const principal = await authenticateOptionalPrincipal(request, reply, authRepository, loginSessionIdleTimeoutSeconds);
 
@@ -2441,7 +2471,8 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
     const parsed = searchInputSchema.safeParse({
       tenantId: principal?.tenantId ?? query.tenantId,
       query: query.query ?? query.q,
-      limit: query.limit ? Number.parseInt(query.limit, 10) : undefined
+      limit: query.limit ? Number.parseInt(query.limit, 10) : undefined,
+      strategy: query.strategy
     });
 
     if (!parsed.success) {
@@ -3635,9 +3666,23 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
       return reply.code(503).send({ error: "registry_unavailable" });
     }
 
-    const query = request.query as { package?: string; limit?: string };
+    const query = request.query as { package?: string; limit?: string; format?: string; okfVersion?: string };
     const packageName = query.package || "demo-agent-pack";
     const limit = query.limit ? Number.parseInt(query.limit, 10) : 200;
+    const formatResult = aiExportFormatSchema.safeParse(query.format ?? "json");
+
+    if (!formatResult.success) {
+      return reply.code(400).send({ error: "invalid_export_format" });
+    }
+
+    const okfVersionResult = okfVersionSchema.safeParse(query.okfVersion ?? "0.1");
+
+    if (!okfVersionResult.success) {
+      return reply.code(400).send({ error: "unsupported_okf_version" });
+    }
+
+    const format = formatResult.data;
+    const okfVersion = okfVersionResult.data;
     const surface: Surface = "export";
     const principal = await authenticateOptionalPrincipal(request, reply, authRepository, loginSessionIdleTimeoutSeconds);
 
@@ -3685,6 +3730,10 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
       deniedCount,
       assets: exportAssets
     });
+    const okfPackage = format === "okf"
+      ? okfExportPackageSchema.parse(buildOkfExportPackage(exportPackage, { okfVersion }))
+      : null;
+    const responsePackage = okfPackage ?? exportPackage;
 
     if (authRepository) {
       await authRepository.recordAuditEvent({
@@ -3695,13 +3744,16 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
         targetId: packageName,
         outcome: "success",
         metadata: {
+          format,
+          okfVersion: format === "okf" ? okfVersion : undefined,
           assetCount: exportPackage.assetCount,
-          deniedCount: exportPackage.deniedCount
+          deniedCount: exportPackage.deniedCount,
+          projectionHash: okfPackage?.projectionHash
         }
       });
     }
 
-    return exportPackage;
+    return responsePackage;
   });
 
   server.get("/telemetry/retrieval-events", async (request, reply) => {
@@ -4315,6 +4367,8 @@ function isPublishedAsset(detail: AssetDetail): boolean {
 }
 
 function toExportPackageAsset(detail: AssetDetail) {
+  const sourceVersion = detail.versions.find((version) => version.id === detail.asset.currentVersionId) ?? null;
+
   return {
     stableId: detail.asset.stableId,
     assetId: detail.asset.id,
@@ -4327,6 +4381,7 @@ function toExportPackageAsset(detail: AssetDetail) {
     lifecycleState: detail.asset.lifecycleState,
     sourceRef: detail.asset.sourceRef,
     currentVersionId: detail.asset.currentVersionId,
+    sourceVersion,
     allowedSurfaces: detail.asset.allowedSurfaces,
     allowedExports: detail.asset.allowedExports,
     instructions: detail.instructionObjects.map((instruction) => ({
@@ -7458,6 +7513,16 @@ function requiresCsrfProtection(request: FastifyRequest): boolean {
   return ["POST", "PUT", "PATCH", "DELETE"].includes(request.method.toUpperCase());
 }
 
+function isPublicAuthenticationPath(requestUrl: string): boolean {
+  const pathname = new URL(requestUrl, "http://agentic-cms.local").pathname;
+
+  return pathname === "/health" ||
+    pathname === "/auth/login" ||
+    pathname === "/auth/oidc/authorize" ||
+    pathname === "/auth/oidc/callback" ||
+    pathname === "/auth/session/refresh";
+}
+
 function hasValidCsrfToken(request: FastifyRequest, sessionToken: string): boolean {
   const cookieToken = readCsrfCookieToken(request);
   const headerToken = readHeaderValue(request, CSRF_HEADER_NAME);
@@ -7692,15 +7757,17 @@ function readOptionalEnvBoolean(value: string | undefined): boolean | undefined 
     return undefined;
   }
 
-  if (["true", "1", "yes"].includes(value.toLowerCase())) {
+  const normalized = value.trim().toLowerCase();
+
+  if (["true", "1", "yes"].includes(normalized)) {
     return true;
   }
 
-  if (["false", "0", "no"].includes(value.toLowerCase())) {
+  if (["false", "0", "no"].includes(normalized)) {
     return false;
   }
 
-  return undefined;
+  throw new Error(`Invalid boolean environment value: ${value}`);
 }
 
 function readCorsAllowedOriginsEnv(): string[] {

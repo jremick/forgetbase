@@ -1,0 +1,1778 @@
+<!doctype html>
+<html lang="en" data-density="comfortable">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Agentic CMS Design System</title>
+  <style>
+    :root {
+      --n-0: #ffffff;
+      --n-25: #fafbfc;
+      --n-50: #f4f6f8;
+      --n-100: #eceff2;
+      --n-200: #dce2e8;
+      --n-300: #c3ccd5;
+      --n-400: #97a3ae;
+      --n-500: #6b7682;
+      --n-600: #4c5862;
+      --n-700: #364049;
+      --n-800: #232b33;
+      --n-900: #141a1f;
+      --brand-50: #eff5f9;
+      --brand-100: #d7e6f0;
+      --brand-500: #246e97;
+      --brand-600: #1d5a80;
+      --brand-700: #154a6a;
+      --ok-50: #eef7f1;
+      --ok-100: #dcf0e5;
+      --ok-600: #1e7d52;
+      --warn-50: #fcf7e8;
+      --warn-100: #faefcd;
+      --warn-600: #8a6300;
+      --bad-50: #fbeeee;
+      --bad-100: #f6dede;
+      --bad-600: #b23b3b;
+      --info-50: #eff5f9;
+      --info-100: #d7e6f0;
+      --info-600: #1d5a80;
+      --shadow-1: 0 1px 2px rgba(16, 24, 32, 0.06);
+      --shadow-2: 0 12px 32px rgba(16, 24, 32, 0.14);
+      --radius-sm: 4px;
+      --radius-md: 6px;
+      --radius-lg: 8px;
+      --radius-pill: 999px;
+      --space-1: 4px;
+      --space-2: 8px;
+      --space-3: 12px;
+      --space-4: 16px;
+      --space-5: 20px;
+      --space-6: 24px;
+      --space-8: 32px;
+      --space-10: 40px;
+      --space-12: 48px;
+      --topbar: 56px;
+      --nav: 248px;
+      --rail: 312px;
+      --ui-font: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --mono-font: ui-monospace, SFMono-Regular, "JetBrains Mono", Menlo, Consolas, monospace;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      color: var(--n-900);
+      background: var(--n-50);
+      font-family: var(--ui-font);
+      font-size: 14px;
+      line-height: 1.5;
+      scroll-behavior: smooth;
+    }
+
+    body {
+      margin: 0;
+      min-width: 320px;
+    }
+
+    a {
+      color: var(--brand-600);
+      text-decoration: none;
+    }
+
+    a:hover,
+    a:focus {
+      color: var(--brand-700);
+      text-decoration: underline;
+    }
+
+    button,
+    input,
+    select,
+    textarea {
+      font: inherit;
+    }
+
+    :focus-visible {
+      outline: 2px solid var(--brand-500);
+      outline-offset: 2px;
+    }
+
+    .skip {
+      position: fixed;
+      left: 16px;
+      top: -48px;
+      z-index: 30;
+      padding: 8px 12px;
+      border-radius: var(--radius-md);
+      background: var(--n-900);
+      color: var(--n-0);
+    }
+
+    .skip:focus {
+      top: 12px;
+    }
+
+    .shell {
+      display: grid;
+      grid-template-columns: var(--nav) minmax(0, 1fr);
+      min-height: 100vh;
+    }
+
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      grid-column: 1 / -1;
+      display: grid;
+      grid-template-columns: var(--nav) minmax(0, 1fr);
+      height: var(--topbar);
+      border-bottom: 1px solid var(--n-200);
+      background: rgba(255, 255, 255, 0.96);
+      backdrop-filter: blur(10px);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 0 18px;
+      border-right: 1px solid var(--n-200);
+      font-weight: 700;
+      color: var(--n-900);
+    }
+
+    .brand-mark {
+      display: grid;
+      place-items: center;
+      width: 28px;
+      height: 28px;
+      border-radius: var(--radius-md);
+      background: var(--brand-600);
+      color: var(--n-0);
+      font-family: var(--mono-font);
+      font-size: 12px;
+      letter-spacing: 0;
+    }
+
+    .top-actions {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 0 20px;
+      min-width: 0;
+    }
+
+    .searchbar {
+      display: flex;
+      align-items: center;
+      min-width: 220px;
+      max-width: 560px;
+      flex: 1;
+      gap: 8px;
+      height: 34px;
+      padding: 0 10px;
+      border: 1px solid var(--n-300);
+      border-radius: var(--radius-md);
+      color: var(--n-500);
+      background: var(--n-25);
+    }
+
+    .kbd {
+      margin-left: auto;
+      padding: 1px 6px;
+      border: 1px solid var(--n-300);
+      border-radius: var(--radius-sm);
+      color: var(--n-600);
+      background: var(--n-0);
+      font-family: var(--mono-font);
+      font-size: 11px;
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--ok-600);
+      box-shadow: 0 0 0 3px var(--ok-100);
+    }
+
+    .environment {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      white-space: nowrap;
+      color: var(--n-600);
+      font-size: 13px;
+    }
+
+    .identity {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+      margin-left: auto;
+    }
+
+    .avatar {
+      display: grid;
+      place-items: center;
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      background: var(--brand-100);
+      color: var(--brand-700);
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .nav {
+      position: sticky;
+      top: var(--topbar);
+      align-self: start;
+      height: calc(100vh - var(--topbar));
+      overflow: auto;
+      border-right: 1px solid var(--n-200);
+      background: var(--n-0);
+      padding: 20px 14px;
+    }
+
+    .nav-group {
+      margin-bottom: 24px;
+    }
+
+    .nav-label {
+      margin: 0 8px 8px;
+      color: var(--n-500);
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    .nav-link {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-height: 34px;
+      margin-bottom: 3px;
+      padding: 7px 9px;
+      border-radius: var(--radius-md);
+      color: var(--n-700);
+      border-left: 2px solid transparent;
+    }
+
+    .nav-link:hover {
+      background: var(--n-100);
+      text-decoration: none;
+      color: var(--n-900);
+    }
+
+    .nav-link.active {
+      background: var(--brand-50);
+      border-left-color: var(--brand-600);
+      color: var(--brand-700);
+      font-weight: 650;
+    }
+
+    .icon {
+      display: inline-grid;
+      place-items: center;
+      width: 18px;
+      height: 18px;
+      border: 1px solid currentColor;
+      border-radius: var(--radius-sm);
+      color: inherit;
+      font-family: var(--mono-font);
+      font-size: 10px;
+      line-height: 1;
+    }
+
+    main {
+      min-width: 0;
+      padding: 28px;
+    }
+
+    .page {
+      max-width: 1440px;
+      margin: 0 auto;
+    }
+
+    .intro-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1.1fr) minmax(320px, 0.9fr);
+      gap: 24px;
+      align-items: start;
+    }
+
+    .page-header {
+      display: flex;
+      justify-content: space-between;
+      gap: 20px;
+      align-items: flex-start;
+      margin-bottom: 24px;
+    }
+
+    .eyebrow {
+      margin: 0 0 6px;
+      color: var(--n-500);
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    h1,
+    h2,
+    h3 {
+      color: var(--n-900);
+      letter-spacing: 0;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 28px;
+      line-height: 1.2;
+      font-weight: 700;
+    }
+
+    h2 {
+      margin: 0 0 14px;
+      font-size: 20px;
+      line-height: 1.3;
+      font-weight: 650;
+    }
+
+    h3 {
+      margin: 0 0 10px;
+      font-size: 15px;
+      line-height: 1.35;
+      font-weight: 650;
+    }
+
+    p {
+      margin: 0 0 12px;
+      color: var(--n-700);
+    }
+
+    .lede {
+      max-width: 820px;
+      color: var(--n-600);
+      font-size: 15px;
+    }
+
+    .panel {
+      border: 1px solid var(--n-200);
+      border-radius: var(--radius-lg);
+      background: var(--n-0);
+      box-shadow: var(--shadow-1);
+    }
+
+    .panel + .panel,
+    .section + .section {
+      margin-top: 24px;
+    }
+
+    .panel-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 16px 18px;
+      border-bottom: 1px solid var(--n-200);
+    }
+
+    .panel-body {
+      padding: 18px;
+    }
+
+    .section {
+      scroll-margin-top: 84px;
+    }
+
+    .decision-list {
+      display: grid;
+      gap: 12px;
+    }
+
+    .decision {
+      display: grid;
+      grid-template-columns: 188px minmax(0, 1fr);
+      gap: 16px;
+      padding: 14px;
+      border: 1px solid var(--n-200);
+      border-radius: var(--radius-lg);
+      background: var(--n-25);
+    }
+
+    .decision strong {
+      color: var(--n-900);
+    }
+
+    .decision p {
+      margin: 0;
+    }
+
+    .note {
+      padding: 12px 14px;
+      border: 1px solid var(--brand-100);
+      border-left: 3px solid var(--brand-600);
+      border-radius: var(--radius-md);
+      background: var(--brand-50);
+      color: var(--n-700);
+    }
+
+    .grid-2 {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 18px;
+    }
+
+    .grid-3 {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 16px;
+    }
+
+    .grid-4 {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .token-swatch {
+      min-height: 86px;
+      padding: 12px;
+      border: 1px solid var(--n-200);
+      border-radius: var(--radius-md);
+      background: var(--n-0);
+    }
+
+    .swatch {
+      height: 28px;
+      margin-bottom: 10px;
+      border-radius: var(--radius-sm);
+      border: 1px solid rgba(20, 26, 31, 0.08);
+    }
+
+    .token-name,
+    .mono {
+      font-family: var(--mono-font);
+      font-size: 12px;
+      color: var(--n-700);
+    }
+
+    .muted {
+      color: var(--n-500);
+    }
+
+    .chip-row {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      min-height: 24px;
+      padding: 2px 8px;
+      border: 1px solid var(--n-300);
+      border-radius: var(--radius-pill);
+      color: var(--n-700);
+      background: var(--n-0);
+      font-size: 12px;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+
+    .chip.ok {
+      color: var(--ok-600);
+      border-color: var(--ok-100);
+      background: var(--ok-50);
+    }
+
+    .chip.warn {
+      color: var(--warn-600);
+      border-color: var(--warn-100);
+      background: var(--warn-50);
+    }
+
+    .chip.bad {
+      color: var(--bad-600);
+      border-color: var(--bad-100);
+      background: var(--bad-50);
+    }
+
+    .chip.info {
+      color: var(--info-600);
+      border-color: var(--info-100);
+      background: var(--info-50);
+    }
+
+    .marker {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      min-height: 26px;
+      padding: 3px 9px 3px 7px;
+      border: 1px solid var(--n-200);
+      border-left-width: 4px;
+      border-radius: var(--radius-md);
+      background: var(--n-0);
+      color: var(--n-700);
+      font-size: 12px;
+      font-weight: 650;
+      white-space: nowrap;
+    }
+
+    .marker.public-demo {
+      border-left-color: var(--ok-600);
+    }
+
+    .marker.internal {
+      border-left-color: var(--info-600);
+    }
+
+    .marker.restricted {
+      border-left-color: var(--bad-600);
+    }
+
+    .marker.confidential,
+    .marker.secret {
+      border-left-color: var(--warn-600);
+    }
+
+    .dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: currentColor;
+    }
+
+    .button-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      min-height: 34px;
+      padding: 7px 12px;
+      border: 1px solid var(--n-300);
+      border-radius: var(--radius-md);
+      color: var(--n-800);
+      background: var(--n-0);
+      cursor: default;
+      font-weight: 650;
+      white-space: nowrap;
+    }
+
+    .btn.primary {
+      border-color: var(--brand-600);
+      background: var(--brand-600);
+      color: var(--n-0);
+    }
+
+    .btn.ghost {
+      border-color: transparent;
+      background: transparent;
+      color: var(--n-700);
+    }
+
+    .btn.danger {
+      border-color: var(--bad-600);
+      color: var(--bad-600);
+      background: var(--bad-50);
+    }
+
+    .field-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .field {
+      display: grid;
+      gap: 6px;
+    }
+
+    label {
+      color: var(--n-700);
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .input,
+    .textarea,
+    .select {
+      width: 100%;
+      min-height: 36px;
+      padding: 7px 10px;
+      border: 1px solid var(--n-300);
+      border-radius: var(--radius-md);
+      background: var(--n-0);
+      color: var(--n-900);
+    }
+
+    .textarea {
+      min-height: 88px;
+      resize: vertical;
+    }
+
+    .help {
+      color: var(--n-500);
+      font-size: 12px;
+    }
+
+    .segmented {
+      display: inline-grid;
+      grid-auto-flow: column;
+      padding: 3px;
+      border: 1px solid var(--n-300);
+      border-radius: var(--radius-md);
+      background: var(--n-100);
+      gap: 3px;
+    }
+
+    .segment {
+      padding: 5px 10px;
+      border-radius: var(--radius-sm);
+      color: var(--n-600);
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .segment.active {
+      background: var(--n-0);
+      color: var(--brand-700);
+      box-shadow: var(--shadow-1);
+    }
+
+    .table-wrap {
+      overflow: auto;
+      border: 1px solid var(--n-200);
+      border-radius: var(--radius-lg);
+      background: var(--n-0);
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 760px;
+      font-size: 13px;
+    }
+
+    th,
+    td {
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--n-200);
+      text-align: left;
+      vertical-align: middle;
+    }
+
+    th {
+      position: sticky;
+      top: 0;
+      z-index: 1;
+      background: var(--n-25);
+      color: var(--n-600);
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    tr:last-child td {
+      border-bottom: 0;
+    }
+
+    tr.selected td:first-child {
+      box-shadow: inset 3px 0 0 var(--brand-600);
+      background: var(--brand-50);
+    }
+
+    .data-title {
+      display: grid;
+      gap: 2px;
+    }
+
+    .stable-id {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      max-width: 100%;
+      color: var(--n-600);
+      font-family: var(--mono-font);
+      font-size: 12px;
+    }
+
+    .mock-app {
+      display: grid;
+      grid-template-columns: 184px minmax(0, 1fr);
+      min-height: 560px;
+      overflow: hidden;
+      border: 1px solid var(--n-200);
+      border-radius: var(--radius-lg);
+      background: var(--n-0);
+      box-shadow: var(--shadow-1);
+    }
+
+    .mock-nav {
+      padding: 16px 10px;
+      border-right: 1px solid var(--n-200);
+      background: var(--n-25);
+    }
+
+    .mock-main {
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+      min-width: 0;
+    }
+
+    .mock-toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      min-height: 52px;
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--n-200);
+    }
+
+    .mock-content {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 260px;
+      min-width: 0;
+    }
+
+    .reader {
+      padding: 22px 30px 30px;
+      background: var(--n-0);
+    }
+
+    .trust-banner {
+      position: sticky;
+      top: 0;
+      z-index: 2;
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 8px;
+      padding: 10px 12px;
+      margin-bottom: 22px;
+      border: 1px solid var(--brand-100);
+      border-left: 3px solid var(--brand-600);
+      border-radius: var(--radius-md);
+      background: var(--brand-50);
+    }
+
+    .reading-body {
+      max-width: 70ch;
+      color: var(--n-800);
+      font-size: 16px;
+      line-height: 1.65;
+    }
+
+    .reading-body h2 {
+      margin-top: 28px;
+      font-size: 23px;
+      line-height: 1.3;
+    }
+
+    .reading-body p {
+      margin-bottom: 16px;
+      color: var(--n-800);
+    }
+
+    .instruction-well {
+      margin: 18px 0;
+      padding: 14px;
+      border: 1px solid var(--n-300);
+      border-radius: var(--radius-md);
+      background: var(--n-25);
+      color: var(--n-800);
+      font-family: var(--mono-font);
+      font-size: 13px;
+      line-height: 1.55;
+      overflow: auto;
+    }
+
+    .rail {
+      padding: 18px;
+      border-left: 1px solid var(--n-200);
+      background: var(--n-25);
+    }
+
+    .meta-list {
+      display: grid;
+      gap: 12px;
+      margin: 0;
+    }
+
+    .meta-list div {
+      display: grid;
+      gap: 2px;
+    }
+
+    .meta-list dt {
+      color: var(--n-500);
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    .meta-list dd {
+      margin: 0;
+      color: var(--n-800);
+    }
+
+    .template-list {
+      display: grid;
+      gap: 14px;
+    }
+
+    .template {
+      padding: 16px;
+      border: 1px solid var(--n-200);
+      border-radius: var(--radius-lg);
+      background: var(--n-25);
+    }
+
+    .template .meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    .component-matrix {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .component {
+      padding: 14px;
+      border: 1px solid var(--n-200);
+      border-radius: var(--radius-lg);
+      background: var(--n-0);
+    }
+
+    .component h3 {
+      margin-bottom: 6px;
+    }
+
+    .component p {
+      margin-bottom: 10px;
+      color: var(--n-600);
+      font-size: 13px;
+    }
+
+    .path-steps {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .step {
+      position: relative;
+      min-height: 112px;
+      padding: 14px;
+      border: 1px solid var(--n-200);
+      border-top: 3px solid var(--brand-600);
+      border-radius: var(--radius-lg);
+      background: var(--n-0);
+    }
+
+    .step-num {
+      display: grid;
+      place-items: center;
+      width: 24px;
+      height: 24px;
+      margin-bottom: 10px;
+      border-radius: 50%;
+      background: var(--brand-100);
+      color: var(--brand-700);
+      font-weight: 800;
+      font-size: 12px;
+    }
+
+    .spec-table {
+      display: grid;
+      gap: 10px;
+    }
+
+    .spec-row {
+      display: grid;
+      grid-template-columns: 180px minmax(0, 1fr);
+      gap: 14px;
+      padding: 12px 0;
+      border-bottom: 1px solid var(--n-200);
+    }
+
+    .spec-row:last-child {
+      border-bottom: 0;
+    }
+
+    .copy-note {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      color: var(--n-600);
+      font-size: 12px;
+    }
+
+    .tree-layout {
+      display: grid;
+      grid-template-columns: minmax(300px, 0.9fr) minmax(0, 1.1fr);
+      gap: 18px;
+      align-items: start;
+    }
+
+    .tree-demo {
+      border: 1px solid var(--n-200);
+      border-radius: var(--radius-lg);
+      background: var(--n-0);
+      overflow: hidden;
+      box-shadow: var(--shadow-1);
+    }
+
+    .tree-demo-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--n-200);
+      background: var(--n-25);
+    }
+
+    .tree-list {
+      display: grid;
+      gap: 3px;
+      margin: 0;
+      padding: 10px;
+      list-style: none;
+    }
+
+    .tree-row {
+      display: grid;
+      grid-template-columns: 18px minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 8px;
+      min-height: 34px;
+      padding: 6px 8px;
+      border: 1px solid transparent;
+      border-radius: var(--radius-md);
+      color: var(--n-700);
+      font-size: 13px;
+    }
+
+    .tree-row:hover {
+      background: var(--n-100);
+    }
+
+    .tree-row.group {
+      margin-top: 8px;
+      color: var(--n-500);
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    .tree-row.group:first-child {
+      margin-top: 0;
+    }
+
+    .tree-row.folder {
+      font-weight: 650;
+    }
+
+    .tree-row.leaf {
+      grid-template-columns: minmax(0, 1fr) auto;
+    }
+
+    .tree-row.ancestor {
+      background: var(--n-25);
+      border-color: var(--brand-100);
+      color: var(--brand-700);
+    }
+
+    .tree-row.selected {
+      background: var(--brand-50);
+      border-color: var(--brand-100);
+      box-shadow: inset 3px 0 0 var(--brand-600);
+      color: var(--brand-700);
+      font-weight: 700;
+    }
+
+    .tree-row.disabled {
+      color: var(--n-400);
+      background: var(--n-25);
+    }
+
+    .tree-row.depth-1 {
+      padding-left: 24px;
+    }
+
+    .tree-row.depth-2 {
+      padding-left: 42px;
+    }
+
+    .tree-icon {
+      display: inline-grid;
+      place-items: center;
+      width: 18px;
+      height: 18px;
+      border-radius: var(--radius-sm);
+      border: 1px solid currentColor;
+      font-family: var(--mono-font);
+      font-size: 10px;
+      line-height: 1;
+    }
+
+    .tree-label {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .tree-meta {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      min-width: 0;
+    }
+
+    .count {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 24px;
+      height: 20px;
+      padding: 0 6px;
+      border: 1px solid var(--n-200);
+      border-radius: var(--radius-pill);
+      background: var(--n-0);
+      color: var(--n-600);
+      font-family: var(--mono-font);
+      font-size: 11px;
+    }
+
+    .tiny-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      min-height: 20px;
+      padding: 1px 6px;
+      border: 1px solid var(--n-300);
+      border-radius: var(--radius-pill);
+      background: var(--n-0);
+      color: var(--n-600);
+      font-size: 11px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .tiny-badge.warn {
+      color: var(--warn-600);
+      border-color: var(--warn-100);
+      background: var(--warn-50);
+    }
+
+    .tiny-badge.bad {
+      color: var(--bad-600);
+      border-color: var(--bad-100);
+      background: var(--bad-50);
+    }
+
+    .guidance-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .guidance-card {
+      padding: 14px;
+      border: 1px solid var(--n-200);
+      border-radius: var(--radius-lg);
+      background: var(--n-25);
+    }
+
+    .guidance-card h3 {
+      margin-bottom: 6px;
+    }
+
+    .guidance-card p {
+      margin: 0;
+      font-size: 13px;
+      color: var(--n-600);
+    }
+
+    .footer {
+      margin-top: 48px;
+      padding: 20px 0;
+      color: var(--n-500);
+      font-size: 12px;
+    }
+
+    @media (max-width: 1180px) {
+      .intro-grid,
+      .mock-content,
+      .grid-3,
+      .component-matrix,
+      .path-steps,
+      .tree-layout,
+      .guidance-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .rail {
+        border-left: 0;
+        border-top: 1px solid var(--n-200);
+      }
+    }
+
+    @media (max-width: 920px) {
+      .shell {
+        grid-template-columns: 1fr;
+      }
+
+      .topbar {
+        grid-template-columns: 1fr;
+      }
+
+      .brand {
+        display: none;
+      }
+
+      .nav {
+        position: static;
+        height: auto;
+        border-right: 0;
+        border-bottom: 1px solid var(--n-200);
+      }
+
+      main {
+        padding: 18px;
+      }
+
+      .grid-2,
+      .grid-4,
+      .field-grid,
+      .decision,
+      .spec-row {
+        grid-template-columns: 1fr;
+      }
+
+      .page-header {
+        display: grid;
+      }
+    }
+
+    @media (max-width: 700px) {
+      .top-actions {
+        padding: 0 12px;
+      }
+
+      .environment,
+      .identity .muted {
+        display: none;
+      }
+
+      .mock-app {
+        grid-template-columns: 1fr;
+      }
+
+      .mock-nav {
+        border-right: 0;
+        border-bottom: 1px solid var(--n-200);
+      }
+
+      .reader {
+        padding: 18px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <a class="skip" href="#content">Skip to content</a>
+  <div class="shell">
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark">AC</span>
+        <span>Agentic CMS</span>
+      </div>
+      <div class="top-actions">
+        <div class="searchbar" role="search" aria-label="Design package search placeholder">
+          <span class="icon" aria-hidden="true">/</span>
+          <span>Search assets, pages, commands</span>
+          <span class="kbd">Cmd K</span>
+        </div>
+        <div class="environment"><span class="status-dot"></span><span>demo tenant healthy</span></div>
+        <div class="identity"><span class="avatar">AD</span><span class="muted">admin</span></div>
+      </div>
+    </header>
+
+    <nav class="nav" aria-label="Design package navigation">
+      <div class="nav-group">
+        <p class="nav-label">Package</p>
+        <a class="nav-link active" href="#overview"><span class="icon">01</span>Overview</a>
+        <a class="nav-link" href="#answers"><span class="icon">02</span>Answered Questions</a>
+        <a class="nav-link" href="#tokens"><span class="icon">03</span>Tokens</a>
+        <a class="nav-link" href="#components"><span class="icon">04</span>Components</a>
+      </div>
+      <div class="nav-group">
+        <p class="nav-label">Application</p>
+        <a class="nav-link" href="#reading"><span class="icon">05</span>Reading UI</a>
+        <a class="nav-link" href="#templates"><span class="icon">06</span>Templates</a>
+        <a class="nav-link" href="#pages"><span class="icon">07</span>Pages</a>
+        <a class="nav-link" href="#nav-trees"><span class="icon">08</span>Navigation Trees</a>
+        <a class="nav-link" href="#implementation"><span class="icon">09</span>Build Path</a>
+      </div>
+    </nav>
+
+    <main id="content">
+      <div class="page">
+        <section class="section" id="overview">
+          <div class="page-header">
+            <div>
+              <p class="eyebrow">Design system package</p>
+              <h1>Quiet Control Plane with a Governed Reading Room</h1>
+              <p class="lede">A business-grade UI system for Agentic CMS: dense operational chrome for maintainers and admins, with a first-class fallback reading experience for typical users. The system treats trust metadata, permissions, versioning, and provenance as primary interface content.</p>
+            </div>
+            <div class="chip-row" aria-label="Package status">
+              <span class="chip ok"><span class="dot"></span>Self-contained HTML</span>
+              <span class="chip info"><span class="dot"></span>First release reader path</span>
+              <span class="chip"><span class="dot"></span>React/Vite ready</span>
+            </div>
+          </div>
+
+          <div class="intro-grid">
+            <div class="panel">
+              <div class="panel-header">
+                <div>
+                  <p class="eyebrow">Primary product read</p>
+                  <h2>Instruction control plane, not a human CMS</h2>
+                </div>
+              </div>
+              <div class="panel-body">
+                <p>Agentic CMS manages governed instruction assets for agents, APIs, CLIs, MCP clients, SDKs, and AI harnesses. The web UI is the operational surface for browsing, approval, debugging, and fallback reading.</p>
+                <p>The first release must make the reader path polished enough for normal consumers: browse approved guidance, read comfortably, verify trust, copy a stable ID, and understand whether a document is in scope.</p>
+                <div class="note">Design language: restrained, accessible, high-density, provenance-forward. No marketing landing page, decorative gradients, one-note palette, or card-heavy SaaS layout.</div>
+              </div>
+            </div>
+
+            <div class="panel">
+              <div class="panel-header">
+                <h2>Personas</h2>
+              </div>
+              <div class="panel-body">
+                <div class="decision-list">
+                  <div class="decision">
+                    <strong>Reader</strong>
+                    <p>Find, read, and trust approved policies, guardrails, templates, skills, SOPs, and human documents.</p>
+                  </div>
+                  <div class="decision">
+                    <strong>Maintainer</strong>
+                    <p>Review, publish, restore, compare versions, and keep governed assets current.</p>
+                  </div>
+                  <div class="decision">
+                    <strong>Admin</strong>
+                    <p>Operate auth, providers, policies, telemetry, audit, evals, sessions, keys, and action approvals.</p>
+                  </div>
+                  <div class="decision">
+                    <strong>Agent operator</strong>
+                    <p>Debug what an agent retrieves, confirm citations, and inspect instruction objects as agents consume them.</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="section panel" id="answers">
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">Claude open questions</p>
+              <h2>Resolved Design Decisions</h2>
+            </div>
+            <span class="chip ok"><span class="dot"></span>Grounded in current repo docs and schema</span>
+          </div>
+          <div class="panel-body">
+            <div class="decision-list">
+              <div class="decision">
+                <strong>Sensitivity taxonomy</strong>
+                <p>Use the current schema exactly: <span class="mono">public-demo</span>, <span class="mono">internal</span>, <span class="mono">restricted</span>, <span class="mono">confidential</span>, and <span class="mono">secret</span>. The open-source demo corpus should use <span class="mono">public-demo</span> only. Anonymous public access requires all three: <span class="mono">sensitivity=public-demo</span>, <span class="mono">lifecycle=active</span>, and <span class="mono">status=approved</span>.</p>
+              </div>
+              <div class="decision">
+                <strong>Asset cardinality</strong>
+                <p>The UI should model one governed asset as a stable identity with versioned content. Current create/update payloads accept one instruction object and/or one human document per update, while detail/export surfaces return arrays. Design for zero-to-many instruction objects and zero-to-many human documents per asset, with first-release views optimized for the common one-plus-one case.</p>
+              </div>
+              <div class="decision">
+                <strong>No-access disclosure</strong>
+                <p>Do not reveal sensitive metadata to unauthorized users by default. Direct hits should use a generic restricted/unavailable state unless policy says the title/owner can be shown. Admins can see hidden counts and denial evidence; readers only get sign-in or access-request guidance.</p>
+              </div>
+              <div class="decision">
+                <strong>Reader write scope</strong>
+                <p>First-release readers are read/search/query consumers. They can copy stable IDs and content snippets. Managed-query feedback can exist for authenticated users where supported, but annotations, comments, and suggested edits are later work.</p>
+              </div>
+              <div class="decision">
+                <strong>Dark theme</strong>
+                <p>Light theme ships first. Tokens reserve a dark-theme path, but dark mode is not a first-release requirement because fallback reading quality and admin density matter more.</p>
+              </div>
+              <div class="decision">
+                <strong>Tenant visibility</strong>
+                <p>Single-tenant OSS is the first target, with <span class="mono">tenant_id</span> in the model. Show the current tenant in admin/system context and connection settings, but do not add a tenant switcher to reader chrome.</p>
+              </div>
+              <div class="decision">
+                <strong>Authoring scope</strong>
+                <p>No rich web authoring for first release. Content is imported or managed through API/CLI/MCP/admin flows. The UI supports reading, review, publish, restore, version inspection, raw/rendered toggles, and operational forms.</p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="section panel" id="tokens">
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">Foundation</p>
+              <h2>Tokens and Visual Language</h2>
+            </div>
+          </div>
+          <div class="panel-body">
+            <div class="grid-2">
+              <div>
+                <h3>Color principles</h3>
+                <p>Neutral slate carries structure. Deep teal-blue carries product accent and focus. Severity colors signal health and risk. Sensitivity is separate: a keyline plus label, never a full red error treatment.</p>
+                <div class="chip-row">
+                  <span class="chip ok"><span class="dot"></span>approved</span>
+                  <span class="chip warn"><span class="dot"></span>review due</span>
+                  <span class="chip bad"><span class="dot"></span>revoked</span>
+                  <span class="chip info"><span class="dot"></span>cached</span>
+                </div>
+                <div style="height: 12px"></div>
+                <div class="chip-row">
+                  <span class="marker public-demo"><span class="dot"></span>public-demo</span>
+                  <span class="marker internal"><span class="dot"></span>internal</span>
+                  <span class="marker restricted"><span class="dot"></span>restricted</span>
+                  <span class="marker confidential"><span class="dot"></span>confidential</span>
+                  <span class="marker secret"><span class="dot"></span>secret</span>
+                </div>
+              </div>
+              <div>
+                <h3>Type and density</h3>
+                <p>UI chrome uses Inter/system sans at 14px. Reading body uses the same family at 16-17px, 1.65 line height, and a 66-72ch measure. Stable IDs, secrets, env vars, diffs, JSON, and instruction bodies use monospace.</p>
+                <p class="mono">policy.pii-redaction.v1</p>
+                <p class="help">Density is comfortable by default, compact for data tables, and always comfortable for reading surfaces.</p>
+              </div>
+            </div>
+            <div class="grid-4" style="margin-top: 18px">
+              <div class="token-swatch"><div class="swatch" style="background:#141a1f"></div><div class="token-name">--n-900</div><div class="muted">Primary ink</div></div>
+              <div class="token-swatch"><div class="swatch" style="background:#f4f6f8"></div><div class="token-name">--n-50</div><div class="muted">App canvas</div></div>
+              <div class="token-swatch"><div class="swatch" style="background:#1d5a80"></div><div class="token-name">--brand-600</div><div class="muted">Primary action</div></div>
+              <div class="token-swatch"><div class="swatch" style="background:#d7e6f0"></div><div class="token-name">--brand-100</div><div class="muted">Selected tint</div></div>
+              <div class="token-swatch"><div class="swatch" style="background:#1e7d52"></div><div class="token-name">--ok-600</div><div class="muted">Approved/ready</div></div>
+              <div class="token-swatch"><div class="swatch" style="background:#8a6300"></div><div class="token-name">--warn-600</div><div class="muted">Due/pending</div></div>
+              <div class="token-swatch"><div class="swatch" style="background:#b23b3b"></div><div class="token-name">--bad-600</div><div class="muted">Denied/error</div></div>
+              <div class="token-swatch"><div class="swatch" style="background:#dce2e8"></div><div class="token-name">--n-200</div><div class="muted">Borders</div></div>
+            </div>
+          </div>
+        </section>
+
+        <section class="section panel" id="components">
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">Reusable primitives</p>
+              <h2>Component System</h2>
+            </div>
+            <div class="segmented" aria-label="Density toggle example">
+              <span class="segment active">Comfortable</span>
+              <span class="segment">Compact</span>
+            </div>
+          </div>
+          <div class="panel-body">
+            <div class="component-matrix">
+              <div class="component">
+                <h3>Buttons and commands</h3>
+                <p>Primary, secondary, ghost, danger, icon, copy, overflow, command palette item.</p>
+                <div class="button-row">
+                  <span class="btn primary"><span class="icon">+</span>Create asset</span>
+                  <span class="btn"><span class="icon">CP</span>Copy ID</span>
+                  <span class="btn ghost">Cancel</span>
+                  <span class="btn danger"><span class="icon">!</span>Revoke</span>
+                </div>
+              </div>
+              <div class="component">
+                <h3>Fields and validation</h3>
+                <p>Labels are explicit. Hints explain policy. Errors are text plus color.</p>
+                <div class="field-grid">
+                  <div class="field">
+                    <label for="stable-id">Stable ID</label>
+                    <input class="input" id="stable-id" value="guardrail.pii-redaction">
+                    <span class="help">Immutable reference used by agents.</span>
+                  </div>
+                  <div class="field">
+                    <label for="surface">Allowed surfaces</label>
+                    <select class="select" id="surface"><option>api, mcp, web</option></select>
+                    <span class="help">Export requires separate permission.</span>
+                  </div>
+                </div>
+              </div>
+              <div class="component">
+                <h3>Status and sensitivity</h3>
+                <p>Severity and classification have different visual languages.</p>
+                <div class="chip-row">
+                  <span class="chip ok"><span class="dot"></span>active</span>
+                  <span class="chip warn"><span class="dot"></span>due soon</span>
+                  <span class="chip bad"><span class="dot"></span>failed</span>
+                  <span class="marker restricted"><span class="dot"></span>restricted</span>
+                </div>
+              </div>
+              <div class="component">
+                <h3>Tables</h3>
+                <p>Sticky headers, stable first column, explicit chips, row actions, filters, and bulk bars.</p>
+                <div class="table-wrap">
+                  <table aria-label="Asset table example">
+                    <thead><tr><th>Asset</th><th>Status</th><th>Sensitivity</th></tr></thead>
+                    <tbody>
+                      <tr class="selected"><td><span class="data-title">PII redaction<span class="stable-id">policy.pii-redaction</span></span></td><td><span class="chip ok">approved</span></td><td><span class="marker internal">internal</span></td></tr>
+                      <tr><td><span class="data-title">Provider routing<span class="stable-id">playbook.provider-routing</span></span></td><td><span class="chip warn">review due</span></td><td><span class="marker restricted">restricted</span></td></tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+              <div class="component">
+                <h3>Instruction well</h3>
+                <p>Agent-facing content is framed as machine-consumed, copyable, and inspectable.</p>
+                <pre class="instruction-well">WHEN handling retrieval:
+  - filter by permission before ranking
+  - cite stable IDs
+  - omit restricted context from public exports</pre>
+              </div>
+              <div class="component">
+                <h3>Confirmation surfaces</h3>
+                <p>Destructive flows use impact preview, audit reason, and typed confirm when irreversible.</p>
+                <div class="note">Dry run first where supported. Raw secrets appear once on create or rotate, then only safe previews remain.</div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="section panel" id="reading">
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">First-release priority</p>
+              <h2>Fallback Reading UI</h2>
+            </div>
+            <span class="chip info"><span class="dot"></span>Reader-first</span>
+          </div>
+          <div class="panel-body">
+            <div class="mock-app" aria-label="Reading UI mockup">
+              <aside class="mock-nav">
+                <p class="nav-label">Read</p>
+                <div class="nav-link active"><span class="icon">LB</span>Library</div>
+                <div class="nav-link"><span class="icon">SR</span>Search</div>
+                <div class="nav-link"><span class="icon">BK</span>Bookmarks</div>
+                <p class="nav-label" style="margin-top:20px">Work</p>
+                <div class="nav-link"><span class="icon">RQ</span>Review queue</div>
+                <div class="nav-link"><span class="icon">DF</span>Drafts</div>
+              </aside>
+              <div class="mock-main">
+                <div class="mock-toolbar">
+                  <div>
+                    <div class="stable-id">Library / Guardrails / policy.pii-redaction</div>
+                    <h3 style="margin:2px 0 0">PII Redaction Policy</h3>
+                  </div>
+                  <div class="button-row">
+                    <span class="btn"><span class="icon">CP</span>Copy ID</span>
+                    <span class="btn primary"><span class="icon">RV</span>Mark reviewed</span>
+                  </div>
+                </div>
+                <div class="mock-content">
+                  <article class="reader">
+                    <div class="trust-banner">
+                      <span class="chip ok"><span class="dot"></span>approved</span>
+                      <span class="chip ok"><span class="dot"></span>active</span>
+                      <span class="chip">v12</span>
+                      <span class="marker internal"><span class="dot"></span>internal</span>
+                      <span class="chip">api</span>
+                      <span class="chip">mcp</span>
+                      <span class="chip">web</span>
+                    </div>
+                    <div class="reading-body">
+                      <h2>Purpose</h2>
+                      <p>This policy defines how agents and operators handle direct identifiers, provider prompts, managed-query feedback, telemetry, and generated-answer caching.</p>
+                      <p>Every retrieval path must filter by permission before returning results or sending context to a model. Public exports can only include active, approved, public-demo assets.</p>
+                      <h2>Agent instruction</h2>
+                      <pre class="instruction-well">If a query contains direct identifiers:
+  1. apply active tenant redaction policy
+  2. record redaction metadata only
+  3. bypass generated-answer cache when required</pre>
+                      <h2>Sources</h2>
+                      <p><span class="chip info">1</span> security model, current implementation note. <span class="chip info">2</span> restricted leakage investigation runbook.</p>
+                    </div>
+                  </article>
+                  <aside class="rail">
+                    <h3>Trust rail</h3>
+                    <dl class="meta-list">
+                      <div><dt>Stable ID</dt><dd class="mono">policy.pii-redaction</dd></div>
+                      <div><dt>Owner</dt><dd>Security operations</dd></div>
+                      <div><dt>Review due</dt><dd><span class="chip warn">in 12 days</span></dd></div>
+                      <div><dt>Source</dt><dd>synthetic/demo corpus</dd></div>
+                      <div><dt>Versions</dt><dd>v12 current, v11 available</dd></div>
+                      <div><dt>Used by agents</dt><dd class="mono">GET /assets/policy.pii-redaction</dd></div>
+                    </dl>
+                  </aside>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="section panel" id="templates">
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">Reusable page backbone</p>
+              <h2>Templates</h2>
+            </div>
+          </div>
+          <div class="panel-body">
+            <div class="template-list">
+              <div class="template">
+                <h3>List / Registry Template</h3>
+                <p>Page header, filter bar, data table, bulk action bar, row actions, right-side create/edit drawer. Used by Library, Users, Groups, Service Accounts, API Keys, Sessions, Audit, Telemetry events, Eval runs, Providers, and Approvals.</p>
+                <div class="meta"><span class="chip">DataTable</span><span class="chip">FilterBar</span><span class="chip">Drawer</span></div>
+              </div>
+              <div class="template">
+                <h3>Detail / Reading Template</h3>
+                <p>Trust banner, reading body or object detail, right metadata rail, versions, sources, audit links, stable ID copy, and raw/rendered toggles.</p>
+                <div class="meta"><span class="chip">TrustBanner</span><span class="chip">ContextRail</span><span class="chip">VersionTag</span></div>
+              </div>
+              <div class="template">
+                <h3>Config / Policy Template</h3>
+                <p>Grouped form sections, field-level validation, saved-vs-current state, sticky save bar, audit evidence link, and explicit secret-reference handling.</p>
+                <div class="meta"><span class="chip">Field</span><span class="chip">SegmentedControl</span><span class="chip">SaveBar</span></div>
+              </div>
+              <div class="template">
+                <h3>Approval Template</h3>
+                <p>Action request summary, scope, risk, dry-run output, expiry countdown, approve/deny decision, reason field, and audit timeline.</p>
+                <div class="meta"><span class="chip warn">approval-required</span><span class="chip">Timeline</span><span class="chip bad">deny</span></div>
+              </div>
+              <div class="template">
+                <h3>Reporting Template</h3>
+                <p>Metric tiles, time-window controls, drill-down tables, retention state, provider cost/readiness, cache status, and event timelines.</p>
+                <div class="meta"><span class="chip">MetricTile</span><span class="chip">EventList</span><span class="chip">Export CSV</span></div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="section panel" id="pages">
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">Main app UI</p>
+              <h2>Pages and Navigation</h2>
+            </div>
+          </div>
+          <div class="panel-body">
+            <div class="grid-3">
+              <div>
+                <h3>Read</h3>
+                <div class="spec-table">
+                  <div class="spec-row"><strong>Library</strong><span>Browse/filter catalog; readers see only permitted assets.</span></div>
+                  <div class="spec-row"><strong>Search</strong><span>Permission-filtered results with snippets, citations, and open-at-section links.</span></div>
+                  <div class="spec-row"><strong>Asset read</strong><span>Human document plus agent instruction tabs, trust banner, sources, versions.</span></div>
+                  <div class="spec-row"><strong>No access</strong><span>Generic restricted/unavailable state unless disclosure policy allows metadata.</span></div>
+                </div>
+              </div>
+              <div>
+                <h3>Work</h3>
+                <div class="spec-table">
+                  <div class="spec-row"><strong>Review queue</strong><span>Stale, not approved, not active, or sweep-included assets.</span></div>
+                  <div class="spec-row"><strong>Publish</strong><span>Confirms active plus approved gate and reindex impact.</span></div>
+                  <div class="spec-row"><strong>Version compare</strong><span>Unified and side-by-side diff; restore requires reason.</span></div>
+                  <div class="spec-row"><strong>Asset audit</strong><span>Timeline of review, publish, restore, grant, and export events.</span></div>
+                </div>
+              </div>
+              <div>
+                <h3>Operate</h3>
+                <div class="spec-table">
+                  <div class="spec-row"><strong>Access</strong><span>Users, groups, service accounts, API keys, sessions, grants.</span></div>
+                  <div class="spec-row"><strong>Providers</strong><span>Model and auth providers; env-var references only; readiness checks.</span></div>
+                  <div class="spec-row"><strong>Policies</strong><span>Managed query, cache, retention, ranking, PII, secrets, evals, actions.</span></div>
+                  <div class="spec-row"><strong>Telemetry</strong><span>Redacted events, feedback, cache metadata, costs, retention state.</span></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="section panel" id="nav-trees">
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">Page navigation options</p>
+              <h2>Navigation Trees And Folders</h2>
+            </div>
+            <span class="chip info"><span class="dot"></span>Agent-native hierarchy</span>
+          </div>
+          <div class="panel-body">
+            <div class="tree-layout">
+              <div class="tree-demo" aria-label="Navigation tree visual example">
+                <div class="tree-demo-header">
+                  <div>
+                    <h3 style="margin:0">Workspace tree</h3>
+                    <p class="help" style="margin:2px 0 0">Expanded ancestors, selected leaf, governed badges.</p>
+                  </div>
+                  <span class="chip">All permitted</span>
+                </div>
+                <ul class="tree-list" role="tree" aria-label="Agentic CMS page tree">
+                  <li class="tree-row group" role="treeitem" aria-expanded="true">
+                    <span class="tree-icon" aria-hidden="true">-</span>
+                    <span class="tree-label">Read</span>
+                    <span class="tree-meta"><span class="count">42</span></span>
+                  </li>
+                  <li class="tree-row folder ancestor depth-1" role="treeitem" aria-expanded="true">
+                    <span class="tree-icon" aria-hidden="true">F</span>
+                    <span class="tree-label">Guardrails</span>
+                    <span class="tree-meta"><span class="count">12</span></span>
+                  </li>
+                  <li class="tree-row leaf selected depth-2" role="treeitem" aria-current="page">
+                    <span class="tree-label">PII Redaction Policy</span>
+                    <span class="tree-meta">
+                      <span class="tiny-badge warn">review due</span>
+                      <span class="marker internal">internal</span>
+                    </span>
+                  </li>
+                  <li class="tree-row leaf depth-2" role="treeitem">
+                    <span class="tree-label">Provider Prompt Limits</span>
+                    <span class="tree-meta"><span class="marker restricted">restricted</span></span>
+                  </li>
+                  <li class="tree-row leaf disabled depth-2" role="treeitem" aria-disabled="true">
+                    <span class="tree-label">Confidential Incident Playbook</span>
+                    <span class="tree-meta"><span class="tiny-badge bad">no access</span></span>
+                  </li>
+                  <li class="tree-row folder depth-1" role="treeitem" aria-expanded="false">
+                    <span class="tree-icon" aria-hidden="true">+</span>
+                    <span class="tree-label">Templates</span>
+                    <span class="tree-meta"><span class="count">8</span></span>
+                  </li>
+                  <li class="tree-row group" role="treeitem" aria-expanded="true">
+                    <span class="tree-icon" aria-hidden="true">-</span>
+                    <span class="tree-label">Work</span>
+                    <span class="tree-meta"><span class="count">17</span></span>
+                  </li>
+                  <li class="tree-row folder depth-1" role="treeitem" aria-expanded="true">
+                    <span class="tree-icon" aria-hidden="true">F</span>
+                    <span class="tree-label">Review queue</span>
+                    <span class="tree-meta"><span class="tiny-badge warn">5 due</span></span>
+                  </li>
+                  <li class="tree-row leaf depth-2" role="treeitem">
+                    <span class="tree-label">Draft imports</span>
+                    <span class="tree-meta"><span class="count">3</span></span>
+                  </li>
+                  <li class="tree-row group" role="treeitem" aria-expanded="false">
+                    <span class="tree-icon" aria-hidden="true">+</span>
+                    <span class="tree-label">Operate</span>
+                    <span class="tree-meta"><span class="count">28</span></span>
+                  </li>
+                </ul>
+              </div>
+
+              <div>
+                <h3>Hierarchy rules</h3>
+                <div class="spec-table">
+                  <div class="spec-row"><strong>Top level</strong><span>Use the three product groups: Read, Work, and Operate. They are stable navigation landmarks, not user-created folders.</span></div>
+                  <div class="spec-row"><strong>Folders</strong><span>Folders sit under a group and collect related governed pages or assets, such as Guardrails, Templates, Review queue, Providers, or Policies.</span></div>
+                  <div class="spec-row"><strong>Sub-pages</strong><span>Sub-pages are leaf destinations under folders. They can be human pages, asset detail pages, saved operational views, or generated lists.</span></div>
+                  <div class="spec-row"><strong>Active leaf</strong><span>The current page uses <span class="mono">aria-current="page"</span>, a left keyline, selected tint, and stronger text weight.</span></div>
+                  <div class="spec-row"><strong>Active ancestor</strong><span>Expanded parent folders use a quieter tint and border so users can see the current path without confusing it with the selected page.</span></div>
+                  <div class="spec-row"><strong>Expanded/collapsed</strong><span>Expandable groups and folders expose <span class="mono">aria-expanded</span>. Collapsed rows retain counts and due markers so hidden work remains visible.</span></div>
+                  <div class="spec-row"><strong>Resizable width</strong><span>The desktop page tree has a draggable right-edge separator with a 240-420 px range. Store the user width in browser storage and restore it on reload.</span></div>
+                </div>
+              </div>
+            </div>
+
+            <div style="height: 18px"></div>
+
+            <div class="guidance-grid">
+              <div class="guidance-card">
+                <h3>Use folders when</h3>
+                <p>The user needs persistent orientation across related pages, nested assets, or operational categories. Folders should be permission-aware and count only visible items unless admin disclosure mode is active.</p>
+              </div>
+              <div class="guidance-card">
+                <h3>Use tabs when</h3>
+                <p>The user is already inside one stable object and switches between sibling views, such as human document, agent instruction, versions, audit, and raw JSON.</p>
+              </div>
+              <div class="guidance-card">
+                <h3>Use filters when</h3>
+                <p>The information is the same list narrowed by metadata, such as status, sensitivity, owner, surface, review date, source, or permission state.</p>
+              </div>
+              <div class="guidance-card">
+                <h3>Use breadcrumbs when</h3>
+                <p>The page can be reached from several paths or deep links. Breadcrumbs show location and parent return points; they do not replace the main tree.</p>
+              </div>
+            </div>
+
+            <div class="grid-2" style="margin-top: 18px">
+              <div>
+                <h3>State and marker rules</h3>
+                <div class="spec-table">
+                  <div class="spec-row"><strong>Counts</strong><span>Use compact numeric pills for visible child count, due count, or hidden admin count. Label the count in accessible text in implementation.</span></div>
+                  <div class="spec-row"><strong>Sensitivity</strong><span>Show sensitivity with the existing marker component. Do not use sensitivity color alone as the item state.</span></div>
+                  <div class="spec-row"><strong>Permissions</strong><span>No-access rows are muted, labelled, and non-interactive unless the policy allows request-access action.</span></div>
+                  <div class="spec-row"><strong>Review due</strong><span>Due work can appear on folder and leaf rows. A folder badge summarizes children; the leaf badge names the exact state.</span></div>
+                </div>
+              </div>
+              <div>
+                <h3>Accessibility guidance</h3>
+                <div class="spec-table">
+                  <div class="spec-row"><strong>Structure</strong><span>Use <span class="mono">role="tree"</span> and <span class="mono">role="treeitem"</span> only when implementing full tree keyboard behavior; otherwise use a nested navigation list.</span></div>
+                  <div class="spec-row"><strong>Keyboard</strong><span>Support Up and Down to move rows, Right to expand or enter, Left to collapse or move to parent, Home and End to jump.</span></div>
+                  <div class="spec-row"><strong>Current page</strong><span>Apply <span class="mono">aria-current="page"</span> to one active leaf. Do not put current-page state on parent folders.</span></div>
+                  <div class="spec-row"><strong>Non-color signal</strong><span>Pair color with labels, keylines, icons, text weight, and visible badges for selected, due, restricted, and denied states.</span></div>
+                  <div class="spec-row"><strong>Mobile</strong><span>Collapse the tree behind a navigation button or drawer. Preserve breadcrumbs and selected-page title in the top bar after the drawer closes.</span></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="section panel" id="implementation">
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">Implementation guidance</p>
+              <h2>Incremental Build Path</h2>
+            </div>
+          </div>
+          <div class="panel-body">
+            <div class="path-steps">
+              <div class="step"><div class="step-num">1</div><h3>Tokens</h3><p>Replace ad-hoc CSS with custom properties, shared status/sensitivity styles, focus rules, and density variables.</p></div>
+              <div class="step"><div class="step-num">2</div><h3>Shell</h3><p>Add role-aware app shell, grouped nav, command/search bar, and connection/session drawer.</p></div>
+              <div class="step"><div class="step-num">3</div><h3>Reader</h3><p>Build Library, Search, Asset Read, TrustBanner, metadata rail, sources, and instruction well.</p></div>
+              <div class="step"><div class="step-num">4</div><h3>Workflows</h3><p>Migrate review queue, publish, restore, version compare, and asset audit into template pages.</p></div>
+              <div class="step"><div class="step-num">5</div><h3>Operations</h3><p>Group admin pages into Access, Providers, Policies, Evaluations, Approvals, Telemetry, and Exports.</p></div>
+            </div>
+            <div class="note" style="margin-top:18px">Acceptance bar: reader can find and trust an approved public-demo asset without admin concepts; maintainer can review and publish with audit clarity; admin can manage keys/providers/policies without exposing raw secrets except one-time create/rotate reveal.</div>
+          </div>
+        </section>
+
+        <footer class="footer">
+          Generated as a self-contained design package for Agentic CMS. Source decisions reflect the current schema and project documentation as of 2026-06-17.
+        </footer>
+      </div>
+    </main>
+  </div>
+</body>
+</html>

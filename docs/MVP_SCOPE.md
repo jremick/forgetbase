@@ -31,7 +31,7 @@ The MVP proves the open-source core of an agent-native instruction management pl
 
 - chunking pipeline
 - Postgres full-text search
-- vector search through `pgvector`
+- deterministic local hash-vector search through `pgvector`, with provider-quality semantic embeddings deferred
 - permission-aware result filtering
 - citations and stable references
 - restricted export safety checks
@@ -43,6 +43,7 @@ The MVP proves the open-source core of an agent-native instruction management pl
 - MCP server
 - operational web UI
 - AI export package
+- OKF v0.1 export projection enabled by default as a permission-filtered agent package format
 
 ### Validation
 
@@ -100,6 +101,7 @@ The MVP is acceptable when:
 - stale content can be reported by repeatable command
 - stale, draft, or reviewing assets can be listed and marked reviewed by maintainers/admins without direct database access
 - the AI export package contains stable IDs, titles, hierarchy, audience, status, sensitivity, and URLs or source references
+- the OKF export package declares `okfVersion`, source asset version metadata, source content hashes, and a projection hash
 - telemetry captures operational events without storing unmitigated PII by default
 - provider prompt/response capture defaults to disabled or metadata-only rather than raw transcript storage
 - provider and OIDC config can reference only env-var names allowed by tenant secret-reference policy
