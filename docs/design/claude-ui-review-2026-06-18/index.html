@@ -1,0 +1,1490 @@
+<!doctype html>
+<html lang="en" data-density="comfortable">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Agentic CMS — Claude UI Design Review (2026-06-18)</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body data-role="admin">
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <div class="app-shell">
+    <!-- ===================================================================
+         Topbar
+         =================================================================== -->
+    <header class="topbar">
+      <div class="brand">
+        <span class="mark">AC</span>
+        <span>Agentic CMS</span>
+        <span class="brand-env">Private alpha</span>
+      </div>
+      <div class="topbar-main">
+        <div class="command" role="search" aria-label="Command and search">
+          <span class="small-icon" aria-hidden="true">/</span>
+          <span class="grow">Search assets, stable IDs, pages, and commands</span>
+          <span class="kbd">⌘K</span>
+        </div>
+        <div class="health"><span class="health-dot"></span><span>API healthy</span></div>
+        <label class="health" style="gap:6px">
+          <span class="muted">View as</span>
+          <select class="ctl" data-role-select aria-label="Preview role">
+            <option value="reader">Reader</option>
+            <option value="maintainer">Maintainer</option>
+            <option value="admin" selected>Admin</option>
+          </select>
+        </label>
+        <button class="ctl" data-density-toggle type="button" aria-pressed="false">Comfortable</button>
+        <button class="ctl" data-review-toggle type="button" aria-pressed="false">Show review notes</button>
+        <div class="identity"><span class="avatar">AD</span><span class="who muted">admin@example.test</span></div>
+      </div>
+    </header>
+
+    <!-- ===================================================================
+         Context / breadcrumb bar (new persistent orientation strip)
+         =================================================================== -->
+    <div class="context-bar">
+      <nav class="crumbs" aria-label="Breadcrumb">
+        <span class="group">Review</span>
+        <span class="sep">/</span>
+        <span class="here">Design review</span>
+      </nav>
+      <div class="context-meta">
+        <span class="chip"><span class="signal" style="color:var(--ok-600)"></span>tenant_demo</span>
+        <span class="chip">build 0.4.0-alpha</span>
+      </div>
+    </div>
+
+    <!-- ===================================================================
+         Left navigation
+         =================================================================== -->
+    <nav class="side-nav" aria-label="Pages">
+      <div class="nav-group">
+        <p class="nav-label">Review</p>
+        <div class="nav-tree">
+          <button class="nav-link" data-route="review" data-group="Review" data-title="Design review"><span class="nav-icon">RV</span><span class="nav-text">Design review</span></button>
+          <button class="nav-link" data-route="states" data-group="Review" data-title="State system"><span class="nav-icon">ST</span><span class="nav-text">State system</span></button>
+          <button class="nav-link" data-route="mobile" data-group="Review" data-title="Responsive"><span class="nav-icon">MB</span><span class="nav-text">Responsive</span></button>
+          <button class="nav-link" data-route="login" data-group="Review" data-title="Login / private access"><span class="nav-icon">LG</span><span class="nav-text">Login screen</span></button>
+        </div>
+      </div>
+
+      <div class="nav-group">
+        <p class="nav-label">Read</p>
+        <div class="nav-tree">
+          <button class="nav-folder is-active-ancestor" aria-expanded="true"><span class="twisty">v</span><span class="folder-glyph">RD</span><span class="nav-text">Library</span><span class="nav-count">132</span></button>
+          <div class="nav-branch">
+            <button class="nav-link active" data-route="library" data-group="Read" data-title="Library"><span class="nav-icon">LB</span><span class="nav-text">Catalog</span><span class="nav-count">94</span></button>
+            <button class="nav-link" data-route="search" data-group="Read" data-title="Search & managed query"><span class="nav-icon">SR</span><span class="nav-text">Search &amp; query</span></button>
+            <button class="nav-link" data-route="asset-read" data-group="Read" data-title="PII Redaction Guardrail"><span class="nav-icon">AR</span><span class="nav-text">Asset detail</span><span class="nav-badge warn">due</span></button>
+          </div>
+        </div>
+      </div>
+
+      <div class="nav-group" data-min-role="maintainer">
+        <p class="nav-label">Work</p>
+        <div class="nav-tree">
+          <button class="nav-folder" aria-expanded="true"><span class="twisty">v</span><span class="folder-glyph">WK</span><span class="nav-text">Governance</span><span class="nav-badge warn">9</span></button>
+          <div class="nav-branch">
+            <button class="nav-link" data-route="review-queue" data-group="Work" data-title="Review queue"><span class="nav-icon">RQ</span><span class="nav-text">Review queue</span><span class="nav-badge warn">9</span></button>
+            <button class="nav-link" data-route="versions" data-group="Work" data-title="Version compare"><span class="nav-icon">VC</span><span class="nav-text">Version compare</span></button>
+          </div>
+        </div>
+      </div>
+
+      <div class="nav-group" data-min-role="admin">
+        <p class="nav-label">Operate</p>
+        <div class="nav-tree">
+          <button class="nav-folder" aria-expanded="true"><span class="twisty">v</span><span class="folder-glyph">OP</span><span class="nav-text">Control plane</span><span class="nav-badge warn">4</span></button>
+          <div class="nav-branch">
+            <button class="nav-link" data-route="operations" data-group="Operate" data-title="Operations"><span class="nav-icon">DS</span><span class="nav-text">Operations</span></button>
+            <button class="nav-link" data-route="access" data-group="Operate" data-title="Access"><span class="nav-icon">AC</span><span class="nav-text">Access</span><span class="nav-badge warn">3</span></button>
+            <button class="nav-link" data-route="providers" data-group="Operate" data-title="Providers"><span class="nav-icon">PV</span><span class="nav-text">Providers</span><span class="nav-badge bad">1</span></button>
+            <button class="nav-link" data-route="policies" data-group="Operate" data-title="Policies"><span class="nav-icon">PY</span><span class="nav-text">Policies</span></button>
+            <button class="nav-link" data-route="telemetry" data-group="Operate" data-title="Telemetry"><span class="nav-icon">TM</span><span class="nav-text">Telemetry</span></button>
+            <button class="nav-link" data-route="approvals" data-group="Operate" data-title="Approvals"><span class="nav-icon">AP</span><span class="nav-text">Approvals</span><span class="nav-badge warn">2</span></button>
+            <button class="nav-link" data-route="exports" data-group="Operate" data-title="Exports"><span class="nav-icon">EX</span><span class="nav-text">Exports</span></button>
+          </div>
+        </div>
+      </div>
+    </nav>
+
+    <!-- ===================================================================
+         Main
+         =================================================================== -->
+    <main class="main" id="main">
+
+      <!-- ========================= REVIEW OVERVIEW ===================== -->
+      <section class="view" data-view="review">
+        <div class="page-header">
+          <div>
+            <p class="eyebrow">Claude design review · 2026-06-18</p>
+            <h1>Quiet Control Plane — review &amp; recommended mockups</h1>
+            <p class="lede">A fresh design pass over the live React UI (<code>apps/web/src/App.tsx</code>) and the saved design package. The established direction is sound; this review keeps the visual language and fixes information architecture, workflow completeness, and state coverage. Toggle <span class="pill-key">Show review notes</span> in the top bar to see per-page rationale on every mockup.</p>
+          </div>
+          <div class="actions">
+            <button class="btn" data-goto="states">State system</button>
+            <button class="btn primary" data-goto="library">Open mockups</button>
+          </div>
+        </div>
+
+        <div class="summary-strip" style="margin-bottom:16px">
+          <div class="summary-cell"><span class="summary-val">13</span><span class="summary-label">Page mockups</span></div>
+          <div class="summary-cell"><span class="summary-val bad">3</span><span class="summary-label">High findings</span></div>
+          <div class="summary-cell"><span class="summary-val warn">5</span><span class="summary-label">Medium findings</span></div>
+          <div class="summary-cell"><span class="summary-val">1</span><span class="summary-label">Visual language (kept)</span></div>
+          <div class="summary-cell"><span class="summary-val ok">4</span><span class="summary-label">New shared patterns</span></div>
+        </div>
+
+        <div class="grid sidebar">
+          <div class="stack">
+            <div class="panel">
+              <div class="panel-header"><h2>What's working — keep it</h2><span class="chip ok"><span class="signal"></span>retain</span></div>
+              <div class="panel-body">
+                <ul class="bullet-list">
+                  <li>Restrained slate + teal-blue palette with severity colors reserved for health/risk. No gradients, no editorial cream/serif. This is the right register for an operational control plane — keep it verbatim.</li>
+                  <li>Sensitivity rendered as a keyline + label, visually distinct from status chips. This separation is a genuine product asset; the mockups preserve it exactly.</li>
+                  <li>Provenance-forward primitives (trust banner, stable IDs, instruction well) and accessibility scaffolding (skip link, <code>:focus-visible</code>, ARIA roles).</li>
+                  <li>Grouped Read / Work / Operate nav with a resizable tree. Good landmarks for three very different audiences.</li>
+                </ul>
+              </div>
+            </div>
+
+            <div class="panel">
+              <div class="panel-header"><h2>Top findings</h2><span class="muted">ordered by severity</span></div>
+              <div class="panel-body">
+                <div class="finding">
+                  <div class="sev high">H1</div>
+                  <div>
+                    <h3>The Operations route is a 25-section mega-page</h3>
+                    <p>In the live app, <span class="ref">App.tsx:2708–4240</span> renders Access, Providers, Policies, Telemetry, Approvals, Exports, users, groups, keys, sessions, evals, and every policy form into one scrolling column. There is no per-domain landing, no task grouping, and the nav routes for those domains effectively resolve into the same surface. <span class="risk">Fix: Operations becomes a router-to-work overview; each domain owns a dedicated, shallow page.</span></p>
+                  </div>
+                </div>
+                <div class="finding">
+                  <div class="sev high">H2</div>
+                  <div>
+                    <h3>Destructive actions fire inline with hardcoded reasons</h3>
+                    <p>Approve/deny and restore run immediately; denial reason is hardcoded (<span class="ref">App.tsx ~3290</span>) and restore appears both in a toolbar and a confirm. <span class="risk">Fix: a single destructive-staging surface — dry-run evidence, required reason, impact preview, typed confirm — and never duplicate the trigger.</span></p>
+                  </div>
+                </div>
+                <div class="finding">
+                  <div class="sev high">H3</div>
+                  <div>
+                    <h3>No real loading / empty / error / no-access system</h3>
+                    <p>Async states are bare <code>"No X loaded."</code> paragraphs; errors are plain red text with no code or next step; reader-vs-admin permission affordances are missing. <span class="risk">Fix: a four-state system (skeleton, empty, error, no-access) applied consistently, with conservative no-access disclosure.</span></p>
+                  </div>
+                </div>
+                <div class="finding">
+                  <div class="sev med">M4</div>
+                  <div>
+                    <h3>Library shows the same content three ways</h3>
+                    <p>The saved mockup stacks the left nav tree, an in-page folder browser, and a catalog table — three representations of one library on one screen. <span class="ref">main-page-mockups/index.html:190–267</span> <span class="risk">Fix: tree lives only in the left nav; the page is one scannable catalog with a filter bar and a compact summary strip.</span></p>
+                  </div>
+                </div>
+                <div class="finding">
+                  <div class="sev med">M5</div>
+                  <div>
+                    <h3>Search blends the synthesized answer into the evidence list</h3>
+                    <p>Answer draft and citations share the same card styling, flattening hierarchy. <span class="risk">Fix: answer is one primary card with grounding/cost/citation-floor chips; evidence is a ranked list below; denied results get an explicit admin rail.</span></p>
+                  </div>
+                </div>
+                <div class="finding">
+                  <div class="sev med">M6</div>
+                  <div>
+                    <h3>The agent-instruction object renders as a raw blob</h3>
+                    <p>Agent instructions are the product, yet they show as <code>&lt;pre&gt;</code> text. <span class="risk">Fix: render the schema structurally — kind, target agents, input/output contracts, constraints, failure modes, escalation — so operators can debug what an agent actually consumes.</span></p>
+                  </div>
+                </div>
+                <div class="finding">
+                  <div class="sev med">M7</div>
+                  <div>
+                    <h3>Policies cram unrelated domains into a 2×2</h3>
+                    <p>Managed-query, PII, retention, cache, and action-execution policies sit in one flat grid with inconsistent depth and no saved-vs-current state. <span class="risk">Fix: a policy index (sub-nav rail) with a sticky dirty-state save bar per domain.</span></p>
+                  </div>
+                </div>
+                <div class="finding">
+                  <div class="sev med">M8</div>
+                  <div>
+                    <h3>Heavy 4-up metric tiles repeat on every page</h3>
+                    <p>26px metric tiles dominate reader and admin pages alike. <span class="risk">Fix: a compact summary strip for at-a-glance counts; reserve large tiles for the Operations overview only.</span></p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="panel">
+              <div class="panel-header"><h2>New shared patterns introduced</h2></div>
+              <div class="panel-body">
+                <div class="grid two">
+                  <div class="note"><strong>Summary strip</strong> — compact, bordered counts that replace heavy tile rows on content pages.</div>
+                  <div class="note"><strong>Destructive staging</strong> — dry-run evidence + required reason + impact preview + typed confirm, in one place.</div>
+                  <div class="note"><strong>Answer / evidence split</strong> — a primary answer card over a ranked evidence list with a denied-results rail.</div>
+                  <div class="note"><strong>State system</strong> — skeleton, empty, error, and no-access components used everywhere.</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <aside class="stack">
+            <div class="panel">
+              <div class="panel-header"><h2>Implementation sequence</h2></div>
+              <div class="panel-body">
+                <div class="seq">
+                  <div class="seq-step"><div class="seq-num">1</div><div><strong>State system + summary strip</strong><p class="hint" style="margin:2px 0 0">Low-risk shared components; immediate scanability win across every page.</p></div></div>
+                  <div class="seq-step"><div class="seq-num">2</div><div><strong>Split the Operations mega-page</strong><p class="hint" style="margin:2px 0 0">Operations overview + dedicated Access / Providers / Policies / Telemetry / Approvals / Exports.</p></div></div>
+                  <div class="seq-step"><div class="seq-num">3</div><div><strong>Destructive staging</strong><p class="hint" style="margin:2px 0 0">Restore, publish, revoke, purge, deny route through one staged surface.</p></div></div>
+                  <div class="seq-step"><div class="seq-num">4</div><div><strong>Reader polish</strong><p class="hint" style="margin:2px 0 0">Library catalog, answer/evidence search, structured instruction object.</p></div></div>
+                  <div class="seq-step"><div class="seq-num">5</div><div><strong>Role-aware chrome</strong><p class="hint" style="margin:2px 0 0">Hide maintainer/admin actions by capability, not just by markup.</p></div></div>
+                </div>
+              </div>
+            </div>
+            <div class="panel">
+              <div class="panel-header"><h2>How to read this artifact</h2></div>
+              <div class="panel-body">
+                <ul class="bullet-list">
+                  <li>Use the left nav to move between page mockups.</li>
+                  <li>Toggle <span class="pill-key">Show review notes</span> to overlay rationale + risk on each page.</li>
+                  <li><strong>View as</strong> and <strong>Density</strong> demonstrate role chrome and table density.</li>
+                  <li>All content is synthetic/demo, aligned to <code>corpus/demo/assets.json</code>.</li>
+                </ul>
+              </div>
+            </div>
+          </aside>
+        </div>
+      </section>
+
+      <!-- ========================= LOGIN ============================== -->
+      <section class="view" data-view="login">
+        <div class="review-note">
+          <span class="rn-tag">Login · private access</span>
+          <p>The live login centers a card on a <em>gradient background</em> (<code>App.tsx:2245–2268</code>) — the one generic-AI tell in the product. This replaces it with an operational split: a restrained product statement (what this control plane is, not marketing), a focused auth card with password + OIDC, and an explicit private-alpha gate. The anonymous public-demo reading path is offered without sign-in.</p>
+          <p class="risk">Risk: introduces a left identity column. On narrow widths it stacks above the form; verify the form stays above the fold on short viewports.</p>
+        </div>
+        <p class="device-cap" style="text-align:left">Unauthenticated surface — shown full-bleed inside the gallery frame.</p>
+        <div class="panel" style="overflow:hidden">
+          <div class="auth-shell" style="min-height:560px">
+            <div class="auth-brand">
+              <div class="lockup"><span class="mark">AC</span><b>Agentic CMS</b><span class="brand-env">Private alpha</span></div>
+              <div>
+                <h1 style="font-size:22px">Instruction control plane for agents</h1>
+                <p class="lede" style="margin-top:8px">Governed policies, guardrails, playbooks, skills, and templates that AI tools retrieve directly through API, CLI, MCP, and managed query — with permission-aware retrieval before any context reaches a model.</p>
+              </div>
+              <div class="auth-points">
+                <div class="auth-point"><span class="small-icon glyph">1</span><div><strong>Permission-aware by default</strong><p class="hint" style="margin:2px 0 0">Restricted content never leaks into broad search, exports, or MCP responses.</p></div></div>
+                <div class="auth-point"><span class="small-icon glyph">2</span><div><strong>Provenance-forward</strong><p class="hint" style="margin:2px 0 0">Stable IDs, versions, and citations are first-class, copyable interface material.</p></div></div>
+                <div class="auth-point"><span class="small-icon glyph">3</span><div><strong>Self-hostable core</strong><p class="hint" style="margin:2px 0 0">Apache-2.0. No hosted-service dependency to read, review, or operate.</p></div></div>
+              </div>
+              <dl class="auth-meta">
+                <div>API base · https://acms.demo.internal/api</div>
+                <div>Tenant · tenant_demo</div>
+                <div>Build · 0.4.0-alpha · commit d85f033</div>
+              </dl>
+            </div>
+            <div class="auth-form-wrap">
+              <div class="auth-card panel">
+                <div class="panel-header"><h2>Sign in</h2><span class="chip"><span class="signal" style="color:var(--ok-600)"></span>healthy</span></div>
+                <div class="panel-body">
+                  <div class="banner" style="margin-bottom:2px"><p><strong>Private alpha.</strong> Authorized accounts only. Access is logged.</p></div>
+                  <div class="field"><label for="lg-email">Email</label><input class="input" id="lg-email" type="email" value="admin@example.test" autocomplete="username"></div>
+                  <div class="field"><label for="lg-pass">Password</label><input class="input" id="lg-pass" type="password" value="············" autocomplete="current-password"></div>
+                  <button class="btn primary" style="width:100%">Sign in</button>
+                  <div class="divider">or</div>
+                  <button class="btn" style="width:100%"><span class="small-icon">MS</span>Continue with Microsoft Entra ID</button>
+                  <p class="hint" style="text-align:center;margin:2px 0 0">Browse the <a href="#library" data-goto="library">public-demo library</a> without signing in →</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ========================= LIBRARY ============================ -->
+      <section class="view" data-view="library">
+        <div class="review-note">
+          <span class="rn-tag">Library · reader overview</span>
+          <p>One library, one representation. The folder tree lives only in the left nav; this page is a single scannable catalog with a filter bar and a compact summary strip — replacing the live page's stacked tree + folder-browser + table (three views of the same data). Reader chrome: no admin CTA as primary; "Import corpus" is maintainer-gated.</p>
+          <p class="risk">Risk (IA change): removes the in-page folder browser. Folder context moves to the nav + breadcrumb. Verify nav tree depth is enough for users who navigated by the in-page browser.</p>
+        </div>
+
+        <div class="page-header">
+          <div>
+            <p class="eyebrow">Read · Library</p>
+            <h1>Governed asset library</h1>
+            <p class="lede">Approved policies, guardrails, playbooks, skills, and templates with trust metadata at a glance. Results are permission-filtered on the server before render.</p>
+          </div>
+          <div class="actions">
+            <button class="btn">Saved views</button>
+            <button class="btn" data-min-role="maintainer">Import corpus</button>
+          </div>
+        </div>
+
+        <div class="summary-strip" style="margin-bottom:16px">
+          <div class="summary-cell"><span class="summary-val">132</span><span class="summary-label">Visible</span></div>
+          <div class="summary-cell"><span class="summary-val ok">94</span><span class="summary-label">Approved · active</span></div>
+          <div class="summary-cell"><span class="summary-val warn">9</span><span class="summary-label">Review due</span></div>
+          <div class="summary-cell"><span class="summary-val">7</span><span class="summary-label">Public-demo</span></div>
+          <div class="summary-cell" data-min-role="admin"><span class="summary-val bad">2</span><span class="summary-label">Restricted hidden</span></div>
+        </div>
+
+        <div class="panel">
+          <div class="filters">
+            <input class="input" placeholder="Filter title or stable ID" value="" aria-label="Filter">
+            <select class="select" aria-label="Type"><option>All types</option><option>policy</option><option>guardrail</option><option>playbook</option><option>skill</option><option>template</option></select>
+            <select class="select" aria-label="Status"><option>Any status</option><option>approved</option><option>reviewing</option><option>draft</option></select>
+            <select class="select" aria-label="Sensitivity"><option>Permitted sensitivity</option><option>public-demo</option><option>internal</option></select>
+            <span class="spacer"></span>
+            <span class="chip info">94 results</span>
+          </div>
+          <div class="panel-body flush">
+            <div class="table-wrap">
+              <table aria-label="Asset catalog">
+                <thead><tr><th>Asset</th><th>Type</th><th>Lifecycle</th><th>Status</th><th>Sensitivity</th><th>Ver</th><th>Owner</th><th>Review due</th></tr></thead>
+                <tbody>
+                  <tr class="row selected" data-route="asset-read" style="cursor:pointer">
+                    <td><span class="title-cell"><strong>PII Redaction Guardrail</strong><span class="stable-id">guardrail.pii-redaction</span></span></td>
+                    <td>guardrail</td><td><span class="chip ok">active</span></td><td><span class="chip ok">approved</span></td>
+                    <td><span class="sensitivity s-public"><span class="dot"></span>public-demo</span></td><td>v6</td><td>user_admin</td><td><span class="chip warn">12 days</span></td>
+                  </tr>
+                  <tr class="row" data-route="asset-read" style="cursor:pointer">
+                    <td><span class="title-cell"><strong>AI Acceptable Use Policy</strong><span class="stable-id">policy.ai-acceptable-use</span></span></td>
+                    <td>policy</td><td><span class="chip ok">active</span></td><td><span class="chip ok">approved</span></td>
+                    <td><span class="sensitivity s-public"><span class="dot"></span>public-demo</span></td><td>v9</td><td>user_admin</td><td>2027-01-31</td>
+                  </tr>
+                  <tr class="row" style="cursor:pointer">
+                    <td><span class="title-cell"><strong>Pull Request Review Agent Skill</strong><span class="stable-id">skill.pr-review-agent</span></span></td>
+                    <td>skill</td><td><span class="chip ok">active</span></td><td><span class="chip ok">approved</span></td>
+                    <td><span class="sensitivity s-public"><span class="dot"></span>public-demo</span></td><td>v3</td><td>user_engineering</td><td>2027-03-31</td>
+                  </tr>
+                  <tr class="row" style="cursor:pointer">
+                    <td><span class="title-cell"><strong>Agent Task Brief Template</strong><span class="stable-id">template.agent-task-brief</span></span></td>
+                    <td>template</td><td><span class="chip ok">active</span></td><td><span class="chip ok">approved</span></td>
+                    <td><span class="sensitivity s-public"><span class="dot"></span>public-demo</span></td><td>v2</td><td>user_admin</td><td>2027-04-30</td>
+                  </tr>
+                  <tr class="row" data-route="review-queue" style="cursor:pointer">
+                    <td><span class="title-cell"><strong>Incident Triage Playbook</strong><span class="stable-id">playbook.incident-triage</span></span></td>
+                    <td>playbook</td><td><span class="chip">draft</span></td><td><span class="chip warn">reviewing</span></td>
+                    <td><span class="sensitivity s-public"><span class="dot"></span>public-demo</span></td><td>v1</td><td>user_ops</td><td><span class="chip warn">overdue</span></td>
+                  </tr>
+                  <tr class="row" data-min-role="maintainer" style="cursor:pointer">
+                    <td><span class="title-cell"><strong>Retention Purge SOP</strong><span class="stable-id">sop.retention-purge</span></span></td>
+                    <td>sop</td><td><span class="chip">draft</span></td><td><span class="chip">draft</span></td>
+                    <td><span class="sensitivity s-internal"><span class="dot"></span>internal</span></td><td>v1</td><td>user_ops</td><td>2026-12-15</td>
+                  </tr>
+                  <tr class="row is-denied" data-route="states" data-min-role="admin" style="cursor:pointer">
+                    <td><span class="title-cell"><strong class="muted">Restricted item</strong><span class="stable-id">metadata withheld</span></span></td>
+                    <td class="muted">—</td><td class="muted">—</td><td class="muted">—</td>
+                    <td><span class="sensitivity s-restricted"><span class="dot"></span>restricted</span></td><td class="muted">—</td><td class="muted">—</td><td><span class="chip bad">no access</span></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+        <p class="hint" style="margin-top:10px">Admin disclosure: restricted rows are summarized as a count and shown muted with a generic label; readers do not see the row at all. See <a href="#states" data-goto="states">no-access state →</a></p>
+      </section>
+
+      <!-- ========================= ASSET READ ========================= -->
+      <section class="view" data-view="asset-read">
+        <div class="review-note">
+          <span class="rn-tag">Asset detail · reading room</span>
+          <p>The human document and the agent-instruction object are separate-but-linked primitives, so they get distinct, well-structured views via tabs. The agent instruction is rendered <em>structurally</em> from the schema (kind, target agents, input/output contracts, constraints, failure modes, escalation) instead of as a raw blob — this is the surface operators use to debug what an agent consumes. Trust banner is sticky; stable ID and agent-access snippets are copyable.</p>
+          <p class="risk">Risk: structured instruction view assumes the schema is populated. Fall back to the raw body for sparse/legacy objects (see the "Raw" tab).</p>
+        </div>
+
+        <div class="page-header">
+          <div>
+            <p class="eyebrow">Read · Library / Guardrails</p>
+            <h1>PII Redaction Guardrail</h1>
+            <div class="route-meta">
+              <span class="stable-id">guardrail.pii-redaction <button class="copy" data-copy="guardrail.pii-redaction">Copy ID</button></span>
+              <span class="chip ok">active</span><span class="chip ok">approved</span>
+              <span class="sensitivity s-public"><span class="dot"></span>public-demo</span>
+            </div>
+          </div>
+          <div class="actions">
+            <button class="btn" data-route="versions">Versions</button>
+            <button class="btn" data-min-role="maintainer" data-route="review-queue">Mark reviewed</button>
+          </div>
+        </div>
+
+        <div class="read-shell">
+          <div>
+            <div class="trust-banner">
+              <span class="chip ok"><span class="signal"></span>approved</span>
+              <span class="chip ok">active</span>
+              <span class="chip">v6 · hash 7fd2c1</span>
+              <span class="chip warn">review due in 12 days</span>
+              <span class="chip">api</span><span class="chip">cli</span><span class="chip">mcp</span><span class="chip">web</span><span class="chip">export</span>
+            </div>
+
+            <div class="tabs" data-tabs="asset" role="tablist" style="margin-bottom:14px">
+              <button class="tab active" data-tab="human" role="tab">Human document</button>
+              <button class="tab" data-tab="agent" role="tab">Agent instruction</button>
+              <button class="tab" data-tab="raw" role="tab">Raw JSON</button>
+            </div>
+
+            <div class="tab-panel active" data-panel="human" data-scope="asset">
+              <article class="reading">
+                <h2>Purpose</h2>
+                <p>Mask direct personal identifiers before support records enter model context. Preserve the operational facts needed to complete the task, use consistent placeholders, and record what was redacted.</p>
+                <h2>Guidance</h2>
+                <ul>
+                  <li>Replace names, emails, phone numbers, addresses, account IDs, and ticket IDs with stable placeholders.</li>
+                  <li>Keep placeholder labels consistent within a single request (<code>[customer_email_1]</code>).</li>
+                  <li>Do not drop facts required to solve the support task; do not invent replacement details.</li>
+                </ul>
+                <h2>Sources</h2>
+              </article>
+              <div class="cite-list" style="margin-top:6px">
+                <div class="cite"><span class="cite-num">1</span><div><strong>Security model — direct-identifier handling</strong><p>Telemetry and feedback text are redacted before storage per the active tenant PII policy.</p></div></div>
+                <div class="cite"><span class="cite-num">2</span><div><strong>Restricted leakage investigation runbook</strong><p>Redaction must not remove evidence required for a regulated complaint.</p></div></div>
+              </div>
+            </div>
+
+            <div class="tab-panel" data-panel="agent" data-scope="asset">
+              <div class="io-object">
+                <div class="io-section">
+                  <div class="io-head"><h4>Instruction</h4><div class="chip-row"><span class="chip info">kind · guardrail</span><span class="chip">targets · support-agent, research-agent</span></div></div>
+                  <div class="io-body">
+                    <p style="margin:0">Remove or mask direct personal identifiers before including support records in model context. Replace names, emails, phone numbers, addresses, account IDs, and ticket IDs with stable placeholders. Preserve the operational meaning needed to complete the task.</p>
+                  </div>
+                </div>
+                <div class="io-section">
+                  <div class="io-head"><h4>Contracts</h4><button class="copy" data-copy='{"input":["raw_text","target_task"],"output":["redacted_text","redaction_summary"]}'>Copy</button></div>
+                  <div class="io-body">
+                    <div class="contract">
+                      <div><label>Input · required</label><div class="chip-row" style="margin-top:6px"><code>raw_text</code><code>target_task</code></div></div>
+                      <div><label>Output · required</label><div class="chip-row" style="margin-top:6px"><code>redacted_text</code><code>redaction_summary</code></div></div>
+                    </div>
+                  </div>
+                </div>
+                <div class="grid two">
+                  <div class="io-section">
+                    <div class="io-head"><h4>Constraints</h4></div>
+                    <div class="io-body"><ul class="bullet-list">
+                      <li>Do not drop facts required to solve the support task.</li>
+                      <li>Do not invent replacement details.</li>
+                      <li>Keep placeholder labels consistent within the same request.</li>
+                    </ul></div>
+                  </div>
+                  <div class="io-section">
+                    <div class="io-head"><h4>Failure modes</h4></div>
+                    <div class="io-body"><ul class="bullet-list">
+                      <li>Masking obvious names while leaving ticket IDs or emails.</li>
+                      <li>Changing the operational meaning of a customer issue.</li>
+                    </ul></div>
+                  </div>
+                </div>
+                <div class="io-section">
+                  <div class="io-head"><h4>Escalation</h4><span class="chip warn">human review</span></div>
+                  <div class="io-body"><p style="margin:0">Escalate if redaction would remove the evidence needed for a regulated complaint.</p></div>
+                </div>
+              </div>
+            </div>
+
+            <div class="tab-panel" data-panel="raw" data-scope="asset">
+              <pre class="code-block">{
+  "stableId": "guardrail.pii-redaction",
+  "type": "guardrail",
+  "version": 6,
+  "instruction": {
+    "instructionKind": "guardrail",
+    "targetAgents": ["support-agent", "research-agent"],
+    "inputContract":  { "required": ["raw_text", "target_task"] },
+    "outputContract": { "required": ["redacted_text", "redaction_summary"] }
+  },
+  "allowedSurfaces": ["api","cli","mcp","web","export"]
+}</pre>
+            </div>
+          </div>
+
+          <aside class="rail">
+            <div class="rail-section">
+              <h3>Trust metadata</h3>
+              <dl class="meta-list">
+                <div><dt>Owner</dt><dd>user_admin · Security operations</dd></div>
+                <div><dt>Audience</dt><dd>ai-team, support-ops</dd></div>
+                <div><dt>Current version</dt><dd>v6 · hash 7fd2c1</dd></div>
+                <div><dt>Source</dt><dd>synthetic-demo corpus</dd></div>
+                <div><dt>Review due</dt><dd><span class="chip warn">2027-02-28 · in 12 days</span></dd></div>
+              </dl>
+            </div>
+            <div class="rail-section">
+              <h3>Versions</h3>
+              <div class="timeline">
+                <div class="timeline-item"><span class="t">v6</span><span class="d"><strong>current</strong> — redaction summary field clarified</span></div>
+                <div class="timeline-item"><span class="t">v5</span><span class="d">placeholder-consistency rule added</span></div>
+              </div>
+              <button class="btn small" style="margin-top:10px" data-route="versions">Compare versions</button>
+            </div>
+            <div class="rail-section">
+              <h3>Agent access</h3>
+              <pre class="code-block" style="font-size:12px">GET /assets/guardrail.pii-redaction
+mcp://asset/fetch?stableId=
+  guardrail.pii-redaction</pre>
+              <button class="copy" data-copy="GET /assets/guardrail.pii-redaction" style="margin-top:8px">Copy request</button>
+            </div>
+          </aside>
+        </div>
+      </section>
+
+      <!-- ========================= SEARCH ============================= -->
+      <section class="view" data-view="search">
+        <div class="review-note">
+          <span class="rn-tag">Search &amp; managed query</span>
+          <p>Answer and evidence are separated. The synthesized answer is one primary card carrying grounding, cache, cost, and citation-floor signals; the evidence is a ranked, citable list below. Denied results get an explicit admin-only rail so operators can see what was filtered without exposing it to readers. Mode (deterministic vs provider-routed) is a clear segmented control showing the active policy floor.</p>
+          <p class="risk">Risk: the answer card can read as authoritative. Keep the "deterministic draft / grounded" labeling and citation-floor chip prominent so it is never mistaken for an unverified generation.</p>
+        </div>
+
+        <div class="page-header">
+          <div>
+            <p class="eyebrow">Read · Search</p>
+            <h1>Search &amp; managed query</h1>
+            <p class="lede">Search and managed query run over the same permission-filtered context that API, CLI, MCP, and agent routes consume.</p>
+          </div>
+          <div class="segmented" role="tablist" aria-label="Query mode">
+            <button class="segment active">Deterministic</button>
+            <button class="segment" data-min-role="admin">Provider-routed</button>
+          </div>
+        </div>
+
+        <div class="panel" style="margin-bottom:16px">
+          <div class="panel-body" style="display:grid;gap:12px">
+            <div class="form-row"><label for="q" class="req">Governed question</label>
+              <textarea class="textarea" id="q" style="min-height:64px">What should an agent do when a user prompt contains API keys or customer emails?</textarea></div>
+            <div class="toolbar">
+              <button class="btn primary">Run query</button>
+              <button class="btn">Copy citations</button>
+              <span class="chip info">mode · deterministic-retrieval</span>
+              <span class="chip">citation floor · 2</span>
+              <span class="spacer" style="flex:1"></span>
+              <span class="chip warn" data-min-role="admin">2 restricted chunks hidden</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="grid sidebar">
+          <div class="stack">
+            <div class="answer-card">
+              <div class="answer-head">
+                <h3 style="margin:0">Grounded answer</h3>
+                <div class="chip-row">
+                  <span class="chip ok"><span class="signal"></span>grounded</span>
+                  <span class="chip">cache miss</span>
+                  <span class="chip">est. cost $0.00</span>
+                </div>
+              </div>
+              <div class="answer-body">
+                <p>Redact recognized identifiers before the prompt reaches a model, record only compact redaction metadata, and bypass the generated-answer cache when a redaction rule matched. Refuse to place secrets or credentials in model context, and cite the governing stable IDs in the response.</p>
+                <p class="hint" style="margin:0">Cites <strong>2 of 2</strong> required sources · <span class="mono">guardrail.pii-redaction</span>, <span class="mono">policy.ai-acceptable-use</span></p>
+              </div>
+            </div>
+
+            <div class="panel">
+              <div class="panel-header"><h2>Evidence</h2><span class="muted">ranked, permission-filtered</span></div>
+              <div class="panel-body">
+                <div class="evidence-list">
+                  <article class="evidence">
+                    <span class="rank">1</span>
+                    <div>
+                      <div class="ev-meta"><span class="chip info">citation 1</span><span class="sensitivity s-public"><span class="dot"></span>public-demo</span><span class="stable-id">guardrail.pii-redaction</span></div>
+                      <h3 style="margin-top:6px">PII Redaction Guardrail</h3>
+                      <p class="snip">Replace names, emails, phone numbers, addresses, account IDs, and ticket IDs with stable placeholders. Keep the operational facts needed to complete the task.</p>
+                      <button class="btn small" style="margin-top:8px" data-route="asset-read">Open at section</button>
+                    </div>
+                  </article>
+                  <article class="evidence">
+                    <span class="rank">2</span>
+                    <div>
+                      <div class="ev-meta"><span class="chip info">citation 2</span><span class="sensitivity s-public"><span class="dot"></span>public-demo</span><span class="stable-id">policy.ai-acceptable-use</span></div>
+                      <h3 style="margin-top:6px">AI Acceptable Use Policy</h3>
+                      <p class="snip">Refuse to place restricted or confidential material in unapproved model contexts. Escalate if the user requests credential exposure or unapproved external posting.</p>
+                      <button class="btn small" style="margin-top:8px" data-route="asset-read">Open at section</button>
+                    </div>
+                  </article>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <aside class="stack">
+            <div class="panel">
+              <div class="panel-header"><h2>Retrieval facts</h2></div>
+              <div class="panel-body">
+                <dl class="meta-list">
+                  <div><dt>Principal</dt><dd>reader-demo</dd></div>
+                  <div><dt>Mode</dt><dd>deterministic-retrieval</dd></div>
+                  <div><dt>Returned</dt><dd>2 chunks · 2 citations</dd></div>
+                  <div><dt>Telemetry event</dt><dd class="mono">rtv_20260618_1842</dd></div>
+                </dl>
+              </div>
+            </div>
+            <div class="denied-rail" data-min-role="admin">
+              <div class="rail-section">
+                <h3>Denied results <span class="chip bad" style="margin-left:6px">admin</span></h3>
+                <p class="hint">2 restricted chunks were filtered before ranking. Readers never see this rail.</p>
+                <dl class="meta-list" style="margin-top:8px">
+                  <div><dt>Hidden</dt><dd>2 chunks · sensitivity ≥ restricted</dd></div>
+                  <div><dt>Reason</dt><dd>principal lacks grant</dd></div>
+                  <div><dt>Audit</dt><dd class="mono">aud_01JZ9AXD0</dd></div>
+                </dl>
+              </div>
+            </div>
+            <div class="panel">
+              <div class="panel-header"><h2>Outcome feedback</h2></div>
+              <div class="panel-body">
+                <p class="hint" style="margin:0 0 8px">Authenticated readers can rate this outcome. Notes are redacted before storage.</p>
+                <div class="chip-row"><button class="btn small">Accepted</button><button class="btn small">Needs review</button><button class="btn small">Rejected</button></div>
+              </div>
+            </div>
+          </aside>
+        </div>
+      </section>
+
+      <!-- ========================= REVIEW QUEUE ======================= -->
+      <section class="view" data-view="review-queue">
+        <div class="review-note">
+          <span class="rn-tag">Work · review queue</span>
+          <p>A real maintainer worklist: a reason filter bar, selectable rows, and a <em>sticky bulk action bar</em> that appears on selection. Each row names the exact reason (overdue, reviewing, draft, swept) and the single next action. Bulk publish routes through destructive staging (see Version compare), not an inline fire.</p>
+          <p class="risk">Risk: bulk publish across mixed sensitivities. The staging step must re-assert the active+approved gate per item and surface any item that would fail it.</p>
+        </div>
+
+        <div class="page-header">
+          <div>
+            <p class="eyebrow">Work · Governance</p>
+            <h1>Review queue</h1>
+            <p class="lede">Assets that are stale, not approved, not active, or included in a governance sweep. Reader-invisible; maintainer and admin only.</p>
+          </div>
+          <div class="actions"><button class="btn">Export queue</button></div>
+        </div>
+
+        <div class="summary-strip" style="margin-bottom:16px">
+          <div class="summary-cell"><span class="summary-val warn">9</span><span class="summary-label">Need attention</span></div>
+          <div class="summary-cell"><span class="summary-val bad">2</span><span class="summary-label">Overdue</span></div>
+          <div class="summary-cell"><span class="summary-val">4</span><span class="summary-label">Reviewing</span></div>
+          <div class="summary-cell"><span class="summary-val">3</span><span class="summary-label">Draft</span></div>
+        </div>
+
+        <div class="panel">
+          <div class="filters">
+            <select class="select" aria-label="Reason"><option>All reasons</option><option>review overdue</option><option>reviewing</option><option>draft</option><option>swept</option></select>
+            <select class="select" aria-label="Owner"><option>Any owner</option><option>user_ops</option><option>user_admin</option></select>
+            <span class="spacer"></span>
+            <span class="chip info">2 selected</span>
+          </div>
+          <div class="panel-body flush">
+            <div class="table-wrap">
+              <table aria-label="Review queue">
+                <thead><tr><th style="width:34px"><input type="checkbox" aria-label="Select all"></th><th>Asset</th><th>Reason</th><th>Status</th><th>Owner</th><th>Next action</th></tr></thead>
+                <tbody>
+                  <tr class="selected"><td><input type="checkbox" checked aria-label="select"></td><td><span class="title-cell"><strong>Incident Triage Playbook</strong><span class="stable-id">playbook.incident-triage</span></span></td><td><span class="chip warn">review overdue</span></td><td><span class="chip warn">reviewing</span></td><td>user_ops</td><td><button class="btn small" data-route="versions">Review</button></td></tr>
+                  <tr class="selected"><td><input type="checkbox" checked aria-label="select"></td><td><span class="title-cell"><strong>Retention Purge SOP</strong><span class="stable-id">sop.retention-purge</span></span></td><td><span class="chip">draft</span></td><td><span class="chip">draft</span></td><td>user_ops</td><td><button class="btn small">Open</button></td></tr>
+                  <tr><td><input type="checkbox" aria-label="select"></td><td><span class="title-cell"><strong>Provider Fallback Playbook</strong><span class="stable-id">playbook.provider-fallback</span></span></td><td><span class="chip warn">review overdue</span></td><td><span class="chip ok">approved</span></td><td>user_admin</td><td><button class="btn small">Mark reviewed</button></td></tr>
+                  <tr><td><input type="checkbox" aria-label="select"></td><td><span class="title-cell"><strong>Agent Skill Draft Import</strong><span class="stable-id">template.agent-skill</span></span></td><td><span class="chip warn">reviewing</span></td><td><span class="chip warn">not approved</span></td><td>user_engineering</td><td><button class="btn small">Publish</button></td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel" style="position:sticky;bottom:14px;margin-top:14px;border-color:var(--brand-100)">
+          <div class="panel-body" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+            <strong>2 assets selected</strong>
+            <span class="hint">Bulk actions re-assert the active + approved gate per asset before any change.</span>
+            <span class="spacer" style="flex:1"></span>
+            <button class="btn">Mark reviewed</button>
+            <button class="btn primary" data-route="versions">Stage publish…</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- ========================= VERSIONS =========================== -->
+      <section class="view" data-view="versions">
+        <div class="review-note">
+          <span class="rn-tag">Work · version compare &amp; restore</span>
+          <p>Side-by-side diff with a unified toggle, and restore handled by a single destructive-staging panel: required change note, an explicit impact preview (pointer move, reindex, cache invalidation, audit event), and a typed confirmation. The destructive trigger appears <em>only</em> here — never duplicated in a toolbar.</p>
+          <p class="risk">Risk: typed-confirm adds friction. Justified for restore because it moves the current pointer and invalidates cache tenant-wide; lighter actions should not borrow this pattern.</p>
+        </div>
+
+        <div class="page-header">
+          <div>
+            <p class="eyebrow">Work · Incident Triage Playbook</p>
+            <h1>Compare &amp; restore</h1>
+            <div class="route-meta"><span class="stable-id">playbook.incident-triage</span><span class="chip">comparing v1 ⇄ v2</span></div>
+          </div>
+          <div class="actions">
+            <div class="segmented"><button class="segment active">Side by side</button><button class="segment">Unified</button></div>
+          </div>
+        </div>
+
+        <div class="grid two" style="margin-bottom:16px">
+          <div class="panel">
+            <div class="panel-header"><h2>v2 · current</h2><span class="chip ok">active draft</span></div>
+            <div class="panel-body"><div class="diff">
+              <div class="diff-line"><span class="ln">1</span>Classify the incident by customer impact, blast radius, reversibility, and evidence freshness.</div>
+              <div class="diff-line add"><span class="ln">2</span>Build a concise timeline from observed facts only.</div>
+              <div class="diff-line"><span class="ln">3</span>Recommend the next diagnostic command or system read-back before proposing a fix.</div>
+              <div class="diff-line add"><span class="ln">4</span>Do not recommend destructive remediation without an explicit rollback path.</div>
+            </div></div>
+          </div>
+          <div class="panel">
+            <div class="panel-header"><h2>v1 · selected</h2><span class="chip">previous</span></div>
+            <div class="panel-body"><div class="diff">
+              <div class="diff-line"><span class="ln">1</span>Classify the incident by customer impact, blast radius, reversibility, and evidence freshness.</div>
+              <div class="diff-line remove"><span class="ln">2</span>Summarize what happened.</div>
+              <div class="diff-line"><span class="ln">3</span>Recommend the next diagnostic command or system read-back before proposing a fix.</div>
+              <div class="diff-line remove"><span class="ln">4</span>Propose a remediation.</div>
+            </div></div>
+          </div>
+        </div>
+
+        <div class="staging">
+          <div class="staging-head"><h2 style="margin:0">Stage restore — v1</h2><span class="chip bad">destructive · maintainer</span></div>
+          <div class="staging-body">
+            <div class="field"><label for="rn" class="req">Change note (audit reason)</label><textarea class="textarea" id="rn" style="min-height:64px">Restore v1 while re-validating the rollback-path wording introduced in v2.</textarea></div>
+            <div class="impact">
+              <strong>Impact preview</strong>
+              <ul>
+                <li>Current pointer moves <strong>v2 → v1</strong>.</li>
+                <li>Retrieval chunks reindex for this asset.</li>
+                <li>Generated-answer cache invalidates for <span class="mono">tenant_demo</span>.</li>
+                <li>An <span class="mono">asset.restore</span> audit event is recorded with this note.</li>
+              </ul>
+            </div>
+            <div class="confirm-row">
+              <input class="input" placeholder="Type RESTORE to confirm" data-confirm-input="restore" data-confirm-phrase="RESTORE" aria-label="Type RESTORE to confirm">
+              <button class="btn danger" data-confirm-btn="restore" disabled aria-disabled="true">Confirm restore of v1</button>
+              <span class="hint">Confirmation enables only after the phrase matches.</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ========================= OPERATIONS ========================= -->
+      <section class="view" data-view="operations">
+        <div class="review-note">
+          <span class="rn-tag">Operate · operations overview</span>
+          <p>The single most important IA change. Operations stops <em>doing</em> everything and becomes a <strong>router to work</strong>: a health summary strip, a prioritized "needs attention" list that deep-links into each domain, maintenance posture (dry-run jobs), a runbook launcher, and recent audit. Every admin domain (Access, Providers, Policies, Telemetry, Approvals, Exports) owns its own shallow page.</p>
+          <p class="risk">Risk (IA change): admins used to scrolling one page must now navigate. Mitigated by the needs-attention list, deep links, and command palette; nothing is more than one click from here.</p>
+        </div>
+
+        <div class="page-header">
+          <div>
+            <p class="eyebrow">Operate · Control plane</p>
+            <h1>Operations</h1>
+            <p class="lede">Deployment health, work that needs attention, maintenance posture, and runbook entry points. Each item links to the page that owns it.</p>
+          </div>
+          <div class="actions"><button class="btn">Run health check</button><button class="btn">Runbooks</button></div>
+        </div>
+
+        <div class="grid four" style="margin-bottom:16px">
+          <div class="metric"><div class="metric-value">healthy</div><div class="metric-label">API · worker · db</div><div class="metric-note">last probe 18:42 UTC</div></div>
+          <div class="metric"><div class="metric-value" style="color:var(--ok-600)">0</div><div class="metric-label">Leakage findings</div><div class="metric-note">restricted verifier passed</div></div>
+          <div class="metric"><div class="metric-value" style="color:var(--warn-600)">3</div><div class="metric-label">Keys near expiry</div><div class="metric-note">service-owned</div></div>
+          <div class="metric"><div class="metric-value">83%</div><div class="metric-label">Last eval pass rate</div><div class="metric-note">deterministic · 24 cases</div></div>
+        </div>
+
+        <div class="grid sidebar">
+          <div class="stack">
+            <div class="panel">
+              <div class="panel-header"><h2>Needs attention</h2><span class="chip warn">6 items</span></div>
+              <div class="panel-body flush">
+                <div class="table-wrap"><table aria-label="Needs attention">
+                  <thead><tr><th>Item</th><th>Signal</th><th>Owner domain</th><th></th></tr></thead>
+                  <tbody>
+                    <tr><td>2 action requests awaiting approval</td><td><span class="chip warn">expires 42m</span></td><td>Approvals</td><td><button class="btn small" data-route="approvals">Open</button></td></tr>
+                    <tr><td>Anthropic provider missing env reference</td><td><span class="chip bad">not ready</span></td><td>Providers</td><td><button class="btn small" data-route="providers">Open</button></td></tr>
+                    <tr><td>3 service keys near expiry</td><td><span class="chip warn">≤ 6 days</span></td><td>Access</td><td><button class="btn small" data-route="access">Open</button></td></tr>
+                    <tr><td>9 assets in review queue (2 overdue)</td><td><span class="chip warn">overdue</span></td><td>Review</td><td><button class="btn small" data-route="review-queue">Open</button></td></tr>
+                    <tr><td>41 generated-answer cache rows expiring</td><td><span class="chip">dry-run ready</span></td><td>Telemetry</td><td><button class="btn small" data-route="telemetry">Open</button></td></tr>
+                    <tr><td>Eval schedule due 02:00 UTC</td><td><span class="chip ok">enabled</span></td><td>Policies</td><td><button class="btn small" data-route="policies">Open</button></td></tr>
+                  </tbody>
+                </table></div>
+              </div>
+            </div>
+            <div class="panel">
+              <div class="panel-header"><h2>Maintenance posture</h2><span class="chip ok">dry-run by default</span></div>
+              <div class="panel-body">
+                <div class="grid three">
+                  <div class="prov-card"><h3>Telemetry retention</h3><span class="chip warn">dry-run</span><p class="hint" style="margin:0">1,248 retrieval events eligible to purge.</p></div>
+                  <div class="prov-card"><h3>Cache cleanup</h3><span class="chip warn">dry-run</span><p class="hint" style="margin:0">41 expired rows ready to remove.</p></div>
+                  <div class="prov-card"><h3>Key rotation reminder</h3><span class="chip ok">enabled</span><p class="hint" style="margin:0">Deduped; optional signed webhook.</p></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <aside class="stack">
+            <div class="panel">
+              <div class="panel-header"><h2>Runbooks</h2></div>
+              <div class="panel-body"><div class="chip-row">
+                <button class="btn small">Deploy</button><button class="btn small">Rollback</button>
+                <button class="btn small">Key rotation</button><button class="btn small">Backup / restore</button>
+                <button class="btn small">Leakage investigation</button>
+              </div></div>
+            </div>
+            <div class="panel">
+              <div class="panel-header"><h2>Recent audit</h2><button class="btn small" data-route="telemetry">All events</button></div>
+              <div class="panel-body"><div class="timeline">
+                <div class="timeline-item"><span class="t">18:42</span><span class="d"><strong>asset.publish</strong> policy.ai-acceptable-use</span></div>
+                <div class="timeline-item"><span class="t">18:38</span><span class="d"><strong>auth.api_key.rotate</strong> svc-mcp-demo</span></div>
+                <div class="timeline-item"><span class="t">18:30</span><span class="d"><strong>action.deny</strong> create-task-record</span></div>
+              </div></div>
+            </div>
+          </aside>
+        </div>
+      </section>
+
+      <!-- ========================= ACCESS ============================= -->
+      <section class="view" data-view="access">
+        <div class="review-note">
+          <span class="rn-tag">Operate · access management</span>
+          <p>Identity work is split into tabbed sub-views (Users · Service accounts · Groups · API keys · Sessions) instead of five scattered sections. One-time key reveal is handled in a staging panel with explicit "shown once" semantics; only a safe preview persists afterward.</p>
+          <p class="risk">Risk: the live app exposes role dropdowns everywhere with no capability hints. Role changes should themselves be audited and confirmed; mock shows the audit chip but the confirm step is page-2 work.</p>
+        </div>
+
+        <div class="page-header">
+          <div>
+            <p class="eyebrow">Operate · Access</p>
+            <h1>Access management</h1>
+            <p class="lede">Human and non-human principals, group grants, browser sessions, and API keys for <span class="mono">tenant_demo</span>.</p>
+          </div>
+          <div class="actions"><button class="btn primary">Create principal</button></div>
+        </div>
+
+        <div class="tabs" data-tabs="access" style="margin-bottom:14px">
+          <button class="tab active" data-tab="keys">API keys <span class="nav-badge warn" style="margin-left:6px">3</span></button>
+          <button class="tab" data-tab="users">Users</button>
+          <button class="tab" data-tab="svc">Service accounts</button>
+          <button class="tab" data-tab="groups">Groups</button>
+          <button class="tab" data-tab="sessions">Sessions</button>
+        </div>
+
+        <div class="tab-panel active" data-panel="keys" data-scope="access">
+          <div class="grid sidebar">
+            <div class="panel">
+              <div class="panel-header"><h2>API keys</h2><span class="chip warn">3 near expiry</span></div>
+              <div class="panel-body flush"><div class="table-wrap"><table>
+                <thead><tr><th>Owner</th><th>Scope</th><th>Preview</th><th>Expires</th><th>Status</th><th></th></tr></thead>
+                <tbody>
+                  <tr><td>svc-mcp-demo</td><td>asset:read</td><td class="mono">acms_live_…7Qp</td><td><span class="chip warn">6 days</span></td><td><span class="chip ok">active</span></td><td><button class="btn small">Rotate</button></td></tr>
+                  <tr><td>svc-exporter</td><td>asset:read · export</td><td class="mono">acms_live_…9Dz</td><td><span class="chip bad">expired</span></td><td><span class="chip bad">disabled</span></td><td><button class="btn small">Rotate</button></td></tr>
+                  <tr><td>svc-agent-planner</td><td>agent:execute</td><td class="mono">acms_live_…2Kx</td><td><span class="chip warn">9 days</span></td><td><span class="chip ok">active</span></td><td><button class="btn small">Rotate</button></td></tr>
+                </tbody>
+              </table></div></div>
+            </div>
+            <aside class="stack">
+              <div class="staging">
+                <div class="staging-head"><h2 style="margin:0">One-time reveal</h2><span class="chip bad">shown once</span></div>
+                <div class="staging-body">
+                  <p class="hint" style="margin:0">The raw secret is shown once on create or rotate. After you close this, only the safe preview remains — there is no second reveal.</p>
+                  <pre class="code-block">acms_live_demo_4f9c2a7b1e8d6033</pre>
+                  <div class="chip-row"><button class="copy" data-copy="acms_live_demo_4f9c2a7b1e8d6033">Copy secret</button><button class="btn small">I've stored it — close</button></div>
+                </div>
+              </div>
+              <div class="panel">
+                <div class="panel-header"><h2>Grants</h2></div>
+                <div class="panel-body"><p class="hint" style="margin:0"><span class="sensitivity s-restricted" style="margin-right:6px"><span class="dot"></span>restricted</span> assets require explicit user, group, or service-account grant records. No implicit access by role.</p></div>
+              </div>
+            </aside>
+          </div>
+        </div>
+
+        <div class="tab-panel" data-panel="users" data-scope="access">
+          <div class="panel"><div class="panel-body flush"><div class="table-wrap"><table>
+            <thead><tr><th>Email</th><th>Role</th><th>Status</th><th>ID</th><th></th></tr></thead>
+            <tbody>
+              <tr><td>admin@example.test</td><td><span class="chip info">admin</span></td><td><span class="chip ok">active</span></td><td class="mono">user_admin</td><td><button class="btn small">Edit</button></td></tr>
+              <tr><td>maintainer@example.test</td><td><span class="chip">maintainer</span></td><td><span class="chip ok">active</span></td><td class="mono">user_engineering</td><td><button class="btn small">Edit</button></td></tr>
+              <tr><td>reader@example.test</td><td><span class="chip">reader</span></td><td><span class="chip ok">active</span></td><td class="mono">user_ops</td><td><button class="btn small">Edit</button></td></tr>
+            </tbody>
+          </table></div></div></div>
+        </div>
+
+        <div class="tab-panel" data-panel="svc" data-scope="access">
+          <div class="panel"><div class="panel-body flush"><div class="table-wrap"><table>
+            <thead><tr><th>Slug</th><th>Role</th><th>Status</th><th>Keys</th><th></th></tr></thead>
+            <tbody>
+              <tr><td class="mono">svc-mcp-demo</td><td>reader</td><td><span class="chip ok">active</span></td><td>1</td><td><button class="btn small">Manage</button></td></tr>
+              <tr><td class="mono">svc-agent-planner</td><td>agent</td><td><span class="chip ok">active</span></td><td>1</td><td><button class="btn small">Manage</button></td></tr>
+            </tbody>
+          </table></div></div></div>
+        </div>
+
+        <div class="tab-panel" data-panel="groups" data-scope="access">
+          <div class="panel"><div class="panel-body flush"><div class="table-wrap"><table>
+            <thead><tr><th>Group</th><th>Members</th><th>Restricted grants</th><th></th></tr></thead>
+            <tbody>
+              <tr><td><span class="title-cell"><strong>AI Team</strong><span class="stable-id">ai-team</span></span></td><td>4</td><td>2</td><td><button class="btn small">Manage</button></td></tr>
+              <tr><td><span class="title-cell"><strong>Support Ops</strong><span class="stable-id">support-ops</span></span></td><td>6</td><td>1</td><td><button class="btn small">Manage</button></td></tr>
+            </tbody>
+          </table></div></div></div>
+        </div>
+
+        <div class="tab-panel" data-panel="sessions" data-scope="access">
+          <div class="panel"><div class="panel-body flush"><div class="table-wrap"><table>
+            <thead><tr><th>Device</th><th>User</th><th>Idle</th><th>Expires</th><th></th></tr></thead>
+            <tbody>
+              <tr><td>macOS · Safari</td><td>admin@example.test</td><td>4m</td><td>11h 40m</td><td><button class="btn small danger">Revoke</button></td></tr>
+              <tr><td>Windows · Edge</td><td>maintainer@example.test</td><td>38m</td><td>6h 02m</td><td><button class="btn small danger">Revoke</button></td></tr>
+            </tbody>
+          </table></div></div></div>
+        </div>
+      </section>
+
+      <!-- ========================= PROVIDERS ========================== -->
+      <section class="view" data-view="providers">
+        <div class="review-note">
+          <span class="rn-tag">Operate · providers</span>
+          <p>Model providers and auth providers are separated into clearly labeled groups (the live app mixes them in one card grid). Each card leads with a readiness state, shows the env-var reference (never the value), priority/fallback order, and a health-check timestamp. "Not ready" providers are visually distinct and surfaced on the Operations overview.</p>
+          <p class="risk">Risk: showing priority ordering implies routing behavior. Keep copy precise — these are configured fallbacks, not a live router until orchestration ships.</p>
+        </div>
+
+        <div class="page-header">
+          <div>
+            <p class="eyebrow">Operate · Providers</p>
+            <h1>Model &amp; auth providers</h1>
+            <p class="lede">Provider configuration referencing env-var secrets only. No raw secret is stored in the database; readiness reflects whether the reference resolves in this deployment.</p>
+          </div>
+          <div class="actions"><button class="btn">Re-check health</button><button class="btn primary">Add provider</button></div>
+        </div>
+
+        <div class="panel" style="margin-bottom:16px">
+          <div class="panel-header"><h2>Model providers</h2><span class="muted">priority order · fallback on failure</span></div>
+          <div class="panel-body"><div class="grid three">
+            <div class="prov-card">
+              <div class="chip-row"><span class="chip ok"><span class="signal"></span>ready</span><span class="chip">priority 10</span></div>
+              <h3>OpenAI · production</h3>
+              <div class="kv"><dt>Env ref</dt><span class="mono">OPENAI_API_KEY</span></div>
+              <div class="kv"><dt>Model</dt><span>gpt-5.1</span></div>
+              <p class="hint" style="margin:0">Checked 18:42 · resolves in deployment.</p>
+              <button class="btn small">Inspect</button>
+            </div>
+            <div class="prov-card" style="border-color:var(--bad-100)">
+              <div class="chip-row"><span class="chip bad"><span class="signal"></span>not ready</span><span class="chip">priority 20</span></div>
+              <h3>Anthropic · fallback</h3>
+              <div class="kv"><dt>Env ref</dt><span class="mono">ANTHROPIC_API_KEY</span></div>
+              <div class="kv"><dt>Model</dt><span>claude-opus-4-8</span></div>
+              <p class="hint" style="margin:0;color:var(--bad-600)">Reference not present in this deployment.</p>
+              <button class="btn small">Edit reference</button>
+            </div>
+            <div class="prov-card">
+              <div class="chip-row"><span class="chip ok"><span class="signal"></span>ready</span><span class="chip">priority 30</span></div>
+              <h3>OpenRouter · spillover</h3>
+              <div class="kv"><dt>Env ref</dt><span class="mono">OPENROUTER_API_KEY</span></div>
+              <div class="kv"><dt>Model</dt><span>routed</span></div>
+              <p class="hint" style="margin:0">Checked 18:42 · resolves in deployment.</p>
+              <button class="btn small">Inspect</button>
+            </div>
+          </div></div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-header"><h2>Auth providers</h2><span class="muted">OIDC login</span></div>
+          <div class="panel-body"><div class="grid three">
+            <div class="prov-card">
+              <div class="chip-row"><span class="chip ok"><span class="signal"></span>oidc ready</span><span class="chip">login</span></div>
+              <h3>Microsoft Entra ID</h3>
+              <div class="kv"><dt>Secret ref</dt><span class="mono">ENTRA_CLIENT_SECRET</span></div>
+              <div class="kv"><dt>Linking</dt><span>email · domain allowlist</span></div>
+              <p class="hint" style="margin:0">PKCE, nonce, and group-claim sync enabled.</p>
+              <button class="btn small">View claims</button>
+            </div>
+          </div></div>
+        </div>
+      </section>
+
+      <!-- ========================= POLICIES =========================== -->
+      <section class="view" data-view="policies">
+        <div class="review-note">
+          <span class="rn-tag">Operate · policies</span>
+          <p>A policy index with a sub-nav rail replaces the flat 2×2. Each domain owns a focused form with a <em>saved-vs-current dirty state</em> and a sticky save bar. The detail shown is Action execution — the riskiest, disabled-by-default domain — with the kill switch, approval requirement, and dry-run default surfaced first.</p>
+          <p class="risk">Risk: a left rail of 8 policy domains can feel like more surface, not less. It is fewer concepts per screen; the rail is orientation, the form is the work.</p>
+        </div>
+
+        <div class="page-header">
+          <div>
+            <p class="eyebrow">Operate · Policies</p>
+            <h1>Tenant policy</h1>
+            <p class="lede">Managed query, retrieval ranking, cache, retention, PII redaction, secret references, eval schedule, and action execution — one domain at a time.</p>
+          </div>
+        </div>
+
+        <div class="grid sidebar-left">
+          <nav class="subnav" data-subnav="pol" aria-label="Policy domains">
+            <button data-section="actions" data-label="Action execution" class="active"><span class="lead"><span class="small-icon">AX</span>Action execution</span><span class="nav-badge bad">off</span></button>
+            <button data-section="query" data-label="Managed query"><span class="lead"><span class="small-icon">MQ</span>Managed query</span><span class="nav-badge">on</span></button>
+            <button data-section="pii" data-label="PII redaction"><span class="lead"><span class="small-icon">PI</span>PII redaction</span><span class="nav-badge">on</span></button>
+            <button data-section="retention" data-label="Retention &amp; cache"><span class="lead"><span class="small-icon">RT</span>Retention &amp; cache</span></button>
+            <button data-section="ranking" data-label="Retrieval ranking"><span class="lead"><span class="small-icon">RK</span>Retrieval ranking</span></button>
+            <button data-section="secrets" data-label="Secret references"><span class="lead"><span class="small-icon">SC</span>Secret references</span></button>
+            <button data-section="evals" data-label="Eval schedule"><span class="lead"><span class="small-icon">EV</span>Eval schedule</span></button>
+          </nav>
+
+          <div>
+            <div class="section-panel active" data-section-panel="actions" data-scope="pol">
+              <div class="panel">
+                <div class="panel-header"><h2 data-subnav-here>Action execution</h2><span class="chip bad">disabled by default</span></div>
+                <div class="panel-body">
+                  <div class="banner warn" style="margin-bottom:14px"><strong>High-risk domain.</strong><p>When enabled, agents can request side-effecting actions. Approval and dry-run defaults stay on unless explicitly removed.</p></div>
+                  <div class="form-grid">
+                    <div class="field"><label>Execution</label><select class="select"><option>disabled</option><option>enabled</option></select></div>
+                    <div class="field"><label>Kill switch</label><select class="select"><option>armed (block all)</option><option>off</option></select></div>
+                    <div class="field"><label>Require approval</label><select class="select"><option>true</option><option>false</option></select></div>
+                    <div class="field"><label>Dry-run default</label><select class="select"><option>on</option><option>off</option></select></div>
+                    <div class="field"><label>Allowed action types</label><input class="input" value="create-task-record, create-incident-summary"></div>
+                    <div class="field"><label>Requests / hour</label><input class="input" value="60"></div>
+                    <div class="field"><label>Approval expiry (min)</label><input class="input" value="1440"></div>
+                    <div class="field"><label>Idempotency</label><select class="select"><option>required</option><option>optional</option></select></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="section-panel" data-section-panel="query" data-scope="pol">
+              <div class="panel"><div class="panel-header"><h2>Managed query</h2><span class="chip ok">enabled</span></div>
+                <div class="panel-body"><div class="form-grid">
+                  <div class="field"><label>Default mode</label><select class="select"><option>deterministic-retrieval</option><option>provider-routed</option></select></div>
+                  <div class="field"><label>Minimum citations</label><input class="input" value="2"></div>
+                  <div class="field"><label>Require grounded context</label><select class="select"><option>true</option><option>false</option></select></div>
+                  <div class="field"><label>Allowed modes</label><input class="input" value="deterministic-retrieval, provider-routed"></div>
+                </div></div>
+              </div>
+            </div>
+
+            <div class="section-panel" data-section-panel="pii" data-scope="pol">
+              <div class="panel"><div class="panel-header"><h2>PII redaction</h2><span class="chip ok">default safe</span></div>
+                <div class="panel-body">
+                  <p>Active rules redact before telemetry, feedback, and cache-bypass decisions:</p>
+                  <div class="chip-row">
+                    <span class="chip">api-key</span><span class="chip">bearer-token</span><span class="chip">jwt</span><span class="chip">email</span><span class="chip">phone</span><span class="chip">ip-address</span><span class="chip">url-secret</span><span class="chip">payment-card</span><span class="chip">government-id</span>
+                  </div>
+                  <p class="hint" style="margin-top:12px">Queries matching any rule bypass the generated-answer cache.</p>
+                </div>
+              </div>
+            </div>
+
+            <div class="section-panel" data-section-panel="retention" data-scope="pol">
+              <div class="panel"><div class="panel-header"><h2>Retention &amp; cache</h2></div>
+                <div class="panel-body"><dl class="meta-list">
+                  <div><dt>Retrieval events</dt><dd>30 days</dd></div>
+                  <div><dt>Audit events</dt><dd>365 days</dd></div>
+                  <div><dt>Feedback</dt><dd>90 days</dd></div>
+                  <div><dt>Generated-answer cache</dt><dd>enabled · 3600s TTL cap</dd></div>
+                  <div><dt>Prompt/response capture</dt><dd>disabled (metadata-only available)</dd></div>
+                </dl></div>
+              </div>
+            </div>
+
+            <div class="section-panel" data-section-panel="ranking" data-scope="pol">
+              <div class="panel"><div class="panel-header"><h2>Retrieval ranking</h2></div>
+                <div class="panel-body"><div class="form-grid">
+                  <div class="field"><label>Agent-instruction weight</label><input class="input" value="1.4"></div>
+                  <div class="field"><label>Asset-summary weight</label><input class="input" value="1.0"></div>
+                  <div class="field"><label>Human-document weight</label><input class="input" value="0.8"></div>
+                  <div class="field"><label>Exact-phrase boost</label><input class="input" value="1.25"></div>
+                </div></div>
+              </div>
+            </div>
+
+            <div class="section-panel" data-section-panel="secrets" data-scope="pol">
+              <div class="panel"><div class="panel-header"><h2>Secret references</h2></div>
+                <div class="panel-body"><div class="form-grid">
+                  <div class="field"><label>Allowed prefixes</label><input class="input" value="AGENTIC_CMS_, OPENAI_, ANTHROPIC_, OPENROUTER_, ENTRA_, OIDC_"></div>
+                  <div class="field"><label>Allow unlisted</label><select class="select"><option>false</option><option>true</option></select></div>
+                </div><p class="hint" style="margin-top:10px">Provider and OIDC config may reference only env-var names matching this policy.</p></div>
+              </div>
+            </div>
+
+            <div class="section-panel" data-section-panel="evals" data-scope="pol">
+              <div class="panel"><div class="panel-header"><h2>Eval schedule</h2><span class="chip ok">enabled</span></div>
+                <div class="panel-body"><div class="form-grid">
+                  <div class="field"><label>Enabled</label><select class="select"><option>true</option><option>false</option></select></div>
+                  <div class="field"><label>Interval (min)</label><input class="input" value="1440"></div>
+                </div><p class="hint" style="margin-top:10px">Next run 2026-06-19 02:00 UTC · last pass rate 83% · floor 100%.</p></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel" style="position:sticky;bottom:14px;margin-top:14px;border-color:var(--brand-100)">
+          <div class="panel-body" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+            <span class="chip warn"><span class="signal"></span>Unsaved changes</span>
+            <span class="hint">Action execution · 2 fields differ from the saved policy.</span>
+            <span class="spacer" style="flex:1"></span>
+            <button class="btn">Revert to saved</button>
+            <button class="btn">Preview policy JSON</button>
+            <button class="btn primary">Save policy</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- ========================= TELEMETRY ========================== -->
+      <section class="view" data-view="telemetry">
+        <div class="review-note">
+          <span class="rn-tag">Operate · telemetry</span>
+          <p>Telemetry is scoped to observability — redacted retrieval/query events, provider-usage metadata, cache status, and retention state — with a time-window control. Redaction-applied is a first-class column. The eval run is summarized as a linked card rather than merged into the same table (it is governance, not telemetry).</p>
+          <p class="risk">Risk: "estimated cost" is metadata-only and can be misread as billed spend. Label it as an estimate and keep prompt/response capture disabled by default.</p>
+        </div>
+
+        <div class="page-header">
+          <div>
+            <p class="eyebrow">Operate · Telemetry</p>
+            <h1>Telemetry</h1>
+            <p class="lede">Redacted operational events and provider-usage metadata for <span class="mono">tenant_demo</span>. No unmitigated PII is stored.</p>
+          </div>
+          <div class="actions">
+            <div class="segmented"><button class="segment">24h</button><button class="segment active">7d</button><button class="segment">30d</button></div>
+            <button class="btn">Export CSV</button>
+          </div>
+        </div>
+
+        <div class="summary-strip" style="margin-bottom:16px">
+          <div class="summary-cell"><span class="summary-val">4,812</span><span class="summary-label">Retrieval events</span></div>
+          <div class="summary-cell"><span class="summary-val ok">100%</span><span class="summary-label">Redaction applied</span></div>
+          <div class="summary-cell"><span class="summary-val">311</span><span class="summary-label">Denied chunks</span></div>
+          <div class="summary-cell"><span class="summary-val">68%</span><span class="summary-label">Cache hit</span></div>
+          <div class="summary-cell"><span class="summary-val">$3.42</span><span class="summary-label">Est. cost (metadata)</span></div>
+        </div>
+
+        <div class="grid sidebar">
+          <div class="panel">
+            <div class="panel-header"><h2>Recent events</h2><span class="muted">queries redacted before storage</span></div>
+            <div class="panel-body flush"><div class="table-wrap"><table>
+              <thead><tr><th>Time</th><th>Event</th><th>Principal</th><th>Outcome</th><th>Redaction</th></tr></thead>
+              <tbody>
+                <tr><td class="mono">18:42</td><td>agent.query</td><td>reader-demo</td><td><span class="chip ok">success</span></td><td><span class="chip ok">applied</span></td></tr>
+                <tr><td class="mono">18:41</td><td>retrieval.search</td><td>svc-mcp-demo</td><td><span class="chip ok">success</span></td><td><span class="chip ok">applied</span></td></tr>
+                <tr><td class="mono">18:38</td><td>asset.publish</td><td>maintainer-demo</td><td><span class="chip ok">success</span></td><td class="muted">n/a</td></tr>
+                <tr><td class="mono">18:33</td><td>agent.query</td><td>reader-demo</td><td><span class="chip bad">denied</span></td><td><span class="chip ok">applied</span></td></tr>
+                <tr><td class="mono">18:30</td><td>auth.api_key.rotate</td><td>admin-demo</td><td><span class="chip ok">success</span></td><td class="muted">preview only</td></tr>
+              </tbody>
+            </table></div></div>
+          </div>
+          <aside class="stack">
+            <div class="panel">
+              <div class="panel-header"><h2>Last eval run</h2><button class="btn small" data-route="policies">Schedule</button></div>
+              <div class="panel-body"><dl class="meta-list">
+                <div><dt>Run ID</dt><dd class="mono">eval_20260618_0200</dd></div>
+                <div><dt>Mode</dt><dd>deterministic-retrieval</dd></div>
+                <div><dt>Cases</dt><dd>24 · pass rate 83%</dd></div>
+                <div><dt>Warnings</dt><dd><span class="chip warn">2 low citation counts</span></dd></div>
+              </dl></div>
+            </div>
+            <div class="panel">
+              <div class="panel-header"><h2>Provider usage</h2></div>
+              <div class="panel-body"><dl class="meta-list">
+                <div><dt>Generations</dt><dd>128 · openai 121 · openrouter 7</dd></div>
+                <div><dt>Capture</dt><dd>disabled (hashes only if metadata-only)</dd></div>
+              </dl></div>
+            </div>
+          </aside>
+        </div>
+      </section>
+
+      <!-- ========================= APPROVALS ========================== -->
+      <section class="view" data-view="approvals">
+        <div class="review-note">
+          <span class="rn-tag">Operate · approvals</span>
+          <p>A real queue + detail, replacing the live app's single inline request. Pending requests list action, requester, risk, and an expiry countdown; the detail shows scope, dry-run evidence in a console, the policy guardrail context (why this is allowed at all), and a decision block. Deny is staged with a required reason — no hardcoded default.</p>
+          <p class="risk">Risk: approving expired or near-expiry requests. Countdown is shown per item and in the decision block; the confirm should re-validate expiry server-side before committing.</p>
+        </div>
+
+        <div class="page-header">
+          <div>
+            <p class="eyebrow">Operate · Approvals</p>
+            <h1>Action requests</h1>
+            <p class="lede">Agent action requests with scope, risk, dry-run evidence, expiry, and audited decisions. Action execution is disabled by default; these exist only because each type is approval-gated.</p>
+          </div>
+          <div class="actions"><button class="btn">Show decided</button></div>
+        </div>
+
+        <div class="grid sidebar-left">
+          <div class="queue" data-queue>
+            <button class="queue-item active" data-request="r1">
+              <div class="qi-top"><strong>create-task-record</strong><span class="chip warn">42m</span></div>
+              <span class="hint">svc-agent-planner · side-effect-free</span>
+            </button>
+            <button class="queue-item" data-request="r2">
+              <div class="qi-top"><strong>create-incident-summary</strong><span class="chip warn">3h 10m</span></div>
+              <span class="hint">svc-agent-planner · writes summary record</span>
+            </button>
+          </div>
+
+          <div>
+            <div class="section-panel active" data-request-detail="r1">
+              <div class="panel">
+                <div class="panel-header"><h2>create-task-record</h2><span class="chip warn">expires in 42 min</span></div>
+                <div class="panel-body">
+                  <div class="grid two" style="margin-bottom:14px">
+                    <dl class="meta-list">
+                      <div><dt>Requested by</dt><dd>svc-agent-planner</dd></div>
+                      <div><dt>Risk</dt><dd><span class="chip ok">low · no external side effects</span></dd></div>
+                    </dl>
+                    <dl class="meta-list">
+                      <div><dt>Idempotency</dt><dd class="mono">idem_7f9a…c21</dd></div>
+                      <div><dt>Audit</dt><dd class="mono">aud_01JZ9B3K</dd></div>
+                    </dl>
+                  </div>
+                  <h3>Dry-run evidence</h3>
+                  <pre class="console">$ action dry-run create-task-record
+<span class="c-muted"># no external calls performed</span>
+would create task marker:
+  title:  Review provider fallback playbook
+  asset:  playbook.provider-fallback
+  surface: web
+<span class="c-ok">external side effects: none</span>
+<span class="c-ok">policy: approval-required satisfied</span></pre>
+                  <div class="note" style="margin-top:14px">Allowed only because <span class="mono">create-task-record</span> is side-effect-free and approval is required. Execution remains globally disabled by default.</div>
+                  <div class="staging" style="margin-top:14px">
+                    <div class="staging-head"><h2 style="margin:0">Decision</h2><span class="chip">audited</span></div>
+                    <div class="staging-body">
+                      <div class="field"><label class="req">Decision note (recorded in audit)</label><textarea class="textarea" style="min-height:56px" placeholder="Why approve or deny — required, not defaulted"></textarea></div>
+                      <div class="confirm-row">
+                        <button class="btn primary">Approve</button>
+                        <button class="btn danger">Deny</button>
+                        <button class="btn">Request changes</button>
+                        <span class="hint">Decision is rejected if the request expires before commit.</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="section-panel" data-request-detail="r2">
+              <div class="panel"><div class="panel-body"><div class="state"><span class="glyph">i</span><h3>create-incident-summary</h3><p>Select shows the same detail layout: scope, dry-run evidence, guardrail context, and a staged decision with a required note.</p></div></div></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ========================= EXPORTS ============================ -->
+      <section class="view" data-view="exports">
+        <div class="review-note">
+          <span class="rn-tag">Operate · exports</span>
+          <p>The leakage check is a <em>precondition</em>, not an afterthought: Generate is disabled until the restricted-leakage verifier passes. The builder shows the package rule (public-demo only), the validation results, the excluded-restricted count, and OKF projection metadata (okfVersion, source hashes, projection hash) so the package is provably permission-filtered.</p>
+          <p class="risk">Risk: gating Generate on validation can frustrate when a single asset is review-due. Distinguish blocking failures (leakage) from non-blocking warnings (review-due) — only leakage blocks.</p>
+        </div>
+
+        <div class="page-header">
+          <div>
+            <p class="eyebrow">Operate · Exports</p>
+            <h1>Export packages</h1>
+            <p class="lede">Permission-filtered connector packages for agents. Only active, approved, public-demo assets are exportable to public packages.</p>
+          </div>
+          <div class="actions"><button class="btn">Validate</button><button class="btn primary">Generate package</button></div>
+        </div>
+
+        <div class="grid sidebar">
+          <div class="panel">
+            <div class="panel-header"><h2>Package builder</h2><span class="chip ok"><span class="signal"></span>leakage check passed</span></div>
+            <div class="panel-body">
+              <div class="form-grid" style="margin-bottom:14px">
+                <div class="field"><label>Package name</label><input class="input" value="demo-agent-pack"></div>
+                <div class="field"><label>Audience</label><input class="input" value="public demo agents"></div>
+                <div class="field"><label>Allowed surfaces</label><input class="input" value="api, cli, mcp, export"></div>
+                <div class="field"><label>Sensitivity rule</label><input class="input" value="public-demo only"></div>
+              </div>
+              <h3>Projected contents</h3>
+              <pre class="code-block">{
+  "okfVersion": "0.1",
+  "package": "demo-agent-pack",
+  "assets": [
+    { "stableId": "policy.ai-acceptable-use",  "version": 9, "hash": "a1c4…" },
+    { "stableId": "guardrail.pii-redaction",   "version": 6, "hash": "7fd2…" },
+    { "stableId": "skill.pr-review-agent",     "version": 3, "hash": "b90e…" },
+    { "stableId": "template.agent-task-brief", "version": 2, "hash": "33ce…" }
+  ],
+  "excludedRestricted": 2,
+  "projectionHash": "okf_5d11c9…",
+  "citations": true
+}</pre>
+            </div>
+          </div>
+          <aside class="stack">
+            <div class="panel">
+              <div class="panel-header"><h2>Pre-generate checks</h2></div>
+              <div class="panel-body">
+                <div class="checklist">
+                  <div class="check done"><span class="box"></span><div><strong>Restricted leakage verifier</strong><p class="hint" style="margin:2px 0 0">2 restricted assets excluded · 0 leaked</p></div></div>
+                  <div class="check done"><span class="box"></span><div><strong>Metadata complete</strong><p class="hint" style="margin:2px 0 0">owner, status, sensitivity, review date present</p></div></div>
+                  <div class="check done"><span class="box"></span><div><strong>Surface consistency</strong><p class="hint" style="margin:2px 0 0">all items allow the export surface</p></div></div>
+                  <div class="check"><span class="box" style="border-color:var(--warn-600)"></span><div><strong>Review currency <span class="chip warn" style="margin-left:4px">warn</span></strong><p class="hint" style="margin:2px 0 0">guardrail.pii-redaction due in 12 days — non-blocking</p></div></div>
+                </div>
+              </div>
+            </div>
+            <div class="panel">
+              <div class="panel-header"><h2>Anonymous export rule</h2></div>
+              <div class="panel-body"><p class="hint" style="margin:0">Only assets with <span class="mono">public-demo</span> sensitivity, <span class="mono">active</span> lifecycle, and <span class="mono">approved</span> status are exportable to public packages.</p></div>
+            </div>
+          </aside>
+        </div>
+      </section>
+
+      <!-- ========================= STATE SYSTEM ======================= -->
+      <section class="view" data-view="states">
+        <div class="page-header">
+          <div>
+            <p class="eyebrow">Review · Shared pattern</p>
+            <h1>State system</h1>
+            <p class="lede">The live app has no consistent loading / empty / error / no-access treatment (async states are bare "No X loaded." strings). These four components are reused on every list, detail, and query surface.</p>
+          </div>
+        </div>
+
+        <div class="grid two">
+          <div class="panel">
+            <div class="panel-header"><h2>Loading — skeleton</h2><span class="chip">async fetch</span></div>
+            <div class="panel-body">
+              <div class="skeleton sk-row w-40"></div>
+              <div class="skeleton sk-row w-80"></div>
+              <div class="skeleton sk-row w-60"></div>
+              <div class="skeleton sk-row w-80"></div>
+              <p class="hint" style="margin-top:10px">Preserves layout height so the page does not jump when data arrives.</p>
+            </div>
+          </div>
+          <div class="panel">
+            <div class="panel-header"><h2>Empty — zero results</h2><span class="chip">no data</span></div>
+            <div class="panel-body">
+              <div class="state">
+                <span class="glyph">∅</span>
+                <h3>No assets match these filters</h3>
+                <p>Clear the type or sensitivity filter, or broaden the search term.</p>
+                <button class="btn small">Clear filters</button>
+              </div>
+            </div>
+          </div>
+          <div class="panel">
+            <div class="panel-header"><h2>Error — actionable</h2><span class="chip bad">failure</span></div>
+            <div class="panel-body">
+              <div class="state error">
+                <span class="glyph">!</span>
+                <h3>Couldn't load the review queue</h3>
+                <p>The API returned <span class="mono">503</span> · request <span class="mono">req_8f21c</span>. The worker may be restarting.</p>
+                <div class="chip-row" style="justify-content:center"><button class="btn small">Retry</button><button class="btn small">Copy request ID</button></div>
+              </div>
+            </div>
+          </div>
+          <div class="panel">
+            <div class="panel-header"><h2>No access — conservative</h2><span class="chip">disclosure-safe</span></div>
+            <div class="panel-body">
+              <div class="state">
+                <span class="glyph">LK</span>
+                <h3>This item is restricted or unavailable</h3>
+                <p>Your session can't read this asset. Sign in with an authorized account or request access. Metadata is intentionally withheld.</p>
+                <div class="chip-row" style="justify-content:center"><button class="btn small primary" data-route="login">Sign in</button><button class="btn small">Request access</button></div>
+              </div>
+              <div class="note" data-min-role="admin" style="margin-top:12px">
+                <strong>Admin disclosure (policy-gated):</strong> attempted <span class="mono">playbook.provider-fallback</span> · principal reader-demo · outcome <span class="chip bad" style="margin:0 4px">denied</span> · audit <span class="mono">aud_01JZ9AXD0</span>. Readers never see this block.
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ========================= RESPONSIVE ========================= -->
+      <section class="view" data-view="mobile">
+        <div class="page-header">
+          <div>
+            <p class="eyebrow">Review · Responsive</p>
+            <h1>Responsive considerations</h1>
+            <p class="lede">Operational density on a phone: the tree collapses behind a drawer, tables become stacked cards, the trust rail moves below the document, and destructive/decision actions get a sticky bottom bar. Text always stays inside its container — no viewport-scaled font sizes.</p>
+          </div>
+        </div>
+
+        <div class="device-row">
+          <div>
+            <p class="device-cap">Library — table → cards</p>
+            <div class="device"><div class="device-screen">
+              <div class="m-top"><button class="m-burger" data-m-burger aria-label="Open navigation"><span></span></button><span class="m-title">Library</span><span class="chip" style="margin-left:auto">94</span></div>
+              <div class="m-drawer" hidden style="padding:12px;border-bottom:1px solid var(--n-200);background:var(--n-25)">
+                <p class="nav-label">Read</p>
+                <button class="nav-link active" style="margin-bottom:2px"><span class="nav-icon">LB</span>Catalog</button>
+                <button class="nav-link"><span class="nav-icon">SR</span>Search</button>
+                <button class="nav-link"><span class="nav-icon">AR</span>Asset detail</button>
+              </div>
+              <div class="m-body">
+                <div class="summary-strip" style="font-size:12px">
+                  <div class="summary-cell" style="min-width:0;flex:1"><span class="summary-val" style="font-size:16px">94</span><span class="summary-label">Approved</span></div>
+                  <div class="summary-cell" style="min-width:0;flex:1"><span class="summary-val warn" style="font-size:16px">9</span><span class="summary-label">Due</span></div>
+                </div>
+                <div class="m-card">
+                  <div class="mc-top"><strong>PII Redaction Guardrail</strong><span class="sensitivity s-public" style="font-size:11px"><span class="dot"></span>public</span></div>
+                  <span class="stable-id">guardrail.pii-redaction</span>
+                  <div class="chip-row"><span class="chip ok">approved</span><span class="chip warn">due 12d</span><span class="chip">v6</span></div>
+                </div>
+                <div class="m-card">
+                  <div class="mc-top"><strong>AI Acceptable Use Policy</strong><span class="sensitivity s-public" style="font-size:11px"><span class="dot"></span>public</span></div>
+                  <span class="stable-id">policy.ai-acceptable-use</span>
+                  <div class="chip-row"><span class="chip ok">approved</span><span class="chip">v9</span></div>
+                </div>
+                <div class="m-card">
+                  <div class="mc-top"><strong>Incident Triage Playbook</strong><span class="sensitivity s-public" style="font-size:11px"><span class="dot"></span>public</span></div>
+                  <span class="stable-id">playbook.incident-triage</span>
+                  <div class="chip-row"><span class="chip warn">reviewing</span><span class="chip warn">overdue</span></div>
+                </div>
+              </div>
+            </div></div>
+          </div>
+
+          <div>
+            <p class="device-cap">Asset detail — rail below</p>
+            <div class="device"><div class="device-screen">
+              <div class="m-top"><button class="m-burger" data-m-burger aria-label="Open navigation"><span></span></button><span class="m-title">Guardrail</span></div>
+              <div class="m-drawer" hidden style="padding:12px;border-bottom:1px solid var(--n-200);background:var(--n-25)">
+                <button class="nav-link active"><span class="nav-icon">AR</span>Asset detail</button>
+                <button class="nav-link"><span class="nav-icon">VC</span>Versions</button>
+              </div>
+              <div class="m-body">
+                <div class="trust-banner" style="position:static;margin:0">
+                  <span class="chip ok">approved</span><span class="chip">v6</span><span class="chip warn">due 12d</span><span class="sensitivity s-public" style="font-size:11px"><span class="dot"></span>public-demo</span>
+                </div>
+                <div class="tabs"><button class="tab active">Human</button><button class="tab">Agent</button><button class="tab">Raw</button></div>
+                <div class="m-card" style="border:0;padding:0">
+                  <h2 style="font-size:18px;margin:4px 0 6px">PII Redaction Guardrail</h2>
+                  <p style="font-size:14px;line-height:1.6;color:var(--n-800)">Mask direct identifiers before support records enter model context. Preserve the facts needed for the task; use consistent placeholders.</p>
+                </div>
+                <div class="m-card">
+                  <h4>Trust metadata</h4>
+                  <div class="kv"><dt>Owner</dt><span>user_admin</span></div>
+                  <div class="kv"><dt>Version</dt><span>v6 · 7fd2c1</span></div>
+                  <div class="kv"><dt>Review</dt><span>2027-02-28</span></div>
+                </div>
+              </div>
+              <div class="m-bar"><button class="btn">Copy ID</button><button class="btn primary">Versions</button></div>
+            </div></div>
+          </div>
+
+          <div>
+            <p class="device-cap">Approval — sticky decision bar</p>
+            <div class="device"><div class="device-screen">
+              <div class="m-top"><button class="m-burger" data-m-burger aria-label="Open navigation"><span></span></button><span class="m-title">Approval</span><span class="chip warn" style="margin-left:auto">42m</span></div>
+              <div class="m-drawer" hidden style="padding:12px;border-bottom:1px solid var(--n-200);background:var(--n-25)">
+                <button class="nav-link active"><span class="nav-icon">AP</span>Approvals</button>
+              </div>
+              <div class="m-body">
+                <div class="m-card">
+                  <div class="mc-top"><strong>create-task-record</strong><span class="chip ok">low risk</span></div>
+                  <span class="hint">svc-agent-planner · side-effect-free</span>
+                </div>
+                <div class="m-card" style="padding:0;overflow:hidden">
+                  <div style="padding:8px 12px;border-bottom:1px solid var(--n-200);background:var(--n-25)"><strong style="font-size:13px">Dry-run evidence</strong></div>
+                  <pre class="console" style="min-height:0;border-radius:0;font-size:11px">would create task marker
+external side effects: <span class="c-ok">none</span></pre>
+                </div>
+                <div class="m-card">
+                  <h4>Decision note <span style="color:var(--bad-600)">*</span></h4>
+                  <textarea class="textarea" style="min-height:48px" placeholder="Required"></textarea>
+                </div>
+              </div>
+              <div class="m-bar"><button class="btn danger">Deny</button><button class="btn primary">Approve</button></div>
+            </div></div>
+          </div>
+        </div>
+      </section>
+
+    </main>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

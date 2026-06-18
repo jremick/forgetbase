@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState, type CSSProperties, type FormEvent, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import type {
   AccountLinkingMode,
   AgentActionExecutionPolicy,
@@ -17,6 +17,7 @@ import type {
   AuthLoginResponse,
   AuthOidcAuthorizeResponse,
   AuthOidcLoginResponse,
+  AuthPrincipal,
   AuthProviderConfig,
   ExternalAuthProvider,
   GroupMembership,
@@ -93,6 +94,118 @@ const actionTypes: AgentActionType[] = [
 ];
 
 const unsafeMethods = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+const navWidthStorageKey = "agentic-cms-web-nav-width";
+const densityStorageKey = "agentic-cms-web-density";
+type AuthState = "checking" | "authenticated" | "unauthenticated";
+type NavBadgeTone = "warn" | "bad" | "ok";
+type NavLeafConfig = {
+  route: string;
+  label: string;
+  icon?: string;
+  showIcon?: boolean;
+  count?: number | string;
+  badge?: {
+    label: number | string;
+    tone?: NavBadgeTone;
+  };
+};
+type NavSectionConfig = {
+  label: string;
+  folderLabel: string;
+  folderIcon: string;
+  folderRoute: string;
+  activeRoutes: string[];
+  count?: number | string;
+  leaves: NavLeafConfig[];
+};
+type AssetContentView = "human" | "instruction" | "version" | "raw";
+type ManagedQueryView = "answer" | "evidence" | "diagnostics";
+const pageRouteValues = [
+  "library",
+  "search",
+  "asset-read",
+  "review",
+  "versions",
+  "operations",
+  "access",
+  "providers",
+  "policies",
+  "telemetry",
+  "approvals",
+  "exports"
+] as const;
+const operationsRouteValues = [
+  "review",
+  "operations",
+  "access",
+  "providers",
+  "policies",
+  "telemetry",
+  "approvals",
+  "exports"
+] as const;
+const pageRoutes = new Set<string>(pageRouteValues);
+const operationsRoutes = new Set<string>(operationsRouteValues);
+const defaultOperationsPageCopy = {
+  eyebrow: "Admin control plane",
+  title: "Operations Dashboard",
+  lede: "Route into reviews, access, providers, policies, telemetry, approvals, and exports from a single control surface."
+};
+const operationsPageCopy: Record<string, { eyebrow: string; title: string; lede: string }> = {
+  review: {
+    eyebrow: "Governance work",
+    title: "Review Queue",
+    lede: "Triage assets that need approval, lifecycle review, or release attention."
+  },
+  operations: defaultOperationsPageCopy,
+  access: {
+    eyebrow: "Identity and access",
+    title: "Access Workspace",
+    lede: "Manage local users, service accounts, groups, keys, sessions, and service-account guardrails."
+  },
+  providers: {
+    eyebrow: "Provider operations",
+    title: "Provider Workspace",
+    lede: "Configure model providers, readiness checks, and external authentication providers."
+  },
+  policies: {
+    eyebrow: "Policy controls",
+    title: "Policy Workspace",
+    lede: "Tune managed query, ranking, retention, eval, action, secret, and PII controls."
+  },
+  telemetry: {
+    eyebrow: "Observability",
+    title: "Telemetry Workspace",
+    lede: "Inspect retrieval, audit, feedback, model generation, retention, cache, and eval signals."
+  },
+  approvals: {
+    eyebrow: "Action governance",
+    title: "Approvals Workspace",
+    lede: "Review dry-run defaults, approval requirements, action requests, and kill-switch posture."
+  },
+  exports: {
+    eyebrow: "Agent export",
+    title: "Exports Workspace",
+    lede: "Generate and inspect permission-aware AI export packages and denied-result counts."
+  }
+};
+
+function routePanelClass(currentPage: string, routes: string[], baseClass = "event-list"): string {
+  return `${baseClass} ${routes.includes(currentPage) ? "" : "is-hidden"}`;
+}
+
+function normalizePageRoute(route: string): string {
+  return pageRoutes.has(route) ? route : "library";
+}
+
+function readStoredNavWidth(): number {
+  if (typeof window === "undefined") {
+    return 292;
+  }
+
+  const stored = Number.parseInt(localStorage.getItem(navWidthStorageKey) ?? "", 10);
+  return Number.isFinite(stored) ? Math.min(420, Math.max(240, stored)) : 292;
+}
 
 function resolveDefaultApiUrl(): string {
   const configuredApiUrl = import.meta.env.VITE_AGENTIC_CMS_API_URL?.trim();
@@ -104,7 +217,7 @@ function resolveDefaultApiUrl(): string {
   if (
     typeof window !== "undefined" &&
     (window.location.hostname === "127.0.0.1" || window.location.hostname === "localhost") &&
-    window.location.port === "5175"
+    (window.location.port === "5173" || window.location.port === "5175")
   ) {
     return localSplitOriginDefaultApiUrl;
   }
@@ -148,6 +261,8 @@ export function App() {
   const [sessionCookieActive, setSessionCookieActive] = useState(
     () => localStorage.getItem(sessionCookieActiveStorageKey) === "true"
   );
+  const [authState, setAuthState] = useState<AuthState>("checking");
+  const [currentPrincipal, setCurrentPrincipal] = useState<AuthPrincipal | null>(null);
   const [loginTenantId, setLoginTenantId] = useState(() => localStorage.getItem("agentic-cms-login-tenant") ?? "tenant_demo");
   const [loginEmail, setLoginEmail] = useState(() => localStorage.getItem("agentic-cms-login-email") ?? "");
   const [loginPassword, setLoginPassword] = useState("");
@@ -155,6 +270,7 @@ export function App() {
   const [assets, setAssets] = useState<AssetRecord[]>([]);
   const [selectedStableId, setSelectedStableId] = useState<string>("");
   const [assetDetail, setAssetDetail] = useState<AssetDetail | null>(null);
+  const [assetContentView, setAssetContentView] = useState<AssetContentView>("human");
   const [selectedVersionNumber, setSelectedVersionNumber] = useState("");
   const [versionSnapshot, setVersionSnapshot] = useState<AssetVersionSnapshot | null>(null);
   const [reviewQueue, setReviewQueue] = useState<AssetReviewQueueResponse | null>(null);
@@ -169,6 +285,7 @@ export function App() {
   const [managedQueryModel, setManagedQueryModel] = useState("");
   const [managedQueryCacheEnabled, setManagedQueryCacheEnabled] = useState(true);
   const [managedQueryResponse, setManagedQueryResponse] = useState<ManagedQueryResponse | null>(null);
+  const [managedQueryView, setManagedQueryView] = useState<ManagedQueryView>("answer");
   const [exportPackage, setExportPackage] = useState<AiExportPackage | null>(null);
   const [telemetryEvents, setTelemetryEvents] = useState<RetrievalEvent[]>([]);
   const [telemetrySummary, setTelemetrySummary] = useState<TelemetryAnalyticsSummary | null>(null);
@@ -197,6 +314,9 @@ export function App() {
   const [actionPolicyMaxRequestsPerHour, setActionPolicyMaxRequestsPerHour] = useState("60");
   const [actionPolicyApprovalExpiresInMinutes, setActionPolicyApprovalExpiresInMinutes] = useState("1440");
   const [agentActions, setAgentActions] = useState<AgentActionRequest[]>([]);
+  const [actionDecisionReasons, setActionDecisionReasons] = useState<Record<string, string>>({});
+  const [pendingActionDecision, setPendingActionDecision] =
+    useState<{ actionId: string; decision: "approve" | "deny" } | null>(null);
   const [actionType, setActionType] = useState<AgentActionType>("create-task-record");
   const [actionTitle, setActionTitle] = useState("Review policy");
   const [actionDescription, setActionDescription] = useState("Create an internal action request for review.");
@@ -332,6 +452,14 @@ export function App() {
   const [health, setHealth] = useState<string>("checking");
   const [message, setMessage] = useState<string>("");
   const [error, setError] = useState<string>("");
+  const [currentPage, setCurrentPage] = useState(() =>
+    normalizePageRoute(typeof window === "undefined" ? "" : window.location.hash.replace("#", ""))
+  );
+  const [density, setDensity] = useState(() =>
+    typeof window === "undefined" ? "comfortable" : localStorage.getItem(densityStorageKey) || "comfortable"
+  );
+  const [navWidth, setNavWidth] = useState(readStoredNavWidth);
+  const [isResizingNav, setIsResizingNav] = useState(false);
 
   const selectedAsset = useMemo(
     () => assets.find((asset) => asset.stableId === selectedStableId) ?? assets[0],
@@ -346,6 +474,13 @@ export function App() {
   const selectedInstructionBody = versionSnapshot?.instructionObjects[0]?.body ?? "";
   const currentHumanBody = assetDetail?.humanDocuments[0]?.body ?? "";
   const selectedHumanBody = versionSnapshot?.humanDocuments[0]?.body ?? "";
+  const approvedAssets = assets.filter((asset) => asset.status === "approved").length;
+  const reviewDueAssets = assets.filter((asset) => asset.status !== "approved" || asset.lifecycleState !== "active").length;
+  const publicDemoAssets = assets.filter((asset) => asset.sensitivity === "public-demo").length;
+  const visibleOperationsPage = operationsRoutes.has(currentPage);
+  const isAuthenticated = authState === "authenticated";
+  const displayIdentity = currentPrincipal?.displayName || currentPrincipal?.email || "Guest";
+  const displayInitials = isAuthenticated ? initialsFor(displayIdentity) : "GU";
 
   useEffect(() => {
     localStorage.setItem(apiUrlStorageKey, apiUrl);
@@ -380,8 +515,48 @@ export function App() {
   }, [loginEmail]);
 
   useEffect(() => {
-    void refresh();
+    void initializeSession();
   }, []);
+
+  useEffect(() => {
+    const syncPageFromHash = () => {
+      setCurrentPage(normalizePageRoute(window.location.hash.replace("#", "")));
+    };
+
+    syncPageFromHash();
+    window.addEventListener("hashchange", syncPageFromHash);
+    return () => window.removeEventListener("hashchange", syncPageFromHash);
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem(navWidthStorageKey, String(navWidth));
+  }, [navWidth]);
+
+  useEffect(() => {
+    localStorage.setItem(densityStorageKey, density);
+  }, [density]);
+
+  useEffect(() => {
+    if (!isResizingNav) {
+      return undefined;
+    }
+
+    const handlePointerMove = (event: PointerEvent) => {
+      const nav = document.querySelector(".side-nav");
+      const navLeft = nav?.getBoundingClientRect().left ?? 0;
+      setNavWidth(Math.min(420, Math.max(240, Math.round(event.clientX - navLeft))));
+    };
+    const stopResize = () => setIsResizingNav(false);
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", stopResize);
+    window.addEventListener("pointercancel", stopResize);
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", stopResize);
+      window.removeEventListener("pointercancel", stopResize);
+    };
+  }, [isResizingNav]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -419,10 +594,10 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    if (selectedAsset) {
+    if (isAuthenticated && selectedAsset) {
       void loadAsset(selectedAsset.stableId);
     }
-  }, [selectedAsset?.stableId]);
+  }, [isAuthenticated, selectedAsset?.stableId]);
 
   useEffect(() => {
     if (!assetDetail) {
@@ -459,17 +634,77 @@ export function App() {
       }
     }
 
-    const response = await fetch(`${apiUrl.replace(/\/$/, "")}${path}`, {
-      ...init,
-      headers,
-      credentials: init.credentials ?? "include"
-    });
+    let response: Response;
+
+    try {
+      response = await fetch(`${apiUrl.replace(/\/$/, "")}${path}`, {
+        ...init,
+        headers,
+        credentials: init.credentials ?? "include"
+      });
+    } catch (fetchError) {
+      throw new Error(`API request failed for ${apiUrl}: ${fetchError instanceof Error ? fetchError.message : String(fetchError)}`);
+    }
 
     if (!response.ok) {
       throw new Error(`${response.status} ${await response.text()}`);
     }
 
+    const contentType = response.headers.get("content-type") ?? "";
+
+    if (!contentType.includes("application/json")) {
+      throw new Error(`Expected JSON from API at ${apiUrl}; received ${contentType || "unknown content type"}`);
+    }
+
     return response.json() as Promise<T>;
+  }
+
+  async function refreshHealth(authKey = apiKey) {
+    try {
+      const healthResponse = await request<{ status: string }>("/health", {}, authKey);
+      setHealth(healthResponse.status);
+    } catch {
+      setHealth("offline");
+    }
+  }
+
+  async function checkAuthenticatedSession(authKey = apiKey): Promise<AuthPrincipal | null> {
+    try {
+      const principal = await request<AuthPrincipal>("/auth/me", {}, authKey);
+      setCurrentPrincipal(principal);
+      setAuthState("authenticated");
+      setSessionCookieActive(!authKey);
+      return principal;
+    } catch (sessionError) {
+      const sessionErrorMessage = sessionError instanceof Error ? sessionError.message : String(sessionError);
+
+      setCurrentPrincipal(null);
+      setAuthState("unauthenticated");
+
+      if (!authKey || sessionErrorMessage.startsWith("401 ")) {
+        setSessionCookieActive(false);
+      }
+
+      if (authKey && sessionErrorMessage.startsWith("401 ")) {
+        setApiKey("");
+      } else if (!sessionErrorMessage.startsWith("401 ")) {
+        setError(sessionErrorMessage);
+      }
+
+      return null;
+    }
+  }
+
+  async function initializeSession() {
+    setAuthState("checking");
+    setError("");
+    await refreshHealth();
+
+    const principal = await checkAuthenticatedSession();
+
+    if (principal) {
+      await refresh();
+    }
   }
 
   async function login(event: FormEvent) {
@@ -488,6 +723,20 @@ export function App() {
         })
       }, "");
       setSessionCookieActive(true);
+      setAuthState("authenticated");
+      setCurrentPrincipal({
+        tenantId: response.user.tenantId,
+        principalType: "user",
+        principalId: response.user.id,
+        userId: response.user.id,
+        serviceAccountId: null,
+        apiKeyId: response.apiKey.id,
+        email: response.user.email,
+        displayName: response.user.displayName,
+        role: response.user.role,
+        scopes: response.apiKey.scopes,
+        groupIds: []
+      });
       setApiKey("");
       setLoginPassword("");
       setMessage(`Signed in as ${response.user.email}`);
@@ -500,6 +749,15 @@ export function App() {
   function clearAuthenticatedState() {
     setApiKey("");
     setSessionCookieActive(false);
+    setAuthState("unauthenticated");
+    setCurrentPrincipal(null);
+    setAssets([]);
+    setSelectedStableId("");
+    setAssetDetail(null);
+    setSelectedVersionNumber("");
+    setVersionSnapshot(null);
+    setReviewQueue(null);
+    setExportPackage(null);
     setTelemetryEvents([]);
     setTelemetrySummary(null);
     setTelemetryRetentionPolicy(null);
@@ -546,7 +804,7 @@ export function App() {
     }
 
     clearAuthenticatedState();
-    await refresh("");
+    await refreshHealth("");
     setError(logoutErrorMessage);
     setMessage(nextMessage);
   }
@@ -598,6 +856,20 @@ export function App() {
         })
       }, "");
       setSessionCookieActive(true);
+      setAuthState("authenticated");
+      setCurrentPrincipal({
+        tenantId: response.user.tenantId,
+        principalType: "user",
+        principalId: response.user.id,
+        userId: response.user.id,
+        serviceAccountId: null,
+        apiKeyId: response.apiKey.id,
+        email: response.user.email,
+        displayName: response.user.displayName,
+        role: response.user.role,
+        scopes: response.apiKey.scopes,
+        groupIds: []
+      });
       setApiKey("");
       setMessage(`Signed in as ${response.user.email}`);
       await refresh("");
@@ -610,6 +882,10 @@ export function App() {
     setError("");
 
     try {
+      const principal = await request<AuthPrincipal>("/auth/me", {}, authKey);
+      setCurrentPrincipal(principal);
+      setAuthState("authenticated");
+      setSessionCookieActive(!authKey);
       const healthResponse = await request<{ status: string }>("/health", {}, authKey);
       setHealth(healthResponse.status);
       const assetResponse = await request<{ assets: AssetRecord[] }>("/assets", {}, authKey);
@@ -625,8 +901,16 @@ export function App() {
 
       setMessage(`Loaded ${assetResponse.assets.length} assets`);
     } catch (loadError) {
-      setHealth("offline");
-      setError(loadError instanceof Error ? loadError.message : String(loadError));
+      const loadErrorMessage = loadError instanceof Error ? loadError.message : String(loadError);
+
+      if (loadErrorMessage.startsWith("401 ")) {
+        clearAuthenticatedState();
+        setHealth("ok");
+        setMessage("");
+      } else {
+        setHealth("offline");
+        setError(loadErrorMessage);
+      }
     }
   }
 
@@ -1083,18 +1367,31 @@ export function App() {
     }
   }
 
-  async function decideAgentAction(actionRequestId: string, decision: "approve" | "deny") {
+  async function decideAgentAction(actionRequestId: string, decision: "approve" | "deny", reason: string) {
     setError("");
+
+    const trimmedReason = reason.trim();
+
+    if (!trimmedReason) {
+      setError("Add an operator note before deciding an action.");
+      return;
+    }
 
     try {
       const action = await request<AgentActionRequest>(`/agent/actions/${encodeURIComponent(actionRequestId)}/decision`, {
         method: "POST",
         body: JSON.stringify({
           decision,
-          reason: decision === "approve" ? "Approved from web operations." : "Denied from web operations."
+          reason: trimmedReason
         })
       });
       setAgentActions((current) => current.map((item) => item.id === action.id ? action : item));
+      setActionDecisionReasons((current) => {
+        const next = { ...current };
+        delete next[actionRequestId];
+        return next;
+      });
+      setPendingActionDecision(null);
       setMessage(`Action ${decision} ${action.status}`);
     } catch (actionError) {
       setError(actionError instanceof Error ? actionError.message : String(actionError));
@@ -2053,21 +2350,175 @@ export function App() {
     }
   }
 
+  function navigatePage(route: string) {
+    const nextRoute = normalizePageRoute(route);
+    setCurrentPage(nextRoute);
+    window.location.hash = nextRoute;
+  }
+
+  function handleNavResizeKey(event: ReactKeyboardEvent<HTMLDivElement>) {
+    const step = event.shiftKey ? 32 : 16;
+
+    if (event.key === "ArrowLeft") {
+      event.preventDefault();
+      setNavWidth((current) => Math.max(240, current - step));
+    } else if (event.key === "ArrowRight") {
+      event.preventDefault();
+      setNavWidth((current) => Math.min(420, current + step));
+    } else if (event.key === "Home") {
+      event.preventDefault();
+      setNavWidth(240);
+    } else if (event.key === "End") {
+      event.preventDefault();
+      setNavWidth(420);
+    }
+  }
+
+  const appShellStyle = {
+    "--nav": `${navWidth}px`
+  } as CSSProperties;
+  const operationsPage = operationsPageCopy[currentPage] ?? defaultOperationsPageCopy;
+  const isOperationsLanding = currentPage === "operations";
+  const activeAssetContentView = currentPage === "versions" ? "version" : assetContentView;
+  const navSections: NavSectionConfig[] = [
+    {
+      label: "Read",
+      folderLabel: "Library",
+      folderIcon: "RD",
+      folderRoute: "library",
+      activeRoutes: ["library", "search", "asset-read"],
+      count: assets.length,
+      leaves: [
+        { route: "library", label: "Overview", count: approvedAssets },
+        { route: "search", label: "Search / query" },
+        { route: "asset-read", label: "Asset read", badge: assetDetail ? { label: "live", tone: "warn" } : undefined }
+      ]
+    },
+    {
+      label: "Work",
+      folderLabel: "Governance Work",
+      folderIcon: "WK",
+      folderRoute: "review",
+      activeRoutes: ["review", "versions"],
+      count: reviewDueAssets,
+      leaves: [
+        { route: "review", label: "Review queue", badge: reviewQueue ? { label: reviewQueue.assets.length, tone: "warn" } : undefined },
+        { route: "versions", label: "Version compare" }
+      ]
+    },
+    {
+      label: "Operate",
+      folderLabel: "Control Plane",
+      folderIcon: "OP",
+      folderRoute: "operations",
+      activeRoutes: [...operationsRouteValues],
+      count: 7,
+      leaves: [
+        { route: "operations", label: "Operations" },
+        { route: "access", label: "Access" },
+        { route: "providers", label: "Providers" },
+        { route: "policies", label: "Policies" },
+        { route: "telemetry", label: "Telemetry" },
+        { route: "approvals", label: "Approvals" },
+        { route: "exports", label: "Exports" }
+      ]
+    }
+  ];
+
   return (
-    <main className="app-shell">
+    <div
+      className={`app-shell ${isAuthenticated ? "" : "auth-shell"} ${isResizingNav ? "is-resizing-nav" : ""}`}
+      data-density={density}
+      style={appShellStyle}
+    >
+      <a className="skip-link" href="#main">Skip to content</a>
       <header className="topbar">
-        <div>
-          <p className="eyebrow">Agent-native instruction control plane</p>
-          <h1>Agentic CMS</h1>
+        <div className="brand">
+          <span className="mark">AC</span>
+          <span>Agentic CMS</span>
         </div>
-        <div className="status-strip">
-          <span className={`status ${health === "ok" ? "ok" : "bad"}`}>{health}</span>
-          <span>{assets.length} assets</span>
-          {searchResponse ? <span>{searchResponse.results.length} chunks</span> : null}
-        </div>
+        {isAuthenticated ? (
+          <div className="topbar-main">
+            <button className="command" type="button" onClick={() => navigatePage("search")}>
+              <span className="small-icon">/</span>
+              <span>Search assets, pages, commands</span>
+              <span className="kbd">Cmd K</span>
+            </button>
+            <div className="health"><span className={`health-dot ${health === "ok" ? "ok" : "bad"}`}></span><span>API {health}</span></div>
+            <button
+              className="density"
+              type="button"
+              onClick={() => setDensity((current) => current === "comfortable" ? "compact" : "comfortable")}
+            >
+              {density === "comfortable" ? "Comfortable" : "Compact"}
+            </button>
+            <div className="identity"><span className="avatar">{displayInitials}</span><span>{displayIdentity}</span></div>
+          </div>
+        ) : null}
       </header>
 
-      <section className="control-bar" aria-label="Connection">
+      {isAuthenticated ? (
+        <>
+      <nav className="side-nav tree-nav" aria-label="Main pages" id="page-nav">
+        {navSections.map((section) => (
+          <div className="nav-group" key={section.label}>
+            <p className="nav-label">{section.label}</p>
+            <div className="nav-tree">
+              <button
+                className={`nav-folder is-open ${section.activeRoutes.includes(currentPage) ? "is-active-ancestor" : ""}`}
+                type="button"
+                aria-expanded="true"
+                onClick={() => navigatePage(section.folderRoute)}
+              >
+                <span className="twisty">v</span>
+                <span className="folder-glyph">{section.folderIcon}</span>
+                <span className="nav-text">{section.folderLabel}</span>
+                {section.count === undefined ? null : <span className="nav-count">{section.count}</span>}
+              </button>
+              <div className="nav-branch">
+                {section.leaves.map((leaf) => {
+                  const hasIcon = Boolean(leaf.showIcon && leaf.icon);
+
+                  return (
+                    <button
+                      key={leaf.route}
+                      className={`nav-link nav-leaf ${hasIcon ? "has-icon" : "is-iconless"} ${currentPage === leaf.route ? "active" : ""}`}
+                      type="button"
+                      aria-current={currentPage === leaf.route ? "page" : undefined}
+                      onClick={() => navigatePage(leaf.route)}
+                    >
+                      {hasIcon ? <span className="nav-icon">{leaf.icon}</span> : null}
+                      <span className="nav-text">{leaf.label}</span>
+                      {leaf.count === undefined ? null : <span className="nav-count">{leaf.count}</span>}
+                      {leaf.badge ? <span className={`nav-badge ${leaf.badge.tone ?? ""}`}>{leaf.badge.label}</span> : null}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        ))}
+        <div
+          className="nav-resizer"
+          role="separator"
+          aria-label="Resize page navigation"
+          aria-orientation="vertical"
+          aria-controls="page-nav main"
+          aria-valuemin={240}
+          aria-valuemax={420}
+          aria-valuenow={navWidth}
+          tabIndex={0}
+          onKeyDown={handleNavResizeKey}
+          onPointerDown={(event) => {
+            event.preventDefault();
+            event.currentTarget.setPointerCapture(event.pointerId);
+            setIsResizingNav(true);
+          }}
+        ></div>
+      </nav>
+
+      <main className="main" id="main">
+        <section className="control-bar" aria-label="Connection">
         <form className="connection-grid" onSubmit={(event) => event.preventDefault()}>
           <label>
             API URL
@@ -2078,42 +2529,42 @@ export function App() {
             <input value={apiKey} onChange={(event) => setApiKey(event.target.value)} type="password" autoComplete="off" />
           </label>
           <button type="button" onClick={() => void refresh()}>Refresh</button>
-          <button type="button" onClick={() => void logout()} disabled={!apiKey && !sessionCookieActive}>Sign out</button>
+          <button type="button" onClick={() => void logout()}>Sign out</button>
         </form>
-        <form className="login-grid" onSubmit={(event) => void login(event)}>
-          <label>
-            Tenant
-            <input value={loginTenantId} onChange={(event) => setLoginTenantId(event.target.value)} autoComplete="organization" />
-          </label>
-          <label>
-            Email
-            <input value={loginEmail} onChange={(event) => setLoginEmail(event.target.value)} type="email" autoComplete="username" />
-          </label>
-          <label>
-            Password
-            <input value={loginPassword} onChange={(event) => setLoginPassword(event.target.value)} type="password" autoComplete="current-password" />
-          </label>
-          <button type="submit">Login</button>
-        </form>
-        <form className="login-grid" onSubmit={(event) => void startOidcLogin(event)}>
-          <label>
-            Provider
-            <select
-              value={oidcProvider}
-              onChange={(event) => setOidcProvider(event.target.value as ExternalAuthProvider)}
-            >
-              <option value="microsoft-entra">microsoft-entra</option>
-              <option value="oidc">oidc</option>
-            </select>
-          </label>
-          <button type="submit">SSO</button>
-        </form>
-      </section>
+        </section>
 
-      {message ? <p className="message">{message}</p> : null}
-      {error ? <p className="error">{error}</p> : null}
+        {message ? <p className="message">{message}</p> : null}
+        {error ? <p className="error">{error}</p> : null}
 
-      <section className="workspace">
+      <section className={`page ${["library", "asset-read", "versions"].includes(currentPage) ? "active" : ""}`} data-page="library">
+        <div className="page-header">
+          <div>
+            <p className="eyebrow">{currentPage === "versions" ? "Governance work" : "Reader library"}</p>
+            <h1>
+              {currentPage === "asset-read"
+                ? assetDetail?.asset.title ?? "Asset read"
+                : currentPage === "versions"
+                  ? "Version Compare"
+                  : "Governed Asset Library"}
+            </h1>
+            <p className="lede">
+              {currentPage === "versions"
+                ? "Inspect current and selected asset versions before restoring, publishing, or closing review work."
+                : "Browse governed policies, guardrails, skills, templates, SOPs, playbooks, and human documents with trust metadata visible at a glance."}
+            </p>
+          </div>
+          <div className="actions">
+            <button type="button" onClick={() => void refresh()}>Refresh</button>
+            <button type="button" onClick={() => void generateExport()}>Export</button>
+          </div>
+        </div>
+        <div className="grid four">
+          <div className="metric"><div className="metric-value">{assets.length}</div><div className="metric-label">Visible assets</div><div className="metric-note">Server-filtered for the current principal.</div></div>
+          <div className="metric"><div className="metric-value">{approvedAssets}</div><div className="metric-label">Approved current</div><div className="metric-note">Approved assets loaded in the browser.</div></div>
+          <div className="metric"><div className="metric-value">{reviewDueAssets}</div><div className="metric-label">Need governance</div><div className="metric-note">Draft, stale, reviewing, or non-active.</div></div>
+          <div className="metric"><div className="metric-value">{publicDemoAssets}</div><div className="metric-label">Public demo</div><div className="metric-note">Anonymous-safe when active and approved.</div></div>
+        </div>
+        <section className="workspace">
         <section className="asset-table" aria-labelledby="assets-title">
           <div className="section-heading">
             <h2 id="assets-title">Assets</h2>
@@ -2205,24 +2656,75 @@ export function App() {
                   <button type="button" onClick={() => void loadVersionSnapshot()}>Inspect</button>
                 </div>
               </div>
-              <div className="compare-grid">
-                <div className="content-block compare-block">
-                  <h3>Current instruction</h3>
-                  <pre>{currentInstructionBody || "No instruction object"}</pre>
-                </div>
-                <div className="content-block compare-block">
-                  <h3>{versionSnapshot ? `Selected v${versionSnapshot.version.versionNumber}` : "Selected version"}</h3>
-                  <pre>{versionSnapshot ? selectedInstructionBody || "No instruction object" : "No version inspected"}</pre>
-                </div>
-                <div className="content-block compare-block">
-                  <h3>Current human document</h3>
+              <div className="tab-bar" role="tablist" aria-label="Asset detail views">
+                {([
+                  ["human", "Human document"],
+                  ["instruction", "Agent instruction"],
+                  ["version", "Version compare"],
+                  ["raw", "Raw metadata"]
+                ] as const).map(([view, label]) => (
+                  <button
+                    key={view}
+                    type="button"
+                    className={activeAssetContentView === view ? "active" : ""}
+                    role="tab"
+                    aria-selected={activeAssetContentView === view}
+                    onClick={() => setAssetContentView(view)}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              {activeAssetContentView === "human" ? (
+                <div className="content-block asset-content-view" role="tabpanel">
+                  <div className="section-heading">
+                    <h3>Human document</h3>
+                    <span className="state-pill">{assetDetail.humanDocuments.length} document{assetDetail.humanDocuments.length === 1 ? "" : "s"}</span>
+                  </div>
                   <pre>{currentHumanBody || "No human document"}</pre>
                 </div>
-                <div className="content-block compare-block">
-                  <h3>{versionSnapshot ? `Selected v${versionSnapshot.version.versionNumber}` : "Selected version"}</h3>
-                  <pre>{versionSnapshot ? selectedHumanBody || "No human document" : "No version inspected"}</pre>
+              ) : null}
+              {activeAssetContentView === "instruction" ? (
+                <div className="content-block asset-content-view" role="tabpanel">
+                  <div className="section-heading">
+                    <h3>Agent instruction</h3>
+                    <span className="state-pill">{assetDetail.instructionObjects.length} object{assetDetail.instructionObjects.length === 1 ? "" : "s"}</span>
+                  </div>
+                  <pre>{currentInstructionBody || "No instruction object"}</pre>
                 </div>
-              </div>
+              ) : null}
+              {activeAssetContentView === "version" ? (
+                <div className="compare-grid" role="tabpanel">
+                  <div className="content-block compare-block">
+                    <h3>Current instruction</h3>
+                    <pre>{currentInstructionBody || "No instruction object"}</pre>
+                  </div>
+                  <div className="content-block compare-block">
+                    <h3>{versionSnapshot ? `Selected v${versionSnapshot.version.versionNumber}` : "Selected version"}</h3>
+                    <pre>{versionSnapshot ? selectedInstructionBody || "No instruction object" : "No version inspected"}</pre>
+                  </div>
+                  <div className="content-block compare-block">
+                    <h3>Current human document</h3>
+                    <pre>{currentHumanBody || "No human document"}</pre>
+                  </div>
+                  <div className="content-block compare-block">
+                    <h3>{versionSnapshot ? `Selected v${versionSnapshot.version.versionNumber}` : "Selected version"}</h3>
+                    <pre>{versionSnapshot ? selectedHumanBody || "No human document" : "No version inspected"}</pre>
+                  </div>
+                </div>
+              ) : null}
+              {activeAssetContentView === "raw" ? (
+                <div className="content-block asset-content-view" role="tabpanel">
+                  <h3>Raw metadata</h3>
+                  <pre>{JSON.stringify({
+                    asset: assetDetail.asset,
+                    currentVersion,
+                    selectedVersion: versionSnapshot?.version ?? null,
+                    instructionObjectCount: assetDetail.instructionObjects.length,
+                    humanDocumentCount: assetDetail.humanDocuments.length
+                  }, null, 2)}</pre>
+                </div>
+              ) : null}
             </>
           ) : (
             <p className="empty">No asset selected.</p>
@@ -2230,7 +2732,20 @@ export function App() {
         </section>
       </section>
 
-      <section className="lower-grid">
+      </section>
+
+      <section className={`page ${currentPage === "search" ? "active" : ""}`} data-page="search">
+        <div className="page-header">
+          <div>
+            <p className="eyebrow">Grounded retrieval</p>
+            <h1>Search and Managed Query</h1>
+            <p className="lede">Test deterministic retrieval and provider-routed answers with citations, cache status, cost metadata, and denied-result visibility.</p>
+          </div>
+          <div className="actions">
+            <button type="button" onClick={() => void runManagedQuery()}>Run managed query</button>
+          </div>
+        </div>
+        <section className="lower-grid search-layout">
         <section className="search-pane" aria-labelledby="search-title">
           <div className="section-heading">
             <h2 id="search-title">Search</h2>
@@ -2303,92 +2818,231 @@ export function App() {
               <button type="submit" disabled={!managedQueryText}>Run managed query</button>
             </form>
           </div>
+          <div className="tab-bar" role="tablist" aria-label="Managed query result views">
+            {([
+              ["answer", "Answer"],
+              ["evidence", "Evidence"],
+              ["diagnostics", "Diagnostics"]
+            ] as const).map(([view, label]) => (
+              <button
+                key={view}
+                type="button"
+                className={managedQueryView === view ? "active" : ""}
+                role="tab"
+                aria-selected={managedQueryView === view}
+                onClick={() => setManagedQueryView(view)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
           <div className="result-list">
             {managedQueryResponse ? (
               <>
-                <dl className="metadata-grid compact">
-                  <div><dt>Mode</dt><dd>{managedQueryResponse.mode}</dd></div>
+                <dl className="metadata-grid compact query-summary">
                   <div><dt>Generation</dt><dd>{managedQueryResponse.generation.status}</dd></div>
-                  <div><dt>Provider</dt><dd>{managedQueryResponse.generation.provider ?? "n/a"}</dd></div>
-                  <div><dt>Model</dt><dd>{managedQueryResponse.generation.model ?? "n/a"}</dd></div>
                   <div><dt>Citations</dt><dd>{managedQueryResponse.citations.length}</dd></div>
                   <div><dt>Denied</dt><dd>{managedQueryResponse.checks.deniedCount}</dd></div>
-                  <div><dt>Tokens</dt><dd>{formatMetric(managedQueryResponse.generation.usage.totalTokens)}</dd></div>
                   <div><dt>Cost</dt><dd>{formatCurrency(managedQueryResponse.generation.usage.estimatedCostUsd)}</dd></div>
-                  <div><dt>Cache</dt><dd>{managedQueryResponse.cache.status}</dd></div>
                 </dl>
-                <div className="content-block">
-                  <p>{managedQueryResponse.answer}</p>
-                </div>
-                {managedQueryResponse.generation.attempts.length ? (
-                  <p>
-                    Attempts {managedQueryResponse.generation.attempts
-                      .map((attempt) => `${attempt.provider}:${attempt.status}${attempt.reason ? `(${attempt.reason})` : ""}`)
-                      .join(" -> ")}
-                  </p>
-                ) : null}
-                {managedQueryResponse.cache.reason ? (
-                  <p>Cache {managedQueryResponse.cache.reason}</p>
-                ) : null}
-                {managedQueryResponse.warnings.length ? (
-                  <p>{managedQueryResponse.warnings.join("\n")}</p>
-                ) : null}
-                {managedQueryResponse.citations.map((citation) => (
-                  <article key={`${citation.assetId}:${citation.chunkId}`}>
-                    <div className="result-title">
-                      <strong>{citation.stableId}</strong>
-                      <span>{citation.sourceKind}</span>
+                {managedQueryView === "answer" ? (
+                  <div className="content-block answer-card" role="tabpanel">
+                    <div className="section-heading">
+                      <h3>Grounded answer</h3>
+                      <span className={`state-pill ${managedQueryResponse.checks.deniedCount ? "warn" : "ok"}`}>
+                        {managedQueryResponse.checks.deniedCount ? `${managedQueryResponse.checks.deniedCount} denied` : "all visible"}
+                      </span>
                     </div>
-                    <p>{citation.snippet}</p>
-                  </article>
-                ))}
+                    <p>{managedQueryResponse.answer}</p>
+                  </div>
+                ) : null}
+                {managedQueryView === "evidence" ? (
+                  <div className="evidence-list" role="tabpanel">
+                    {managedQueryResponse.citations.length ? managedQueryResponse.citations.map((citation) => (
+                      <article key={`${citation.assetId}:${citation.chunkId}`}>
+                        <div className="result-title">
+                          <strong>{citation.stableId}</strong>
+                          <span>{citation.sourceKind}</span>
+                        </div>
+                        <p>{citation.snippet}</p>
+                      </article>
+                    )) : <p className="empty">No citations returned.</p>}
+                  </div>
+                ) : null}
+                {managedQueryView === "diagnostics" ? (
+                  <div className="content-block diagnostics-card" role="tabpanel">
+                    <dl className="metadata-grid compact">
+                      <div><dt>Mode</dt><dd>{managedQueryResponse.mode}</dd></div>
+                      <div><dt>Provider</dt><dd>{managedQueryResponse.generation.provider ?? "n/a"}</dd></div>
+                      <div><dt>Model</dt><dd>{managedQueryResponse.generation.model ?? "n/a"}</dd></div>
+                      <div><dt>Tokens</dt><dd>{formatMetric(managedQueryResponse.generation.usage.totalTokens)}</dd></div>
+                      <div><dt>Cache</dt><dd>{managedQueryResponse.cache.status}</dd></div>
+                      <div><dt>Telemetry</dt><dd>{managedQueryResponse.telemetryEventId ?? "n/a"}</dd></div>
+                    </dl>
+                    {managedQueryResponse.generation.attempts.length ? (
+                      <p>
+                        <strong>Attempts</strong>{" "}
+                        {managedQueryResponse.generation.attempts
+                          .map((attempt) => `${attempt.provider}:${attempt.status}${attempt.reason ? `(${attempt.reason})` : ""}`)
+                          .join(" -> ")}
+                      </p>
+                    ) : null}
+                    {managedQueryResponse.cache.reason ? (
+                      <p><strong>Cache</strong> {managedQueryResponse.cache.reason}</p>
+                    ) : null}
+                    {managedQueryResponse.warnings.length ? (
+                      <p><strong>Warnings</strong> {managedQueryResponse.warnings.join("\n")}</p>
+                    ) : null}
+                  </div>
+                ) : null}
               </>
             ) : <p className="empty">No managed query run.</p>}
           </div>
         </section>
 
-        <section className="ops-pane" aria-labelledby="ops-title">
-          <div className="section-heading">
-            <h2 id="ops-title">Operations</h2>
-            <div className="button-row">
-              <button type="button" onClick={() => void loadTelemetrySummary()}>Summary</button>
+        </section>
+      </section>
+
+      <section className={`page ${visibleOperationsPage ? "active" : ""}`} data-page="operations">
+        <div className="page-header">
+          <div>
+            <p className="eyebrow">{operationsPage.eyebrow}</p>
+            <h1>{operationsPage.title}</h1>
+            <p className="lede">{operationsPage.lede}</p>
+          </div>
+          <div className="actions">
+            {currentPage === "exports" ? (
+              <button type="button" onClick={() => void generateExport()}>Generate export</button>
+            ) : null}
+            {currentPage === "review" ? (
               <button type="button" onClick={() => void loadReviewQueue()}>Review queue</button>
-              <button type="button" onClick={() => void loadTelemetryRetentionPolicy()}>Retention</button>
-              <button type="button" onClick={() => void loadManagedQueryCache()}>Cache</button>
-              <button type="button" onClick={() => void loadManagedQueryPolicy()}>Query policy</button>
-              <button type="button" onClick={() => void loadRetrievalRankingPolicy()}>Ranking policy</button>
-              <button type="button" onClick={() => void loadManagedQueryCachePolicy()}>Cache policy</button>
-              <button type="button" onClick={() => void loadManagedQueryRetentionPolicy()}>Query retention</button>
-              <button
-                type="button"
-                onClick={() => {
-                  void loadActionExecutionPolicy();
-                  void loadAgentActions();
-                }}
-              >
-                Actions
+            ) : null}
+            {currentPage === "telemetry" ? (
+              <button type="button" onClick={() => void loadTelemetrySummary()}>Load summary</button>
+            ) : null}
+          </div>
+        </div>
+        <section className="operations-grid">
+        <section className="ops-pane operations-shell" aria-labelledby="ops-title">
+          <div className={routePanelClass(currentPage, ["operations"], "operations-overview")}>
+            <div className="overview-copy">
+              <p className="eyebrow">Operational surface</p>
+              <h2 id={isOperationsLanding ? "ops-title" : undefined}>Control plane routes</h2>
+              <p>Each workspace keeps its own forms and load actions visible without carrying every admin panel into every route.</p>
+            </div>
+            <div className="summary-strip" aria-label="Control plane route summaries">
+              <button className="summary-link" type="button" onClick={() => navigatePage("review")}>
+                <span>Reviews</span>
+                <strong>{reviewQueue?.assets.length ?? reviewDueAssets}</strong>
+                <em>needs governance</em>
               </button>
-              <button type="button" onClick={() => void loadSecretReferencePolicy()}>Secrets</button>
-              <button type="button" onClick={() => void loadPiiRedactionPolicy()}>PII policy</button>
-              <button type="button" onClick={() => void loadTelemetry()}>Telemetry</button>
-              <button type="button" onClick={() => void loadAuditEvents()}>Audit</button>
-              <button type="button" onClick={() => void loadUsers()}>Users</button>
-              <button type="button" onClick={() => void loadServiceAccounts()}>Services</button>
-              <button type="button" onClick={() => void loadServiceAccountPolicy()}>Service policy</button>
-              <button type="button" onClick={() => void loadGroups()}>Groups</button>
-              <button type="button" onClick={() => void loadApiKeys()}>Keys</button>
-              <button type="button" onClick={() => void loadLoginSessions()}>Sessions</button>
-              <button type="button" onClick={() => void loadApiKeyRotationReport()}>Key rotation</button>
-              <button type="button" onClick={() => void loadFeedback()}>Feedback</button>
-              <button type="button" onClick={() => void runDemoEval()}>Eval</button>
-              <button type="button" onClick={() => void loadEvalRuns()}>Eval runs</button>
-              <button type="button" onClick={() => void loadEvalSummary()}>Eval summary</button>
-              <button type="button" onClick={() => void loadProviderConfigs()}>Providers</button>
-              <button type="button" onClick={() => void loadProviderHealth()}>Provider health</button>
-              <button type="button" onClick={() => void loadAuthProviderConfigs()}>Auth</button>
+              <button className="summary-link" type="button" onClick={() => navigatePage("access")}>
+                <span>Access</span>
+                <strong>{users.length + serviceAccounts.length}</strong>
+                <em>principals loaded</em>
+              </button>
+              <button className="summary-link" type="button" onClick={() => navigatePage("providers")}>
+                <span>Providers</span>
+                <strong>{providerConfigs.length + authProviderConfigs.length}</strong>
+                <em>configs loaded</em>
+              </button>
+              <button className="summary-link" type="button" onClick={() => navigatePage("policies")}>
+                <span>Policies</span>
+                <strong>{managedQueryPolicy || retrievalRankingPolicy ? "loaded" : "setup"}</strong>
+                <em>guardrails</em>
+              </button>
+              <button className="summary-link" type="button" onClick={() => navigatePage("telemetry")}>
+                <span>Telemetry</span>
+                <strong>{telemetrySummary?.retrieval.eventCount ?? telemetryEvents.length}</strong>
+                <em>retrieval events</em>
+              </button>
+              <button className="summary-link" type="button" onClick={() => navigatePage("approvals")}>
+                <span>Approvals</span>
+                <strong>{agentActions.length}</strong>
+                <em>action requests</em>
+              </button>
+              <button className="summary-link" type="button" onClick={() => navigatePage("exports")}>
+                <span>Exports</span>
+                <strong>{exportPackage?.assetCount ?? assets.length}</strong>
+                <em>asset package</em>
+              </button>
             </div>
           </div>
-          <div className="event-list">
+          {isOperationsLanding ? null : (
+          <div className="section-heading">
+            <h2 id="ops-title">Workspace actions</h2>
+            <div className="button-row">
+              {currentPage === "review" ? (
+                <button type="button" onClick={() => void loadReviewQueue()}>Review queue</button>
+              ) : null}
+              {currentPage === "telemetry" ? (
+                <>
+                  <button type="button" onClick={() => void loadTelemetrySummary()}>Summary</button>
+                  <button type="button" onClick={() => void loadTelemetryRetentionPolicy()}>Retention</button>
+                  <button type="button" onClick={() => void loadTelemetry()}>Telemetry</button>
+                  <button type="button" onClick={() => void loadAuditEvents()}>Audit</button>
+                  <button type="button" onClick={() => void loadFeedback()}>Feedback</button>
+                  <button type="button" onClick={() => void runDemoEval()}>Eval</button>
+                  <button type="button" onClick={() => void loadEvalRuns()}>Eval runs</button>
+                  <button type="button" onClick={() => void loadEvalSummary()}>Eval summary</button>
+                </>
+              ) : null}
+              {currentPage === "policies" ? (
+                <>
+                  <button type="button" onClick={() => void loadManagedQueryPolicy()}>Query policy</button>
+                  <button type="button" onClick={() => void loadRetrievalRankingPolicy()}>Ranking policy</button>
+                  <button type="button" onClick={() => void loadManagedQueryCache()}>Cache</button>
+                  <button type="button" onClick={() => void loadManagedQueryCachePolicy()}>Cache policy</button>
+                  <button type="button" onClick={() => void loadManagedQueryRetentionPolicy()}>Query retention</button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void loadActionExecutionPolicy();
+                      void loadAgentActions();
+                    }}
+                  >
+                    Actions
+                  </button>
+                  <button type="button" onClick={() => void loadSecretReferencePolicy()}>Secrets</button>
+                  <button type="button" onClick={() => void loadPiiRedactionPolicy()}>PII policy</button>
+                </>
+              ) : null}
+              {currentPage === "approvals" ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    void loadActionExecutionPolicy();
+                    void loadAgentActions();
+                  }}
+                >
+                  Actions
+                </button>
+              ) : null}
+              {currentPage === "access" ? (
+                <>
+                  <button type="button" onClick={() => void loadUsers()}>Users</button>
+                  <button type="button" onClick={() => void loadServiceAccounts()}>Services</button>
+                  <button type="button" onClick={() => void loadServiceAccountPolicy()}>Service policy</button>
+                  <button type="button" onClick={() => void loadGroups()}>Groups</button>
+                  <button type="button" onClick={() => void loadApiKeys()}>Keys</button>
+                  <button type="button" onClick={() => void loadLoginSessions()}>Sessions</button>
+                  <button type="button" onClick={() => void loadApiKeyRotationReport()}>Key rotation</button>
+                </>
+              ) : null}
+              {currentPage === "providers" ? (
+                <>
+                  <button type="button" onClick={() => void loadProviderConfigs()}>Providers</button>
+                  <button type="button" onClick={() => void loadProviderHealth()}>Provider health</button>
+                  <button type="button" onClick={() => void loadAuthProviderConfigs()}>Auth</button>
+                </>
+              ) : null}
+              {currentPage === "exports" ? (
+                <button type="button" onClick={() => void generateExport()}>Export</button>
+              ) : null}
+            </div>
+          </div>
+          )}
+          <div className={routePanelClass(currentPage, ["review"])}>
             <h3>Review queue</h3>
             {reviewQueue ? (
               <>
@@ -2420,7 +3074,7 @@ export function App() {
               </>
             ) : <p className="empty">No review queue loaded.</p>}
           </div>
-          <div className="event-list">
+          <div className={routePanelClass(currentPage, ["telemetry"])}>
             <h3>Telemetry summary</h3>
             {telemetrySummary ? (
               <>
@@ -2449,7 +3103,7 @@ export function App() {
               </>
             ) : <p className="empty">No summary loaded.</p>}
           </div>
-          <div className="event-list">
+          <div className={routePanelClass(currentPage, ["telemetry"])}>
             <h3>Telemetry retention</h3>
             <form className="ops-form" onSubmit={(event) => void saveTelemetryRetentionPolicy(event)}>
               <label>
@@ -2493,7 +3147,7 @@ export function App() {
               </p>
             ) : null}
           </div>
-          <div className="event-list">
+          <div className={routePanelClass(currentPage, ["policies"])}>
             <h3>Managed query policy</h3>
             <form className="ops-form" onSubmit={(event) => void saveManagedQueryPolicy(event)}>
               <label>
@@ -2543,7 +3197,7 @@ export function App() {
               </p>
             ) : <p className="empty">No managed query policy loaded.</p>}
           </div>
-          <div className="event-list">
+          <div className={routePanelClass(currentPage, ["policies"])}>
             <h3>Retrieval ranking policy</h3>
             <form className="ops-form" onSubmit={(event) => void saveRetrievalRankingPolicy(event)}>
               <label>
@@ -2587,7 +3241,7 @@ export function App() {
               </p>
             ) : <p className="empty">No retrieval ranking policy loaded.</p>}
           </div>
-          <div className="event-list">
+          <div className={routePanelClass(currentPage, ["policies", "telemetry"])}>
             <h3>Eval schedule</h3>
             <form className="ops-form" onSubmit={(event) => void saveEvalSchedulePolicy(event)}>
               <label>
@@ -2621,7 +3275,7 @@ export function App() {
               </p>
             ) : <p className="empty">No eval schedule policy loaded.</p>}
           </div>
-          <div className="event-list">
+          <div className={routePanelClass(currentPage, ["approvals", "policies"])}>
             <h3>Action execution</h3>
             <form className="ops-form" onSubmit={(event) => void saveActionExecutionPolicy(event)}>
               <label>
@@ -2738,26 +3392,72 @@ export function App() {
               <button type="submit" disabled={!actionTitle}>Request action</button>
               <button type="button" onClick={() => void loadAgentActions()}>Load requests</button>
             </form>
-            {agentActions.length ? agentActions.map((action) => (
-              <p key={action.id}>
-                <strong>{action.status}</strong> {action.actionType}: {action.title}
-                {action.reason ? ` (${action.reason})` : ""}
-                {action.idempotencyKey ? ` key ${action.idempotencyKey}` : ""}
-                {action.approvalExpiresAt ? ` expires ${new Date(action.approvalExpiresAt).toLocaleString()}` : ""}
-                {" "}
-                {new Date(action.createdAt).toLocaleString()}
-                {action.status === "approval-required" ? (
-                  <>
-                    {" "}
-                    <button type="button" onClick={() => void decideAgentAction(action.id, "approve")}>Approve</button>
-                    {" "}
-                    <button type="button" onClick={() => void decideAgentAction(action.id, "deny")}>Deny</button>
-                  </>
-                ) : null}
-              </p>
-            )) : <p className="empty">No action requests loaded.</p>}
+            {agentActions.length ? agentActions.map((action) => {
+              const decisionReason = actionDecisionReasons[action.id] ?? "";
+              const stagedDecision = pendingActionDecision?.actionId === action.id ? pendingActionDecision.decision : null;
+
+              return (
+                <article className="action-card" key={action.id}>
+                  <div className="result-title">
+                    <strong>{action.actionType}: {action.title}</strong>
+                    <span>{action.status}</span>
+                  </div>
+                  <p>
+                    {action.reason ? `${action.reason} ` : ""}
+                    {action.idempotencyKey ? `key ${action.idempotencyKey} ` : ""}
+                    {action.approvalExpiresAt ? `expires ${new Date(action.approvalExpiresAt).toLocaleString()} ` : ""}
+                    created {new Date(action.createdAt).toLocaleString()}
+                  </p>
+                  {action.status === "approval-required" ? (
+                    <div className="decision-panel">
+                      <label>
+                        Operator note
+                        <textarea
+                          value={decisionReason}
+                          onChange={(event) => {
+                            setActionDecisionReasons((current) => ({
+                              ...current,
+                              [action.id]: event.target.value
+                            }));
+                            setPendingActionDecision((current) =>
+                              current?.actionId === action.id ? null : current
+                            );
+                          }}
+                          placeholder="Describe why this action is safe to approve or must be denied."
+                        />
+                      </label>
+                      <div className="button-row">
+                        <button
+                          type="button"
+                          onClick={() => setPendingActionDecision({ actionId: action.id, decision: "approve" })}
+                          disabled={!decisionReason.trim()}
+                        >
+                          Stage approve
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setPendingActionDecision({ actionId: action.id, decision: "deny" })}
+                          disabled={!decisionReason.trim()}
+                        >
+                          Stage deny
+                        </button>
+                        {stagedDecision ? (
+                          <button
+                            type="button"
+                            className={stagedDecision === "deny" ? "danger" : "primary"}
+                            onClick={() => void decideAgentAction(action.id, stagedDecision, decisionReason)}
+                          >
+                            Confirm {stagedDecision}
+                          </button>
+                        ) : null}
+                      </div>
+                    </div>
+                  ) : null}
+                </article>
+              );
+            }) : <p className="empty">No action requests loaded.</p>}
           </div>
-          <div className="event-list">
+          <div className={routePanelClass(currentPage, ["policies", "telemetry"])}>
             <h3>Managed query cache</h3>
             <form className="ops-form" onSubmit={(event) => void saveManagedQueryCachePolicy(event)}>
               <label>
@@ -2807,7 +3507,7 @@ export function App() {
               </p>
             )) : <p className="empty">No cache entries loaded.</p>}
           </div>
-          <div className="event-list">
+          <div className={routePanelClass(currentPage, ["policies"])}>
             <h3>Managed query retention</h3>
             <form className="ops-form" onSubmit={(event) => void saveManagedQueryRetentionPolicy(event)}>
               <label>
@@ -2852,7 +3552,7 @@ export function App() {
               </p>
             ) : <p className="empty">No managed query retention policy loaded.</p>}
           </div>
-          <div className="event-list">
+          <div className={routePanelClass(currentPage, ["policies"])}>
             <h3>Secret references</h3>
             <form className="ops-form" onSubmit={(event) => void saveSecretReferencePolicy(event)}>
               <label>
@@ -2892,7 +3592,7 @@ export function App() {
               </p>
             ) : <p className="empty">No secret reference policy loaded.</p>}
           </div>
-          <div className="event-list">
+          <div className={routePanelClass(currentPage, ["policies"])}>
             <h3>PII redaction</h3>
             <form className="ops-form" onSubmit={(event) => void savePiiRedactionPolicy(event)}>
               <label>
@@ -2924,7 +3624,7 @@ export function App() {
               </p>
             ) : <p className="empty">No PII redaction policy loaded.</p>}
           </div>
-          <div className="export-summary">
+          <div className={routePanelClass(currentPage, ["exports"], "export-summary")}>
             <h3>Export package</h3>
             {exportPackage ? (
               <dl className="metadata-grid compact">
@@ -2937,7 +3637,7 @@ export function App() {
               <p className="empty">No export generated.</p>
             )}
           </div>
-          <div className="event-list">
+          <div className={routePanelClass(currentPage, ["telemetry"])}>
             <h3>Retrieval events</h3>
             {telemetryEvents.length ? telemetryEvents.map((event) => (
               <p key={event.id}>
@@ -2945,7 +3645,7 @@ export function App() {
               </p>
             )) : <p className="empty">No telemetry loaded.</p>}
           </div>
-          <div className="event-list">
+          <div className={routePanelClass(currentPage, ["telemetry"])}>
             <h3>Audit events</h3>
             {auditEvents.length ? auditEvents.map((event) => (
               <p key={event.id}>
@@ -2953,7 +3653,7 @@ export function App() {
               </p>
             )) : <p className="empty">No audit events loaded.</p>}
           </div>
-          <div className="event-list">
+          <div className={routePanelClass(currentPage, ["access"])}>
             <h3>Users</h3>
             <form className="ops-form" onSubmit={(event) => void createUser(event)}>
               <label>
@@ -3048,7 +3748,7 @@ export function App() {
               </p>
             )) : <p className="empty">No users loaded.</p>}
           </div>
-          <div className="event-list">
+          <div className={routePanelClass(currentPage, ["access"])}>
             <h3>Service policy</h3>
             <form className="ops-form" onSubmit={(event) => void updateServiceAccountPolicy(event)}>
               <label>
@@ -3080,7 +3780,7 @@ export function App() {
               </p>
             ) : <p className="empty">No service policy loaded.</p>}
           </div>
-          <div className="event-list">
+          <div className={routePanelClass(currentPage, ["access"])}>
             <h3>Service accounts</h3>
             <form className="ops-form" onSubmit={(event) => void createServiceAccount(event)}>
               <label>
@@ -3189,7 +3889,7 @@ export function App() {
               </p>
             )) : <p className="empty">No service accounts loaded.</p>}
           </div>
-          <div className="event-list">
+          <div className={routePanelClass(currentPage, ["access"])}>
             <h3>Groups</h3>
             <form className="ops-form" onSubmit={(event) => void createGroup(event)}>
               <label>
@@ -3245,7 +3945,7 @@ export function App() {
               </p>
             )) : <p className="empty">No members loaded.</p>}
           </div>
-          <div className="event-list">
+          <div className={routePanelClass(currentPage, ["access"])}>
             <h3>API keys</h3>
             <form className="ops-form" onSubmit={(event) => void createApiKey(event)}>
               <label>
@@ -3344,7 +4044,7 @@ export function App() {
               </p>
             )) : <p className="empty">No API keys loaded.</p>}
           </div>
-          <div className="event-list">
+          <div className={routePanelClass(currentPage, ["access"])}>
             <h3>Login sessions</h3>
             <form className="ops-form" onSubmit={(event) => event.preventDefault()}>
               <label>
@@ -3367,7 +4067,7 @@ export function App() {
               </p>
             )) : <p className="empty">No login sessions loaded.</p>}
           </div>
-          <div className="event-list">
+          <div className={routePanelClass(currentPage, ["telemetry"])}>
             <h3>Managed query feedback</h3>
             <form className="ops-form" onSubmit={(event) => void submitFeedback(event)}>
               <label>
@@ -3408,7 +4108,7 @@ export function App() {
               </p>
             )) : <p className="empty">No feedback loaded.</p>}
           </div>
-          <div className="event-list">
+          <div className={routePanelClass(currentPage, ["telemetry"])}>
             <h3>Demo eval report</h3>
             {evalReport ? (
               <>
@@ -3465,7 +4165,7 @@ export function App() {
               <p className="empty">No eval history loaded.</p>
             )}
           </div>
-          <div className="event-list">
+          <div className={routePanelClass(currentPage, ["providers"])}>
             <h3>Provider config</h3>
             <form className="provider-form" onSubmit={(event) => void saveProviderConfig(event)}>
               <label>
@@ -3684,7 +4384,7 @@ export function App() {
               </>
             ) : null}
           </div>
-          <div className="event-list">
+          <div className={routePanelClass(currentPage, ["providers"])}>
             <h3>Auth provider config</h3>
             <form className="provider-form" onSubmit={(event) => void saveAuthProviderConfig(event)}>
               <label>
@@ -3868,7 +4568,63 @@ export function App() {
           </div>
         </section>
       </section>
-    </main>
+      </section>
+      </main>
+        </>
+      ) : (
+        <main className="auth-main" id="main">
+          <section className="login-panel" aria-labelledby="login-title">
+            <div className="login-header">
+              <span className="mark login-mark">AC</span>
+              <h1 id="login-title">Sign in to Agentic CMS</h1>
+              <p className="lede">Private prototype access</p>
+            </div>
+            <form className="auth-settings-form" onSubmit={(event) => {
+              event.preventDefault();
+              void refresh();
+            }}>
+              <label>
+                API URL
+                <input value={apiUrl} onChange={(event) => setApiUrl(event.target.value)} autoComplete="url" />
+              </label>
+              <label>
+                API key
+                <input value={apiKey} onChange={(event) => setApiKey(event.target.value)} type="password" autoComplete="off" />
+              </label>
+              <button type="submit" disabled={!apiKey.trim() || authState === "checking"}>Use API key</button>
+            </form>
+            <form className="classic-login-form" onSubmit={(event) => void login(event)}>
+              <label>
+                Tenant ID
+                <input value={loginTenantId} onChange={(event) => setLoginTenantId(event.target.value)} autoComplete="organization" />
+              </label>
+              <label>
+                Email
+                <input value={loginEmail} onChange={(event) => setLoginEmail(event.target.value)} type="email" autoComplete="username" />
+              </label>
+              <label>
+                Password
+                <input value={loginPassword} onChange={(event) => setLoginPassword(event.target.value)} type="password" autoComplete="current-password" />
+              </label>
+              <button type="submit" disabled={authState === "checking"}>Sign in</button>
+            </form>
+            <form className="oidc-login-form" onSubmit={(event) => void startOidcLogin(event)}>
+              <label>
+                SSO provider
+                <select value={oidcProvider} onChange={(event) => setOidcProvider(event.target.value as ExternalAuthProvider)}>
+                  <option value="microsoft-entra">microsoft-entra</option>
+                  <option value="oidc">oidc</option>
+                </select>
+              </label>
+              <button type="submit" disabled={!loginTenantId || authState === "checking"}>Continue with SSO</button>
+            </form>
+            {authState === "checking" ? <p className="message">Checking session</p> : null}
+            {message ? <p className="message">{message}</p> : null}
+            {error ? <p className="error">{error}</p> : null}
+          </section>
+        </main>
+      )}
+    </div>
   );
 }
 
@@ -3908,6 +4664,18 @@ function formatCounts(counts: Array<{ key: string; count: number }>): string {
 
 function formatList(values: string[]): string {
   return values.length ? values.join(", ") : "none";
+}
+
+function initialsFor(value: string): string {
+  const initials = value
+    .split(/[\s@._-]+/)
+    .map((part) => part.trim()[0])
+    .filter(Boolean)
+    .slice(0, 2)
+    .join("")
+    .toUpperCase();
+
+  return initials || "AC";
 }
 
 function formatMetric(value: number | null, suffix = ""): string {
