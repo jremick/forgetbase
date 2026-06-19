@@ -18,6 +18,7 @@ Migrate ForgetBase web UI to a shadcn/ui-based interface while preserving only t
 | Public/auth entry migration | `019edf76-6fd4-7e23-b8ee-833b21baebb6` | Complete | Unauthenticated render branch in `apps/web/src/App.tsx`; public-entry/auth-dialog CSS |
 | App/domain composition components | `019edf76-ba84-7361-b191-7e76a63c38f2` | Complete | New files under `apps/web/src/components/app/**` and `apps/web/src/components/domain/**` |
 | Route migration inventory | manager | Complete | `work/shadcn-migration/route-migration-inventory.md` |
+| Wave 3 worker goals | manager | Prepared | `work/shadcn-migration/worker-goals-wave3.md` |
 | Authenticated shell/nav/command | `019edf8c-83f1-7cf0-8b13-0a53f9d115bf` | Running | Authenticated topbar, nav, command dialog, connection panel, global shell alerts |
 
 ## Replaced / Closed Threads
