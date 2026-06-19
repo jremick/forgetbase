@@ -3082,7 +3082,7 @@ export function App() {
                         </>
                       )}
                     >
-                      <div className="grid gap-4 md:grid-cols-[minmax(160px,0.5fr)_minmax(150px,0.4fr)_minmax(220px,1fr)_auto]">
+                      <div className="grid gap-4 sm:grid-cols-2">
                         <FormField label="Review date" htmlFor="publish-review-due-at">
                           <Input id="publish-review-due-at" value={publishReviewDueAt} onChange={(event) => setPublishReviewDueAt(event.target.value)} />
                         </FormField>
@@ -3109,7 +3109,7 @@ export function App() {
                         <FormField label="Change note" htmlFor="workflow-note">
                           <Input id="workflow-note" value={workflowNote} onChange={(event) => setWorkflowNote(event.target.value)} />
                         </FormField>
-                        <div className="flex items-end">
+                        <div className="flex items-end sm:col-span-2">
                           <Button type="button" onClick={() => void loadVersionSnapshot()}>Inspect</Button>
                         </div>
                       </div>

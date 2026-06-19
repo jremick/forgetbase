@@ -1,6 +1,6 @@
 # Shadcn Migration Thread Dispatch Index
 
-Status: active
+Status: local QA passed; push/deploy in progress
 Date: 2026-06-19
 Manager branch: `codex/shadcn-ui-migration`
 
@@ -58,6 +58,7 @@ Migrate ForgetBase web UI to a shadcn/ui-based interface while preserving only t
 - 2026-06-19: Read/Search route cluster migrated to shadcn-style composition with `MetricCard`, `DataTableShell`, `Toolbar`, `FormField`, `Input`, `Select`, `Checkbox`, `Table`, `Tabs`, `SectionCard`, `DefinitionGrid`, `TrustStateSummary`, `StatusAlert`, and `EmptyState`. Verification passed: web typecheck, web test including `asset-ui.test.ts`, web build, `git diff --check`, and owned-section grep found no raw form controls, raw table markup, `.metric`, `.asset-table`, `.table-scroll`, `.detail-pane`, `.workflow-panel`, `.content-block`, `.tab-bar`, `.metadata-grid`, `.state-pill`, or `.stable-id-chip` in the Read/Search block.
 - 2026-06-19: Operate landing/actions, review queue, telemetry summary, and dense admin forms migrated off raw App-level controls and old route-layout selectors. Verification passed: web typecheck, web test, web build, `git diff --check`, no raw `<button>`, `<input>`, `<select>`, `<textarea>`, or `<table>` tags in `App.tsx`, and no old route selectors (`.metric`, `.workflow-panel`, `.content-block`, `.ops-pane`, `.detail-pane`, `.tab-bar`, `.library-filter-bar`, `.metadata-grid`, `.table-scroll`, `.asset-table`, `.export-summary`, `.operations-overview`, `.summary-link`, `.state-pill`, `.stable-id-chip`, `.ops-form`, `.provider-form`, `.button-row`, `.wide-field`) in `App.tsx` or `styles.css`.
 - Implementation note: dense admin native select handlers use `components/ui/native-select.tsx`, a shadcn-token-styled compatibility wrapper, to avoid changing API-facing form semantics in the same migration.
+- 2026-06-19: Final local rendered QA passed against `http://127.0.0.1:5175/`: desktop 1346x900 and mobile 390x844 route checks covered `#library`, `#search`, `#asset-read`, `#review`, `#versions`, `#distribute`, `#exports`, `#operations`, `#access`, `#providers`, `#policies`, `#telemetry`, and `#approvals` with zero page-level horizontal overflow and zero browser warnings/errors. The unauthenticated home page has no inline login form, and the login dialog opens with only blank username/email and password inputs.
 
 ## Manager-Owned Decisions
 

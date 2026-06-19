@@ -6,14 +6,14 @@ function Card({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
       data-slot="card"
-      className={cn("flex flex-col rounded-lg border border-border bg-card text-card-foreground shadow-xs", className)}
+      className={cn("flex min-w-0 flex-col rounded-lg border border-border bg-card text-card-foreground shadow-xs", className)}
       {...props}
     />
   );
 }
 
 function CardHeader({ className, ...props }: React.ComponentProps<"div">) {
-  return <div data-slot="card-header" className={cn("grid gap-1.5 p-4", className)} {...props} />;
+  return <div data-slot="card-header" className={cn("grid min-w-0 gap-1.5 p-4", className)} {...props} />;
 }
 
 function CardTitle({ className, ...props }: React.ComponentProps<"div">) {
@@ -29,7 +29,7 @@ function CardAction({ className, ...props }: React.ComponentProps<"div">) {
 }
 
 function CardContent({ className, ...props }: React.ComponentProps<"div">) {
-  return <div data-slot="card-content" className={cn("p-4 pt-0", className)} {...props} />;
+  return <div data-slot="card-content" className={cn("min-w-0 p-4 pt-0", className)} {...props} />;
 }
 
 function CardFooter({ className, ...props }: React.ComponentProps<"div">) {
