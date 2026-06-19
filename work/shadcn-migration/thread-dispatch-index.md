@@ -17,6 +17,8 @@ Migrate ForgetBase web UI to a shadcn/ui-based interface while preserving only t
 | Shadcn foundation components | `019edf6a-c66a-7e72-ac4e-908d2397dab4` | Complete | `components.json`, `apps/web/package.json`, `pnpm-lock.yaml`, `apps/web/src/components/ui/**`, token-only CSS |
 | Public/auth entry migration | `019edf76-6fd4-7e23-b8ee-833b21baebb6` | Complete | Unauthenticated render branch in `apps/web/src/App.tsx`; public-entry/auth-dialog CSS |
 | App/domain composition components | `019edf76-ba84-7361-b191-7e76a63c38f2` | Complete | New files under `apps/web/src/components/app/**` and `apps/web/src/components/domain/**` |
+| Route migration inventory | manager | Complete | `work/shadcn-migration/route-migration-inventory.md` |
+| Authenticated shell/nav/command | `019edf8c-83f1-7cf0-8b13-0a53f9d115bf` | Running | Authenticated topbar, nav, command dialog, connection panel, global shell alerts |
 
 ## Replaced / Closed Threads
 
@@ -31,7 +33,8 @@ Migrate ForgetBase web UI to a shadcn/ui-based interface while preserving only t
 3. Public/auth entry can migrate before authenticated shell as long as it only touches the unauthenticated branch.
 4. Authenticated shell/navigation should land before broad route conversion.
 5. Shared form/table/card/tabs compositions should land before Read/Work/Distribute/Operate route clusters.
-6. Final CSS cleanup must wait until all route clusters stop using the bespoke selectors.
+6. Route workers should use `work/shadcn-migration/route-migration-inventory.md` for ownership and stop conditions.
+7. Final CSS cleanup must wait until all route clusters stop using the bespoke selectors.
 
 ## Integration Checkpoints
 
@@ -40,6 +43,7 @@ Migrate ForgetBase web UI to a shadcn/ui-based interface while preserving only t
 - 2026-06-19: Browser verification passed against `http://127.0.0.1:4173/`: initial public page showed no username/email, password, API URL, API key, tenant ID, or SSO provider controls; login dialog showed only blank username/email and password fields; desktop and 390px mobile had no horizontal overflow; browser console had zero warnings/errors.
 - Screenshot artifacts: `work/shadcn-migration/public-login-desktop.png`, `work/shadcn-migration/public-login-mobile.png`.
 - 2026-06-19: `Button` and `Badge` primitives migrated off the legacy `.ui-*` CSS classes and now expose shadcn-style `data-slot` markers plus Tailwind/CVA variants. Verification passed: web typecheck, web tests, web build, and desktop/mobile browser assertions for public login blank values, removed auth controls, zero console warnings/errors, and no horizontal overflow.
+- 2026-06-19: Added route/shell primitives for upcoming authenticated migration: `Command`, `AlertDialog`, `ToggleGroup`, `Collapsible`, and updated `Table`. Verification passed: web typecheck and web build.
 
 ## Manager-Owned Decisions
 
