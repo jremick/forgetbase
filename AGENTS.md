@@ -62,6 +62,7 @@ Before claiming a milestone is done, provide evidence for the relevant checks:
 - `docs/TECHNICAL_SPEC.md`: buildable technical specification.
 - `docs/DECISIONS.md`: current decisions, tradeoffs, and review triggers.
 - `docs/MVP_SCOPE.md`: minimum useful release and acceptance checks.
+- `docs/BETA_PRIVATE_CONTRACT.md`: private beta frozen machine-consumer surface and preview boundaries.
 - `docs/SECURITY_MODEL.md`: security posture, auth, permissions, telemetry, and PII handling.
 - `docs/DEVELOPMENT.md`: install, verification, and smoke-test commands.
 - `docs/SYNTHETIC_CORPUS_PLAN.md`: public demo corpus design.

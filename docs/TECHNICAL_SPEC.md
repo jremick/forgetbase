@@ -39,7 +39,7 @@ Implementation candidates:
 
 Recommendation: Fastify-style API service unless a later framework review changes it.
 
-Current implementation note: Phase 5 serves a hand-authored `/openapi.json` contract from the Fastify API. It should be replaced or backed by generated OpenAPI once route/schema generation is introduced, but the endpoint now gives API, CLI, MCP, and hosted-service consumers a stable contract target.
+Current implementation note: Phase 5 serves a hand-authored `/openapi.json` contract from the Fastify API. It should be replaced or backed by generated OpenAPI once route/schema generation is introduced, but the endpoint now gives API, CLI, MCP, and hosted-service consumers a current contract target. Beta stability should only be claimed after the OpenAPI drift gate and contract-freeze checks exist.
 
 ### Web UI
 
@@ -321,8 +321,13 @@ Fields:
 - citation
 - search_vector
 - embedding
+- embedding_provider
+- embedding_model
+- embedding_dimensions
 
-Current implementation note: Phase 4 stores chunks in Postgres with generated full-text vectors, citation JSON, and deterministic hash embeddings in a `vector(1536)` column. The default retrieval path is permission-filtered Postgres full-text search with `lexical-weighted-v1` ranking metadata. Callers can also request `strategy=vector` for `vector-hash-v1` ranking or `strategy=hybrid` for `hybrid-hash-lexical-v1` ranking through API, SDK, CLI, and MCP. The vector modes use local deterministic token hashing so the self-hosted core has a pgvector-backed path without calling an external embedding provider. Ranking combines lexical rank, tenant-configurable source-kind weighting that defaults to favoring agent-instruction chunks over equal human-document matches, exact-phrase boost, and vector similarity where requested. `/admin/retrieval-ranking-policy` exposes the lexical weights through API, SDK, CLI, MCP, OpenAPI, and the operational web UI; changes are audited and default to the original `1.2` agent-instruction, `1.1` asset-summary, `1.0` human-document, and `0.25` exact-phrase boost behavior. Provider-quality embedding generation, semantic reranking, retrieval eval optimization, and search-service federation are pending.
+Current implementation note: Phase 4 stores chunks in Postgres with generated full-text vectors, citation JSON, and `vector(1536)` embeddings. The default embedding provider is deterministic local hashing (`local-hash` / `hash-embedding-v1`) so the self-hosted core has a key-free `pgvector` path. Operators can opt into OpenAI-compatible provider embeddings by setting the embedding provider env vars on both API and worker processes, then reindexing assets. Chunk rows store `embedding_provider`, `embedding_model`, and `embedding_dimensions`; vector and hybrid search only compare query vectors against chunks with matching metadata, avoiding mixed vector spaces.
+
+The default retrieval path is permission-filtered Postgres full-text search with `lexical-weighted-v1` ranking metadata. Callers can also request `strategy=vector` or `strategy=hybrid` through API, SDK, CLI, and MCP. Local hash embeddings return `vector-hash-v1` and `hybrid-hash-lexical-v1`; provider embeddings return `vector-provider-v1` and `hybrid-provider-lexical-v1`. Ranking combines lexical rank, tenant-configurable source-kind weighting that defaults to favoring agent-instruction chunks over equal human-document matches, exact-phrase boost, and vector similarity where requested. `/admin/retrieval-ranking-policy` exposes the lexical weights through API, SDK, CLI, MCP, OpenAPI, and the operational web UI; changes are audited and default to the original `1.2` agent-instruction, `1.1` asset-summary, `1.0` human-document, and `0.25` exact-phrase boost behavior. Semantic reranking, retrieval eval optimization, per-tenant retrieval profiles, and search-service federation are pending.
 
 ### Permission Grant
 

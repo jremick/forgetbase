@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="ForgetBase partition mark">
+  <title>ForgetBase - retained and released</title>
+  <rect width="64" height="64" rx="14" fill="#1d5a80"/>
+  <!-- retained side of the base -->
+  <path d="M20 14 H33 V50 H20 a6 6 0 0 1 -6 -6 V20 a6 6 0 0 1 6 -6 Z" fill="#ffffff"/>
+  <!-- released side: forgotten under policy, still the same base -->
+  <path d="M35 14 H44 a6 6 0 0 1 6 6 V44 a6 6 0 0 1 -6 6 H35 Z" fill="#d7e6f0"/>
+</svg>

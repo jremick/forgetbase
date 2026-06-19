@@ -3,7 +3,9 @@
   "tagMinimumPassRates": {
     "citation-accuracy": 1,
     "policy-compliance": 1,
-    "task-completion-quality": 1
+    "task-completion-quality": 1,
+    "restricted-boundary": 1,
+    "export-eligibility": 1
   },
   "cases": [
     {
@@ -26,6 +28,32 @@
       "expectedStableIds": ["template.agent-task-brief"],
       "requiredCitationCount": 1,
       "tags": ["task-completion-quality", "agent-operations"]
+    },
+    {
+      "id": "eval.restricted-block-boundary",
+      "query": "credential vault escalation broad reader restricted stable IDs omitted",
+      "expectedStableIds": ["playbook.public-demo-no-export"],
+      "requiredCitationCount": 1,
+      "tags": ["restricted-boundary", "policy-compliance"],
+      "metadata": {
+        "forbiddenStableIds": [
+          "policy.restricted-credential-handling",
+          "runbook.restricted-security-escalation"
+        ],
+        "note": "Current eval schema cannot enforce forbidden stable IDs; this metadata supports the later leakage verifier and smoke:compose proof."
+      }
+    },
+    {
+      "id": "eval.export-eligibility",
+      "query": "readable public demo playbook omitted from demo agent pack export eligibility",
+      "expectedStableIds": ["playbook.public-demo-no-export"],
+      "requiredCitationCount": 1,
+      "tags": ["export-eligibility", "governed-distribution"],
+      "metadata": {
+        "expectedAllowedExports": [],
+        "expectedAllowedSurfaces": ["api", "cli", "mcp", "web"],
+        "note": "Managed-query evals can retrieve the readable asset; export omission must still be verified by export/leakage checks."
+      }
     }
   ]
 }

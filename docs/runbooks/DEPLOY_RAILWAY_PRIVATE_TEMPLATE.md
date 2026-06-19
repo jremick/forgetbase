@@ -22,6 +22,19 @@ AGENTIC_CMS_CORS_ALLOWED_ORIGINS=https://<approved-origin>
 
 Do not publish a public domain until these are configured and verified. Invalid boolean environment values fail startup, so fix configuration rather than relying on defaults.
 
+Run the deployment-default gate for public prototype checks before adding or keeping a public domain:
+
+```bash
+AGENTIC_CMS_PUBLIC_DEPLOYMENT=true \
+AGENTIC_CMS_PUBLIC_ENTRYPOINT=railway-proxy \
+AGENTIC_CMS_REQUIRE_AUTHENTICATION=true \
+AGENTIC_CMS_SESSION_COOKIE_SECURE=true \
+AGENTIC_CMS_CORS_ALLOWED_ORIGINS=https://<approved-origin> \
+npx -y pnpm@11.7.0 security:check-deployment-defaults
+```
+
+The gate checks the reusable template posture, including the Railway proxy bootstrap block. It does not inspect live Railway state; keep using `railway domain list` read-backs below to confirm `api` and `web` have no public domains.
+
 If you expose the Vite preview service directly for a private test, set its host allowlist through:
 
 ```text

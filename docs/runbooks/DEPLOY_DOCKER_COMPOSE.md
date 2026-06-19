@@ -32,7 +32,27 @@ Install workspace dependencies and validate the compose file:
 
 ```bash
 npx -y pnpm@11.7.0 install
+npx -y pnpm@11.7.0 build
 docker compose config --quiet
+npx -y pnpm@11.7.0 security:check-deployment-defaults
+```
+
+The build step creates the workspace `dist/` outputs used by host-run CLI and worker commands later in this runbook. The Docker services also build inside their images, but the local CLI commands need the host workspace built first when starting from a fresh clone.
+
+The deployment-default check is safe to run before first boot. With no public-deployment flag it verifies the repository templates and keeps the local direct API/bootstrap path usable. Before exposing a Compose deployment beyond localhost, run it in public mode with the intended entrypoint and public browser origins. For example, a Compose TLS deployment should make the direct service ports private while exposing only the HTTPS proxy:
+
+```bash
+AGENTIC_CMS_PUBLIC_DEPLOYMENT=true \
+AGENTIC_CMS_PUBLIC_ENTRYPOINT=compose-tls \
+AGENTIC_CMS_REQUIRE_AUTHENTICATION=true \
+AGENTIC_CMS_SESSION_COOKIE_SECURE=true \
+AGENTIC_CMS_CORS_ALLOWED_ORIGINS=https://cms.example.com \
+AGENTIC_CMS_API_PORT=127.0.0.1:3000 \
+AGENTIC_CMS_WEB_PORT=127.0.0.1:5175 \
+AGENTIC_CMS_POSTGRES_PORT=127.0.0.1:5432 \
+AGENTIC_CMS_PROXY_PORT=127.0.0.1:8080 \
+AGENTIC_CMS_HTTPS_PORT=443 \
+npx -y pnpm@11.7.0 security:check-deployment-defaults
 ```
 
 Start Postgres, API, worker, and web:
@@ -97,6 +117,7 @@ curl --insecure --silent --show-error --fail https://127.0.0.1:8443/
 Then run authenticated and permission checks:
 
 ```bash
+npx -y pnpm@11.7.0 smoke:compose
 npx -y pnpm@11.7.0 --filter @agentic-cms/cli start -- auth me --api-url http://127.0.0.1:3000
 npx -y pnpm@11.7.0 --filter @agentic-cms/cli start -- search --api-url http://127.0.0.1:3000 --query "PII redaction" --limit 3
 ```
@@ -155,6 +176,8 @@ bash scripts/generate-local-tls-certs.sh
 For production, replace the local self-signed files with real certificates, set `AGENTIC_CMS_HTTPS_PORT=443` when binding the TLS listener directly, and set `AGENTIC_CMS_CORS_ALLOWED_ORIGINS` to the exact public browser origins when using split-origin browser clients. The TLS overlay also keeps an HTTP listener for redirects; bind `AGENTIC_CMS_PROXY_PORT` to a private interface or front it with your edge/firewall if you do not want plain HTTP exposed. CLI, MCP, SDK, and direct API clients may continue to use the API origin directly or use the proxied API base URL such as `https://cms.example.com/api`.
 
 For production behind an external reverse proxy or load balancer, TLS can terminate at the edge instead of inside Compose. In that shape, still use the same-origin `/api` routing contract, set `AGENTIC_CMS_SESSION_COOKIE_SECURE=true` on the API, forward standard `X-Forwarded-*` headers, and use the public proxy origin as the browser entry point.
+
+For an external TLS edge, use `AGENTIC_CMS_PUBLIC_ENTRYPOINT=external-tls-proxy` in `security:check-deployment-defaults` and bind `AGENTIC_CMS_PROXY_PORT` to localhost or another private interface. The base API, web, and Postgres port variables should also be explicitly localhost-bound in public Compose checks; bare port values are local-development convenience, not a public deployment posture.
 
 Keep `AGENTIC_CMS_LOGIN_SESSION_MAX_AGE_SECONDS`, `AGENTIC_CMS_LOGIN_SESSION_IDLE_TIMEOUT_SECONDS`, `AGENTIC_CMS_LOGIN_SESSION_ABSOLUTE_MAX_AGE_SECONDS`, and `AGENTIC_CMS_LOGIN_REFRESH_TOKEN_MAX_AGE_SECONDS` at the shortest operationally acceptable values. Browser cookie authentication requires an active `login_sessions` row created by password/OIDC login; refresh uses hash-only one-time tokens stored in `login_session_refresh_tokens` and cannot extend beyond `login_sessions.absolute_expires_at` when configured; admin-created user keys and service-account keys remain bearer credentials only. Use admin-created user or service-account API keys, not the login endpoint, for longer-lived automation credentials.
 

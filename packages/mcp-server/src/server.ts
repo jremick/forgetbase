@@ -15,6 +15,7 @@ const DEFAULT_API_URL = "http://127.0.0.1:3000";
 export interface CreateMcpServerOptions {
   apiUrl?: string;
   apiKey?: string;
+  fetchImpl?: typeof fetch;
 }
 
 export function createMcpServer(options: CreateMcpServerOptions = {}): McpServer {
@@ -25,7 +26,8 @@ export function createMcpServer(options: CreateMcpServerOptions = {}): McpServer
   const client = new AgenticCmsClient({
     baseUrl: options.apiUrl ?? DEFAULT_API_URL,
     apiKey: options.apiKey,
-    surface: "mcp"
+    surface: "mcp",
+    fetchImpl: options.fetchImpl
   });
 
   server.registerTool(

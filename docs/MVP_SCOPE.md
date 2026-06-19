@@ -31,7 +31,7 @@ The MVP proves the open-source core of an agent-native instruction management pl
 
 - chunking pipeline
 - Postgres full-text search
-- deterministic local hash-vector search through `pgvector`, with provider-quality semantic embeddings deferred
+- deterministic local hash-vector search through `pgvector`, plus opt-in OpenAI-compatible provider semantic embeddings with provider/model/dimension metadata
 - permission-aware result filtering
 - citations and stable references
 - restricted export safety checks

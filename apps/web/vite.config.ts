@@ -1,5 +1,6 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import tailwindcss from "@tailwindcss/vite";
 
 const allowedHosts = (process.env.AGENTIC_CMS_WEB_ALLOWED_HOSTS ?? "")
   .split(",")
@@ -7,7 +8,12 @@ const allowedHosts = (process.env.AGENTIC_CMS_WEB_ALLOWED_HOSTS ?? "")
   .filter(Boolean);
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), tailwindcss()],
+  resolve: {
+    alias: {
+      "@": new URL("./src", import.meta.url).pathname
+    }
+  },
   preview: allowedHosts.length ? { allowedHosts } : undefined,
   server: {
     port: 5173

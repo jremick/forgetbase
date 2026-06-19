@@ -1,0 +1,104 @@
+{
+  "rules": [
+    {
+      "id": "production-readiness",
+      "description": "Avoid unsupported production-readiness claims.",
+      "suggestion": "Use public-alpha candidate, beta candidate, self-hosted core, or production path still being hardened.",
+      "patterns": [
+        "\\bproduction-ready\\b",
+        "\\bprod ready\\b",
+        "\\bproduction grade\\b",
+        "\\bbattle-tested\\b",
+        "\\bmission critical\\b"
+      ]
+    },
+    {
+      "id": "hosted-service-maturity",
+      "description": "Avoid implying hosted-service maturity before the hosted path is proven.",
+      "suggestion": "Use self-hostable core, hosted service later, or hosted-service work deferred.",
+      "patterns": [
+        "\\bhosted-service-ready\\b",
+        "\\bmanaged hosted service\\b",
+        "\\bSaaS-ready\\b",
+        "\\bmulti-tenant hosted\\b"
+      ]
+    },
+    {
+      "id": "enterprise-identity-completeness",
+      "description": "Avoid implying enterprise identity is complete.",
+      "suggestion": "Use local users, OIDC configuration foundation, or SCIM and advanced identity hardening deferred.",
+      "patterns": [
+        "\\benterprise SSO complete\\b",
+        "\\bSCIM\\b",
+        "\\bMFA enforced\\b",
+        "\\bcomplete Entra\\b",
+        "\\bfull identity lifecycle\\b"
+      ]
+    },
+    {
+      "id": "full-orchestration",
+      "description": "Avoid implying full managed-agent orchestration.",
+      "suggestion": "Use disabled-by-default action governance or managed orchestration future phase.",
+      "patterns": [
+        "\\bfull agent orchestration\\b",
+        "\\bfull managed-agent orchestration\\b",
+        "\\bmanaged-agent orchestration\\b",
+        "\\bautonomous task execution\\b",
+        "\\bconnector execution platform\\b"
+      ]
+    },
+    {
+      "id": "enterprise-search-parity",
+      "description": "Avoid broad enterprise-search parity claims.",
+      "suggestion": "Use governed instruction and context registry or permission-aware retrieval for agent assets.",
+      "patterns": [
+        "\\benterprise search\\b",
+        "\\bsearch everything\\b",
+        "\\bGlean replacement\\b",
+        "\\bRovo replacement\\b",
+        "\\bknowledge base for all company content\\b"
+      ]
+    },
+    {
+      "id": "observability-overclaim",
+      "description": "Avoid implying complete observability.",
+      "suggestion": "Use telemetry and audit foundations, recent-window admin summary, or advanced analytics deferred.",
+      "patterns": [
+        "\\bcomplete observability\\b",
+        "\\bfull tracing\\b",
+        "\\banalytics warehouse\\b",
+        "\\bSOC-ready audit\\b"
+      ]
+    },
+    {
+      "id": "api-stability-overclaim",
+      "description": "Avoid implying API contract stability before beta freeze gates exist.",
+      "suggestion": "Use beta contract freeze pending, current contract target, or routes may change before beta.",
+      "patterns": [
+        "\\bstable API\\b",
+        "\\bstable-API-compatible\\b",
+        "\\bstable API compatibility\\b",
+        "\\bstable contract\\b",
+        "\\bbackward compatible\\b",
+        "\\bGA contract\\b",
+        "\\bversioned public API\\b"
+      ]
+    },
+    {
+      "id": "unqualified-control-plane",
+      "description": "Qualify control-plane claims with agent, instruction, or context scope.",
+      "suggestion": "Use instruction control plane, agent context control plane, or governed instruction and context registry.",
+      "patterns": [
+        "\\bcontrol plane\\b"
+      ],
+      "requiredNearbyTerms": [
+        "agent",
+        "agentic",
+        "instruction",
+        "context",
+        "knowledge",
+        "governed"
+      ]
+    }
+  ]
+}

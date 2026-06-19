@@ -15,6 +15,7 @@ import {
 } from "@agentic-cms/schema";
 import {
   createPool,
+  createEmbeddingProviderFromEnv,
   defaultPiiRedactionPolicy,
   PostgresAuthRepository,
   PostgresAgentActionExecutionRepository,
@@ -187,7 +188,7 @@ export async function runOnce(): Promise<void> {
 
   try {
     await runMigrations(pool);
-    const retrievalRepository = new PostgresRetrievalRepository(pool);
+    const retrievalRepository = new PostgresRetrievalRepository(pool, undefined, createEmbeddingProviderFromEnv());
     const result = await retrievalRepository.indexAllAssets();
     console.log(`Indexed ${result.assetsIndexed} assets into ${result.chunksIndexed} retrieval chunks.`);
 
@@ -265,7 +266,7 @@ export async function runRetentionMaintenance(input: { dryRun?: boolean } = {}):
   try {
     await runMigrations(pool);
     const authRepository = new PostgresAuthRepository(pool);
-    const retrievalRepository = new PostgresRetrievalRepository(pool);
+    const retrievalRepository = new PostgresRetrievalRepository(pool, undefined, createEmbeddingProviderFromEnv());
     const feedbackRepository = new PostgresManagedQueryFeedbackRepository(pool);
     const policyRepository = new PostgresTelemetryRetentionPolicyRepository(pool);
     const policies = await policyRepository.listPolicies();
@@ -544,7 +545,7 @@ export async function runManagedQueryEvalScheduleMaintenance(
     }
 
     const authRepository = new PostgresAuthRepository(pool);
-    const retrievalRepository = new PostgresRetrievalRepository(pool);
+    const retrievalRepository = new PostgresRetrievalRepository(pool, undefined, createEmbeddingProviderFromEnv());
     const evalRunRepository = new PostgresManagedQueryEvalRunRepository(pool);
     const piiRedactionPolicyRepository = new PostgresPiiRedactionPolicyRepository(pool);
 

@@ -167,6 +167,7 @@ import {
   PostgresTelemetryRetentionPolicyRepository,
   PostgresRetrievalRepository,
   createPool,
+  createEmbeddingProviderFromEnv,
   DuplicateAssetError,
   PostgresRegistryRepository,
   defaultManagedQueryCachePolicy,
@@ -340,7 +341,7 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
   const retrievalRankingPolicyRepository = options.retrievalRankingPolicyRepository ??
     (pool ? new PostgresRetrievalRankingPolicyRepository(pool) : undefined);
   const retrievalRepository = options.retrievalRepository ??
-    (pool ? new PostgresRetrievalRepository(pool, retrievalRankingPolicyRepository) : undefined);
+    (pool ? new PostgresRetrievalRepository(pool, retrievalRankingPolicyRepository, createEmbeddingProviderFromEnv()) : undefined);
   const evalRunRepository = options.evalRunRepository ??
     (pool ? new PostgresManagedQueryEvalRunRepository(pool) : undefined);
   const feedbackRepository = options.feedbackRepository ??

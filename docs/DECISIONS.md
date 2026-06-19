@@ -2133,7 +2133,7 @@ Add `action_execution_policies` and `agent_action_requests`. Tenant policy defau
 
 Only `create-task-record` can execute today, and it records an internal task marker result with `externalSideEffects: false`. External action types are schema-supported for policy planning, but approving them does not run external side effects until dedicated adapters, sandboxing, scopes, and multi-step approvals exist.
 
-This gives SMB operators a real governance foundation and gives agent harnesses a stable contract without pretending the system is ready to mutate external systems safely.
+This gives SMB operators a real governance foundation and gives agent harnesses a current action-request interface without implying the system is ready to mutate external systems safely.
 
 ### Consequences
 
@@ -2815,3 +2815,40 @@ Also keep local private artifacts out of Docker/Railway build contexts through `
 ### Follow-Ups / Review
 
 Review before changing the public prototype domain, enabling a hosted onboarding flow, adding setup tokens, or documenting a production hosted-service deployment path.
+
+## 0094: Add OpenAI-Compatible Provider Embeddings With Vector-Space Metadata
+
+### Context
+
+The alpha retrieval path had deterministic hash vectors in `pgvector`, but provider-quality semantic embeddings were still a documented gap. Adding semantic embeddings without tracking provider/model metadata would risk comparing vectors from incompatible spaces, especially when API and worker processes are configured differently or chunks were indexed before a provider change.
+
+CLI and MCP surfaces also had broad command/tool coverage but no executable contract tests proving their option parsing, request forwarding, surface headers, or MCP tool payload shape.
+
+### Options Considered
+
+- keep provider embeddings deferred until per-tenant retrieval profiles exist
+- store only provider vectors in the existing `embedding` column without metadata
+- add a separate embedding table keyed by provider/model
+- add provider metadata on chunk rows and filter vector comparisons by matching provider/model/dimensions
+- test CLI/MCP by starting a real API server
+- test CLI/MCP through in-process fetch and MCP in-memory transports
+
+### Decision And Rationale
+
+Add an embedding provider abstraction with deterministic local hash as the default and an OpenAI-compatible provider selected by environment variables. Keep provider secrets in deployment env only, referenced through `AGENTIC_CMS_EMBEDDINGS_API_KEY_ENV_VAR`; do not store embedding provider secrets in the database.
+
+Add `embedding_provider`, `embedding_model`, and `embedding_dimensions` to `asset_chunks`. Indexing writes those fields, and vector/hybrid search only compares query vectors with chunks that match the active provider, model, and dimensions. Local hash results keep `vector-hash-v1` / `hybrid-hash-lexical-v1`; provider embeddings return `vector-provider-v1` / `hybrid-provider-lexical-v1`.
+
+Add initial CLI and MCP contract tests that exercise command/tool contracts without a live API: CLI tests stub `fetch`, and MCP tests use the SDK in-memory transport plus a stubbed SDK fetch.
+
+### Consequences
+
+- Self-hosted installs still work without provider keys.
+- Provider embeddings require API and worker processes to share embedding env configuration and require reindexing to populate provider vectors.
+- Vector-only search returns no rows when active query embeddings do not match indexed chunk metadata; hybrid search can still return lexical matches.
+- The current schema remains fixed at `vector(1536)`, so provider dimensions must be `1536`.
+- CLI/MCP contract automation now covers the high-risk command/tool paths but not every long-tail command.
+
+### Follow-Ups / Review
+
+Review when adding per-tenant embedding profiles, additional embedding providers, variable vector dimensions, background reindex jobs, semantic reranking, eval-driven search optimization, hosted secret-manager adapters, or exhaustive CLI/MCP contract coverage.

@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="ForgetBase keystone mark">
+  <title>ForgetBase - released keystone</title>
+  <rect width="64" height="64" rx="14" fill="#1d5a80"/>
+  <!-- stable base -->
+  <rect x="14" y="14" width="36" height="36" rx="8" fill="#ffffff"/>
+  <!-- keystone wedge cut from the top edge, rendered as released -->
+  <path d="M23 14 H41 L32 30 Z" fill="#1d5a80"/>
+  <path d="M25 14 H39 L32 26.5 Z" fill="#d7e6f0"/>
+</svg>

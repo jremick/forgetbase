@@ -709,7 +709,9 @@ export const citationSchema = z.object({
 export const searchRankingStrategySchema = z.enum([
   "lexical-weighted-v1",
   "vector-hash-v1",
-  "hybrid-hash-lexical-v1"
+  "hybrid-hash-lexical-v1",
+  "vector-provider-v1",
+  "hybrid-provider-lexical-v1"
 ]);
 
 export const searchRankingSchema = z.object({
@@ -719,6 +721,9 @@ export const searchRankingSchema = z.object({
   exactPhraseBoost: z.number().nonnegative(),
   vectorSimilarity: z.number().nonnegative().nullable(),
   vectorWeight: z.number().nonnegative().nullable(),
+  embeddingProvider: z.string().min(1).nullable(),
+  embeddingModel: z.string().min(1).nullable(),
+  embeddingDimensions: z.number().int().positive().nullable(),
   finalScore: z.number()
 });
 

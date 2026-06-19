@@ -4,6 +4,7 @@ import type {
   AgentActionExecutionPolicy,
   AgentActionRequest,
   AgentActionType,
+  AiExportFormat,
   AiExportPackage,
   ApiKeyCreated,
   ApiKeyRecord,
@@ -39,6 +40,8 @@ import type {
   ModelProvider,
   ModelProviderConfig,
   ModelProviderHealth,
+  OkfExportPackage,
+  OkfVersion,
   PiiRedactionPolicy,
   RetrievalEvent,
   RetrievalRankingPolicy,
@@ -50,12 +53,46 @@ import type {
   TelemetryRetentionPolicy,
   TelemetryRetentionPurgeResult
 } from "@agentic-cms/schema";
+import { Copy, Download, LogOut, RefreshCw, Search, SlidersHorizontal } from "lucide-react";
+import { Badge } from "./components/ui/badge.js";
+import { Button } from "./components/ui/button.js";
+import {
+  formatCachePolicyTtl,
+  formatCounts,
+  formatCurrency,
+  formatDaysUntil,
+  formatList,
+  formatMetric,
+  formatPercent,
+  formatRetentionDays,
+  formatRetentionInput,
+  formatReviewDue,
+  isAssetGovernanceDue,
+  isPublicReaderEligible,
+  libraryAssetMatches,
+  libraryAssetMatchesView,
+  parseCsvInput,
+  parseNullablePolicyNumber,
+  parseOptionalNumber,
+  parseRetentionInput,
+  policyValue,
+  sensitivityBadgeVariant,
+  stateBadgeVariant,
+  type LibraryViewFilter
+} from "./lib/asset-ui.js";
+import {
+  apiUrlStorageKey,
+  localSplitOriginAuthKey,
+  readInitialApiUrl,
+  readInitialLoginEmail,
+  readInitialLoginPassword,
+  readInitialLoginTenantId
+} from "./local-dev-auth.js";
 import "./styles.css";
 
-const localSplitOriginDefaultApiUrl = "http://127.0.0.1:3000";
 const sessionCookieActiveStorageKey = "agentic-cms-session-cookie-active";
 const csrfCookieName = "agentic_cms_csrf";
-const apiUrlStorageKey = "agentic-cms-api-url";
+const configuredApiUrl = import.meta.env.VITE_AGENTIC_CMS_API_URL?.trim();
 const demoEvalCases = [
   {
     id: "eval.pii-redaction-citation",
@@ -120,12 +157,14 @@ type NavSectionConfig = {
 };
 type AssetContentView = "human" | "instruction" | "version" | "raw";
 type ManagedQueryView = "answer" | "evidence" | "diagnostics";
+type GeneratedPackage = AiExportPackage | OkfExportPackage;
 const pageRouteValues = [
   "library",
   "search",
   "asset-read",
   "review",
   "versions",
+  "distribute",
   "operations",
   "access",
   "providers",
@@ -141,15 +180,15 @@ const operationsRouteValues = [
   "providers",
   "policies",
   "telemetry",
-  "approvals",
-  "exports"
+  "approvals"
 ] as const;
 const pageRoutes = new Set<string>(pageRouteValues);
 const operationsRoutes = new Set<string>(operationsRouteValues);
+const sensitivityFilterValues = ["public-demo", "internal", "restricted", "confidential", "secret"] as const;
 const defaultOperationsPageCopy = {
-  eyebrow: "Admin control plane",
+  eyebrow: "Instruction control plane",
   title: "Operations Dashboard",
-  lede: "Route into reviews, access, providers, policies, telemetry, approvals, and exports from a single control surface."
+  lede: "Route into reviews, access, providers, policies, telemetry, approvals, and distribution from a single control surface."
 };
 const operationsPageCopy: Record<string, { eyebrow: string; title: string; lede: string }> = {
   review: {
@@ -186,7 +225,7 @@ const operationsPageCopy: Record<string, { eyebrow: string; title: string; lede:
   exports: {
     eyebrow: "Agent export",
     title: "Exports Workspace",
-    lede: "Generate and inspect permission-aware AI export packages and denied-result counts."
+    lede: "Legacy route. The active export workflow now lives in Distribute."
   }
 };
 
@@ -207,39 +246,6 @@ function readStoredNavWidth(): number {
   return Number.isFinite(stored) ? Math.min(420, Math.max(240, stored)) : 292;
 }
 
-function resolveDefaultApiUrl(): string {
-  const configuredApiUrl = import.meta.env.VITE_AGENTIC_CMS_API_URL?.trim();
-
-  if (configuredApiUrl) {
-    return configuredApiUrl;
-  }
-
-  if (
-    typeof window !== "undefined" &&
-    (window.location.hostname === "127.0.0.1" || window.location.hostname === "localhost") &&
-    (window.location.port === "5173" || window.location.port === "5175")
-  ) {
-    return localSplitOriginDefaultApiUrl;
-  }
-
-  return "/api";
-}
-
-function readInitialApiUrl(): string {
-  const defaultApiUrl = resolveDefaultApiUrl();
-  const storedApiUrl = localStorage.getItem(apiUrlStorageKey);
-
-  if (!storedApiUrl) {
-    return defaultApiUrl;
-  }
-
-  if (storedApiUrl === localSplitOriginDefaultApiUrl && defaultApiUrl !== localSplitOriginDefaultApiUrl) {
-    return defaultApiUrl;
-  }
-
-  return storedApiUrl;
-}
-
 function readCookie(name: string): string {
   const prefix = `${name}=`;
   const cookie = document.cookie.split("; ").find((candidate) => candidate.startsWith(prefix));
@@ -256,16 +262,16 @@ function readCookie(name: string): string {
 }
 
 export function App() {
-  const [apiUrl, setApiUrl] = useState(readInitialApiUrl);
+  const [apiUrl, setApiUrl] = useState(() => readInitialApiUrl(configuredApiUrl));
   const [apiKey, setApiKey] = useState(() => localStorage.getItem("agentic-cms-api-key") ?? "");
   const [sessionCookieActive, setSessionCookieActive] = useState(
     () => localStorage.getItem(sessionCookieActiveStorageKey) === "true"
   );
   const [authState, setAuthState] = useState<AuthState>("checking");
   const [currentPrincipal, setCurrentPrincipal] = useState<AuthPrincipal | null>(null);
-  const [loginTenantId, setLoginTenantId] = useState(() => localStorage.getItem("agentic-cms-login-tenant") ?? "tenant_demo");
-  const [loginEmail, setLoginEmail] = useState(() => localStorage.getItem("agentic-cms-login-email") ?? "");
-  const [loginPassword, setLoginPassword] = useState("");
+  const [loginTenantId, setLoginTenantId] = useState(readInitialLoginTenantId);
+  const [loginEmail, setLoginEmail] = useState(readInitialLoginEmail);
+  const [loginPassword, setLoginPassword] = useState(readInitialLoginPassword);
   const [oidcProvider, setOidcProvider] = useState<ExternalAuthProvider>("microsoft-entra");
   const [assets, setAssets] = useState<AssetRecord[]>([]);
   const [selectedStableId, setSelectedStableId] = useState<string>("");
@@ -286,7 +292,11 @@ export function App() {
   const [managedQueryCacheEnabled, setManagedQueryCacheEnabled] = useState(true);
   const [managedQueryResponse, setManagedQueryResponse] = useState<ManagedQueryResponse | null>(null);
   const [managedQueryView, setManagedQueryView] = useState<ManagedQueryView>("answer");
-  const [exportPackage, setExportPackage] = useState<AiExportPackage | null>(null);
+  const [packageName, setPackageName] = useState("demo-agent-pack");
+  const [exportFormat, setExportFormat] = useState<AiExportFormat>("json");
+  const [okfVersion, setOkfVersion] = useState<OkfVersion>("0.1");
+  const [exportPackage, setExportPackage] = useState<GeneratedPackage | null>(null);
+  const [isGeneratingExport, setIsGeneratingExport] = useState(false);
   const [telemetryEvents, setTelemetryEvents] = useState<RetrievalEvent[]>([]);
   const [telemetrySummary, setTelemetrySummary] = useState<TelemetryAnalyticsSummary | null>(null);
   const [telemetryRetentionPolicy, setTelemetryRetentionPolicy] = useState<TelemetryRetentionPolicy | null>(null);
@@ -452,6 +462,9 @@ export function App() {
   const [health, setHealth] = useState<string>("checking");
   const [message, setMessage] = useState<string>("");
   const [error, setError] = useState<string>("");
+  const [libraryQuery, setLibraryQuery] = useState("");
+  const [libraryViewFilter, setLibraryViewFilter] = useState<LibraryViewFilter>("all");
+  const [librarySensitivityFilter, setLibrarySensitivityFilter] = useState<string>("all");
   const [currentPage, setCurrentPage] = useState(() =>
     normalizePageRoute(typeof window === "undefined" ? "" : window.location.hash.replace("#", ""))
   );
@@ -470,14 +483,73 @@ export function App() {
     [assetDetail]
   );
   const selectedVersionIsCurrent = versionSnapshot?.version.id === assetDetail?.asset.currentVersionId;
-  const currentInstructionBody = assetDetail?.instructionObjects[0]?.body ?? "";
+  const currentInstructionObject = assetDetail?.instructionObjects[0] ?? null;
+  const currentHumanDocument = assetDetail?.humanDocuments[0] ?? null;
+  const currentInstructionBody = currentInstructionObject?.body ?? "";
   const selectedInstructionBody = versionSnapshot?.instructionObjects[0]?.body ?? "";
-  const currentHumanBody = assetDetail?.humanDocuments[0]?.body ?? "";
+  const currentHumanBody = currentHumanDocument?.body ?? "";
   const selectedHumanBody = versionSnapshot?.humanDocuments[0]?.body ?? "";
   const approvedAssets = assets.filter((asset) => asset.status === "approved").length;
-  const reviewDueAssets = assets.filter((asset) => asset.status !== "approved" || asset.lifecycleState !== "active").length;
-  const publicDemoAssets = assets.filter((asset) => asset.sensitivity === "public-demo").length;
+  const reviewDueAssets = assets.filter(isAssetGovernanceDue).length;
+  const publicReaderAssets = assets.filter(isPublicReaderEligible).length;
+  const packageNameInput = packageName.trim() || "demo-agent-pack";
+  const exportEligibleAssets = assets.filter((asset) => asset.allowedExports.includes(packageNameInput)).length;
+  const filteredLibraryAssets = useMemo(
+    () => assets.filter((asset) =>
+      libraryAssetMatches(asset, libraryQuery) &&
+      (librarySensitivityFilter === "all" || asset.sensitivity === librarySensitivityFilter) &&
+      libraryAssetMatchesView(asset, libraryViewFilter)
+    ),
+    [assets, libraryQuery, librarySensitivityFilter, libraryViewFilter]
+  );
+  const libraryFilterActive = Boolean(
+    libraryQuery.trim() || libraryViewFilter !== "all" || librarySensitivityFilter !== "all"
+  );
   const visibleOperationsPage = operationsRoutes.has(currentPage);
+  const visibleDistributePage = currentPage === "distribute" || currentPage === "exports";
+  const normalizedApiUrl = apiUrl.replace(/\/$/, "");
+  const exportQueryParams = new URLSearchParams({
+    package: packageNameInput,
+    format: exportFormat
+  });
+
+  if (exportFormat === "okf") {
+    exportQueryParams.set("okfVersion", okfVersion);
+  }
+
+  const exportEndpointPath = `/exports/ai-package?${exportQueryParams.toString()}`;
+  const apiCommand = [
+    "curl --silent --show-error --fail \\",
+    "  -H \"authorization: Bearer $AGENTIC_CMS_API_KEY\" \\",
+    "  -H \"x-agentic-cms-surface: api\" \\",
+    `  \"${normalizedApiUrl}${exportEndpointPath}\"`
+  ].join("\n");
+  const cliCommand = [
+    `npx -y pnpm@11.7.0 --filter @agentic-cms/cli start -- exports ai-package --package ${packageNameInput} --format ${exportFormat}`,
+    exportFormat === "okf" ? `  --okf-version ${okfVersion} --output-dir okf-bundle` : "  --output export.json",
+    `  --api-url ${normalizedApiUrl}`
+  ].join(" \\\n");
+  const mcpCommand = JSON.stringify(
+    {
+      tool: "generate_ai_export",
+      arguments: {
+        packageName: packageNameInput,
+        format: exportFormat,
+        okfVersion
+      }
+    },
+    null,
+    2
+  );
+  const okfCommand = exportFormat === "okf"
+    ? `GET ${exportEndpointPath}`
+    : `GET /exports/ai-package?package=${encodeURIComponent(packageNameInput)}&format=okf&okfVersion=${okfVersion}`;
+  const commandExamples: Array<[string, string]> = [
+    ["API", apiCommand],
+    ["CLI", cliCommand],
+    ["MCP", mcpCommand],
+    ["OKF", okfCommand]
+  ];
   const isAuthenticated = authState === "authenticated";
   const displayIdentity = currentPrincipal?.displayName || currentPrincipal?.email || "Guest";
   const displayInitials = isAuthenticated ? initialsFor(displayIdentity) : "GU";
@@ -685,9 +757,11 @@ export function App() {
         setSessionCookieActive(false);
       }
 
+      const shouldSurfaceSessionError = Boolean(authKey || sessionCookieActive);
+
       if (authKey && sessionErrorMessage.startsWith("401 ")) {
         setApiKey("");
-      } else if (!sessionErrorMessage.startsWith("401 ")) {
+      } else if (shouldSurfaceSessionError && !sessionErrorMessage.startsWith("401 ")) {
         setError(sessionErrorMessage);
       }
 
@@ -699,6 +773,11 @@ export function App() {
     setAuthState("checking");
     setError("");
     await refreshHealth();
+
+    if (!apiKey && !sessionCookieActive) {
+      setAuthState("unauthenticated");
+      return;
+    }
 
     const principal = await checkAuthenticatedSession();
 
@@ -722,7 +801,8 @@ export function App() {
           deviceLabel: "Web browser"
         })
       }, "");
-      setSessionCookieActive(true);
+      const localAuthKey = localSplitOriginAuthKey(response.secret);
+      setSessionCookieActive(!localAuthKey);
       setAuthState("authenticated");
       setCurrentPrincipal({
         tenantId: response.user.tenantId,
@@ -737,10 +817,10 @@ export function App() {
         scopes: response.apiKey.scopes,
         groupIds: []
       });
-      setApiKey("");
+      setApiKey(localAuthKey);
       setLoginPassword("");
       setMessage(`Signed in as ${response.user.email}`);
-      await refresh("");
+      await refresh(localAuthKey);
     } catch (loginError) {
       setError(loginError instanceof Error ? loginError.message : String(loginError));
     }
@@ -855,7 +935,8 @@ export function App() {
           deviceLabel: "Web OIDC browser"
         })
       }, "");
-      setSessionCookieActive(true);
+      const localAuthKey = localSplitOriginAuthKey(response.secret);
+      setSessionCookieActive(!localAuthKey);
       setAuthState("authenticated");
       setCurrentPrincipal({
         tenantId: response.user.tenantId,
@@ -870,9 +951,9 @@ export function App() {
         scopes: response.apiKey.scopes,
         groupIds: []
       });
-      setApiKey("");
+      setApiKey(localAuthKey);
       setMessage(`Signed in as ${response.user.email}`);
-      await refresh("");
+      await refresh(localAuthKey);
     } catch (oidcError) {
       setError(oidcError instanceof Error ? oidcError.message : String(oidcError));
     }
@@ -1091,13 +1172,36 @@ export function App() {
 
   async function generateExport() {
     setError("");
+    setIsGeneratingExport(true);
 
     try {
-      const response = await request<AiExportPackage>("/exports/ai-package?package=demo-agent-pack");
+      const response = await request<GeneratedPackage>(exportEndpointPath);
+
+      if (exportFormat === "okf" && (!("format" in response) || response.format !== "okf")) {
+        throw new Error("Expected OKF export package, but the API returned the JSON package shape.");
+      }
+
+      if (exportFormat === "json" && "format" in response) {
+        throw new Error("Expected JSON export package, but the API returned an OKF package.");
+      }
+
       setExportPackage(response);
-      setMessage(`Export package contains ${response.assetCount} assets`);
+      setMessage(`Generated ${response.packageName} ${exportFormat.toUpperCase()} package with ${response.assetCount} assets`);
     } catch (exportError) {
       setError(exportError instanceof Error ? exportError.message : String(exportError));
+    } finally {
+      setIsGeneratingExport(false);
+    }
+  }
+
+  async function copyText(value: string, label: string) {
+    setError("");
+
+    try {
+      await navigator.clipboard.writeText(value);
+      setMessage(`Copied ${label}`);
+    } catch (clipboardError) {
+      setError(clipboardError instanceof Error ? clipboardError.message : String(clipboardError));
     }
   }
 
@@ -2407,20 +2511,35 @@ export function App() {
       ]
     },
     {
+      label: "Distribute",
+      folderLabel: "Agent Distribution",
+      folderIcon: "DS",
+      folderRoute: "distribute",
+      activeRoutes: ["distribute", "exports"],
+      count: exportPackage?.assetCount ?? exportEligibleAssets,
+      leaves: [
+        {
+          route: "distribute",
+          label: "Package builder",
+          badge: exportPackage ? { label: "format" in exportPackage ? exportPackage.format : "json", tone: "ok" } : undefined
+        },
+        { route: "exports", label: "Legacy exports", badge: { label: "alias", tone: "warn" } }
+      ]
+    },
+    {
       label: "Operate",
-      folderLabel: "Control Plane",
+      folderLabel: "Instruction Control",
       folderIcon: "OP",
       folderRoute: "operations",
       activeRoutes: [...operationsRouteValues],
-      count: 7,
+      count: 6,
       leaves: [
         { route: "operations", label: "Operations" },
         { route: "access", label: "Access" },
         { route: "providers", label: "Providers" },
         { route: "policies", label: "Policies" },
         { route: "telemetry", label: "Telemetry" },
-        { route: "approvals", label: "Approvals" },
-        { route: "exports", label: "Exports" }
+        { route: "approvals", label: "Approvals" }
       ]
     }
   ];
@@ -2434,24 +2553,28 @@ export function App() {
       <a className="skip-link" href="#main">Skip to content</a>
       <header className="topbar">
         <div className="brand">
-          <span className="mark">AC</span>
-          <span>Agentic CMS</span>
+          <span className="mark" aria-hidden="true">
+            <img className="mark-image" src="/favicon.svg" alt="" />
+          </span>
+          <span>ForgetBase</span>
         </div>
         {isAuthenticated ? (
           <div className="topbar-main">
-            <button className="command" type="button" onClick={() => navigatePage("search")}>
-              <span className="small-icon">/</span>
+            <Button variant="command" type="button" onClick={() => navigatePage("search")}>
+              <Search aria-hidden="true" />
               <span>Search assets, pages, commands</span>
               <span className="kbd">Cmd K</span>
-            </button>
+            </Button>
             <div className="health"><span className={`health-dot ${health === "ok" ? "ok" : "bad"}`}></span><span>API {health}</span></div>
-            <button
-              className="density"
+            <Button
+              variant="ghost"
+              size="sm"
               type="button"
               onClick={() => setDensity((current) => current === "comfortable" ? "compact" : "comfortable")}
             >
+              <SlidersHorizontal aria-hidden="true" />
               {density === "comfortable" ? "Comfortable" : "Compact"}
-            </button>
+            </Button>
             <div className="identity"><span className="avatar">{displayInitials}</span><span>{displayIdentity}</span></div>
           </div>
         ) : null}
@@ -2528,8 +2651,8 @@ export function App() {
             API key
             <input value={apiKey} onChange={(event) => setApiKey(event.target.value)} type="password" autoComplete="off" />
           </label>
-          <button type="button" onClick={() => void refresh()}>Refresh</button>
-          <button type="button" onClick={() => void logout()}>Sign out</button>
+          <Button type="button" onClick={() => void refresh()}><RefreshCw aria-hidden="true" />Refresh</Button>
+          <Button type="button" onClick={() => void logout()}><LogOut aria-hidden="true" />Sign out</Button>
         </form>
         </section>
 
@@ -2554,60 +2677,159 @@ export function App() {
             </p>
           </div>
           <div className="actions">
-            <button type="button" onClick={() => void refresh()}>Refresh</button>
-            <button type="button" onClick={() => void generateExport()}>Export</button>
+            <Button type="button" onClick={() => void refresh()}><RefreshCw aria-hidden="true" />Refresh</Button>
+            <Button variant="primary" type="button" onClick={() => void generateExport()}>
+              <Download aria-hidden="true" />Export
+            </Button>
           </div>
         </div>
         <div className="grid four">
           <div className="metric"><div className="metric-value">{assets.length}</div><div className="metric-label">Visible assets</div><div className="metric-note">Server-filtered for the current principal.</div></div>
           <div className="metric"><div className="metric-value">{approvedAssets}</div><div className="metric-label">Approved current</div><div className="metric-note">Approved assets loaded in the browser.</div></div>
-          <div className="metric"><div className="metric-value">{reviewDueAssets}</div><div className="metric-label">Need governance</div><div className="metric-note">Draft, stale, reviewing, or non-active.</div></div>
-          <div className="metric"><div className="metric-value">{publicDemoAssets}</div><div className="metric-label">Public demo</div><div className="metric-note">Anonymous-safe when active and approved.</div></div>
+          <div className="metric"><div className="metric-value">{reviewDueAssets}</div><div className="metric-label">Need governance</div><div className="metric-note">Draft, stale, reviewing, overdue, or non-active.</div></div>
+          <div className="metric"><div className="metric-value">{publicReaderAssets}</div><div className="metric-label">Public reader</div><div className="metric-note">public-demo plus active and approved.</div></div>
         </div>
         <section className="workspace">
         <section className="asset-table" aria-labelledby="assets-title">
           <div className="section-heading">
-            <h2 id="assets-title">Assets</h2>
-            <button type="button" onClick={() => void generateExport()}>Export</button>
+            <div>
+              <h2 id="assets-title">Assets</h2>
+              <p className="section-note">{filteredLibraryAssets.length} of {assets.length} visible in this view</p>
+            </div>
+            <Button size="sm" type="button" onClick={() => void generateExport()}>
+              <Download aria-hidden="true" />Export
+            </Button>
+          </div>
+          <div className="library-filter-bar" aria-label="Asset filters">
+            <label>
+              Find
+              <input
+                value={libraryQuery}
+                onChange={(event) => setLibraryQuery(event.target.value)}
+                placeholder="Title, stable ID, owner, source"
+              />
+            </label>
+            <label>
+              View
+              <select
+                value={libraryViewFilter}
+                onChange={(event) => setLibraryViewFilter(event.target.value as LibraryViewFilter)}
+              >
+                <option value="all">All permitted</option>
+                <option value="public-reader">Public reader</option>
+                <option value="needs-governance">Needs governance</option>
+                <option value="approved-active">Approved active</option>
+              </select>
+            </label>
+            <label>
+              Sensitivity
+              <select
+                value={librarySensitivityFilter}
+                onChange={(event) => setLibrarySensitivityFilter(event.target.value)}
+              >
+                <option value="all">All bands</option>
+                {sensitivityFilterValues.map((sensitivity) => (
+                  <option key={sensitivity} value={sensitivity}>{sensitivity}</option>
+                ))}
+              </select>
+            </label>
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              disabled={!libraryFilterActive}
+              onClick={() => {
+                setLibraryQuery("");
+                setLibraryViewFilter("all");
+                setLibrarySensitivityFilter("all");
+              }}
+            >
+              Clear
+            </Button>
           </div>
           <div className="table-scroll">
             <table>
               <thead>
                 <tr>
-                  <th>Stable ID</th>
+                  <th>Asset</th>
                   <th>Type</th>
-                  <th>Lifecycle</th>
-                  <th>Status</th>
+                  <th>State</th>
                   <th>Sensitivity</th>
+                  <th>Review</th>
+                  <th>Public</th>
                 </tr>
               </thead>
               <tbody>
-                {assets.map((asset) => (
+                {filteredLibraryAssets.length ? filteredLibraryAssets.map((asset) => (
                   <tr
                     key={asset.id}
                     className={asset.stableId === selectedAsset?.stableId ? "selected" : ""}
                     onClick={() => setSelectedStableId(asset.stableId)}
+                    onKeyDown={(event) => selectAssetFromRow(event, () => setSelectedStableId(asset.stableId))}
+                    tabIndex={0}
+                    aria-selected={asset.stableId === selectedAsset?.stableId}
                   >
-                    <td>{asset.stableId}</td>
+                    <td>
+                      <span className="asset-title-cell">
+                        <strong>{asset.title}</strong>
+                        <span>{asset.stableId}</span>
+                        {asset.summary ? <small>{asset.summary}</small> : null}
+                      </span>
+                    </td>
                     <td>{asset.type}</td>
-                    <td>{asset.lifecycleState}</td>
-                    <td>{asset.status}</td>
-                    <td>{asset.sensitivity}</td>
+                    <td>
+                      <span className="badge-stack">
+                        <Badge variant={stateBadgeVariant(asset.lifecycleState)}>{asset.lifecycleState}</Badge>
+                        <Badge variant={stateBadgeVariant(asset.status)}>{asset.status}</Badge>
+                      </span>
+                    </td>
+                    <td><Badge variant={sensitivityBadgeVariant(asset.sensitivity)}>{asset.sensitivity}</Badge></td>
+                    <td><span className={isAssetGovernanceDue(asset) ? "review-due warn" : "review-due"}>{formatReviewDue(asset.reviewDueAt)}</span></td>
+                    <td>
+                      <Badge variant={isPublicReaderEligible(asset) ? "success" : "neutral"}>
+                        {isPublicReaderEligible(asset) ? "eligible" : "gated"}
+                      </Badge>
+                    </td>
                   </tr>
-                ))}
+                )) : (
+                  <tr className="empty-row">
+                    <td colSpan={6}>No assets match this view.</td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>
         </section>
 
         <section className="detail-pane" aria-labelledby="detail-title">
-          <h2 id="detail-title">{assetDetail?.asset.title ?? "Asset detail"}</h2>
+          <div className="detail-pane-header">
+            <div>
+              <p className="eyebrow">Governed reading room</p>
+              <h2 id="detail-title">{assetDetail?.asset.title ?? "Asset detail"}</h2>
+            </div>
+            {assetDetail ? (
+              <Badge variant={isPublicReaderEligible(assetDetail.asset) ? "success" : "neutral"}>
+                {isPublicReaderEligible(assetDetail.asset) ? "public reader eligible" : "authenticated access"}
+              </Badge>
+            ) : null}
+          </div>
           {assetDetail ? (
             <>
+              <div className="trust-banner" aria-label="Selected asset trust metadata">
+                <span className="stable-id-chip">{assetDetail.asset.stableId}</span>
+                <Badge variant={stateBadgeVariant(assetDetail.asset.lifecycleState)}>{assetDetail.asset.lifecycleState}</Badge>
+                <Badge variant={stateBadgeVariant(assetDetail.asset.status)}>{assetDetail.asset.status}</Badge>
+                <Badge variant={sensitivityBadgeVariant(assetDetail.asset.sensitivity)}>{assetDetail.asset.sensitivity}</Badge>
+                <Badge variant={isAssetGovernanceDue(assetDetail.asset) ? "warning" : "success"}>
+                  {formatReviewDue(assetDetail.asset.reviewDueAt)}
+                </Badge>
+                {currentVersion ? <Badge variant="neutral">v{currentVersion.versionNumber}</Badge> : null}
+              </div>
               <dl className="metadata-grid">
                 <div><dt>Stable ID</dt><dd>{assetDetail.asset.stableId}</dd></div>
-                <div><dt>Lifecycle</dt><dd>{assetDetail.asset.lifecycleState}</dd></div>
-                <div><dt>Status</dt><dd>{assetDetail.asset.status}</dd></div>
+                <div><dt>Lifecycle</dt><dd><Badge variant={stateBadgeVariant(assetDetail.asset.lifecycleState)}>{assetDetail.asset.lifecycleState}</Badge></dd></div>
+                <div><dt>Status</dt><dd><Badge variant={stateBadgeVariant(assetDetail.asset.status)}>{assetDetail.asset.status}</Badge></dd></div>
+                <div><dt>Sensitivity</dt><dd><Badge variant={sensitivityBadgeVariant(assetDetail.asset.sensitivity)}>{assetDetail.asset.sensitivity}</Badge></dd></div>
                 <div><dt>Audience</dt><dd>{assetDetail.asset.audience.join(", ")}</dd></div>
                 <div><dt>Review</dt><dd>{assetDetail.asset.reviewDueAt}</dd></div>
                 <div><dt>Current version</dt><dd>{currentVersion ? `v${currentVersion.versionNumber}` : "none"}</dd></div>
@@ -2617,15 +2839,16 @@ export function App() {
                 <div className="section-heading">
                   <h3>Release control</h3>
                   <div className="button-row">
-                    <button type="button" onClick={() => void completeAssetReview()}>Review</button>
-                    <button type="button" onClick={() => void publishAsset()}>Publish</button>
-                    <button
+                    <Button size="sm" type="button" onClick={() => void completeAssetReview()}>Review</Button>
+                    <Button size="sm" type="button" onClick={() => void publishAsset()}>Publish</Button>
+                    <Button
+                      size="sm"
                       type="button"
                       onClick={() => void restoreVersion()}
                       disabled={!versionSnapshot || selectedVersionIsCurrent}
                     >
                       Restore
-                    </button>
+                    </Button>
                   </div>
                 </div>
                 <div className="workflow-grid">
@@ -2653,7 +2876,7 @@ export function App() {
                     Change note
                     <input value={workflowNote} onChange={(event) => setWorkflowNote(event.target.value)} />
                   </label>
-                  <button type="button" onClick={() => void loadVersionSnapshot()}>Inspect</button>
+                  <Button type="button" onClick={() => void loadVersionSnapshot()}>Inspect</Button>
                 </div>
               </div>
               <div className="tab-bar" role="tablist" aria-label="Asset detail views">
@@ -2676,21 +2899,73 @@ export function App() {
                 ))}
               </div>
               {activeAssetContentView === "human" ? (
-                <div className="content-block asset-content-view" role="tabpanel">
-                  <div className="section-heading">
-                    <h3>Human document</h3>
-                    <span className="state-pill">{assetDetail.humanDocuments.length} document{assetDetail.humanDocuments.length === 1 ? "" : "s"}</span>
-                  </div>
-                  <pre>{currentHumanBody || "No human document"}</pre>
+                <div className="reader-layout asset-content-view" role="tabpanel">
+                  <article className="content-block reader-card">
+                    <div className="section-heading">
+                      <div>
+                        <h3>Human document</h3>
+                        <p className="section-note">{assetDetail.asset.summary ?? "No summary recorded."}</p>
+                      </div>
+                      <span className="state-pill">{assetDetail.humanDocuments.length} document{assetDetail.humanDocuments.length === 1 ? "" : "s"}</span>
+                    </div>
+                    <div className="reading-body">
+                      {currentHumanBody ? <pre className="reader-text">{currentHumanBody}</pre> : <p className="empty">No human document</p>}
+                    </div>
+                  </article>
+                  <aside className="reader-rail" aria-label="Human document context">
+                    <h3>Context rail</h3>
+                    <dl className="meta-list">
+                      <div><dt>Format</dt><dd>{currentHumanDocument?.format ?? "none"}</dd></div>
+                      <div><dt>Source</dt><dd>{assetDetail.asset.sourceKind ?? "unknown"}{assetDetail.asset.sourceRef ? ` / ${assetDetail.asset.sourceRef}` : ""}</dd></div>
+                      <div><dt>Surfaces</dt><dd>{formatList(assetDetail.asset.allowedSurfaces)}</dd></div>
+                      <div><dt>Exports</dt><dd>{formatList(assetDetail.asset.allowedExports)}</dd></div>
+                      <div><dt>Updated</dt><dd>{new Date(assetDetail.asset.updatedAt).toLocaleString()}</dd></div>
+                    </dl>
+                  </aside>
                 </div>
               ) : null}
               {activeAssetContentView === "instruction" ? (
-                <div className="content-block asset-content-view" role="tabpanel">
-                  <div className="section-heading">
-                    <h3>Agent instruction</h3>
-                    <span className="state-pill">{assetDetail.instructionObjects.length} object{assetDetail.instructionObjects.length === 1 ? "" : "s"}</span>
-                  </div>
-                  <pre>{currentInstructionBody || "No instruction object"}</pre>
+                <div className="reader-layout asset-content-view" role="tabpanel">
+                  <article className="content-block reader-card instruction-reader">
+                    <div className="section-heading">
+                      <div>
+                        <h3>Agent instruction</h3>
+                        <p className="section-note">{currentInstructionObject?.instructionKind ?? "No instruction kind recorded."}</p>
+                      </div>
+                      <span className="state-pill">{assetDetail.instructionObjects.length} object{assetDetail.instructionObjects.length === 1 ? "" : "s"}</span>
+                    </div>
+                    <div className="instruction-well">
+                      {currentInstructionBody ? <pre>{currentInstructionBody}</pre> : <p className="empty">No instruction object</p>}
+                    </div>
+                    <div className="instruction-support-grid">
+                      <div>
+                        <h4>Constraints</h4>
+                        {currentInstructionObject?.constraints.length ? (
+                          <ul>
+                            {currentInstructionObject.constraints.map((constraint) => <li key={constraint}>{constraint}</li>)}
+                          </ul>
+                        ) : <p className="empty">None recorded.</p>}
+                      </div>
+                      <div>
+                        <h4>Failure modes</h4>
+                        {currentInstructionObject?.failureModes.length ? (
+                          <ul>
+                            {currentInstructionObject.failureModes.map((failureMode) => <li key={failureMode}>{failureMode}</li>)}
+                          </ul>
+                        ) : <p className="empty">None recorded.</p>}
+                      </div>
+                    </div>
+                  </article>
+                  <aside className="reader-rail" aria-label="Agent instruction context">
+                    <h3>Agent contract</h3>
+                    <dl className="meta-list">
+                      <div><dt>Kind</dt><dd>{currentInstructionObject?.instructionKind ?? "none"}</dd></div>
+                      <div><dt>Targets</dt><dd>{formatList(currentInstructionObject?.targetAgents ?? [])}</dd></div>
+                      <div><dt>Escalation</dt><dd>{currentInstructionObject?.escalation ?? "none"}</dd></div>
+                      <div><dt>Allowed actions</dt><dd>{formatList(assetDetail.asset.allowedActions)}</dd></div>
+                      <div><dt>Surfaces</dt><dd>{formatList(assetDetail.asset.allowedSurfaces)}</dd></div>
+                    </dl>
+                  </aside>
                 </div>
               ) : null}
               {activeAssetContentView === "version" ? (
@@ -2903,6 +3178,139 @@ export function App() {
         </section>
       </section>
 
+      <section className={`page ${visibleDistributePage ? "active" : ""}`} data-page="distribute">
+        <div className="page-header">
+          <div>
+            <p className="eyebrow">Agent distribution</p>
+            <h1>Distribute</h1>
+            <p className="lede">
+              Build a session-local package from approved, permission-filtered assets for API, CLI, MCP, JSON, and OKF consumers.
+            </p>
+          </div>
+          <div className="actions">
+            <Button variant="primary" type="button" onClick={() => void generateExport()} disabled={isGeneratingExport}>
+              <Download aria-hidden="true" />{isGeneratingExport ? "Generating" : "Generate"}
+            </Button>
+          </div>
+        </div>
+
+        {currentPage === "exports" ? (
+          <p className="message">
+            Legacy <code>#exports</code> opens the Distribute package builder. Use <code>#distribute</code> for the first-class route.
+          </p>
+        ) : null}
+
+        <div className="grid four">
+          <div className="metric"><div className="metric-value">{packageNameInput}</div><div className="metric-label">Package</div><div className="metric-note">Generated on demand from current API state.</div></div>
+          <div className="metric"><div className="metric-value">{exportFormat.toUpperCase()}</div><div className="metric-label">Format</div><div className="metric-note">{exportFormat === "okf" ? `OKF ${okfVersion} projection` : "JSON connector package"}</div></div>
+          <div className="metric"><div className="metric-value">{exportPackage?.assetCount ?? exportEligibleAssets}</div><div className="metric-label">Assets</div><div className="metric-note">{exportPackage ? "Last generated package count." : "Loaded assets with matching export eligibility."}</div></div>
+          <div className="metric"><div className="metric-value">{exportPackage?.deniedCount ?? 0}</div><div className="metric-label">Denied</div><div className="metric-note">Restricted omissions are counted, not previewed.</div></div>
+        </div>
+
+        <section className="distribute-grid">
+          <div className="workflow-panel package-builder" aria-labelledby="package-builder-title">
+            <div className="section-heading">
+              <div>
+                <h2 id="package-builder-title">Package builder</h2>
+                <p className="section-note">No package history is saved by this UI; generated state stays local to this browser session.</p>
+              </div>
+            </div>
+            <form className="ops-form" onSubmit={(event) => {
+              event.preventDefault();
+              void generateExport();
+            }}>
+              <label>
+                Package name
+                <input value={packageName} onChange={(event) => setPackageName(event.target.value)} placeholder="demo-agent-pack" />
+              </label>
+              <label>
+                Format
+                <select value={exportFormat} onChange={(event) => setExportFormat(event.target.value as AiExportFormat)}>
+                  <option value="json">json</option>
+                  <option value="okf">okf</option>
+                </select>
+              </label>
+              <label>
+                OKF version
+                <select
+                  value={okfVersion}
+                  onChange={(event) => setOkfVersion(event.target.value as OkfVersion)}
+                  disabled={exportFormat !== "okf"}
+                >
+                  <option value="0.1">0.1</option>
+                </select>
+              </label>
+              <div className="wide-field button-row">
+                <Button variant="primary" type="submit" disabled={isGeneratingExport}>
+                  <Download aria-hidden="true" />{isGeneratingExport ? "Generating package" : "Generate package"}
+                </Button>
+                <Button type="button" onClick={() => setExportPackage(null)}>Clear local result</Button>
+              </div>
+            </form>
+          </div>
+
+          <div className="export-summary package-result" aria-labelledby="package-result-title">
+            <div className="section-heading">
+              <div>
+                <h2 id="package-result-title">Package result</h2>
+                <p className="section-note">Safe metadata only. Restricted content and package bodies are not previewed here.</p>
+              </div>
+            </div>
+            {exportPackage ? (
+              <>
+                <dl className="metadata-grid compact">
+                  <div><dt>Name</dt><dd>{exportPackage.packageName}</dd></div>
+                  <div><dt>Format</dt><dd>{"format" in exportPackage ? exportPackage.format : "json"}</dd></div>
+                  <div><dt>Assets</dt><dd>{exportPackage.assetCount}</dd></div>
+                  <div><dt>Denied</dt><dd>{exportPackage.deniedCount}</dd></div>
+                  <div><dt>Generated</dt><dd>{new Date(exportPackage.generatedAt).toLocaleString()}</dd></div>
+                  <div><dt>Tenant</dt><dd>{exportPackage.tenantId}</dd></div>
+                  {"okfVersion" in exportPackage ? <div><dt>OKF version</dt><dd>{exportPackage.okfVersion}</dd></div> : null}
+                  {"sourcePackageHash" in exportPackage ? <div><dt>Source hash</dt><dd>{exportPackage.sourcePackageHash}</dd></div> : null}
+                  {"projectionHash" in exportPackage ? <div><dt>Projection hash</dt><dd>{exportPackage.projectionHash}</dd></div> : null}
+                  {"rootIndexPath" in exportPackage ? <div><dt>Root index</dt><dd>{exportPackage.rootIndexPath}</dd></div> : null}
+                </dl>
+                {"assets" in exportPackage && exportPackage.assets.length ? (
+                  <div className="safe-asset-list">
+                    <h3>Included stable IDs</h3>
+                    <ul>
+                      {exportPackage.assets.map((asset) => (
+                        <li key={asset.stableId}>
+                          <strong>{asset.stableId}</strong>
+                          <span>{asset.type} · {asset.status} · {asset.sensitivity}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
+              </>
+            ) : (
+              <p className="empty">No package generated in this browser session.</p>
+            )}
+          </div>
+        </section>
+
+        <section className="workflow-panel command-examples" aria-labelledby="consumer-examples-title">
+          <div className="section-heading">
+            <div>
+              <h2 id="consumer-examples-title">Consumer examples</h2>
+              <p className="section-note">Copy these after setting a scoped API key in your shell or MCP runtime. The commands call the same export endpoint as the builder.</p>
+            </div>
+          </div>
+          {commandExamples.map(([label, command]) => (
+            <div className="command-example" key={label}>
+              <div className="command-example-header">
+                <h3>{label}</h3>
+                <Button size="sm" type="button" onClick={() => void copyText(command, `${label} example`)}>
+                  <Copy aria-hidden="true" />Copy
+                </Button>
+              </div>
+              <pre>{command}</pre>
+            </div>
+          ))}
+        </section>
+      </section>
+
       <section className={`page ${visibleOperationsPage ? "active" : ""}`} data-page="operations">
         <div className="page-header">
           <div>
@@ -2927,10 +3335,10 @@ export function App() {
           <div className={routePanelClass(currentPage, ["operations"], "operations-overview")}>
             <div className="overview-copy">
               <p className="eyebrow">Operational surface</p>
-              <h2 id={isOperationsLanding ? "ops-title" : undefined}>Control plane routes</h2>
+              <h2 id={isOperationsLanding ? "ops-title" : undefined}>Instruction control plane routes</h2>
               <p>Each workspace keeps its own forms and load actions visible without carrying every admin panel into every route.</p>
             </div>
-            <div className="summary-strip" aria-label="Control plane route summaries">
+            <div className="summary-strip" aria-label="Instruction control route summaries">
               <button className="summary-link" type="button" onClick={() => navigatePage("review")}>
                 <span>Reviews</span>
                 <strong>{reviewQueue?.assets.length ?? reviewDueAssets}</strong>
@@ -2961,10 +3369,10 @@ export function App() {
                 <strong>{agentActions.length}</strong>
                 <em>action requests</em>
               </button>
-              <button className="summary-link" type="button" onClick={() => navigatePage("exports")}>
-                <span>Exports</span>
-                <strong>{exportPackage?.assetCount ?? assets.length}</strong>
-                <em>asset package</em>
+              <button className="summary-link" type="button" onClick={() => navigatePage("distribute")}>
+                <span>Distribute</span>
+                <strong>{exportPackage?.assetCount ?? exportEligibleAssets}</strong>
+                <em>package builder</em>
               </button>
             </div>
           </div>
@@ -4572,55 +4980,170 @@ export function App() {
       </main>
         </>
       ) : (
-        <main className="auth-main" id="main">
-          <section className="login-panel" aria-labelledby="login-title">
-            <div className="login-header">
-              <span className="mark login-mark">AC</span>
-              <h1 id="login-title">Sign in to Agentic CMS</h1>
-              <p className="lede">Private prototype access</p>
+        <main className="public-entry-main" id="main">
+          <section className="public-hero" aria-labelledby="public-hero-title">
+            <div className="public-hero-copy">
+              <p className="eyebrow">Self-hostable beta core</p>
+              <h1 id="public-hero-title">Governed instructions for AI agents, self-hosted.</h1>
+              <p className="public-hero-lede">
+                ForgetBase gives teams a permissioned source of truth for the prompts, policies, playbooks, skills, SOPs,
+                eval cases, and context packages their agents retrieve through API, CLI, MCP, JSON, and OKF exports.
+              </p>
+              <div className="public-hero-actions" aria-label="Landing actions">
+                <Button
+                  variant="primary"
+                  type="button"
+                  onClick={() => {
+                    navigatePage("distribute");
+                    document.getElementById("login-title")?.scrollIntoView({ block: "center" });
+                  }}
+                >
+                  Run locally
+                </Button>
+                <Button
+                  type="button"
+                  onClick={() => {
+                    navigatePage("distribute");
+                    document.getElementById("login-title")?.scrollIntoView({ block: "center" });
+                  }}
+                >
+                  View the demo path
+                </Button>
+              </div>
+              <div className="public-trust-strip" aria-label="Beta proof points">
+                <span>Apache 2.0 core</span>
+                <span>Docker Compose quickstart</span>
+                <span>API, CLI, MCP, JSON, and OKF</span>
+                <span>Synthetic demo corpus</span>
+              </div>
             </div>
-            <form className="auth-settings-form" onSubmit={(event) => {
-              event.preventDefault();
-              void refresh();
-            }}>
-              <label>
-                API URL
-                <input value={apiUrl} onChange={(event) => setApiUrl(event.target.value)} autoComplete="url" />
-              </label>
-              <label>
-                API key
-                <input value={apiKey} onChange={(event) => setApiKey(event.target.value)} type="password" autoComplete="off" />
-              </label>
-              <button type="submit" disabled={!apiKey.trim() || authState === "checking"}>Use API key</button>
-            </form>
-            <form className="classic-login-form" onSubmit={(event) => void login(event)}>
-              <label>
-                Tenant ID
-                <input value={loginTenantId} onChange={(event) => setLoginTenantId(event.target.value)} autoComplete="organization" />
-              </label>
-              <label>
-                Email
-                <input value={loginEmail} onChange={(event) => setLoginEmail(event.target.value)} type="email" autoComplete="username" />
-              </label>
-              <label>
-                Password
-                <input value={loginPassword} onChange={(event) => setLoginPassword(event.target.value)} type="password" autoComplete="current-password" />
-              </label>
-              <button type="submit" disabled={authState === "checking"}>Sign in</button>
-            </form>
-            <form className="oidc-login-form" onSubmit={(event) => void startOidcLogin(event)}>
-              <label>
-                SSO provider
-                <select value={oidcProvider} onChange={(event) => setOidcProvider(event.target.value as ExternalAuthProvider)}>
-                  <option value="microsoft-entra">microsoft-entra</option>
-                  <option value="oidc">oidc</option>
-                </select>
-              </label>
-              <button type="submit" disabled={!loginTenantId || authState === "checking"}>Continue with SSO</button>
-            </form>
-            {authState === "checking" ? <p className="message">Checking session</p> : null}
-            {message ? <p className="message">{message}</p> : null}
-            {error ? <p className="error">{error}</p> : null}
+
+            <div className="public-proof-scene" aria-label="Product proof preview">
+              <div className="proof-browser">
+                <div className="proof-window-bar">
+                  <span></span>
+                  <span></span>
+                  <span></span>
+                  <strong>#distribute</strong>
+                </div>
+                <div className="proof-product-grid">
+                  <section className="proof-panel proof-panel-primary">
+                    <p className="proof-label">Approved instruction</p>
+                    <h2>PII redaction guardrail</h2>
+                    <dl>
+                      <div><dt>Stable ID</dt><dd>guardrail.pii-redaction</dd></div>
+                      <div><dt>State</dt><dd>active / approved</dd></div>
+                      <div><dt>Sensitivity</dt><dd>public-demo</dd></div>
+                      <div><dt>Allowed surfaces</dt><dd>web, api, cli, mcp, export</dd></div>
+                    </dl>
+                  </section>
+                  <section className="proof-panel">
+                    <p className="proof-label">Agent package</p>
+                    <h3>demo-agent-pack</h3>
+                    <div className="proof-package-state">
+                      <span>JSON ready</span>
+                      <span>OKF 0.1 ready</span>
+                      <span>projection hash</span>
+                    </div>
+                  </section>
+                  <section className="proof-panel proof-terminal">
+                    <p className="proof-label">Consumer fetch</p>
+                    <pre>{`GET /exports/ai-package
+format=okf
+rootIndexPath=index.md`}</pre>
+                  </section>
+                  <section className="proof-panel proof-safety">
+                    <p className="proof-label">Boundary proof</p>
+                    <strong>restricted asset omitted</strong>
+                    <span>Denied items are counted, not previewed.</span>
+                  </section>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section className="public-proof-section" aria-labelledby="public-proof-title">
+            <div>
+              <p className="eyebrow">15-minute beta path</p>
+              <h2 id="public-proof-title">One governed path from draft to agent consumer.</h2>
+              <p>
+                Use the local demo to inspect a governed asset, review its lifecycle state, search with citations, and
+                generate JSON or OKF packages from the same permission-filtered API.
+              </p>
+            </div>
+            <div className="public-step-list" aria-label="Beta path steps">
+              <span>Create or import synthetic governed assets.</span>
+              <span>Review, publish, and inspect trust metadata.</span>
+              <span>Package approved context for API, CLI, MCP, JSON, and OKF.</span>
+              <span>Verify restricted context stays out of broad-reader exports.</span>
+            </div>
+          </section>
+
+          <section className="auth-entry-grid" aria-label="Sign in and beta boundary">
+            <section className="login-panel" aria-labelledby="login-title">
+              <div className="login-header">
+                <span className="mark login-mark" aria-hidden="true">
+                  <img className="mark-image" src="/favicon.svg" alt="" />
+                </span>
+                <h1 id="login-title">Sign in to ForgetBase</h1>
+                <p className="lede">Private alpha. Access by invitation.</p>
+                {currentPage === "distribute" || currentPage === "exports" ? (
+                  <p className="queued-route">Demo path queued: <code>#{currentPage}</code></p>
+                ) : null}
+              </div>
+              <form className="auth-settings-form" onSubmit={(event) => {
+                event.preventDefault();
+                void refresh();
+              }}>
+                <label>
+                  API URL
+                  <input value={apiUrl} onChange={(event) => setApiUrl(event.target.value)} autoComplete="url" />
+                </label>
+                <label>
+                  API key
+                  <input value={apiKey} onChange={(event) => setApiKey(event.target.value)} type="password" autoComplete="off" />
+                </label>
+                <button type="submit" disabled={!apiKey.trim() || authState === "checking"}>Use API key</button>
+              </form>
+              <form className="classic-login-form" onSubmit={(event) => void login(event)}>
+                <label>
+                  Tenant ID
+                  <input value={loginTenantId} onChange={(event) => setLoginTenantId(event.target.value)} autoComplete="organization" />
+                </label>
+                <label>
+                  Email
+                  <input value={loginEmail} onChange={(event) => setLoginEmail(event.target.value)} type="email" autoComplete="username" />
+                </label>
+                <label>
+                  Password
+                  <input value={loginPassword} onChange={(event) => setLoginPassword(event.target.value)} type="password" autoComplete="current-password" />
+                </label>
+                <button type="submit" disabled={authState === "checking"}>Sign in</button>
+              </form>
+              <form className="oidc-login-form" onSubmit={(event) => void startOidcLogin(event)}>
+                <label>
+                  SSO provider
+                  <select value={oidcProvider} onChange={(event) => setOidcProvider(event.target.value as ExternalAuthProvider)}>
+                    <option value="microsoft-entra">microsoft-entra</option>
+                    <option value="oidc">oidc</option>
+                  </select>
+                </label>
+                <button type="submit" disabled={!loginTenantId || authState === "checking"}>Continue with SSO</button>
+              </form>
+              {authState === "checking" ? <p className="message">Checking session</p> : null}
+              {message ? <p className="message">{message}</p> : null}
+              {error ? <p className="error">{error}</p> : null}
+            </section>
+
+            <aside className="beta-boundary-panel" aria-labelledby="beta-boundary-title">
+              <p className="eyebrow">Clear beta boundary</p>
+              <h2 id="beta-boundary-title">Built in public boundaries, not inflated claims.</h2>
+              <p>
+                Evaluate ForgetBase as a self-hostable core for governed agent instructions and context packages.
+                It is not claiming hosted-service maturity, enterprise SSO/SCIM completion, full managed-agent
+                orchestration, broad enterprise search parity, or certification-level compliance.
+              </p>
+            </aside>
           </section>
         </main>
       )}
@@ -4638,32 +5161,19 @@ function upsertApiKeyRecords(records: ApiKeyRecord[], rotation: ApiKeyRotateResp
   );
 }
 
+function selectAssetFromRow(event: ReactKeyboardEvent<HTMLTableRowElement>, selectAsset: () => void): void {
+  if (event.key !== "Enter" && event.key !== " ") {
+    return;
+  }
+
+  event.preventDefault();
+  selectAsset();
+}
+
 function keyOwnerLabel(record: ApiKeyRecord): string {
   return record.serviceAccountId
     ? `service:${record.serviceAccountId}`
     : `user:${record.userId ?? "unknown"}`;
-}
-
-function formatDaysUntil(daysUntilExpiry: number | null): string {
-  if (daysUntilExpiry === null) {
-    return "no expiry";
-  }
-
-  if (daysUntilExpiry <= 0) {
-    return `${Math.abs(daysUntilExpiry)}d overdue`;
-  }
-
-  return `${daysUntilExpiry}d left`;
-}
-
-function formatCounts(counts: Array<{ key: string; count: number }>): string {
-  return counts.length
-    ? counts.map((entry) => `${entry.key} ${entry.count}`).join(", ")
-    : "none";
-}
-
-function formatList(values: string[]): string {
-  return values.length ? values.join(", ") : "none";
 }
 
 function initialsFor(value: string): string {
@@ -4678,80 +5188,10 @@ function initialsFor(value: string): string {
   return initials || "AC";
 }
 
-function formatMetric(value: number | null, suffix = ""): string {
-  return value === null ? "n/a" : `${value}${suffix}`;
-}
-
-function formatPercent(value: number): string {
-  return `${Math.round(value * 100)}%`;
-}
-
-function formatCurrency(value: number | null): string {
-  return value === null ? "n/a" : `$${value.toFixed(6)}`;
-}
-
-function parseOptionalNumber(value: string): number | undefined {
-  const trimmed = value.trim();
-
-  if (!trimmed) {
-    return undefined;
-  }
-
-  const parsed = Number.parseFloat(trimmed);
-  return Number.isFinite(parsed) ? parsed : undefined;
-}
-
-function parseCsvInput(value: string): string[] {
-  return value.split(",").map((entry) => entry.trim()).filter(Boolean);
-}
-
 function compactMetadata(values: Record<string, number | undefined>): Record<string, number> {
   return Object.fromEntries(
     Object.entries(values).filter((entry): entry is [string, number] => entry[1] !== undefined)
   );
-}
-
-function formatRetentionDays(value: number | null): string {
-  return value === null ? "forever" : `${value}d`;
-}
-
-function formatRetentionInput(value: number | null): string {
-  return value === null ? "forever" : String(value);
-}
-
-function parseRetentionInput(value: string): number | null {
-  const trimmed = value.trim().toLowerCase();
-
-  if (["forever", "none", "null"].includes(trimmed)) {
-    return null;
-  }
-
-  const parsed = Number.parseInt(trimmed, 10);
-  return Number.isNaN(parsed) ? 0 : parsed;
-}
-
-function policyValue(value: number | null): string {
-  return value === null ? "unlimited" : String(value);
-}
-
-function formatCachePolicyTtl(value: number | null): string {
-  return value === null ? "unlimited" : `${value}s`;
-}
-
-function parseNullablePolicyNumber(value: string): number | null {
-  const trimmed = value.trim().toLowerCase();
-
-  if (!trimmed || ["forever", "none", "null", "unlimited"].includes(trimmed)) {
-    return null;
-  }
-
-  const parsed = Number.parseInt(trimmed, 10);
-
-  if (!Number.isSafeInteger(parsed) || parsed <= 0) {
-    throw new Error(`Invalid positive integer: ${value}`);
-  }
-
-  return parsed;
 }
 
 interface ProviderFormState {
