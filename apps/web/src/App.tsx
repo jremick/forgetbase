@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import type {
   AccountLinkingMode,
   AgentActionExecutionPolicy,
@@ -52,7 +52,7 @@ import type {
   TelemetryRetentionPolicy,
   TelemetryRetentionPurgeResult
 } from "@agentic-cms/schema";
-import { Copy, Download, LogOut, RefreshCw, Search, SlidersHorizontal } from "lucide-react";
+import { BookOpen, ClipboardCheck, Copy, Download, LogOut, PackageOpen, RefreshCw, Search, Settings2, SlidersHorizontal } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "./components/ui/alert.js";
 import { Badge, type BadgeVariant } from "./components/ui/badge.js";
 import { Button } from "./components/ui/button.js";
@@ -63,6 +63,7 @@ import {
   EmptyState,
   FormField,
   MetricCard,
+  RouteHeader,
   SectionCard,
   StatusAlert,
   Toolbar
@@ -212,7 +213,7 @@ type NavLeafConfig = {
 type NavSectionConfig = {
   label: string;
   folderLabel: string;
-  folderIcon: string;
+  folderIcon: ReactNode;
   folderRoute: string;
   activeRoutes: string[];
   count?: number | string;
@@ -228,30 +229,39 @@ const pageRouteValues = [
   "review",
   "versions",
   "distribute",
-  "operations",
-  "access",
-  "providers",
-  "policies",
-  "telemetry",
-  "approvals",
-  "exports"
-] as const;
-const operationsRouteValues = [
-  "review",
-  "operations",
-  "access",
-  "providers",
-  "policies",
-  "telemetry",
+  "activity",
+  "health",
+  "integrations",
+  "settings",
   "approvals"
 ] as const;
+const operationsRouteValues = [
+  "activity",
+  "health",
+  "integrations",
+  "settings",
+  "approvals"
+] as const;
+const legacyPageRouteAliases: Record<string, string> = {
+  access: "settings",
+  exports: "distribute",
+  operate: "health",
+  operations: "health",
+  policies: "settings",
+  providers: "integrations",
+  telemetry: "activity"
+};
+const activityPanelRoutes = ["activity", "telemetry"];
+const activityAndHealthPanelRoutes = ["activity", "telemetry", "health"];
+const integrationsPanelRoutes = ["integrations", "providers"];
+const settingsPanelRoutes = ["settings", "access", "policies"];
 const pageRoutes = new Set<string>(pageRouteValues);
 const operationsRoutes = new Set<string>(operationsRouteValues);
 const sensitivityFilterValues = ["public-demo", "internal", "restricted", "confidential", "secret"] as const;
 const defaultOperationsPageCopy = {
   eyebrow: "Instruction control plane",
-  title: "Operations Dashboard",
-  lede: "Route into reviews, access, providers, policies, telemetry, approvals, and distribution from a single control surface."
+  title: "Health Workspace",
+  lede: "Check API status, provider readiness, recent telemetry, action governance, and maintenance posture."
 };
 const operationsPageCopy: Record<string, { eyebrow: string; title: string; lede: string }> = {
   review: {
@@ -259,36 +269,30 @@ const operationsPageCopy: Record<string, { eyebrow: string; title: string; lede:
     title: "Review Queue",
     lede: "Triage assets that need approval, lifecycle review, or release attention."
   },
-  operations: defaultOperationsPageCopy,
-  access: {
-    eyebrow: "Identity and access",
-    title: "Access Workspace",
-    lede: "Manage local users, service accounts, groups, keys, sessions, and service-account guardrails."
+  activity: {
+    eyebrow: "Activity and observability",
+    title: "Activity Workspace",
+    lede: "Inspect retrieval, audit, feedback, model generation, retention, cache, and eval signals."
   },
-  providers: {
-    eyebrow: "Provider operations",
-    title: "Provider Workspace",
+  health: {
+    eyebrow: "Operational health",
+    title: "Health Workspace",
+    lede: "Check API status, provider readiness, recent telemetry, action governance, and maintenance posture."
+  },
+  integrations: {
+    eyebrow: "Integrations",
+    title: "Integrations Workspace",
     lede: "Configure model providers, readiness checks, and external authentication providers."
   },
-  policies: {
-    eyebrow: "Policy controls",
-    title: "Policy Workspace",
-    lede: "Tune managed query, ranking, retention, eval, action, secret, and PII controls."
-  },
-  telemetry: {
-    eyebrow: "Observability",
-    title: "Telemetry Workspace",
-    lede: "Inspect retrieval, audit, feedback, model generation, retention, cache, and eval signals."
+  settings: {
+    eyebrow: "Admin settings",
+    title: "Settings Workspace",
+    lede: "Manage access, service accounts, groups, keys, sessions, policies, retention, secrets, and PII controls."
   },
   approvals: {
     eyebrow: "Action governance",
     title: "Approvals Workspace",
     lede: "Review dry-run defaults, approval requirements, action requests, and kill-switch posture."
-  },
-  exports: {
-    eyebrow: "Agent export",
-    title: "Exports Workspace",
-    lede: "Legacy route. The active export workflow now lives in Distribute."
   }
 };
 
@@ -297,7 +301,15 @@ function routePanelClass(currentPage: string, routes: string[], baseClass = "gri
 }
 
 function normalizePageRoute(route: string): string {
-  return pageRoutes.has(route) ? route : "library";
+  const aliasedRoute = legacyPageRouteAliases[route] ?? route;
+
+  return pageRoutes.has(aliasedRoute) ? aliasedRoute : "library";
+}
+
+function isPublishedReaderAsset(asset: AssetRecord): boolean {
+  return asset.lifecycleState === "active" &&
+    asset.status === "approved" &&
+    asset.allowedSurfaces.includes("web");
 }
 
 function navBadgeVariant(tone?: NavBadgeTone): BadgeVariant {
@@ -538,15 +550,28 @@ export function App() {
   const [currentPage, setCurrentPage] = useState(() =>
     normalizePageRoute(typeof window === "undefined" ? "" : window.location.hash.replace("#", ""))
   );
+  const [currentHashRoute, setCurrentHashRoute] = useState(() =>
+    typeof window === "undefined" ? "" : window.location.hash.replace("#", "")
+  );
   const [density, setDensity] = useState(() =>
     typeof window === "undefined" ? "comfortable" : localStorage.getItem(densityStorageKey) || "comfortable"
   );
   const [isCommandOpen, setIsCommandOpen] = useState(false);
+  const [loadingWorkspaceRoute, setLoadingWorkspaceRoute] = useState("");
   const commandTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const loadedWorkspaceRoutesRef = useRef<Set<string>>(new Set());
 
+  const readerPublishedAssets = useMemo(
+    () => assets.filter(isPublishedReaderAsset),
+    [assets]
+  );
   const selectedAsset = useMemo(
-    () => assets.find((asset) => asset.stableId === selectedStableId) ?? assets[0],
-    [assets, selectedStableId]
+    () => {
+      const scopedAssets = currentPrincipal?.role === "reader" ? readerPublishedAssets : assets;
+
+      return scopedAssets.find((asset) => asset.stableId === selectedStableId) ?? scopedAssets[0];
+    },
+    [assets, currentPrincipal?.role, readerPublishedAssets, selectedStableId]
   );
   const currentVersion = useMemo(
     () => assetDetail?.versions.find((version) => version.id === assetDetail.asset.currentVersionId) ?? assetDetail?.versions[0],
@@ -572,11 +597,19 @@ export function App() {
     ),
     [assets, libraryQuery, librarySensitivityFilter, libraryViewFilter]
   );
+  const filteredReaderAssets = useMemo(
+    () => readerPublishedAssets.filter((asset) => libraryAssetMatches(asset, libraryQuery)),
+    [libraryQuery, readerPublishedAssets]
+  );
   const libraryFilterActive = Boolean(
     libraryQuery.trim() || libraryViewFilter !== "all" || librarySensitivityFilter !== "all"
   );
-  const visibleOperationsPage = operationsRoutes.has(currentPage);
-  const visibleDistributePage = currentPage === "distribute" || currentPage === "exports";
+  const readerFilterActive = Boolean(libraryQuery.trim());
+  const visibleOperationsPage = operationsRoutes.has(currentPage) || currentPage === "review";
+  const visibleDistributePage = currentPage === "distribute";
+  const isLegacyExportsAlias = currentHashRoute === "exports";
+  const legacyRouteTarget = legacyPageRouteAliases[currentHashRoute] ?? "";
+  const isLegacyRouteAlias = Boolean(legacyRouteTarget && legacyRouteTarget === currentPage);
   const normalizedApiUrl = apiUrl.replace(/\/$/, "");
   const exportQueryParams = new URLSearchParams({
     package: packageNameInput,
@@ -623,6 +656,10 @@ export function App() {
   const isAuthenticated = authState === "authenticated";
   const displayIdentity = currentPrincipal?.displayName || currentPrincipal?.email || "Guest";
   const displayInitials = isAuthenticated ? initialsFor(displayIdentity) : "GU";
+  const readerSurfaceActive = isAuthenticated && currentPrincipal?.role === "reader";
+  const readerSelectedAsset = readerPublishedAssets.find((asset) => asset.stableId === selectedStableId) ??
+    filteredReaderAssets[0] ??
+    readerPublishedAssets[0];
 
   function openLoginPanel() {
     setShowLoginPanel(true);
@@ -666,7 +703,9 @@ export function App() {
 
   useEffect(() => {
     const syncPageFromHash = () => {
-      setCurrentPage(normalizePageRoute(window.location.hash.replace("#", "")));
+      const routeFromHash = window.location.hash.replace("#", "");
+      setCurrentHashRoute(routeFromHash);
+      setCurrentPage(normalizePageRoute(routeFromHash));
     };
 
     syncPageFromHash();
@@ -679,7 +718,7 @@ export function App() {
   }, [density]);
 
   useEffect(() => {
-    if (!isAuthenticated) {
+    if (!isAuthenticated || readerSurfaceActive) {
       return undefined;
     }
 
@@ -692,7 +731,7 @@ export function App() {
 
     window.addEventListener("keydown", openCommandShortcut);
     return () => window.removeEventListener("keydown", openCommandShortcut);
-  }, [isAuthenticated]);
+  }, [isAuthenticated, readerSurfaceActive]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -730,10 +769,59 @@ export function App() {
   }, []);
 
   useEffect(() => {
+    if (readerSurfaceActive && currentPage !== "library") {
+      setCurrentPage("library");
+      setCurrentHashRoute("library");
+      window.history.replaceState({}, document.title, `${window.location.pathname}${window.location.search}#library`);
+    }
+  }, [currentPage, readerSurfaceActive]);
+
+  useEffect(() => {
+    if (!readerSurfaceActive) {
+      return;
+    }
+
+    if (!readerPublishedAssets.length) {
+      setSelectedStableId("");
+      setAssetDetail(null);
+      return;
+    }
+
+    const fallbackAsset = readerPublishedAssets[0]!;
+    const nextStableId = readerPublishedAssets.some((asset) => asset.stableId === selectedStableId)
+      ? selectedStableId
+      : fallbackAsset.stableId;
+
+    if (nextStableId !== selectedStableId) {
+      setSelectedStableId(nextStableId);
+      setAssetContentView("human");
+    }
+  }, [readerPublishedAssets, readerSurfaceActive, selectedStableId]);
+
+  useEffect(() => {
     if (isAuthenticated && selectedAsset) {
       void loadAsset(selectedAsset.stableId);
     }
   }, [isAuthenticated, selectedAsset?.stableId]);
+
+  useEffect(() => {
+    if (!isAuthenticated || readerSurfaceActive) {
+      loadedWorkspaceRoutesRef.current.clear();
+      setLoadingWorkspaceRoute("");
+      return;
+    }
+
+    if (!visibleOperationsPage) {
+      return;
+    }
+
+    if (loadedWorkspaceRoutesRef.current.has(currentPage)) {
+      return;
+    }
+
+    loadedWorkspaceRoutesRef.current.add(currentPage);
+    void loadWorkspaceRoute(currentPage);
+  }, [isAuthenticated, readerSurfaceActive, visibleOperationsPage, currentPage]);
 
   useEffect(() => {
     if (!assetDetail) {
@@ -2497,6 +2585,129 @@ export function App() {
     window.location.hash = nextRoute;
   }
 
+  function openAssetRead(stableId: string) {
+    setSelectedStableId(stableId);
+    navigatePage("asset-read");
+  }
+
+  function routeBreadcrumbs(route: string) {
+    const normalizedRoute = normalizePageRoute(route);
+
+    if (normalizedRoute === "search") {
+      return [
+        { label: "Read", onClick: () => navigatePage("library") },
+        { label: "Search", current: true }
+      ];
+    }
+
+    if (normalizedRoute === "asset-read") {
+      return [
+        { label: "Read", onClick: () => navigatePage("library") },
+        { label: "Reading room", current: true }
+      ];
+    }
+
+    if (normalizedRoute === "versions") {
+      return [
+        { label: "Work", onClick: () => navigatePage("review") },
+        { label: "Version compare", current: true }
+      ];
+    }
+
+    if (normalizedRoute === "review") {
+      return [
+        { label: "Work", onClick: () => navigatePage("review") },
+        { label: "Review queue", current: true }
+      ];
+    }
+
+    if (normalizedRoute === "distribute") {
+      return [
+        { label: "Distribute", current: true }
+      ];
+    }
+
+    if (operationsRoutes.has(normalizedRoute)) {
+      return [
+        { label: "Operate", onClick: () => navigatePage("health") },
+        { label: operationsPageCopy[normalizedRoute]?.title ?? "Operations", current: true }
+      ];
+    }
+
+    return [
+      { label: "Read", current: true }
+    ];
+  }
+
+  function workspaceLoadersForRoute(route: string): Array<() => Promise<void>> {
+    switch (normalizePageRoute(route)) {
+      case "review":
+        return [loadReviewQueue];
+      case "activity":
+        return [
+          loadTelemetrySummary,
+          loadTelemetry,
+          loadAuditEvents,
+          loadFeedback,
+          loadEvalRuns,
+          loadEvalSummary
+        ];
+      case "health":
+        return [
+          () => refreshHealth(),
+          loadTelemetrySummary,
+          loadProviderHealth,
+          loadActionExecutionPolicy,
+          loadAgentActions,
+          loadEvalRuns,
+          loadEvalSummary,
+          loadManagedQueryCachePolicy
+        ];
+      case "integrations":
+        return [loadProviderConfigs, loadProviderHealth, loadAuthProviderConfigs];
+      case "settings":
+        return [
+          loadUsers,
+          loadServiceAccounts,
+          loadServiceAccountPolicy,
+          loadGroups,
+          loadApiKeys,
+          loadLoginSessions,
+          loadApiKeyRotationReport,
+          loadManagedQueryPolicy,
+          loadRetrievalRankingPolicy,
+          loadEvalSchedulePolicy,
+          loadActionExecutionPolicy,
+          loadManagedQueryCachePolicy,
+          loadManagedQueryCache,
+          loadManagedQueryRetentionPolicy,
+          loadSecretReferencePolicy,
+          loadPiiRedactionPolicy
+        ];
+      case "approvals":
+        return [loadActionExecutionPolicy, loadAgentActions];
+      default:
+        return [];
+    }
+  }
+
+  async function loadWorkspaceRoute(route: string) {
+    const normalizedRoute = normalizePageRoute(route);
+    const loaders = workspaceLoadersForRoute(normalizedRoute);
+
+    if (!loaders.length) {
+      return;
+    }
+
+    setLoadingWorkspaceRoute(normalizedRoute);
+
+    try {
+      await Promise.all(loaders.map((loader) => loader()));
+    } finally {
+      setLoadingWorkspaceRoute((current) => current === normalizedRoute ? "" : current);
+    }
+  }
+
   function handleCommandOpenChange(open: boolean) {
     setIsCommandOpen(open);
   }
@@ -2506,26 +2717,25 @@ export function App() {
   }
 
   const operationsPage = operationsPageCopy[currentPage] ?? defaultOperationsPageCopy;
-  const isOperationsLanding = currentPage === "operations";
   const activeAssetContentView = currentPage === "versions" ? "version" : assetContentView;
   const navSections: NavSectionConfig[] = [
     {
       label: "Read",
       folderLabel: "Library",
-      folderIcon: "RD",
+      folderIcon: <BookOpen aria-hidden="true" />,
       folderRoute: "library",
       activeRoutes: ["library", "search", "asset-read"],
       count: assets.length,
       leaves: [
-        { route: "library", label: "Overview", count: approvedAssets },
+        { route: "library", label: "Asset library", count: approvedAssets },
         { route: "search", label: "Search / query" },
-        { route: "asset-read", label: "Asset read", badge: assetDetail ? { label: "live", tone: "warn" } : undefined }
+        { route: "asset-read", label: "Reading room", badge: assetDetail ? { label: "live", tone: "warn" } : undefined }
       ]
     },
     {
       label: "Work",
       folderLabel: "Governance Work",
-      folderIcon: "WK",
+      folderIcon: <ClipboardCheck aria-hidden="true" />,
       folderRoute: "review",
       activeRoutes: ["review", "versions"],
       count: reviewDueAssets,
@@ -2537,33 +2747,31 @@ export function App() {
     {
       label: "Distribute",
       folderLabel: "Agent Distribution",
-      folderIcon: "DS",
+      folderIcon: <PackageOpen aria-hidden="true" />,
       folderRoute: "distribute",
-      activeRoutes: ["distribute", "exports"],
+      activeRoutes: ["distribute"],
       count: exportPackage?.assetCount ?? exportEligibleAssets,
       leaves: [
         {
           route: "distribute",
           label: "Package builder",
           badge: exportPackage ? { label: "format" in exportPackage ? exportPackage.format : "json", tone: "ok" } : undefined
-        },
-        { route: "exports", label: "Legacy exports", badge: { label: "alias", tone: "warn" } }
+        }
       ]
     },
     {
       label: "Operate",
       folderLabel: "Instruction Control",
-      folderIcon: "OP",
-      folderRoute: "operations",
+      folderIcon: <Settings2 aria-hidden="true" />,
+      folderRoute: "health",
       activeRoutes: [...operationsRouteValues],
-      count: 6,
+      count: 5,
       leaves: [
-        { route: "operations", label: "Operations" },
-        { route: "access", label: "Access" },
-        { route: "providers", label: "Providers" },
-        { route: "policies", label: "Policies" },
-        { route: "telemetry", label: "Telemetry" },
-        { route: "approvals", label: "Approvals" }
+        { route: "activity", label: "Activity" },
+        { route: "health", label: "Health", badge: health === "ok" ? { label: "ok", tone: "ok" } : { label: health, tone: "bad" } },
+        { route: "integrations", label: "Integrations", count: providerConfigs.length + authProviderConfigs.length },
+        { route: "settings", label: "Settings" },
+        { route: "approvals", label: "Approvals", badge: agentActions.length ? { label: agentActions.length, tone: "warn" } : undefined }
       ]
     }
   ];
@@ -2592,7 +2800,7 @@ export function App() {
 
   return (
     <div
-      className={`app-shell ${isAuthenticated ? "" : "auth-shell"}`}
+      className={`app-shell ${isAuthenticated ? readerSurfaceActive ? "reader-shell" : "" : "auth-shell"}`}
       data-density={density}
     >
       <a className="skip-link" href="#main">Skip to content</a>
@@ -2603,7 +2811,54 @@ export function App() {
           </span>
           <span>ForgetBase</span>
         </div>
-        {isAuthenticated ? (
+        {isAuthenticated ? readerSurfaceActive ? (
+          <div className="topbar-main reader-topbar-main">
+            <form className="reader-topbar-search" onSubmit={(event) => void runSearch(event)}>
+              <Search aria-hidden="true" />
+              <Input
+                value={searchQuery}
+                onChange={(event) => setSearchQuery(event.target.value)}
+                placeholder="Search published material"
+                aria-label="Search published material"
+              />
+            </form>
+            <Button
+              variant="ghost"
+              size="sm"
+              type="button"
+              onClick={() => void refresh()}
+            >
+              <RefreshCw aria-hidden="true" />
+              Refresh
+            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="sm" type="button" className="identity-trigger">
+                  <span className="avatar">{displayInitials}</span>
+                  <span className="identity-name">{displayIdentity}</span>
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="identity-menu">
+                <DropdownMenuLabel>
+                  <span className="identity-menu-label">Reader account</span>
+                  <span className="identity-menu-value">{displayIdentity}</span>
+                </DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                <DropdownMenuGroup>
+                  <DropdownMenuItem onSelect={() => void refresh()}>
+                    Refresh library
+                    <DropdownMenuShortcut>sync</DropdownMenuShortcut>
+                  </DropdownMenuItem>
+                </DropdownMenuGroup>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem variant="destructive" onSelect={() => void logout()}>
+                  Sign out
+                  <DropdownMenuShortcut>auth</DropdownMenuShortcut>
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        ) : (
           <div className="topbar-main">
             <Button
               ref={commandTriggerRef}
@@ -2612,7 +2867,7 @@ export function App() {
               onClick={() => handleCommandOpenChange(true)}
             >
               <Search aria-hidden="true" />
-              <span>Search assets, pages, commands</span>
+              <span>Go to page or route</span>
               <span className="kbd">Cmd K</span>
             </Button>
             <div className="health"><span className={`health-dot ${health === "ok" ? "ok" : "bad"}`}></span><span>API {health}</span></div>
@@ -2639,9 +2894,9 @@ export function App() {
                 </DropdownMenuLabel>
                 <DropdownMenuSeparator />
                 <DropdownMenuGroup>
-                  <DropdownMenuItem onSelect={() => navigatePage("access")}>
-                    Access
-                    <DropdownMenuShortcut>#access</DropdownMenuShortcut>
+                  <DropdownMenuItem onSelect={() => navigatePage("settings")}>
+                    Settings
+                    <DropdownMenuShortcut>#settings</DropdownMenuShortcut>
                   </DropdownMenuItem>
                   <DropdownMenuItem onSelect={toggleDensity}>
                     {density === "comfortable" ? "Compact density" : "Comfortable density"}
@@ -2663,7 +2918,180 @@ export function App() {
         ) : null}
       </header>
 
-      {isAuthenticated ? (
+      {isAuthenticated ? readerSurfaceActive ? (
+        <main className="reader-main" id="main">
+          <section className="reader-hero" aria-labelledby="reader-title">
+            <div className="reader-hero-copy">
+              <p className="eyebrow">Published knowledge base</p>
+              <h1 id="reader-title">Read approved ForgetBase material.</h1>
+              <p>
+                This view is for people who need the published content, not the management console. It shows active,
+                approved web material from the governed library with lightweight source and version context.
+              </p>
+            </div>
+            <div className="reader-hero-stats" aria-label="Published library summary">
+              <div>
+                <strong>{readerPublishedAssets.length}</strong>
+                <span>published item{readerPublishedAssets.length === 1 ? "" : "s"}</span>
+              </div>
+              <div>
+                <strong>{searchResponse?.results.length ?? 0}</strong>
+                <span>search citation{searchResponse?.results.length === 1 ? "" : "s"}</span>
+              </div>
+              <div>
+                <strong>{readerSelectedAsset ? "ready" : "empty"}</strong>
+                <span>reader library</span>
+              </div>
+            </div>
+          </section>
+
+          {message ? (
+            <Alert variant="success" className="reader-alert">
+              <AlertDescription>{message}</AlertDescription>
+            </Alert>
+          ) : null}
+          {error ? (
+            <Alert variant="destructive" className="reader-alert">
+              <AlertTitle>Request failed</AlertTitle>
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
+          ) : null}
+
+          <section className="reader-search-panel" aria-label="Published material search">
+            <form className="reader-search-form" onSubmit={(event) => void runSearch(event)}>
+              <FormField label="Search published material" htmlFor="reader-search-query">
+                <Input
+                  id="reader-search-query"
+                  value={searchQuery}
+                  onChange={(event) => setSearchQuery(event.target.value)}
+                  placeholder="Find a policy, guide, SOP, template, or playbook"
+                />
+              </FormField>
+              <Button type="submit" disabled={!searchQuery.trim()}>
+                <Search aria-hidden="true" />
+                Search
+              </Button>
+            </form>
+            {searchResponse ? (
+              <div className="reader-search-results">
+                {searchResponse.results.length ? searchResponse.results.map((result) => (
+                  <button
+                    type="button"
+                    className="reader-search-result"
+                    key={result.chunkId}
+                    onClick={() => {
+                      setSelectedStableId(result.asset.stableId);
+                      setAssetContentView("human");
+                    }}
+                  >
+                    <span>{result.asset.title}</span>
+                    <small>{result.citation.snippet}</small>
+                  </button>
+                )) : (
+                  <p className="empty">No permitted citations matched this search.</p>
+                )}
+              </div>
+            ) : null}
+          </section>
+
+          <section className="reader-layout" aria-label="Published library">
+            <aside className="reader-library" aria-label="Published material list">
+              <div className="reader-library-header">
+                <div>
+                  <p className="eyebrow">Library</p>
+                  <h2>Published material</h2>
+                </div>
+                {readerFilterActive ? (
+                  <Button type="button" size="sm" variant="ghost" onClick={() => setLibraryQuery("")}>Clear</Button>
+                ) : null}
+              </div>
+              <div className="reader-list">
+                {filteredReaderAssets.length ? filteredReaderAssets.map((asset) => (
+                  <button
+                    type="button"
+                    key={asset.id}
+                    className={`reader-card ${asset.stableId === readerSelectedAsset?.stableId ? "is-selected" : ""}`}
+                    aria-current={asset.stableId === readerSelectedAsset?.stableId ? "true" : undefined}
+                    onClick={() => {
+                      setSelectedStableId(asset.stableId);
+                      setAssetContentView("human");
+                    }}
+                  >
+                    <span className="reader-card-title">{asset.title}</span>
+                    <span className="reader-card-summary">{asset.summary || asset.stableId}</span>
+                    <span className="reader-card-meta">
+                      <Badge variant="neutral">{asset.type}</Badge>
+                      <Badge variant={isPublicReaderEligible(asset) ? "success" : "info"}>
+                        {isPublicReaderEligible(asset) ? "public" : "authenticated"}
+                      </Badge>
+                    </span>
+                  </button>
+                )) : (
+                  <div className="reader-empty-state">
+                    <h3>No published material found</h3>
+                    <p>{readerFilterActive ? "Clear search to see all published material." : "No active, approved web material is available to this reader account yet."}</p>
+                  </div>
+                )}
+              </div>
+            </aside>
+
+            <article className="reader-article">
+              {assetDetail && readerSelectedAsset ? (
+                <>
+                  <header className="reader-article-header">
+                    <div>
+                      <p className="eyebrow">{assetDetail.asset.type}</p>
+                      <h2>{assetDetail.asset.title}</h2>
+                      {assetDetail.asset.summary ? <p>{assetDetail.asset.summary}</p> : null}
+                    </div>
+                    <div className="reader-status">
+                      <Badge variant={stateBadgeVariant(assetDetail.asset.lifecycleState)}>{assetDetail.asset.lifecycleState}</Badge>
+                      <Badge variant={stateBadgeVariant(assetDetail.asset.status)}>{assetDetail.asset.status}</Badge>
+                    </div>
+                  </header>
+
+                  <div className="reader-document">
+                    {currentHumanBody ? (
+                      <pre className="reader-document-body">{currentHumanBody}</pre>
+                    ) : (
+                      <div className="reader-empty-state">
+                        <h3>No human-readable page</h3>
+                        <p>This published asset does not have a human document body yet.</p>
+                      </div>
+                    )}
+                  </div>
+
+                  <footer className="reader-source-panel" aria-label="Publication details">
+                    <dl>
+                      <div>
+                        <dt>Stable ID</dt>
+                        <dd>{assetDetail.asset.stableId}</dd>
+                      </div>
+                      <div>
+                        <dt>Version</dt>
+                        <dd>{currentVersion ? `v${currentVersion.versionNumber}` : "none"}</dd>
+                      </div>
+                      <div>
+                        <dt>Updated</dt>
+                        <dd>{new Date(assetDetail.asset.updatedAt).toLocaleString()}</dd>
+                      </div>
+                      <div>
+                        <dt>Access</dt>
+                        <dd>{isPublicReaderEligible(assetDetail.asset) ? "public reader" : "authenticated reader"}</dd>
+                      </div>
+                    </dl>
+                  </footer>
+                </>
+              ) : (
+                <div className="reader-empty-state reader-empty-state--large">
+                  <h2>No published material selected</h2>
+                  <p>Select an item from the published library after it loads.</p>
+                </div>
+              )}
+            </article>
+          </section>
+        </main>
+      ) : (
         <>
           <CommandDialog
             open={isCommandOpen}
@@ -2677,7 +3105,7 @@ export function App() {
             }}
           >
             <Command>
-              <CommandInput placeholder="Search pages and routes..." />
+              <CommandInput placeholder="Go to page or route..." />
               <CommandList>
                 <CommandEmpty>No route found.</CommandEmpty>
                 {commandSections.map((section) => (
@@ -2709,14 +3137,12 @@ export function App() {
               <p className="nav-label">{section.label}</p>
               <div className="nav-tree">
                 <Button
-                  className={`nav-folder is-open ${section.activeRoutes.includes(currentPage) ? "is-active-ancestor" : ""}`}
+                  className={`nav-folder ${section.activeRoutes.includes(currentPage) ? "is-active-ancestor" : ""}`}
                   type="button"
                   variant="ghost"
-                  aria-expanded="true"
                   onClick={() => navigatePage(section.folderRoute)}
                 >
-                  <span className="twisty">v</span>
-                  <span className="folder-glyph">{section.folderIcon}</span>
+                  <span className="folder-glyph" aria-hidden="true">{section.folderIcon}</span>
                   <span className="nav-text">{section.folderLabel}</span>
                   {section.count === undefined ? null : <Badge variant="neutral" className="nav-count">{section.count}</Badge>}
                 </Button>
@@ -2748,35 +3174,40 @@ export function App() {
       </nav>
 
       <main className="main" id="main">
-        <Card className="control-bar" aria-label="Connection">
-          <CardContent>
-            <form className="connection-grid" onSubmit={(event) => event.preventDefault()}>
-              <div className="connection-field">
-                <Label htmlFor="shell-api-url">API URL</Label>
-                <Input
-                  id="shell-api-url"
-                  value={apiUrl}
-                  onChange={(event) => setApiUrl(event.target.value)}
-                  autoComplete="url"
-                />
-              </div>
-              <div className="connection-field">
-                <Label htmlFor="shell-api-key">API key</Label>
-                <Input
-                  id="shell-api-key"
-                  value={apiKey}
-                  onChange={(event) => setApiKey(event.target.value)}
-                  type="password"
-                  autoComplete="off"
-                />
-              </div>
-              <div className="connection-actions">
-                <Button type="button" onClick={() => void refresh()}><RefreshCw aria-hidden="true" />Refresh</Button>
-                <Button type="button" onClick={() => void logout()}><LogOut aria-hidden="true" />Sign out</Button>
-              </div>
-            </form>
-          </CardContent>
-        </Card>
+        {sessionCookieActive ? null : (
+          <details className="developer-connection">
+            <summary>Developer connection</summary>
+            <Card className="control-bar" aria-label="Developer connection">
+              <CardContent>
+                <form className="connection-grid" onSubmit={(event) => event.preventDefault()}>
+                  <div className="connection-field">
+                    <Label htmlFor="shell-api-url">API URL</Label>
+                    <Input
+                      id="shell-api-url"
+                      value={apiUrl}
+                      onChange={(event) => setApiUrl(event.target.value)}
+                      autoComplete="url"
+                    />
+                  </div>
+                  <div className="connection-field">
+                    <Label htmlFor="shell-api-key">API key</Label>
+                    <Input
+                      id="shell-api-key"
+                      value={apiKey}
+                      onChange={(event) => setApiKey(event.target.value)}
+                      type="password"
+                      autoComplete="off"
+                    />
+                  </div>
+                  <div className="connection-actions">
+                    <Button type="button" onClick={() => void refresh()}><RefreshCw aria-hidden="true" />Refresh</Button>
+                    <Button type="button" onClick={() => void logout()}><LogOut aria-hidden="true" />Sign out</Button>
+                  </div>
+                </form>
+              </CardContent>
+            </Card>
+          </details>
+        )}
 
         {message ? (
           <Alert variant="success" className="shell-alert">
@@ -2791,48 +3222,39 @@ export function App() {
         ) : null}
 
           <section className={`page ${["library", "asset-read", "versions"].includes(currentPage) ? "active" : ""}`} data-page="library">
-            <div className="page-header">
-              <div>
-                <p className="eyebrow">{currentPage === "versions" ? "Governance work" : "Reader library"}</p>
-                <h1>
-                  {currentPage === "asset-read"
-                    ? assetDetail?.asset.title ?? "Asset read"
-                    : currentPage === "versions"
-                      ? "Version Compare"
-                      : "Governed Asset Library"}
-                </h1>
-                <p className="lede">
-                  {currentPage === "versions"
-                    ? "Inspect current and selected asset versions before restoring, publishing, or closing review work."
-                    : "Browse governed policies, guardrails, skills, templates, SOPs, playbooks, and human documents with trust metadata visible at a glance."}
-                </p>
+            <RouteHeader
+              className="page-route-header"
+              breadcrumbs={routeBreadcrumbs(currentPage)}
+              eyebrow={currentPage === "versions" ? "Governance work" : "Reader library"}
+              title={currentPage === "asset-read"
+                ? assetDetail?.asset.title ?? "Reading room"
+                : currentPage === "versions"
+                  ? "Version Compare"
+                  : "Governed Asset Library"}
+              lede={currentPage === "versions"
+                ? "Inspect current and selected asset versions before restoring, publishing, or closing review work."
+                : currentPage === "asset-read"
+                  ? "Read the selected governed asset with trust state, permitted surfaces, and current agent contract in view."
+                  : "Browse governed policies, guardrails, skills, templates, SOPs, playbooks, and human documents with trust metadata visible at a glance."}
+              actions={<Button type="button" onClick={() => void refresh()}><RefreshCw aria-hidden="true" />Refresh</Button>}
+            />
+            {currentPage === "library" ? (
+              <div className="grid four">
+                <MetricCard label="Visible assets" value={assets.length} note="Server-filtered for the current principal." />
+                <MetricCard label="Approved current" value={approvedAssets} note="Approved assets loaded in the browser." />
+                <MetricCard label="Need governance" value={reviewDueAssets} note="Draft, stale, reviewing, overdue, or non-active." />
+                <MetricCard label="Public reader" value={publicReaderAssets} note="public-demo plus active and approved." />
               </div>
-              <div className="actions">
-                <Button type="button" onClick={() => void refresh()}><RefreshCw aria-hidden="true" />Refresh</Button>
-                <Button variant="primary" type="button" onClick={() => void generateExport()}>
-                  <Download aria-hidden="true" />Export
-                </Button>
-              </div>
-            </div>
-            <div className="grid four">
-              <MetricCard label="Visible assets" value={assets.length} note="Server-filtered for the current principal." />
-              <MetricCard label="Approved current" value={approvedAssets} note="Approved assets loaded in the browser." />
-              <MetricCard label="Need governance" value={reviewDueAssets} note="Draft, stale, reviewing, overdue, or non-active." />
-              <MetricCard label="Public reader" value={publicReaderAssets} note="public-demo plus active and approved." />
-            </div>
-            <section className="workspace">
-              <DataTableShell
-                title="Assets"
-                description={`${filteredLibraryAssets.length} of ${assets.length} visible in this view`}
-                actions={(
-                  <Button size="sm" type="button" onClick={() => void generateExport()}>
-                    <Download aria-hidden="true" />Export
-                  </Button>
-                )}
-                isEmpty={!filteredLibraryAssets.length}
-                emptyTitle="No assets match this view"
-                emptyDescription="Adjust filters or refresh the library."
-              >
+            ) : null}
+            <section className={`workspace ${currentPage === "library" ? "" : "workspace--focused"}`}>
+              {currentPage === "library" ? (
+                <DataTableShell
+                  title="Assets"
+                  description={`${filteredLibraryAssets.length} of ${assets.length} visible in this view`}
+                  isEmpty={!filteredLibraryAssets.length}
+                  emptyTitle="No assets match this view"
+                  emptyDescription="Adjust filters or refresh the library."
+                >
                 <Toolbar
                   aria-label="Asset filters"
                   className="rounded-none border-x-0 border-t-0"
@@ -2907,8 +3329,8 @@ export function App() {
                         key={asset.id}
                         data-state={asset.stableId === selectedAsset?.stableId ? "selected" : undefined}
                         className="cursor-pointer"
-                        onClick={() => setSelectedStableId(asset.stableId)}
-                        onKeyDown={(event) => selectAssetFromRow(event, () => setSelectedStableId(asset.stableId))}
+                        onClick={() => openAssetRead(asset.stableId)}
+                        onKeyDown={(event) => selectAssetFromRow(event, () => openAssetRead(asset.stableId))}
                         tabIndex={0}
                         aria-selected={asset.stableId === selectedAsset?.stableId}
                       >
@@ -2943,7 +3365,8 @@ export function App() {
                     ))}
                   </TableBody>
                 </Table>
-              </DataTableShell>
+                </DataTableShell>
+              ) : null}
 
               <SectionCard
                 title={assetDetail?.asset.title ?? "Asset detail"}
@@ -3147,19 +3570,17 @@ export function App() {
               </SectionCard>
       </section>
 
-      </section>
+          </section>
 
           <section className={`page ${currentPage === "search" ? "active" : ""}`} data-page="search">
-            <div className="page-header">
-              <div>
-                <p className="eyebrow">Grounded retrieval</p>
-                <h1>Search and Managed Query</h1>
-                <p className="lede">Test deterministic retrieval and provider-routed answers with citations, cache status, cost metadata, and denied-result visibility.</p>
-              </div>
-              <div className="actions">
-                <Button type="button" onClick={() => void runManagedQuery()}>Run managed query</Button>
-              </div>
-            </div>
+            <RouteHeader
+              className="page-route-header"
+              breadcrumbs={routeBreadcrumbs("search")}
+              eyebrow="Grounded retrieval"
+              title="Search and Managed Query"
+              lede="Test deterministic retrieval and provider-routed answers with citations, cache status, cost metadata, and denied-result visibility."
+              actions={<Button type="button" onClick={() => void runManagedQuery()}>Run managed query</Button>}
+            />
             <section className="grid gap-4 xl:grid-cols-[minmax(320px,0.75fr)_minmax(440px,1.25fr)]">
               <SectionCard title="Search" variant="tool" className="min-w-0 self-start" contentClassName="grid gap-4">
                 <form className="flex min-w-0 flex-col gap-2 sm:flex-row" onSubmit={(event) => void runSearch(event)}>
@@ -3332,25 +3753,23 @@ export function App() {
                 </Tabs>
               </SectionCard>
             </section>
-          </section>
+      </section>
 
       <section className={`page ${visibleDistributePage ? "active" : ""}`} data-page="distribute">
-        <div className="page-header">
-          <div>
-            <p className="eyebrow">Agent distribution</p>
-            <h1>Distribute</h1>
-            <p className="lede">
-              Build a session-local package from approved, permission-filtered assets for API, CLI, MCP, JSON, and OKF consumers.
-            </p>
-          </div>
-          <div className="actions">
+        <RouteHeader
+          className="page-route-header"
+          breadcrumbs={routeBreadcrumbs("distribute")}
+          eyebrow="Agent distribution"
+          title="Distribute"
+          lede="Build a session-local package from approved, permission-filtered assets for API, CLI, MCP, JSON, and OKF consumers."
+          actions={(
             <Button variant="primary" type="button" onClick={() => void generateExport()} disabled={isGeneratingExport}>
               <Download aria-hidden="true" />{isGeneratingExport ? "Generating" : "Generate"}
             </Button>
-          </div>
-        </div>
+          )}
+        />
 
-        {currentPage === "exports" ? (
+        {isLegacyExportsAlias ? (
           <StatusAlert
             status="info"
             title="Legacy alias"
@@ -3549,131 +3968,80 @@ export function App() {
       </section>
 
       <section className={`page ${visibleOperationsPage ? "active" : ""}`} data-page="operations">
-        <div className="page-header">
-          <div>
-            <p className="eyebrow">{operationsPage.eyebrow}</p>
-            <h1>{operationsPage.title}</h1>
-            <p className="lede">{operationsPage.lede}</p>
-          </div>
-          <div className="actions">
-            {currentPage === "review" ? (
-              <Button type="button" onClick={() => void loadReviewQueue()}>Review queue</Button>
-            ) : null}
-            {currentPage === "telemetry" ? (
-              <Button type="button" onClick={() => void loadTelemetrySummary()}>Load summary</Button>
-            ) : null}
-          </div>
-        </div>
+        <RouteHeader
+          className="page-route-header"
+          breadcrumbs={routeBreadcrumbs(currentPage)}
+          eyebrow={operationsPage.eyebrow}
+          title={operationsPage.title}
+          lede={operationsPage.lede}
+          actions={(
+            <Button
+              type="button"
+              onClick={() => void loadWorkspaceRoute(currentPage)}
+              disabled={loadingWorkspaceRoute === currentPage}
+            >
+              <RefreshCw aria-hidden="true" />
+              {loadingWorkspaceRoute === currentPage ? "Loading" : "Refresh workspace"}
+            </Button>
+          )}
+        />
+        {isLegacyRouteAlias ? (
+          <StatusAlert
+            title={`Legacy #${currentHashRoute} route`}
+            description={`This route now opens #${currentPage} to match the updated information architecture.`}
+          />
+        ) : null}
         <section className="operations-grid">
         <section className="grid gap-4" aria-labelledby="ops-title">
-          <div className={routePanelClass(currentPage, ["operations"], "grid gap-4")}>
+          <h2 id="ops-title" className="sr-only">{operationsPage.title}</h2>
+          <div className={routePanelClass(currentPage, ["health"], "grid gap-4")}>
             <SectionCard
-              title="Instruction control plane routes"
-              description="Each workspace keeps its own forms and load actions visible without carrying every admin panel into every route."
+              title="System health"
+              description="A compact operational readout for the API, provider readiness, recent activity, and action governance."
               variant="tool"
             >
-              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4" aria-label="Instruction control route summaries">
-                {([
-                  ["review", "Reviews", reviewQueue?.assets.length ?? reviewDueAssets, "needs governance"],
-                  ["access", "Access", users.length + serviceAccounts.length, "principals loaded"],
-                  ["providers", "Providers", providerConfigs.length + authProviderConfigs.length, "configs loaded"],
-                  ["policies", "Policies", managedQueryPolicy || retrievalRankingPolicy ? "loaded" : "setup", "guardrails"],
-                  ["telemetry", "Telemetry", telemetrySummary?.retrieval.eventCount ?? telemetryEvents.length, "retrieval events"],
-                  ["approvals", "Approvals", agentActions.length, "action requests"],
-                  ["distribute", "Distribute", exportPackage?.assetCount ?? exportEligibleAssets, "package builder"]
-                ] as const).map(([route, label, value, note]) => (
-                  <Button
-                    key={route}
-                    type="button"
-                    variant="default"
-                    className="h-auto min-h-[86px] flex-col items-start justify-start gap-1 whitespace-normal p-3 text-left"
-                    onClick={() => navigatePage(route)}
-                  >
-                    <span className="text-[11px] font-extrabold uppercase text-muted-foreground">{label}</span>
-                    <strong className="text-2xl leading-tight text-foreground">{value}</strong>
-                    <em className="text-xs not-italic text-muted-foreground">{note}</em>
-                  </Button>
-                ))}
-              </div>
+              <DefinitionGrid
+                compact
+                items={[
+                  { term: "API", description: <Badge variant={health === "ok" ? "success" : "destructive"}>{health}</Badge> },
+                  { term: "Providers checked", description: providerHealth.length },
+                  { term: "Ready providers", description: providerHealth.filter((provider) => provider.status === "ready").length },
+                  { term: "Retrieval sample", description: telemetrySummary?.retrieval.eventCount ?? telemetryEvents.length },
+                  { term: "Action policy", description: actionExecutionPolicy ? actionExecutionPolicy.enabled ? "enabled" : "disabled" : "not loaded" },
+                  { term: "Pending actions", description: agentActions.length },
+                  {
+                    term: "Eval latest",
+                    description: evalSummary ? evalSummary.latestPassRate === null ? "n/a" : formatPercent(evalSummary.latestPassRate) : "not loaded"
+                  },
+                  {
+                    term: "Cache policy",
+                    description: managedQueryCachePolicy ? managedQueryCachePolicy.cacheEnabled ? "enabled" : "disabled" : "not loaded"
+                  }
+                ]}
+              />
+              {providerHealth.length ? (
+                <div className="grid gap-2">
+                  {providerHealth.map((provider) => (
+                    <p key={provider.provider}>
+                      <strong>{provider.provider}</strong>{" "}
+                      <Badge variant={provider.status === "ready" ? "success" : "warning"}>{provider.status}</Badge>{" "}
+                      {provider.apiKeyConfigured ? "key configured" : "no key"}
+                      {provider.reasons.length ? ` (${provider.reasons.join(", ")})` : ""}
+                    </p>
+                  ))}
+                </div>
+              ) : (
+                <EmptyState title="No provider health loaded" description="Use Refresh workspace to check provider readiness." />
+              )}
             </SectionCard>
           </div>
-          {isOperationsLanding ? null : (
-          <SectionCard title="Workspace actions" variant="tool" contentClassName="pt-0">
-            <Toolbar divided={false} className="border-0 p-0 shadow-none">
-              {currentPage === "review" ? (
-                <Button type="button" onClick={() => void loadReviewQueue()}>Review queue</Button>
-              ) : null}
-              {currentPage === "telemetry" ? (
-                <>
-                  <Button type="button" onClick={() => void loadTelemetrySummary()}>Summary</Button>
-                  <Button type="button" onClick={() => void loadTelemetryRetentionPolicy()}>Retention</Button>
-                  <Button type="button" onClick={() => void loadTelemetry()}>Telemetry</Button>
-                  <Button type="button" onClick={() => void loadAuditEvents()}>Audit</Button>
-                  <Button type="button" onClick={() => void loadFeedback()}>Feedback</Button>
-                  <Button type="button" onClick={() => void runDemoEval()}>Eval</Button>
-                  <Button type="button" onClick={() => void loadEvalRuns()}>Eval runs</Button>
-                  <Button type="button" onClick={() => void loadEvalSummary()}>Eval summary</Button>
-                </>
-              ) : null}
-              {currentPage === "policies" ? (
-                <>
-                  <Button type="button" onClick={() => void loadManagedQueryPolicy()}>Query policy</Button>
-                  <Button type="button" onClick={() => void loadRetrievalRankingPolicy()}>Ranking policy</Button>
-                  <Button type="button" onClick={() => void loadManagedQueryCache()}>Cache</Button>
-                  <Button type="button" onClick={() => void loadManagedQueryCachePolicy()}>Cache policy</Button>
-                  <Button type="button" onClick={() => void loadManagedQueryRetentionPolicy()}>Query retention</Button>
-                  <Button
-                    type="button"
-                    onClick={() => {
-                      void loadActionExecutionPolicy();
-                      void loadAgentActions();
-                    }}
-                  >
-                    Actions
-                  </Button>
-                  <Button type="button" onClick={() => void loadSecretReferencePolicy()}>Secrets</Button>
-                  <Button type="button" onClick={() => void loadPiiRedactionPolicy()}>PII policy</Button>
-                </>
-              ) : null}
-              {currentPage === "approvals" ? (
-                <Button
-                  type="button"
-                  onClick={() => {
-                    void loadActionExecutionPolicy();
-                    void loadAgentActions();
-                  }}
-                >
-                  Actions
-                </Button>
-              ) : null}
-              {currentPage === "access" ? (
-                <>
-                  <Button type="button" onClick={() => void loadUsers()}>Users</Button>
-                  <Button type="button" onClick={() => void loadServiceAccounts()}>Services</Button>
-                  <Button type="button" onClick={() => void loadServiceAccountPolicy()}>Service policy</Button>
-                  <Button type="button" onClick={() => void loadGroups()}>Groups</Button>
-                  <Button type="button" onClick={() => void loadApiKeys()}>Keys</Button>
-                  <Button type="button" onClick={() => void loadLoginSessions()}>Sessions</Button>
-                  <Button type="button" onClick={() => void loadApiKeyRotationReport()}>Key rotation</Button>
-                </>
-              ) : null}
-              {currentPage === "providers" ? (
-                <>
-                  <Button type="button" onClick={() => void loadProviderConfigs()}>Providers</Button>
-                  <Button type="button" onClick={() => void loadProviderHealth()}>Provider health</Button>
-                  <Button type="button" onClick={() => void loadAuthProviderConfigs()}>Auth</Button>
-                </>
-              ) : null}
-            </Toolbar>
-          </SectionCard>
-          )}
           <div className={routePanelClass(currentPage, ["review"], "grid gap-4")}>
             <DataTableShell
               title="Review queue"
-              description={reviewQueue ? `${reviewQueue.assets.length} items as of ${reviewQueue.asOf}` : "Load the review queue to inspect governed assets."}
+              description={reviewQueue ? `${reviewQueue.assets.length} items as of ${reviewQueue.asOf}` : "Review items load automatically when this route opens."}
               isEmpty={!reviewQueue || !reviewQueue.assets.length}
-              emptyTitle={reviewQueue ? "No review items" : "No review queue loaded"}
-              emptyDescription={reviewQueue ? "There are no assets currently waiting in the review queue." : "Use the workspace action to load review items."}
+              emptyTitle={reviewQueue ? "No review items" : loadingWorkspaceRoute === "review" ? "Loading review queue" : "Review queue not loaded"}
+              emptyDescription={reviewQueue ? "There are no assets currently waiting in the review queue." : "Use Refresh workspace if the route did not load automatically."}
             >
               <Table>
                 <TableHeader>
@@ -3686,7 +4054,13 @@ export function App() {
                 </TableHeader>
                 <TableBody>
                   {reviewQueue?.assets.map((asset) => (
-                    <TableRow key={asset.id} className="cursor-pointer" onClick={() => setSelectedStableId(asset.stableId)}>
+                    <TableRow
+                      key={asset.id}
+                      className="cursor-pointer"
+                      onClick={() => openAssetRead(asset.stableId)}
+                      onKeyDown={(event) => selectAssetFromRow(event, () => openAssetRead(asset.stableId))}
+                      tabIndex={0}
+                    >
                       <TableCell>{asset.stableId}</TableCell>
                       <TableCell><Badge variant={stateBadgeVariant(asset.status)}>{asset.status}</Badge></TableCell>
                       <TableCell><Badge variant={stateBadgeVariant(asset.lifecycleState)}>{asset.lifecycleState}</Badge></TableCell>
@@ -3697,7 +4071,7 @@ export function App() {
               </Table>
             </DataTableShell>
           </div>
-          <div className={routePanelClass(currentPage, ["telemetry"], "grid gap-4")}>
+          <div className={routePanelClass(currentPage, activityAndHealthPanelRoutes, "grid gap-4")}>
             <SectionCard title="Telemetry summary" variant="tool">
               {telemetrySummary ? (
                 <div className="grid gap-4">
@@ -3732,10 +4106,15 @@ export function App() {
                     ]}
                   />
                 </div>
-              ) : <EmptyState title="No summary loaded" description="Use the workspace action to load telemetry summary." />}
+              ) : (
+                <EmptyState
+                  title={activityAndHealthPanelRoutes.includes(loadingWorkspaceRoute) ? "Loading telemetry summary" : "No telemetry summary"}
+                  description="This route loads telemetry automatically. Use Refresh workspace to retry."
+                />
+              )}
             </SectionCard>
           </div>
-          <div className={routePanelClass(currentPage, ["telemetry"])}>
+          <div className={routePanelClass(currentPage, settingsPanelRoutes)}>
             <h3>Telemetry retention</h3>
             <form className="grid gap-4 md:grid-cols-[repeat(auto-fit,minmax(160px,1fr))] md:items-end" onSubmit={(event) => void saveTelemetryRetentionPolicy(event)}>
               <label>
@@ -3779,7 +4158,7 @@ export function App() {
               </p>
             ) : null}
           </div>
-          <div className={routePanelClass(currentPage, ["policies"])}>
+          <div className={routePanelClass(currentPage, settingsPanelRoutes)}>
             <h3>Managed query policy</h3>
             <form className="grid gap-4 md:grid-cols-[repeat(auto-fit,minmax(160px,1fr))] md:items-end" onSubmit={(event) => void saveManagedQueryPolicy(event)}>
               <label>
@@ -3829,7 +4208,7 @@ export function App() {
               </p>
             ) : <p className="empty">No managed query policy loaded.</p>}
           </div>
-          <div className={routePanelClass(currentPage, ["policies"])}>
+          <div className={routePanelClass(currentPage, settingsPanelRoutes)}>
             <h3>Retrieval ranking policy</h3>
             <form className="grid gap-4 md:grid-cols-[repeat(auto-fit,minmax(160px,1fr))] md:items-end" onSubmit={(event) => void saveRetrievalRankingPolicy(event)}>
               <label>
@@ -3873,7 +4252,7 @@ export function App() {
               </p>
             ) : <p className="empty">No retrieval ranking policy loaded.</p>}
           </div>
-          <div className={routePanelClass(currentPage, ["policies", "telemetry"])}>
+          <div className={routePanelClass(currentPage, settingsPanelRoutes)}>
             <h3>Eval schedule</h3>
             <form className="grid gap-4 md:grid-cols-[repeat(auto-fit,minmax(160px,1fr))] md:items-end" onSubmit={(event) => void saveEvalSchedulePolicy(event)}>
               <label>
@@ -3907,7 +4286,7 @@ export function App() {
               </p>
             ) : <p className="empty">No eval schedule policy loaded.</p>}
           </div>
-          <div className={routePanelClass(currentPage, ["approvals", "policies"])}>
+          <div className={routePanelClass(currentPage, ["approvals", ...settingsPanelRoutes])}>
             <h3>Action execution</h3>
             <form className="grid gap-4 md:grid-cols-[repeat(auto-fit,minmax(160px,1fr))] md:items-end" onSubmit={(event) => void saveActionExecutionPolicy(event)}>
               <label>
@@ -4089,7 +4468,7 @@ export function App() {
               );
             }) : <p className="empty">No action requests loaded.</p>}
           </div>
-          <div className={routePanelClass(currentPage, ["policies", "telemetry"])}>
+          <div className={routePanelClass(currentPage, settingsPanelRoutes)}>
             <h3>Managed query cache</h3>
             <form className="grid gap-4 md:grid-cols-[repeat(auto-fit,minmax(160px,1fr))] md:items-end" onSubmit={(event) => void saveManagedQueryCachePolicy(event)}>
               <label>
@@ -4139,7 +4518,7 @@ export function App() {
               </p>
             )) : <p className="empty">No cache entries loaded.</p>}
           </div>
-          <div className={routePanelClass(currentPage, ["policies"])}>
+          <div className={routePanelClass(currentPage, settingsPanelRoutes)}>
             <h3>Managed query retention</h3>
             <form className="grid gap-4 md:grid-cols-[repeat(auto-fit,minmax(160px,1fr))] md:items-end" onSubmit={(event) => void saveManagedQueryRetentionPolicy(event)}>
               <label>
@@ -4184,7 +4563,7 @@ export function App() {
               </p>
             ) : <p className="empty">No managed query retention policy loaded.</p>}
           </div>
-          <div className={routePanelClass(currentPage, ["policies"])}>
+          <div className={routePanelClass(currentPage, settingsPanelRoutes)}>
             <h3>Secret references</h3>
             <form className="grid gap-4 md:grid-cols-[repeat(auto-fit,minmax(160px,1fr))] md:items-end" onSubmit={(event) => void saveSecretReferencePolicy(event)}>
               <label>
@@ -4224,7 +4603,7 @@ export function App() {
               </p>
             ) : <p className="empty">No secret reference policy loaded.</p>}
           </div>
-          <div className={routePanelClass(currentPage, ["policies"])}>
+          <div className={routePanelClass(currentPage, settingsPanelRoutes)}>
             <h3>PII redaction</h3>
             <form className="grid gap-4 md:grid-cols-[repeat(auto-fit,minmax(160px,1fr))] md:items-end" onSubmit={(event) => void savePiiRedactionPolicy(event)}>
               <label>
@@ -4256,7 +4635,7 @@ export function App() {
               </p>
             ) : <p className="empty">No PII redaction policy loaded.</p>}
           </div>
-          <div className={routePanelClass(currentPage, ["telemetry"])}>
+          <div className={routePanelClass(currentPage, activityPanelRoutes)}>
             <h3>Retrieval events</h3>
             {telemetryEvents.length ? telemetryEvents.map((event) => (
               <p key={event.id}>
@@ -4264,7 +4643,7 @@ export function App() {
               </p>
             )) : <p className="empty">No telemetry loaded.</p>}
           </div>
-          <div className={routePanelClass(currentPage, ["telemetry"])}>
+          <div className={routePanelClass(currentPage, activityPanelRoutes)}>
             <h3>Audit events</h3>
             {auditEvents.length ? auditEvents.map((event) => (
               <p key={event.id}>
@@ -4272,7 +4651,7 @@ export function App() {
               </p>
             )) : <p className="empty">No audit events loaded.</p>}
           </div>
-          <div className={routePanelClass(currentPage, ["access"])}>
+          <div className={routePanelClass(currentPage, settingsPanelRoutes)}>
             <h3>Users</h3>
             <form className="grid gap-4 md:grid-cols-[repeat(auto-fit,minmax(160px,1fr))] md:items-end" onSubmit={(event) => void createUser(event)}>
               <label>
@@ -4367,7 +4746,7 @@ export function App() {
               </p>
             )) : <p className="empty">No users loaded.</p>}
           </div>
-          <div className={routePanelClass(currentPage, ["access"])}>
+          <div className={routePanelClass(currentPage, settingsPanelRoutes)}>
             <h3>Service policy</h3>
             <form className="grid gap-4 md:grid-cols-[repeat(auto-fit,minmax(160px,1fr))] md:items-end" onSubmit={(event) => void updateServiceAccountPolicy(event)}>
               <label>
@@ -4399,7 +4778,7 @@ export function App() {
               </p>
             ) : <p className="empty">No service policy loaded.</p>}
           </div>
-          <div className={routePanelClass(currentPage, ["access"])}>
+          <div className={routePanelClass(currentPage, settingsPanelRoutes)}>
             <h3>Service accounts</h3>
             <form className="grid gap-4 md:grid-cols-[repeat(auto-fit,minmax(160px,1fr))] md:items-end" onSubmit={(event) => void createServiceAccount(event)}>
               <label>
@@ -4508,7 +4887,7 @@ export function App() {
               </p>
             )) : <p className="empty">No service accounts loaded.</p>}
           </div>
-          <div className={routePanelClass(currentPage, ["access"])}>
+          <div className={routePanelClass(currentPage, settingsPanelRoutes)}>
             <h3>Groups</h3>
             <form className="grid gap-4 md:grid-cols-[repeat(auto-fit,minmax(160px,1fr))] md:items-end" onSubmit={(event) => void createGroup(event)}>
               <label>
@@ -4564,7 +4943,7 @@ export function App() {
               </p>
             )) : <p className="empty">No members loaded.</p>}
           </div>
-          <div className={routePanelClass(currentPage, ["access"])}>
+          <div className={routePanelClass(currentPage, settingsPanelRoutes)}>
             <h3>API keys</h3>
             <form className="grid gap-4 md:grid-cols-[repeat(auto-fit,minmax(160px,1fr))] md:items-end" onSubmit={(event) => void createApiKey(event)}>
               <label>
@@ -4663,7 +5042,7 @@ export function App() {
               </p>
             )) : <p className="empty">No API keys loaded.</p>}
           </div>
-          <div className={routePanelClass(currentPage, ["access"])}>
+          <div className={routePanelClass(currentPage, settingsPanelRoutes)}>
             <h3>Login sessions</h3>
             <form className="grid gap-4 md:grid-cols-[repeat(auto-fit,minmax(160px,1fr))] md:items-end" onSubmit={(event) => event.preventDefault()}>
               <label>
@@ -4686,7 +5065,7 @@ export function App() {
               </p>
             )) : <p className="empty">No login sessions loaded.</p>}
           </div>
-          <div className={routePanelClass(currentPage, ["telemetry"])}>
+          <div className={routePanelClass(currentPage, activityPanelRoutes)}>
             <h3>Managed query feedback</h3>
             <form className="grid gap-4 md:grid-cols-[repeat(auto-fit,minmax(160px,1fr))] md:items-end" onSubmit={(event) => void submitFeedback(event)}>
               <label>
@@ -4727,7 +5106,7 @@ export function App() {
               </p>
             )) : <p className="empty">No feedback loaded.</p>}
           </div>
-          <div className={routePanelClass(currentPage, ["telemetry"])}>
+          <div className={routePanelClass(currentPage, activityAndHealthPanelRoutes)}>
             <h3>Demo eval report</h3>
             {evalReport ? (
               <>
@@ -4790,7 +5169,7 @@ export function App() {
               <p className="empty">No eval history loaded.</p>
             )}
           </div>
-          <div className={routePanelClass(currentPage, ["providers"])}>
+          <div className={routePanelClass(currentPage, integrationsPanelRoutes)}>
             <h3>Provider config</h3>
             <form className="grid gap-4 md:grid-cols-[repeat(auto-fit,minmax(180px,1fr))] md:items-end" onSubmit={(event) => void saveProviderConfig(event)}>
               <label>
@@ -5009,7 +5388,7 @@ export function App() {
               </>
             ) : null}
           </div>
-          <div className={routePanelClass(currentPage, ["providers"])}>
+          <div className={routePanelClass(currentPage, integrationsPanelRoutes)}>
             <h3>Auth provider config</h3>
             <form className="grid gap-4 md:grid-cols-[repeat(auto-fit,minmax(180px,1fr))] md:items-end" onSubmit={(event) => void saveAuthProviderConfig(event)}>
               <label>
@@ -5358,7 +5737,7 @@ rootIndexPath=index.md`}</pre>
                   </DialogDescription>
                 </div>
               </DialogHeader>
-              {(currentPage === "distribute" || currentPage === "exports") ? (
+              {currentPage === "distribute" ? (
                 <Alert variant="info" className="queued-route">
                   <AlertDescription>Demo path queued: <code>#{currentPage}</code></AlertDescription>
                 </Alert>
