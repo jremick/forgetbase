@@ -63,9 +63,9 @@ The project succeeds when:
 - certification-level compliance process
 - proprietary content migration into the public repo
 
-## First Production Definition
+## First Hardened Deployment Definition
 
-A production-ready SMB deployment can:
+A hardened SMB deployment can:
 
 - run from documented containers
 - authenticate local users and API clients

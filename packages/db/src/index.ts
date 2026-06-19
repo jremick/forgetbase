@@ -34,6 +34,7 @@ import {
 export * from "./auth.js";
 export * from "./auth-provider-config.js";
 export * from "./action-execution.js";
+export * from "./embeddings.js";
 export * from "./eval-runs.js";
 export * from "./feedback.js";
 export * from "./managed-query-cache.js";

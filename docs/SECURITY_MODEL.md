@@ -170,7 +170,7 @@ Current implementation: `security:verify-restricted-leakage` creates a throwaway
 
 ## Incident And Rollback Expectations
 
-Production-ready deployments need:
+Hardened deployments need:
 
 - content rollback
 - deployment rollback

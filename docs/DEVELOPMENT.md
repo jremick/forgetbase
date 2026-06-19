@@ -22,9 +22,25 @@ The workspace explicitly allows the `esbuild` build script through `allowBuilds`
 npx -y pnpm@11.7.0 typecheck
 npx -y pnpm@11.7.0 test
 npx -y pnpm@11.7.0 build
+npx -y pnpm@11.7.0 --filter @agentic-cms/cli start -- validate --file corpus/demo/assets.json --as-of 2026-06-16 --fail-on-warnings
+npx -y pnpm@11.7.0 openapi:check
+npx -y pnpm@11.7.0 claims:lint
+npx -y pnpm@11.7.0 contracts:check
+npx -y pnpm@11.7.0 security:check-deployment-defaults
 docker compose config --quiet
+docker compose -f compose.yaml -f compose.same-origin.yaml config --quiet
 docker compose -f compose.yaml -f compose.same-origin.yaml -f compose.tls.yaml config --quiet
 ```
+
+The deployment-default check is a static/template gate. It preserves local Compose bootstrap defaults, verifies the same-origin/TLS/Railway public template guardrails, and only enforces public-deployment env requirements when `AGENTIC_CMS_PUBLIC_DEPLOYMENT=true`.
+
+Run the Compose/API/export/leakage smoke gate against a running local stack after importing the demo corpus:
+
+```bash
+npx -y pnpm@11.7.0 smoke:compose
+```
+
+The smoke gate validates the base, same-origin, and TLS Compose configs, then checks `/health`, `/openapi.json`, JSON and OKF `demo-agent-pack` exports, and restricted leakage through the running API. It does not start or stop containers. If the API is not on `http://127.0.0.1:3000`, set `AGENTIC_CMS_API_URL`. If export checks report 0 assets, import `corpus/demo/assets.json` into the running API first.
 
 With Docker Compose API running, run the restricted leakage smoke check:
 
@@ -42,7 +58,11 @@ npx -y pnpm@11.7.0 auth:verify-oidc-login
 
 The GitHub Actions workflow at `.github/workflows/ci.yml` runs on pushes to `main` and pull requests.
 
-It uses official GitHub actions for checkout and Node setup, installs with the repo-pinned `pnpm@11.7.0`, runs typecheck, validates the demo corpus with `--fail-on-warnings`, and runs the test suite against a `pgvector/pgvector:pg17` Postgres service through `TEST_DATABASE_URL`.
+It uses official GitHub actions for checkout and Node setup, installs with the repo-pinned `pnpm@11.7.0`, then runs deterministic, secret-free beta gates: typecheck, build, strict demo corpus validation, static Compose config parsing for the base, same-origin, and TLS overlays, `openapi:check`, `claims:lint`, `contracts:check`, and the test suite against a `pgvector/pgvector:pg17` Postgres service through `TEST_DATABASE_URL`.
+
+The frozen private-beta machine-consumer lane is documented in [ForgetBase Private Beta Contract](BETA_PRIVATE_CONTRACT.md). The contract is intentionally narrower than the full route, CLI, SDK, and MCP surface; broader admin/provider/telemetry/action routes remain preview unless a later contract update moves them into scope.
+
+Default CI intentionally does not run `smoke:compose`, `security:verify-restricted-leakage`, `db:verify-backup-restore`, `auth:verify-oidc-login`, provider smoke checks, or browser UAT. Those checks require a running API lifecycle, Docker runtime state, release data, fake/real identity setup, provider secrets, or browser walkthrough state. Keep them as local release/manual gates until a CI wrapper owns setup, health waiting, evidence capture, and cleanup.
 
 ## API Smoke Check
 
@@ -67,7 +87,7 @@ The migration runner holds a Postgres advisory lock while it creates `schema_mig
 Bootstrap the first local admin user and API key:
 
 ```bash
-npx -y pnpm@11.7.0 --filter @agentic-cms/cli start -- auth bootstrap --email admin@example.test --display-name "Admin"
+npx -y pnpm@11.7.0 --filter @agentic-cms/cli start -- auth bootstrap --email admin@example.test --display-name "Admin" --password local-dev-password
 ```
 
 The bootstrap command returns the API key secret once. Set `AGENTIC_CMS_API_KEY` for CLI commands; this avoids printing the raw key through package-manager script echo. The CLI also supports `--api-key ...` for controlled one-off use.
@@ -169,7 +189,20 @@ curl --silent --show-error --fail "http://127.0.0.1:3000/search?query=PII%20reda
 curl --silent --show-error --fail "http://127.0.0.1:3000/search?query=PII%20redaction&limit=3&strategy=vector"
 ```
 
-Search results include `ranking.strategy`, lexical rank, source-kind weight, exact-phrase boost, optional vector similarity, optional vector weight, and final score. The default `lexical` strategy returns `lexical-weighted-v1`; `vector` returns `vector-hash-v1`; `hybrid` returns `hybrid-hash-lexical-v1`. Vector modes use deterministic local hash embeddings stored in `pgvector`, not an external semantic embedding provider. Admins can tune tenant source-kind weights and exact-phrase boost through the retrieval ranking policy.
+Search results include `ranking.strategy`, lexical rank, source-kind weight, exact-phrase boost, optional vector similarity, optional vector weight, optional embedding provider/model/dimensions, and final score. The default `lexical` strategy returns `lexical-weighted-v1`. `vector` returns `vector-hash-v1` with local hash embeddings or `vector-provider-v1` with provider embeddings. `hybrid` returns `hybrid-hash-lexical-v1` with local hash embeddings or `hybrid-provider-lexical-v1` with provider embeddings. Admins can tune tenant source-kind weights and exact-phrase boost through the retrieval ranking policy.
+
+By default, vector modes use deterministic local hash embeddings stored in `pgvector`. To use OpenAI-compatible semantic embeddings, configure the same env vars on the API and worker, then reindex assets with the worker:
+
+```bash
+AGENTIC_CMS_EMBEDDINGS_PROVIDER=openai
+AGENTIC_CMS_EMBEDDINGS_API_KEY_ENV_VAR=OPENAI_API_KEY
+AGENTIC_CMS_EMBEDDINGS_MODEL=text-embedding-3-small
+AGENTIC_CMS_EMBEDDINGS_BASE_URL=https://api.openai.com/v1
+AGENTIC_CMS_EMBEDDINGS_DIMENSIONS=1536
+AGENTIC_CMS_EMBEDDINGS_TIMEOUT_MS=30000
+```
+
+`AGENTIC_CMS_EMBEDDINGS_API_KEY_ENV_VAR` stores the name of the env var that contains the provider secret; do not put the secret value in config or docs. Provider/model/dimension metadata is stored on each chunk, and vector/hybrid search only compares query vectors with chunks from the same embedding space. If the API uses provider embeddings before the worker has reindexed chunks with the same provider/model, vector-only searches will return no matches and hybrid searches will fall back to lexical matches with zero vector similarity for old chunks.
 
 Search returns citation-bearing chunks. Restricted chunks are filtered unless the request has an authorized scoped API key and matching grant.
 
@@ -277,6 +310,7 @@ curl --silent --show-error --fail "http://127.0.0.1:3000/search?query=PII%20reda
 With Docker Compose API running:
 
 ```bash
+npx -y pnpm@11.7.0 smoke:compose
 curl --silent --show-error --fail http://127.0.0.1:3000/openapi.json
 curl --silent --show-error --fail "http://127.0.0.1:3000/exports/ai-package?package=demo-agent-pack"
 curl --silent --show-error --fail "http://127.0.0.1:3000/exports/ai-package?package=demo-agent-pack&format=okf&okfVersion=0.1"
@@ -299,6 +333,8 @@ With Docker Compose API and web running, open:
 ```text
 http://127.0.0.1:5175/
 ```
+
+For local split-origin Vite checks, the login form defaults to `http://127.0.0.1:3000`, `tenant_demo`, `admin@example.test`, and the temporary local password `local-dev-password` on `localhost:5173` / `127.0.0.1:5173`. This prefill is only for disposable local UI review and is not used by the same-origin proxy, preview, or deployed builds.
 
 For a production-like same-origin browser smoke check, start the proxy overlay and open:
 
@@ -464,6 +500,7 @@ Validate configuration:
 docker compose config --quiet
 docker compose -f compose.yaml -f compose.same-origin.yaml config --quiet
 docker compose -f compose.yaml -f compose.same-origin.yaml -f compose.tls.yaml config --quiet
+npx -y pnpm@11.7.0 security:check-deployment-defaults
 ```
 
 Build and start once a Docker daemon is running:
@@ -482,6 +519,12 @@ docker compose -f compose.yaml -f compose.same-origin.yaml -f compose.tls.yaml u
 curl --head --silent --show-error --fail http://127.0.0.1:8080/api/health
 curl --insecure --silent --show-error --fail https://127.0.0.1:8443/api/health
 curl --insecure --silent --show-error --fail https://127.0.0.1:8443/ | head
+```
+
+After the stack is running and the demo corpus is imported, run the runtime smoke gate:
+
+```bash
+npx -y pnpm@11.7.0 smoke:compose
 ```
 
 The Compose web preview is exposed on `http://127.0.0.1:5175/` to avoid colliding with local Vite development ports. The API and Postgres defaults are `http://127.0.0.1:3000` and local port `5432`. Override `AGENTIC_CMS_WEB_PORT`, `AGENTIC_CMS_API_PORT`, or `AGENTIC_CMS_POSTGRES_PORT` when running a second clean Compose project beside an existing stack. The same-origin proxy overlay is exposed on `http://127.0.0.1:8080/` and routes API calls under `/api`. After the TLS overlay is active, the 8080 listener redirects to HTTPS and the browser entry point is `https://127.0.0.1:8443/`. The TLS overlay sets secure browser-cookie mode on the API and expects `infra/docker/tls/tls.crt` plus `infra/docker/tls/tls.key`; the helper script creates local self-signed files that are ignored by git.

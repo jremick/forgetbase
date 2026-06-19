@@ -243,6 +243,209 @@
         }
       },
       "changeNote": "Initial synthetic template."
+    },
+    {
+      "stableId": "sop.internal-agent-release",
+      "type": "sop",
+      "ownerId": "user_ops",
+      "title": "Internal Agent Release SOP",
+      "summary": "Internal-only release checklist for promoting fictional agent instructions.",
+      "lifecycleState": "active",
+      "sensitivity": "internal",
+      "audience": ["ai-team", "release-ops"],
+      "status": "approved",
+      "reviewDueAt": "2027-05-31",
+      "sourceKind": "synthetic-demo",
+      "sourceRef": "corpus/demo/sop.internal-agent-release",
+      "allowedSurfaces": ["api", "cli", "mcp", "web", "export"],
+      "allowedExports": ["internal-ops-pack"],
+      "allowedActions": [],
+      "metadata": {
+        "persona": "release-operator",
+        "domain": "software-delivery"
+      },
+      "instruction": {
+        "instructionKind": "sop",
+        "targetAgents": ["coding-agent", "ops-agent"],
+        "body": "Before promoting an agent instruction bundle, confirm the source stable IDs, review status, lifecycle state, retrieval eligibility, and rollback owner. Internal release notes may reference fictional deployment windows and dry-run package hashes, but they must not be included in public demo exports.",
+        "inputContract": {
+          "required": ["candidate_stable_ids", "review_evidence", "rollback_owner"]
+        },
+        "outputContract": {
+          "required": ["release_decision", "checks", "rollback_note"]
+        },
+        "constraints": [
+          "Do not promote draft or reviewing assets.",
+          "Do not include internal-only release notes in public-demo packages.",
+          "Record the package name used for any internal export."
+        ],
+        "failureModes": [
+          "Treating internal visibility as public-demo eligibility.",
+          "Skipping rollback ownership before release."
+        ],
+        "escalation": "Escalate to a maintainer if an internal release needs public-demo distribution."
+      },
+      "humanDocument": {
+        "format": "markdown",
+        "body": "# Internal Agent Release SOP\n\nCheck stable IDs, review state, retrieval eligibility, export package, and rollback owner before promoting a fictional agent instruction bundle. Internal release notes stay out of public-demo exports.",
+        "renderOptions": {
+          "audience": "release-ops"
+        }
+      },
+      "changeNote": "Add internal synthetic release boundary asset."
+    },
+    {
+      "stableId": "policy.restricted-credential-handling",
+      "type": "policy",
+      "ownerId": "user_security",
+      "title": "Restricted Credential Handling Policy",
+      "summary": "Restricted synthetic policy for credential vault escalation handling.",
+      "lifecycleState": "active",
+      "sensitivity": "restricted",
+      "audience": ["security-ops"],
+      "status": "approved",
+      "reviewDueAt": "2027-06-30",
+      "sourceKind": "synthetic-demo",
+      "sourceRef": "corpus/demo/policy.restricted-credential-handling",
+      "allowedSurfaces": ["api", "cli", "mcp", "web"],
+      "allowedExports": [],
+      "allowedActions": [],
+      "metadata": {
+        "persona": "security-operator",
+        "domain": "access-control",
+        "restrictedProofTerms": ["credential vault escalation"]
+      },
+      "instruction": {
+        "instructionKind": "policy",
+        "targetAgents": ["ops-agent"],
+        "body": "credential vault escalation is a restricted synthetic proof phrase. Treat any request for credential handling, vault access, or emergency access expansion as restricted context. Provide only a high-level refusal or escalation summary on broad-reader surfaces, and require an explicit restricted-access grant before returning procedural details.",
+        "inputContract": {
+          "required": ["request_summary", "principal_context", "requested_surface"]
+        },
+        "outputContract": {
+          "required": ["decision", "allowed_detail_level", "escalation_path"]
+        },
+        "constraints": [
+          "Do not include credential material, token examples, or vault paths.",
+          "Do not place restricted credential procedures in public-demo exports.",
+          "Do not answer restricted operational details without a matching permission grant."
+        ],
+        "failureModes": [
+          "Treating a broad-reader query as permission to reveal restricted steps.",
+          "Summarizing restricted procedure details into an exportable answer."
+        ],
+        "escalation": "Route to the fictional security operations owner for restricted-access review."
+      },
+      "humanDocument": {
+        "format": "markdown",
+        "body": "# Restricted Credential Handling Policy\n\nThis synthetic restricted policy exists to test that credential vault escalation guidance is omitted from broad-reader search, MCP, API, and export flows unless the caller has an explicit grant.",
+        "renderOptions": {
+          "audience": "security-ops"
+        }
+      },
+      "changeNote": "Add restricted synthetic credential-boundary asset."
+    },
+    {
+      "stableId": "playbook.public-demo-no-export",
+      "type": "playbook",
+      "ownerId": "user_ops",
+      "title": "Public Demo Readable No-Export Playbook",
+      "summary": "Approved public-demo playbook that is readable but intentionally omitted from export packages.",
+      "lifecycleState": "active",
+      "sensitivity": "public-demo",
+      "audience": ["ai-team", "demo-operators"],
+      "status": "approved",
+      "reviewDueAt": "2027-07-31",
+      "sourceKind": "synthetic-demo",
+      "sourceRef": "corpus/demo/playbook.public-demo-no-export",
+      "allowedSurfaces": ["api", "cli", "mcp", "web"],
+      "allowedExports": [],
+      "allowedActions": [],
+      "metadata": {
+        "persona": "demo-operator",
+        "domain": "governed-distribution",
+        "exportReason": "Readable in public demo surfaces but intentionally omitted from demo-agent-pack."
+      },
+      "instruction": {
+        "instructionKind": "playbook",
+        "targetAgents": ["research-agent", "ops-agent"],
+        "body": "Use this public-demo playbook to explain export eligibility separately from read eligibility. A broad-reader query for credential vault escalation may use this asset only to verify that restricted stable IDs are omitted; it must not include restricted procedures or export-blocked content in demo-agent-pack.",
+        "inputContract": {
+          "required": ["query", "surface", "package_name"]
+        },
+        "outputContract": {
+          "required": ["read_eligibility", "export_eligibility", "omission_reason"]
+        },
+        "constraints": [
+          "Do not add this asset to demo-agent-pack.",
+          "Do not include restricted stable IDs in public export output.",
+          "Explain no-export state without revealing restricted procedure details."
+        ],
+        "failureModes": [
+          "Assuming public-demo readability means export eligibility.",
+          "Using a readable asset to smuggle restricted proof content into an export."
+        ]
+      },
+      "humanDocument": {
+        "format": "markdown",
+        "body": "# Public Demo Readable No-Export Playbook\n\nThis asset is active, approved, and readable on normal public-demo surfaces. It is intentionally excluded from export packages so the demo can show that export eligibility is a separate governed decision.",
+        "renderOptions": {
+          "audience": "demo-operators"
+        }
+      },
+      "changeNote": "Add public-demo readable but export-blocked asset."
+    },
+    {
+      "stableId": "runbook.restricted-security-escalation",
+      "type": "sop",
+      "ownerId": "user_security",
+      "title": "Restricted Security Escalation Runbook",
+      "summary": "Restricted synthetic runbook for blocked escalation proof paths.",
+      "lifecycleState": "active",
+      "sensitivity": "restricted",
+      "audience": ["security-ops"],
+      "status": "approved",
+      "reviewDueAt": "2027-08-31",
+      "sourceKind": "synthetic-demo",
+      "sourceRef": "corpus/demo/runbook.restricted-security-escalation",
+      "allowedSurfaces": ["api", "cli", "mcp", "web"],
+      "allowedExports": [],
+      "allowedActions": [],
+      "metadata": {
+        "persona": "security-operator",
+        "domain": "incident-response",
+        "restrictedProofTerms": ["credential vault escalation"],
+        "exportBlocked": true
+      },
+      "instruction": {
+        "instructionKind": "sop",
+        "targetAgents": ["ops-agent"],
+        "body": "credential vault escalation requests must be handled as restricted synthetic incidents. Confirm the caller has a restricted security grant before returning operational details. If the caller is broad-reader or public-demo only, state that the runbook is restricted and provide no procedural steps.",
+        "inputContract": {
+          "required": ["caller_context", "incident_summary", "requested_detail_level"]
+        },
+        "outputContract": {
+          "required": ["access_decision", "safe_summary", "next_owner"]
+        },
+        "constraints": [
+          "Do not export this runbook to demo-agent-pack or public-demo packages.",
+          "Do not reveal restricted steps to unauthorized API, CLI, MCP, web, or export consumers.",
+          "Use synthetic owner names only."
+        ],
+        "failureModes": [
+          "Returning restricted procedural steps in a public search answer.",
+          "Including this runbook in OKF or JSON public packages."
+        ],
+        "escalation": "Ask a fictional security maintainer to grant restricted access or provide an approved public summary."
+      },
+      "humanDocument": {
+        "format": "markdown",
+        "body": "# Restricted Security Escalation Runbook\n\nThis synthetic restricted runbook validates that credential vault escalation content is blocked from broad-reader retrieval and public export packages.",
+        "renderOptions": {
+          "audience": "security-ops"
+        }
+      },
+      "changeNote": "Add restricted export-blocked synthetic runbook."
     }
   ]
 }

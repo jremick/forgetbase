@@ -99,7 +99,7 @@ Exit criteria:
 
 ## Phase 4: Search And Retrieval
 
-Status: initial foundation implemented for chunk indexing, Postgres full-text search, transparent `lexical-weighted-v1`, `vector-hash-v1`, and `hybrid-hash-lexical-v1` ranking metadata, tenant admin retrieval ranking policy, deterministic hash embeddings stored in `pgvector`, permission-filtered search responses, deterministic managed query answer drafts, citation metadata, CLI/MCP search and managed query, worker reindexing, and retrieval telemetry. Provider-quality embedding generation, semantic reranking, advanced retrieval evaluation, eval-driven ranking optimization, search-service federation, and richer UI workflows remain pending.
+Status: initial foundation implemented for chunk indexing, Postgres full-text search, transparent `lexical-weighted-v1`, `vector-hash-v1`, `hybrid-hash-lexical-v1`, `vector-provider-v1`, and `hybrid-provider-lexical-v1` ranking metadata, tenant admin retrieval ranking policy, deterministic hash embeddings and opt-in OpenAI-compatible provider embeddings stored in `pgvector`, provider/model/dimension vector-space filtering, permission-filtered search responses, deterministic managed query answer drafts, citation metadata, CLI/MCP search and managed query, CLI/MCP contract-test automation, worker reindexing, and retrieval telemetry. Semantic reranking, advanced retrieval evaluation, eval-driven ranking optimization, per-tenant retrieval profiles, search-service federation, and richer UI workflows remain pending.
 
 Goal: implement permission-aware lexical and vector retrieval.
 

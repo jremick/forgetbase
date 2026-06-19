@@ -17,7 +17,7 @@ jobs:
   verify:
     name: Verify
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
 
     services:
       postgres:
@@ -67,6 +67,24 @@ jobs:
 
       - name: Validate demo corpus
         run: pnpm --filter @agentic-cms/cli start -- validate --file corpus/demo/assets.json --as-of 2026-06-16 --fail-on-warnings
+
+      - name: Validate Compose config
+        run: docker compose -f compose.yaml config --quiet
+
+      - name: Validate same-origin Compose config
+        run: docker compose -f compose.yaml -f compose.same-origin.yaml config --quiet
+
+      - name: Validate TLS Compose config
+        run: docker compose -f compose.yaml -f compose.same-origin.yaml -f compose.tls.yaml config --quiet
+
+      - name: Check OpenAPI drift
+        run: pnpm openapi:check
+
+      - name: Lint public claims
+        run: pnpm claims:lint
+
+      - name: Check beta contracts
+        run: pnpm contracts:check
 
       - name: Test
         run: pnpm test

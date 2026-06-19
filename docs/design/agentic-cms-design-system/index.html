@@ -1758,12 +1758,14 @@
           </div>
           <div class="panel-body">
             <div class="path-steps">
-              <div class="step"><div class="step-num">1</div><h3>Tokens</h3><p>Replace ad-hoc CSS with custom properties, shared status/sensitivity styles, focus rules, and density variables.</p></div>
-              <div class="step"><div class="step-num">2</div><h3>Shell</h3><p>Add role-aware app shell, grouped nav, command/search bar, and connection/session drawer.</p></div>
-              <div class="step"><div class="step-num">3</div><h3>Reader</h3><p>Build Library, Search, Asset Read, TrustBanner, metadata rail, sources, and instruction well.</p></div>
-              <div class="step"><div class="step-num">4</div><h3>Workflows</h3><p>Migrate review queue, publish, restore, version compare, and asset audit into template pages.</p></div>
-              <div class="step"><div class="step-num">5</div><h3>Operations</h3><p>Group admin pages into Access, Providers, Policies, Evaluations, Approvals, Telemetry, and Exports.</p></div>
+              <div class="step"><div class="step-num">1</div><h3>Tokens</h3><p>Replace ad-hoc CSS with custom properties, shared status/sensitivity styles, focus rules, density variables, and shadcn/ReUI semantic tokens.</p></div>
+              <div class="step"><div class="step-num">2</div><h3>Foundation</h3><p>Adopt local shadcn-style primitives for buttons, badges, commands, and status states before installing richer registry components.</p></div>
+              <div class="step"><div class="step-num">3</div><h3>Shell</h3><p>Add role-aware app shell, grouped nav, command/search bar, and connection/session drawer.</p></div>
+              <div class="step"><div class="step-num">4</div><h3>Reader</h3><p>Build Library, Search, Asset Read, TrustBanner, metadata rail, sources, and instruction well.</p></div>
+              <div class="step"><div class="step-num">5</div><h3>Workflows</h3><p>Migrate review queue, publish, restore, version compare, and asset audit into template pages.</p></div>
+              <div class="step"><div class="step-num">6</div><h3>Operations</h3><p>Use ReUI selectively for data grids, filters, frames, trees, timelines, and steppers when an operational workflow needs richer console behavior.</p></div>
             </div>
+            <div class="note" style="margin-top:18px">Component source order: local governed-asset primitives first, shadcn core for foundational controls, ReUI only for richer app-console components, and custom components only when permission, sensitivity, export, or audit behavior requires it.</div>
             <div class="note" style="margin-top:18px">Acceptance bar: reader can find and trust an approved public-demo asset without admin concepts; maintainer can review and publish with audit clarity; admin can manage keys/providers/policies without exposing raw secrets except one-time create/rotate reveal.</div>
           </div>
         </section>

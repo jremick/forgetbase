@@ -38,9 +38,13 @@ import {
   PostgresSecretReferencePolicyRepository,
   PostgresTelemetryRetentionPolicyRepository,
   ServiceAccountPolicyViolationError,
+  DEFAULT_EMBEDDING_DIMENSIONS,
+  DEFAULT_OPENAI_EMBEDDING_MODEL,
+  OpenAiEmbeddingProvider,
   isSecretEnvVarAllowed,
   purgeTelemetryForRetentionPolicy,
   runMigrations,
+  type EmbeddingProvider,
   type AuthRepository,
   type RegistryRepository
 } from "./index.js";
@@ -119,6 +123,63 @@ function sampleEvalReport(tenantId = "tenant_demo"): ManagedQueryEvalReport {
     ]
   };
 }
+
+class TestEmbeddingProvider implements EmbeddingProvider {
+  readonly dimensions = DEFAULT_EMBEDDING_DIMENSIONS;
+
+  constructor(
+    readonly provider: string,
+    readonly model: string
+  ) {}
+
+  async embedTexts(texts: string[]): Promise<number[][]> {
+    return texts.map((text) => {
+      const vector = Array.from({ length: this.dimensions }, () => 0);
+      vector[text.toLowerCase().includes("semanticprovideranchor") ? 17 : 23] = 1;
+      return vector;
+    });
+  }
+}
+
+describe("OpenAiEmbeddingProvider", () => {
+  it("posts embedding batches to the OpenAI-compatible embeddings endpoint", async () => {
+    const embedding = Array.from({ length: DEFAULT_EMBEDDING_DIMENSIONS }, (_, index) => index / 1000);
+    const requests: Array<{
+      url: string;
+      headers: Headers;
+      body: Record<string, unknown>;
+    }> = [];
+    const provider = new OpenAiEmbeddingProvider({
+      apiKey: "test-openai-key",
+      fetchImpl: async (input, init) => {
+        requests.push({
+          url: String(input),
+          headers: new Headers(init?.headers),
+          body: JSON.parse(String(init?.body)) as Record<string, unknown>
+        });
+
+        return new Response(JSON.stringify({
+          data: [
+            {
+              index: 0,
+              embedding
+            }
+          ]
+        }), { status: 200 });
+      }
+    });
+
+    await expect(provider.embedTexts(["semantic provider text"])).resolves.toEqual([embedding]);
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.url).toBe("https://api.openai.com/v1/embeddings");
+    expect(requests[0]?.headers.get("authorization")).toBe("Bearer test-openai-key");
+    expect(requests[0]?.body).toMatchObject({
+      input: ["semantic provider text"],
+      model: DEFAULT_OPENAI_EMBEDDING_MODEL,
+      dimensions: DEFAULT_EMBEDDING_DIMENSIONS
+    });
+  });
+});
 
 describe("InMemoryRegistryRepository", () => {
   it("creates, lists, and fetches governed assets", async () => {
@@ -2204,8 +2265,84 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("PostgresRegistryRepository", ()
     expect(vectorResults[0]?.asset.stableId).toBe(stableId);
     expect(vectorResults[0]?.ranking.strategy).toBe("vector-hash-v1");
     expect(vectorResults[0]?.ranking.vectorSimilarity).toBeGreaterThan(0);
+    expect(vectorResults[0]?.ranking.embeddingProvider).toBe("local-hash");
+    expect(vectorResults[0]?.ranking.embeddingModel).toBe("hash-embedding-v1");
+    expect(vectorResults[0]?.ranking.embeddingDimensions).toBe(1536);
     expect(hybridResults[0]?.asset.stableId).toBe(stableId);
     expect(hybridResults[0]?.ranking.strategy).toBe("hybrid-hash-lexical-v1");
+  });
+
+  it("persists provider embedding metadata and filters incompatible vector spaces", async () => {
+    const registryRepository = new PostgresRegistryRepository(pool);
+    const embeddingProvider = new TestEmbeddingProvider("test-provider", "semantic-test-model");
+    const mismatchedProvider = new TestEmbeddingProvider("test-provider", "other-semantic-model");
+    const retrievalRepository = new PostgresRetrievalRepository(pool, undefined, embeddingProvider);
+    const mismatchedRetrievalRepository = new PostgresRetrievalRepository(pool, undefined, mismatchedProvider);
+    const tenantId = `tenant_provider_vector_${Date.now()}`;
+    const stableId = `guardrail.provider-vector-${Date.now()}`;
+    const asset = await registryRepository.createAsset({
+      ...sampleAsset,
+      tenantId,
+      stableId,
+      summary: "Provider semantic retrieval guidance for semanticprovideranchor."
+    });
+
+    await retrievalRepository.indexAsset(asset);
+    const embeddingMetadata = await pool.query<{
+      provider: string;
+      model: string;
+      dimensions: number;
+    }>(
+      `
+        SELECT DISTINCT
+          embedding_provider AS provider,
+          embedding_model AS model,
+          embedding_dimensions AS dimensions
+        FROM asset_chunks
+        WHERE asset_id = $1
+      `,
+      [asset.asset.id]
+    );
+    const vectorResults = await retrievalRepository.search({
+      tenantId,
+      query: "semanticprovideranchor",
+      strategy: "vector",
+      limit: 5
+    });
+    const hybridResults = await retrievalRepository.search({
+      tenantId,
+      query: "semanticprovideranchor",
+      strategy: "hybrid",
+      limit: 5
+    });
+    const mismatchedVectorResults = await mismatchedRetrievalRepository.search({
+      tenantId,
+      query: "semanticprovideranchor",
+      strategy: "vector",
+      limit: 5
+    });
+
+    expect(embeddingMetadata.rows).toEqual([
+      {
+        provider: "test-provider",
+        model: "semantic-test-model",
+        dimensions: DEFAULT_EMBEDDING_DIMENSIONS
+      }
+    ]);
+    expect(vectorResults[0]?.asset.stableId).toBe(stableId);
+    expect(vectorResults[0]?.ranking).toMatchObject({
+      strategy: "vector-provider-v1",
+      embeddingProvider: "test-provider",
+      embeddingModel: "semantic-test-model",
+      embeddingDimensions: DEFAULT_EMBEDDING_DIMENSIONS,
+      vectorSimilarity: expect.any(Number)
+    });
+    expect(hybridResults[0]?.ranking).toMatchObject({
+      strategy: "hybrid-provider-lexical-v1",
+      embeddingProvider: "test-provider",
+      embeddingModel: "semantic-test-model"
+    });
+    expect(mismatchedVectorResults).toHaveLength(0);
   });
 
   it("persists managed query feedback records", async () => {
