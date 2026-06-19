@@ -223,6 +223,7 @@ type AssetContentView = "human" | "instruction" | "version" | "raw";
 type ManagedQueryView = "answer" | "evidence" | "diagnostics";
 type GeneratedPackage = AiExportPackage | OkfExportPackage;
 const pageRouteValues = [
+  "reader",
   "library",
   "search",
   "asset-read",
@@ -561,17 +562,19 @@ export function App() {
   const commandTriggerRef = useRef<HTMLButtonElement | null>(null);
   const loadedWorkspaceRoutesRef = useRef<Set<string>>(new Set());
 
+  const readerRouteRequested = currentPage === "reader";
+  const shouldUseReaderAssetScope = currentPrincipal?.role === "reader" || readerRouteRequested;
   const readerPublishedAssets = useMemo(
     () => assets.filter(isPublishedReaderAsset),
     [assets]
   );
   const selectedAsset = useMemo(
     () => {
-      const scopedAssets = currentPrincipal?.role === "reader" ? readerPublishedAssets : assets;
+      const scopedAssets = shouldUseReaderAssetScope ? readerPublishedAssets : assets;
 
       return scopedAssets.find((asset) => asset.stableId === selectedStableId) ?? scopedAssets[0];
     },
-    [assets, currentPrincipal?.role, readerPublishedAssets, selectedStableId]
+    [assets, readerPublishedAssets, selectedStableId, shouldUseReaderAssetScope]
   );
   const currentVersion = useMemo(
     () => assetDetail?.versions.find((version) => version.id === assetDetail.asset.currentVersionId) ?? assetDetail?.versions[0],
@@ -656,7 +659,7 @@ export function App() {
   const isAuthenticated = authState === "authenticated";
   const displayIdentity = currentPrincipal?.displayName || currentPrincipal?.email || "Guest";
   const displayInitials = isAuthenticated ? initialsFor(displayIdentity) : "GU";
-  const readerSurfaceActive = isAuthenticated && currentPrincipal?.role === "reader";
+  const readerSurfaceActive = isAuthenticated && shouldUseReaderAssetScope;
   const readerSelectedAsset = readerPublishedAssets.find((asset) => asset.stableId === selectedStableId) ??
     filteredReaderAssets[0] ??
     readerPublishedAssets[0];
@@ -769,12 +772,12 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    if (readerSurfaceActive && currentPage !== "library") {
-      setCurrentPage("library");
-      setCurrentHashRoute("library");
-      window.history.replaceState({}, document.title, `${window.location.pathname}${window.location.search}#library`);
+    if (currentPrincipal?.role === "reader" && currentPage !== "reader") {
+      setCurrentPage("reader");
+      setCurrentHashRoute("reader");
+      window.history.replaceState({}, document.title, `${window.location.pathname}${window.location.search}#reader`);
     }
-  }, [currentPage, readerSurfaceActive]);
+  }, [currentPage, currentPrincipal?.role]);
 
   useEffect(() => {
     if (!readerSurfaceActive) {
@@ -2724,9 +2727,10 @@ export function App() {
       folderLabel: "Library",
       folderIcon: <BookOpen aria-hidden="true" />,
       folderRoute: "library",
-      activeRoutes: ["library", "search", "asset-read"],
+      activeRoutes: ["reader", "library", "search", "asset-read"],
       count: assets.length,
       leaves: [
+        { route: "reader", label: "Reader interface", count: readerPublishedAssets.length },
         { route: "library", label: "Asset library", count: approvedAssets },
         { route: "search", label: "Search / query" },
         { route: "asset-read", label: "Reading room", badge: assetDetail ? { label: "live", tone: "warn" } : undefined }
@@ -2840,7 +2844,7 @@ export function App() {
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="identity-menu">
                 <DropdownMenuLabel>
-                  <span className="identity-menu-label">Reader account</span>
+                  <span className="identity-menu-label">Signed in</span>
                   <span className="identity-menu-value">{displayIdentity}</span>
                 </DropdownMenuLabel>
                 <DropdownMenuSeparator />

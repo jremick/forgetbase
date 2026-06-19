@@ -65,3 +65,11 @@ Decision: No route-module rewrite, package changes, backend route renames, shadc
 Rationale: The IA issue could be improved at the shell/route/panel layer, and the repo already has active shadcn migration changes. A broader rewrite would raise merge and regression risk without being required for the user-facing IA improvement.
 
 Uncertainty: This leaves structural debt in `App.tsx`; the next safe lane is a focused route-module extraction after current UI migrations settle.
+
+## Decision 9: Let every authenticated role open the reader interface
+
+Decision: Add `#reader` as an authenticated route that renders the same published-material reader shell for admins, maintainers, and readers. Actual reader accounts are still routed there by default.
+
+Rationale: Managers and operators need to verify and debug the consumer experience without creating a separate login or using an impersonation path. This is a view-mode change only: it uses the current principal and existing permission-filtered API responses, so it does not bypass access control.
+
+Uncertainty: A later enterprise version may need true delegated impersonation with audit evidence, but that would be a separate security-sensitive workflow.
