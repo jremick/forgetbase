@@ -23,19 +23,19 @@ jobs:
       postgres:
         image: pgvector/pgvector:pg17
         env:
-          POSTGRES_DB: agentic_cms
-          POSTGRES_USER: agentic_cms
-          POSTGRES_PASSWORD: agentic_cms_dev
+          POSTGRES_DB: forgetbase
+          POSTGRES_USER: forgetbase
+          POSTGRES_PASSWORD: forgetbase_dev
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U agentic_cms -d agentic_cms"
+          --health-cmd "pg_isready -U forgetbase -d forgetbase"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
 
     env:
-      TEST_DATABASE_URL: postgres://agentic_cms:agentic_cms_dev@127.0.0.1:5432/agentic_cms
+      TEST_DATABASE_URL: postgres://forgetbase:forgetbase_dev@127.0.0.1:5432/forgetbase
 
     steps:
       - name: Checkout
@@ -66,7 +66,7 @@ jobs:
         run: pnpm build
 
       - name: Validate demo corpus
-        run: pnpm --filter @agentic-cms/cli start -- validate --file corpus/demo/assets.json --as-of 2026-06-16 --fail-on-warnings
+        run: pnpm --filter @forgetbase/cli start -- validate --file corpus/demo/assets.json --as-of 2026-06-16 --fail-on-warnings
 
       - name: Validate Compose config
         run: docker compose -f compose.yaml config --quiet

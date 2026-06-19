@@ -25,16 +25,16 @@ This is a design artifact only. It does not wire CI, add scripts, or change runt
 | `pnpm typecheck` | Prove TypeScript contracts still compile. | Core engineering | Node 22, repo install | Default PR/push CI, before all release gates | 1-3 min | Block merge/release. Fix compile errors before trust gates are meaningful. | None. This is not deferrable. |
 | `pnpm build` | Build API, web, CLI, MCP, worker artifacts used by runtime gates. | Core engineering | Node 22, repo install | Default PR/push CI, before leakage/OpenAPI/Compose runtime gates | 2-5 min | Block merge/release. Runtime checks must run against compiled artifacts where possible. | None. This is not deferrable. |
 | `pnpm test` | Existing Postgres-backed and unit behavior coverage, including public-demo and auth tests. | Core engineering | Node 22, Postgres service in CI via `TEST_DATABASE_URL` | Default PR/push CI | 3-8 min | Block merge/release. | If CI DB is unavailable, rerun locally with documented `TEST_DATABASE_URL`; do not tag until green. |
-| `pnpm --filter @agentic-cms/cli start -- validate --file corpus/demo/assets.json --as-of 2026-06-16 --fail-on-warnings` | Enforce synthetic corpus metadata, stale review, surface consistency, and restricted public export validation. | Demo/corpus owner | Repo install | Default PR/push CI | <1 min | Block merge/release. Warnings are failures because demo corpus is public proof. | None for default corpus. |
+| `pnpm --filter @forgetbase/cli start -- validate --file corpus/demo/assets.json --as-of 2026-06-16 --fail-on-warnings` | Enforce synthetic corpus metadata, stale review, surface consistency, and restricted public export validation. | Demo/corpus owner | Repo install | Default PR/push CI | <1 min | Block merge/release. Warnings are failures because demo corpus is public proof. | None for default corpus. |
 | `docker compose config --quiet` | Validate base Compose syntax and interpolation. | Release engineering | Docker Compose CLI | Default PR/push CI if Docker available; otherwise release gate | <1 min | Block release; block PR if run in CI. | Run locally and attach command output to release checklist if hosted CI Docker is unavailable. |
 | `docker compose -f compose.yaml -f compose.same-origin.yaml config --quiet` | Validate same-origin proxy overlay used for browser-cookie self-hosting. | Release engineering | Docker Compose CLI | Default PR/push CI if Docker available; otherwise release gate | <1 min | Block release; block PR if run in CI. | Run locally and attach command output. |
 | `docker compose -f compose.yaml -f compose.same-origin.yaml -f compose.tls.yaml config --quiet` | Validate HTTPS same-origin overlay and secure-cookie env wiring. | Release engineering | Docker Compose CLI; cert files not required for config parse | Default PR/push CI if Docker available; otherwise release gate | <1 min | Block release; block PR if run in CI. | Run locally and attach command output. |
 | `pnpm openapi:check` | Detect drift between server contract and committed/versioned OpenAPI artifact. | API contract owner | Node 22, build complete | Default PR/push CI after build | <1 min | Block merge/release when route or schema changes are not reflected in the OpenAPI artifact. | If intentionally changing API, regenerate/update the artifact and include contract note in PR. |
 | `pnpm claims:lint` | Block public-copy overclaims and risky category drift. | Product/release owner | Node 22; no network | Default PR/push CI for public docs and landing copy; release gate for tags | <1 min | Block merge/release with file, line, phrase, and suggested safer wording. | Product owner may approve a narrow inline allowlist with reason and expiry date. |
-| `pnpm security:verify-restricted-leakage` | Prove restricted fixture does not leak into anonymous search, ungranted reader search, JSON export, or OKF export while admin search still works. | Security/retrieval owner | Built API reachable at `AGENTIC_CMS_API_URL`; disposable DB/tenant; no real provider secrets | Default CI once script can start its own ephemeral API or CI boots API; release gate until then | 1-3 min after API is healthy | Block merge/release. Treat failures as possible data exposure until investigated. | Run against local Compose or staging with `AGENTIC_CMS_API_URL=<origin>` and attach JSON output; follow restricted leakage runbook. |
+| `pnpm security:verify-restricted-leakage` | Prove restricted fixture does not leak into anonymous search, ungranted reader search, JSON export, or OKF export while admin search still works. | Security/retrieval owner | Built API reachable at `FORGETBASE_API_URL`; disposable DB/tenant; no real provider secrets | Default CI once script can start its own ephemeral API or CI boots API; release gate until then | 1-3 min after API is healthy | Block merge/release. Treat failures as possible data exposure until investigated. | Run against local Compose or staging with `FORGETBASE_API_URL=<origin>` and attach JSON output; follow restricted leakage runbook. |
 | `pnpm smoke:compose` | Boot canonical Compose stack, bootstrap disposable admin, import corpus, run multiple retrieval requests, validate exports, and prove same-origin proxy health. | Release engineering | Docker daemon, free ports or override env ports, no external credentials | Docker-capable PR/push CI if runtime is stable; otherwise required release gate | 5-12 min | Block release. In PR CI, block if flake rate is controlled; otherwise quarantine as required pre-tag gate until stable. | Run locally from a clean clone and attach summarized evidence plus `docker compose ps`. |
 | `pnpm db:verify-backup-restore` | Prove Postgres backup can restore into temporary DB and core table counts match. | Ops/release owner | Docker Compose Postgres running; enough disk for temporary dump; `docker compose exec` works | Manual/required release gate; optional scheduled CI, not default PR | 1-5 min depending DB size | Block tag/release. Count mismatch means recovery is not proven. | Run during release candidate checklist; if too slow, document DB size, timing, and latest passing evidence. |
-| `pnpm auth:verify-oidc-login` | Prove OIDC flow with local fake provider and no real Entra credentials. | Auth owner | API with `AGENTIC_CMS_OIDC_STATE_SECRET` and local fake provider script support | Optional default CI once stable; release gate for auth-sensitive changes | 1-3 min | Block auth-sensitive release if failing. Do not require for every PR until flake-free. | Manual local run with generated state secret. Real Entra remains separate. |
+| `pnpm auth:verify-oidc-login` | Prove OIDC flow with local fake provider and no real Entra credentials. | Auth owner | API with `FORGETBASE_OIDC_STATE_SECRET` and local fake provider script support | Optional default CI once stable; release gate for auth-sensitive changes | 1-3 min | Block auth-sensitive release if failing. Do not require for every PR until flake-free. | Manual local run with generated state secret. Real Entra remains separate. |
 | `pnpm provider:smoke` | Secret-gated real provider managed-query/eval path. | Provider/runtime owner | Approved provider secret, budget/quota limit, explicit opt-in | Manual/secret-gated release gate only | 1-3 min | Blocks claims about real-provider beta proof, not core OSS beta if explicitly deferred. | Record as deferred unless manager approves provider cost/secrets. |
 | `pnpm test:uat` | Browser UAT for canonical demo path after UI lane lands. | UI/release owner | Playwright/browser dependencies, running app | Release gate after UI work lands; not a prerequisite for this design | 5-15 min | Block beta readiness claim. | Manual browser walkthrough with screenshots until automation exists. |
 
@@ -45,7 +45,7 @@ Default PR/push CI should include only checks that are deterministic, secret-fre
 ```bash
 pnpm typecheck
 pnpm build
-pnpm --filter @agentic-cms/cli start -- validate --file corpus/demo/assets.json --as-of 2026-06-16 --fail-on-warnings
+pnpm --filter @forgetbase/cli start -- validate --file corpus/demo/assets.json --as-of 2026-06-16 --fail-on-warnings
 pnpm test
 docker compose config --quiet
 docker compose -f compose.yaml -f compose.same-origin.yaml config --quiet
@@ -93,7 +93,7 @@ Current scope already creates a throwaway tenant and restricted fixture, then ve
 Implementation notes:
 
 - Keep the gate pointed at compiled/running API behavior, not raw TypeScript source.
-- Make `AGENTIC_CMS_API_URL` the only required runtime input.
+- Make `FORGETBASE_API_URL` the only required runtime input.
 - For CI, prefer a wrapper that starts `node apps/api/dist/index.js` against the CI Postgres service, waits on `/health`, runs the verifier, then stops the process.
 - If global auth defaults change, do not weaken this verifier by reopening `/auth/bootstrap` publicly. Instead, add an explicit test-mode setup route only inside the verifier harness, or let the wrapper provision the disposable tenant through an authenticated seed path.
 
@@ -257,7 +257,7 @@ Minimum useful flow:
     ```
 
 13. Run `docker compose ps` and write a compact JSON evidence summary.
-14. Always run `docker compose -p "$PROJECT" down -v` in cleanup unless `KEEP_AGENTIC_CMS_COMPOSE_SMOKE=1`.
+14. Always run `docker compose -p "$PROJECT" down -v` in cleanup unless `KEEP_FORGETBASE_COMPOSE_SMOKE=1`.
 
 TLS overlay extension:
 
@@ -317,10 +317,10 @@ Known boundary:
 
 Current implementation:
 
-- `AGENTIC_CMS_REQUIRE_AUTHENTICATION` defaults to `false`.
+- `FORGETBASE_REQUIRE_AUTHENTICATION` defaults to `false`.
 - Invalid boolean values fail startup.
 - When `requireAuthentication` is `true`, unauthenticated `/auth/bootstrap` is blocked with `401 authentication_required`.
-- Public prototype guidance requires explicit `AGENTIC_CMS_REQUIRE_AUTHENTICATION=true` and proxy-level bootstrap blocking.
+- Public prototype guidance requires explicit `FORGETBASE_REQUIRE_AUTHENTICATION=true` and proxy-level bootstrap blocking.
 
 ### Option A: Keep Default `false`, Warn Loudly
 
@@ -371,10 +371,10 @@ Behavior:
 Possible implementation:
 
 - Keep app default `false` for local direct API unless explicitly set.
-- Set `AGENTIC_CMS_REQUIRE_AUTHENTICATION=true` in public prototype and deployment templates.
-- Add startup warning when `HOST=0.0.0.0` and `AGENTIC_CMS_REQUIRE_AUTHENTICATION` is unset.
+- Set `FORGETBASE_REQUIRE_AUTHENTICATION=true` in public prototype and deployment templates.
+- Add startup warning when `HOST=0.0.0.0` and `FORGETBASE_REQUIRE_AUTHENTICATION` is unset.
 - Add release gate that asserts public template/proxy paths block `/api/auth/bootstrap`.
-- Consider a future `AGENTIC_CMS_BOOTSTRAP_SETUP_TOKEN` before making global default `true`.
+- Consider a future `FORGETBASE_BOOTSTRAP_SETUP_TOKEN` before making global default `true`.
 
 Pros:
 
@@ -443,7 +443,7 @@ Default CI:
 ```bash
 pnpm typecheck
 pnpm build
-pnpm --filter @agentic-cms/cli start -- validate --file corpus/demo/assets.json --as-of 2026-06-16 --fail-on-warnings
+pnpm --filter @forgetbase/cli start -- validate --file corpus/demo/assets.json --as-of 2026-06-16 --fail-on-warnings
 pnpm test
 docker compose config --quiet
 docker compose -f compose.yaml -f compose.same-origin.yaml config --quiet

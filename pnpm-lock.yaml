@@ -23,13 +23,13 @@ importers:
 
   apps/api:
     dependencies:
-      '@agentic-cms/db':
+      '@forgetbase/db':
         specifier: workspace:*
         version: link:../../packages/db
-      '@agentic-cms/schema':
+      '@forgetbase/schema':
         specifier: workspace:*
         version: link:../../packages/schema
-      '@agentic-cms/validation':
+      '@forgetbase/validation':
         specifier: workspace:*
         version: link:../../packages/validation
       fastify:
@@ -48,7 +48,7 @@ importers:
 
   apps/web:
     dependencies:
-      '@agentic-cms/schema':
+      '@forgetbase/schema':
         specifier: workspace:*
         version: link:../../packages/schema
       '@radix-ui/react-slot':
@@ -97,13 +97,13 @@ importers:
 
   apps/worker:
     dependencies:
-      '@agentic-cms/db':
+      '@forgetbase/db':
         specifier: workspace:*
         version: link:../../packages/db
-      '@agentic-cms/schema':
+      '@forgetbase/schema':
         specifier: workspace:*
         version: link:../../packages/schema
-      '@agentic-cms/validation':
+      '@forgetbase/validation':
         specifier: workspace:*
         version: link:../../packages/validation
     devDependencies:
@@ -116,13 +116,13 @@ importers:
 
   packages/cli:
     dependencies:
-      '@agentic-cms/schema':
+      '@forgetbase/schema':
         specifier: workspace:*
         version: link:../schema
-      '@agentic-cms/sdk':
+      '@forgetbase/sdk':
         specifier: workspace:*
         version: link:../sdk
-      '@agentic-cms/validation':
+      '@forgetbase/validation':
         specifier: workspace:*
         version: link:../validation
     devDependencies:
@@ -135,7 +135,7 @@ importers:
 
   packages/db:
     dependencies:
-      '@agentic-cms/schema':
+      '@forgetbase/schema':
         specifier: workspace:*
         version: link:../schema
       pg:
@@ -157,10 +157,10 @@ importers:
 
   packages/mcp-server:
     dependencies:
-      '@agentic-cms/schema':
+      '@forgetbase/schema':
         specifier: workspace:*
         version: link:../schema
-      '@agentic-cms/sdk':
+      '@forgetbase/sdk':
         specifier: workspace:*
         version: link:../sdk
       '@modelcontextprotocol/sdk':
@@ -189,7 +189,7 @@ importers:
 
   packages/sdk:
     dependencies:
-      '@agentic-cms/schema':
+      '@forgetbase/schema':
         specifier: workspace:*
         version: link:../schema
     devDependencies:
@@ -199,7 +199,7 @@ importers:
 
   packages/validation:
     dependencies:
-      '@agentic-cms/schema':
+      '@forgetbase/schema':
         specifier: workspace:*
         version: link:../schema
     devDependencies:

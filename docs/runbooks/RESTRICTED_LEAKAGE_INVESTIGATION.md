@@ -8,7 +8,7 @@ Use this runbook when restricted, confidential, or secret content may have appea
 2. Revoke or rotate any API key suspected of unauthorized access:
 
 ```bash
-npx -y pnpm@11.7.0 --filter @agentic-cms/cli start -- auth api-key-revoke --api-key-id <api-key-id>
+npx -y pnpm@11.7.0 --filter @forgetbase/cli start -- auth api-key-revoke --api-key-id <api-key-id>
 ```
 
 3. If a content asset is suspected, remove broad exposure by updating sensitivity, status, lifecycle state, allowed surfaces, allowed exports, or grants. Use the web UI or an authenticated asset update payload.
@@ -26,20 +26,20 @@ Collect the smallest evidence set that answers what leaked, to whom, through whi
 List recent audit events:
 
 ```bash
-npx -y pnpm@11.7.0 --filter @agentic-cms/cli start -- audit events --limit 100
+npx -y pnpm@11.7.0 --filter @forgetbase/cli start -- audit events --limit 100
 ```
 
 Review retrieval and managed-query activity:
 
 ```bash
-npx -y pnpm@11.7.0 --filter @agentic-cms/cli start -- telemetry summary
-npx -y pnpm@11.7.0 --filter @agentic-cms/cli start -- agent feedback-list
+npx -y pnpm@11.7.0 --filter @forgetbase/cli start -- telemetry summary
+npx -y pnpm@11.7.0 --filter @forgetbase/cli start -- agent feedback-list
 ```
 
 Generate the affected export package with the suspected caller role or key, then inspect whether the asset appears:
 
 ```bash
-AGENTIC_CMS_API_KEY="$SUSPECTED_CALLER_KEY" npx -y pnpm@11.7.0 --filter @agentic-cms/cli start -- exports ai-package --package <package-name>
+FORGETBASE_API_KEY="$SUSPECTED_CALLER_KEY" npx -y pnpm@11.7.0 --filter @forgetbase/cli start -- exports ai-package --package <package-name>
 ```
 
 Run the restricted leakage verifier against the current API:
@@ -51,7 +51,7 @@ npx -y pnpm@11.7.0 security:verify-restricted-leakage
 Use a non-default API URL when investigating another deployment:
 
 ```bash
-AGENTIC_CMS_API_URL=https://cms.example.com npx -y pnpm@11.7.0 security:verify-restricted-leakage
+FORGETBASE_API_URL=https://cms.example.com npx -y pnpm@11.7.0 security:verify-restricted-leakage
 ```
 
 The verifier creates a throwaway tenant, creates a restricted fixture asset, proves admin search can find it, and proves anonymous search, ungranted reader search, and broad reader export do not receive it. It prints fixture IDs and counts only; it does not print generated secrets.
@@ -81,7 +81,7 @@ docker compose up -d migrate api worker web
 3. Reindex if asset content, publish state, or restore state changed:
 
 ```bash
-DATABASE_URL=postgres://agentic_cms:agentic_cms_dev@127.0.0.1:5432/agentic_cms npx -y pnpm@11.7.0 --filter @agentic-cms/worker start -- --once
+DATABASE_URL=postgres://forgetbase:forgetbase_dev@127.0.0.1:5432/forgetbase npx -y pnpm@11.7.0 --filter @forgetbase/worker start -- --once
 ```
 
 4. Rotate affected keys if access boundaries were uncertain.

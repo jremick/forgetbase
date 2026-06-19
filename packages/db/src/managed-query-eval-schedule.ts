@@ -5,7 +5,7 @@ import {
   type ManagedQueryEvalSchedulePolicy,
   type ManagedQueryEvalSchedulePolicyInput,
   type ManagedQueryEvalScheduleStatus
-} from "@agentic-cms/schema";
+} from "@forgetbase/schema";
 
 export const DEFAULT_MANAGED_QUERY_EVAL_SCHEDULE_POLICY = {
   enabled: false,

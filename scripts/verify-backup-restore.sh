@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-db_service="${AGENTIC_CMS_DB_SERVICE:-postgres}"
-source_db_name="${AGENTIC_CMS_DB_NAME:-agentic_cms}"
-db_user="${AGENTIC_CMS_DB_USER:-agentic_cms}"
-work_dir="$(mktemp -d "${TMPDIR:-/tmp}/agentic-cms-backup-restore.XXXXXX")"
-target_db="agentic_cms_restore_$$_$(date -u +"%H%M%S")"
-backup_path="${work_dir}/agentic-cms-verify.dump"
+db_service="${FORGETBASE_DB_SERVICE:-postgres}"
+source_db_name="${FORGETBASE_DB_NAME:-forgetbase}"
+db_user="${FORGETBASE_DB_USER:-forgetbase}"
+work_dir="$(mktemp -d "${TMPDIR:-/tmp}/forgetbase-backup-restore.XXXXXX")"
+target_db="forgetbase_restore_$$_$(date -u +"%H%M%S")"
+backup_path="${work_dir}/forgetbase-verify.dump"
 
 cleanup() {
   docker compose exec -T "${db_service}" psql -U "${db_user}" -d postgres -v ON_ERROR_STOP=1 \
@@ -15,7 +15,7 @@ cleanup() {
     -c "DROP DATABASE IF EXISTS ${target_db};" \
     > /dev/null 2>&1 || true
 
-  if [[ "${KEEP_AGENTIC_CMS_BACKUP:-}" != "1" ]]; then
+  if [[ "${KEEP_FORGETBASE_BACKUP:-}" != "1" ]]; then
     rm -rf "${work_dir}"
   fi
 }

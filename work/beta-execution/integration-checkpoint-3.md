@@ -24,24 +24,24 @@ The manager reran these checks after worker completion:
 npx -y pnpm@11.7.0 openapi:check
 npx -y pnpm@11.7.0 claims:lint
 npx -y pnpm@11.7.0 contracts:check
-npx -y pnpm@11.7.0 --filter @agentic-cms/web typecheck
-npx -y pnpm@11.7.0 --filter @agentic-cms/web test
-npx -y pnpm@11.7.0 --filter @agentic-cms/web build
+npx -y pnpm@11.7.0 --filter @forgetbase/web typecheck
+npx -y pnpm@11.7.0 --filter @forgetbase/web test
+npx -y pnpm@11.7.0 --filter @forgetbase/web build
 npx -y pnpm@11.7.0 smoke:compose
 ```
 
 Initial manager `smoke:compose` failed for the same stale running API mismatch reported by workers. The manager inspected Docker ownership and found the listener belonged to this repo's Compose project:
 
 ```text
-agentic-cms-api-1
-agentic-cms-postgres-1
+forgetbase-api-1
+forgetbase-postgres-1
 ```
 
 The manager then made the narrow runtime refresh call:
 
 ```bash
-AGENTIC_CMS_POSTGRES_PORT=55432 docker compose build migrate api
-AGENTIC_CMS_POSTGRES_PORT=55432 docker compose up -d migrate api
+FORGETBASE_POSTGRES_PORT=55432 docker compose build migrate api
+FORGETBASE_POSTGRES_PORT=55432 docker compose up -d migrate api
 npx -y pnpm@11.7.0 smoke:compose
 ```
 
@@ -99,7 +99,7 @@ Representative leakage evidence:
 - `Status`: Accepted
 - `Owner`: Manager thread
 - `Scope`: Local Compose runtime
-- `Decision`: Rebuild and restart only `migrate` and `api` in the existing `agentic-cms` Compose project, preserving the running Postgres container and volume.
+- `Decision`: Rebuild and restart only `migrate` and `api` in the existing `forgetbase` Compose project, preserving the running Postgres container and volume.
 - `Why`: The blocker was not an unrelated user process; Docker labels showed the stale listener belonged to this repo's Compose project. Restarting only the API path was the smallest action that could turn the runtime gate from an environmental caveat into proof.
 - `Alternatives`: Ask the user; dispatch another worker; leave the caveat. Rejected because the user delegated minor decisions to the manager and the action was narrow, reversible, and aligned with the runbook.
 - `Follow-ups`: Record the refresh evidence in this checkpoint and rerun OKF browser UAT against the refreshed API.

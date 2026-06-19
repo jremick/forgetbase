@@ -1,5 +1,5 @@
 {
-  "name": "@agentic-cms/mcp-server",
+  "name": "@forgetbase/mcp-server",
   "version": "0.1.0",
   "private": true,
   "license": "Apache-2.0",
@@ -10,8 +10,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@agentic-cms/schema": "workspace:*",
-    "@agentic-cms/sdk": "workspace:*",
+    "@forgetbase/schema": "workspace:*",
+    "@forgetbase/sdk": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "zod": "^4.4.3"
   },

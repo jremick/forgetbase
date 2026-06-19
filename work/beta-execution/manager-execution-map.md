@@ -272,8 +272,8 @@ Source of truth:
 - apps/web/src/App.tsx
 - apps/web/src/styles.css
 - apps/web/src/components/
-- docs/design/agentic-cms-design-system/index.html
-- docs/design/agentic-cms-main-page-mockups/index.html
+- docs/design/forgetbase-design-system/index.html
+- docs/design/forgetbase-main-page-mockups/index.html
 
 Must produce:
 - work/beta-execution/app-ia-screen-specs.md

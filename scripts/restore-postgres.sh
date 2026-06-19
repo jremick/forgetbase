@@ -7,10 +7,10 @@ if [[ $# -lt 1 ]]; then
 fi
 
 backup_path="$1"
-db_service="${AGENTIC_CMS_DB_SERVICE:-postgres}"
-source_db_name="${AGENTIC_CMS_DB_NAME:-agentic_cms}"
+db_service="${FORGETBASE_DB_SERVICE:-postgres}"
+source_db_name="${FORGETBASE_DB_NAME:-forgetbase}"
 target_db="${2:-${source_db_name}}"
-db_user="${AGENTIC_CMS_DB_USER:-agentic_cms}"
+db_user="${FORGETBASE_DB_USER:-forgetbase}"
 
 if [[ ! -f "${backup_path}" ]]; then
   echo "Backup file not found: ${backup_path}" >&2
@@ -22,13 +22,13 @@ if [[ ! "${target_db}" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
   exit 2
 fi
 
-if [[ "${target_db}" == "${source_db_name}" && "${AGENTIC_CMS_RESTORE_CONFIRM:-}" != "${target_db}" ]]; then
-  echo "Refusing to replace ${target_db}. Set AGENTIC_CMS_RESTORE_CONFIRM=${target_db} to continue." >&2
+if [[ "${target_db}" == "${source_db_name}" && "${FORGETBASE_RESTORE_CONFIRM:-}" != "${target_db}" ]]; then
+  echo "Refusing to replace ${target_db}. Set FORGETBASE_RESTORE_CONFIRM=${target_db} to continue." >&2
   exit 2
 fi
 
-if [[ "${target_db}" != agentic_cms_restore_* && "${target_db}" != "${source_db_name}" && "${AGENTIC_CMS_RESTORE_CONFIRM:-}" != "${target_db}" ]]; then
-  echo "Refusing to restore into non-temporary database ${target_db}. Set AGENTIC_CMS_RESTORE_CONFIRM=${target_db} to continue." >&2
+if [[ "${target_db}" != forgetbase_restore_* && "${target_db}" != "${source_db_name}" && "${FORGETBASE_RESTORE_CONFIRM:-}" != "${target_db}" ]]; then
+  echo "Refusing to restore into non-temporary database ${target_db}. Set FORGETBASE_RESTORE_CONFIRM=${target_db} to continue." >&2
   exit 2
 fi
 

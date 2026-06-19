@@ -2,7 +2,7 @@ type BrowserLocation = Pick<Location, "hostname" | "port">;
 type BrowserStorage = Pick<Storage, "getItem">;
 
 export const localSplitOriginDefaultApiUrl = "http://127.0.0.1:3000";
-export const apiUrlStorageKey = "agentic-cms-api-url";
+export const apiUrlStorageKey = "forgetbase-api-url";
 
 const localDevHostnamePattern = /^(127\.0\.0\.1|localhost)$/;
 const localDevWebPorts = new Set(["5173", "5175"]);

@@ -7,10 +7,10 @@ This folder is the saved design source for the first business-grade UI direction
 - `forgetbase-brand/index.html`: brand contact sheet with 10 ForgetBase logo options.
 - `forgetbase-brand/README.md`: brand rationale, option notes, shortlist, palette, and implementation notes.
 - `forgetbase-brand/marks/`: SVG logo option source files.
-- `agentic-cms-design-system/index.html`: static design-system package with tokens, typography, navigation, cards, tables, forms, empty states, and governance/status patterns.
-- `agentic-cms-main-page-mockups/index.html`: static page mockup package for the main app surfaces.
-- `agentic-cms-main-page-mockups/styles.css`: mockup stylesheet, including the tree/folder page navigation and retained draggable nav width behavior.
-- `agentic-cms-main-page-mockups/app.js`: mockup interaction script.
+- `forgetbase-design-system/index.html`: static design-system package with tokens, typography, navigation, cards, tables, forms, empty states, and governance/status patterns.
+- `forgetbase-main-page-mockups/index.html`: static page mockup package for the main app surfaces.
+- `forgetbase-main-page-mockups/styles.css`: mockup stylesheet, including the tree/folder page navigation and retained draggable nav width behavior.
+- `forgetbase-main-page-mockups/app.js`: mockup interaction script.
 
 ## Implemented In App
 

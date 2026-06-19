@@ -1,7 +1,7 @@
 CREATE TABLE IF NOT EXISTS secret_reference_policies (
   tenant_id text PRIMARY KEY REFERENCES tenants(id) ON DELETE CASCADE,
   allowed_env_var_prefixes text[] NOT NULL DEFAULT ARRAY[
-    'AGENTIC_CMS_',
+    'FORGETBASE_',
     'OPENAI_',
     'ANTHROPIC_',
     'OPENROUTER_',

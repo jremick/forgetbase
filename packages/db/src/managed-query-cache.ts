@@ -9,7 +9,7 @@ import {
   type ManagedQueryMode,
   type ModelProvider,
   type Surface
-} from "@agentic-cms/schema";
+} from "@forgetbase/schema";
 
 export const DEFAULT_MANAGED_QUERY_CACHE_POLICY = {
   cacheEnabled: true,

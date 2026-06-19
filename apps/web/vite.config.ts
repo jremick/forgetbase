@@ -2,7 +2,7 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 
-const allowedHosts = (process.env.AGENTIC_CMS_WEB_ALLOWED_HOSTS ?? "")
+const allowedHosts = (process.env.FORGETBASE_WEB_ALLOWED_HOSTS ?? "")
   .split(",")
   .map((host) => host.trim())
   .filter(Boolean);

@@ -82,7 +82,7 @@ The `Verify` job now runs these commands after checkout, Node setup, and frozen 
 ```bash
 pnpm typecheck
 pnpm build
-pnpm --filter @agentic-cms/cli start -- validate --file corpus/demo/assets.json --as-of 2026-06-16 --fail-on-warnings
+pnpm --filter @forgetbase/cli start -- validate --file corpus/demo/assets.json --as-of 2026-06-16 --fail-on-warnings
 docker compose -f compose.yaml config --quiet
 docker compose -f compose.yaml -f compose.same-origin.yaml config --quiet
 docker compose -f compose.yaml -f compose.same-origin.yaml -f compose.tls.yaml config --quiet
@@ -123,7 +123,7 @@ Commands run after the CI/docs patch:
 
 ```bash
 npx -y pnpm@11.7.0 install --frozen-lockfile
-npx -y pnpm@11.7.0 --filter @agentic-cms/cli start -- validate --file corpus/demo/assets.json --as-of 2026-06-16 --fail-on-warnings
+npx -y pnpm@11.7.0 --filter @forgetbase/cli start -- validate --file corpus/demo/assets.json --as-of 2026-06-16 --fail-on-warnings
 docker compose -f compose.yaml config --quiet
 docker compose -f compose.yaml -f compose.same-origin.yaml config --quiet
 docker compose -f compose.yaml -f compose.same-origin.yaml -f compose.tls.yaml config --quiet

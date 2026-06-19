@@ -2,16 +2,16 @@ services:
   postgres:
     image: pgvector/pgvector:pg17
     environment:
-      POSTGRES_DB: agentic_cms
-      POSTGRES_USER: agentic_cms
-      POSTGRES_PASSWORD: agentic_cms_dev
+      POSTGRES_DB: forgetbase
+      POSTGRES_USER: forgetbase
+      POSTGRES_PASSWORD: forgetbase_dev
     ports:
-      - "${AGENTIC_CMS_POSTGRES_PORT:-5432}:5432"
+      - "${FORGETBASE_POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
       - ./infra/docker/postgres-init:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U agentic_cms -d agentic_cms"]
+      test: ["CMD-SHELL", "pg_isready -U forgetbase -d forgetbase"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -22,7 +22,7 @@ services:
       dockerfile: infra/docker/node.Dockerfile
     command: ["pnpm", "db:migrate"]
     environment:
-      DATABASE_URL: postgres://agentic_cms:agentic_cms_dev@postgres:5432/agentic_cms
+      DATABASE_URL: postgres://forgetbase:forgetbase_dev@postgres:5432/forgetbase
     depends_on:
       postgres:
         condition: service_healthy
@@ -32,19 +32,19 @@ services:
     build:
       context: .
       dockerfile: infra/docker/node.Dockerfile
-    command: ["pnpm", "--filter", "@agentic-cms/api", "start"]
+    command: ["pnpm", "--filter", "@forgetbase/api", "start"]
     environment:
       HOST: 0.0.0.0
       PORT: 3000
-      DATABASE_URL: postgres://agentic_cms:agentic_cms_dev@postgres:5432/agentic_cms
-      AGENTIC_CMS_OIDC_STATE_SECRET: ${AGENTIC_CMS_OIDC_STATE_SECRET:-}
-      AGENTIC_CMS_CORS_ALLOWED_ORIGINS: ${AGENTIC_CMS_CORS_ALLOWED_ORIGINS:-http://127.0.0.1:5175,http://localhost:5175}
-      AGENTIC_CMS_LOGIN_SESSION_MAX_AGE_SECONDS: ${AGENTIC_CMS_LOGIN_SESSION_MAX_AGE_SECONDS:-43200}
-      AGENTIC_CMS_LOGIN_SESSION_IDLE_TIMEOUT_SECONDS: ${AGENTIC_CMS_LOGIN_SESSION_IDLE_TIMEOUT_SECONDS:-14400}
-      AGENTIC_CMS_LOGIN_SESSION_ABSOLUTE_MAX_AGE_SECONDS: ${AGENTIC_CMS_LOGIN_SESSION_ABSOLUTE_MAX_AGE_SECONDS:-2592000}
-      AGENTIC_CMS_LOGIN_REFRESH_TOKEN_MAX_AGE_SECONDS: ${AGENTIC_CMS_LOGIN_REFRESH_TOKEN_MAX_AGE_SECONDS:-604800}
+      DATABASE_URL: postgres://forgetbase:forgetbase_dev@postgres:5432/forgetbase
+      FORGETBASE_OIDC_STATE_SECRET: ${FORGETBASE_OIDC_STATE_SECRET:-}
+      FORGETBASE_CORS_ALLOWED_ORIGINS: ${FORGETBASE_CORS_ALLOWED_ORIGINS:-http://127.0.0.1:5175,http://localhost:5175}
+      FORGETBASE_LOGIN_SESSION_MAX_AGE_SECONDS: ${FORGETBASE_LOGIN_SESSION_MAX_AGE_SECONDS:-43200}
+      FORGETBASE_LOGIN_SESSION_IDLE_TIMEOUT_SECONDS: ${FORGETBASE_LOGIN_SESSION_IDLE_TIMEOUT_SECONDS:-14400}
+      FORGETBASE_LOGIN_SESSION_ABSOLUTE_MAX_AGE_SECONDS: ${FORGETBASE_LOGIN_SESSION_ABSOLUTE_MAX_AGE_SECONDS:-2592000}
+      FORGETBASE_LOGIN_REFRESH_TOKEN_MAX_AGE_SECONDS: ${FORGETBASE_LOGIN_REFRESH_TOKEN_MAX_AGE_SECONDS:-604800}
     ports:
-      - "${AGENTIC_CMS_API_PORT:-3000}:3000"
+      - "${FORGETBASE_API_PORT:-3000}:3000"
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -53,36 +53,36 @@ services:
     build:
       context: .
       dockerfile: infra/docker/node.Dockerfile
-    command: ["pnpm", "--filter", "@agentic-cms/worker", "start"]
+    command: ["pnpm", "--filter", "@forgetbase/worker", "start"]
     environment:
-      DATABASE_URL: postgres://agentic_cms:agentic_cms_dev@postgres:5432/agentic_cms
+      DATABASE_URL: postgres://forgetbase:forgetbase_dev@postgres:5432/forgetbase
       # Set enabled=true and dry-run=false only after validating retention counts.
-      AGENTIC_CMS_RETENTION_PURGE_ENABLED: "false"
-      AGENTIC_CMS_RETENTION_PURGE_DRY_RUN: "true"
-      AGENTIC_CMS_RETENTION_PURGE_INTERVAL_MS: "86400000"
+      FORGETBASE_RETENTION_PURGE_ENABLED: "false"
+      FORGETBASE_RETENTION_PURGE_DRY_RUN: "true"
+      FORGETBASE_RETENTION_PURGE_INTERVAL_MS: "86400000"
       # Set enabled=true and dry-run=false only after validating cache purge counts.
-      AGENTIC_CMS_CACHE_PURGE_ENABLED: "false"
-      AGENTIC_CMS_CACHE_PURGE_DRY_RUN: "true"
-      AGENTIC_CMS_CACHE_PURGE_INTERVAL_MS: "3600000"
+      FORGETBASE_CACHE_PURGE_ENABLED: "false"
+      FORGETBASE_CACHE_PURGE_DRY_RUN: "true"
+      FORGETBASE_CACHE_PURGE_INTERVAL_MS: "3600000"
       # Set enabled=true and dry-run=false only after validating rotation reminder counts.
-      AGENTIC_CMS_API_KEY_ROTATION_REMINDERS_ENABLED: "false"
-      AGENTIC_CMS_API_KEY_ROTATION_REMINDERS_DRY_RUN: "true"
-      AGENTIC_CMS_API_KEY_ROTATION_REMINDERS_DUE_WITHIN_DAYS: "14"
-      AGENTIC_CMS_API_KEY_ROTATION_REMINDERS_DEDUPE_WINDOW_HOURS: "24"
-      AGENTIC_CMS_API_KEY_ROTATION_REMINDERS_INTERVAL_MS: "86400000"
-      AGENTIC_CMS_API_KEY_ROTATION_REMINDERS_WEBHOOK_URL: ${AGENTIC_CMS_API_KEY_ROTATION_REMINDERS_WEBHOOK_URL:-}
-      AGENTIC_CMS_API_KEY_ROTATION_REMINDERS_WEBHOOK_SIGNING_SECRET: ${AGENTIC_CMS_API_KEY_ROTATION_REMINDERS_WEBHOOK_SIGNING_SECRET:-}
-      AGENTIC_CMS_API_KEY_ROTATION_REMINDERS_WEBHOOK_TIMEOUT_MS: ${AGENTIC_CMS_API_KEY_ROTATION_REMINDERS_WEBHOOK_TIMEOUT_MS:-5000}
+      FORGETBASE_API_KEY_ROTATION_REMINDERS_ENABLED: "false"
+      FORGETBASE_API_KEY_ROTATION_REMINDERS_DRY_RUN: "true"
+      FORGETBASE_API_KEY_ROTATION_REMINDERS_DUE_WITHIN_DAYS: "14"
+      FORGETBASE_API_KEY_ROTATION_REMINDERS_DEDUPE_WINDOW_HOURS: "24"
+      FORGETBASE_API_KEY_ROTATION_REMINDERS_INTERVAL_MS: "86400000"
+      FORGETBASE_API_KEY_ROTATION_REMINDERS_WEBHOOK_URL: ${FORGETBASE_API_KEY_ROTATION_REMINDERS_WEBHOOK_URL:-}
+      FORGETBASE_API_KEY_ROTATION_REMINDERS_WEBHOOK_SIGNING_SECRET: ${FORGETBASE_API_KEY_ROTATION_REMINDERS_WEBHOOK_SIGNING_SECRET:-}
+      FORGETBASE_API_KEY_ROTATION_REMINDERS_WEBHOOK_TIMEOUT_MS: ${FORGETBASE_API_KEY_ROTATION_REMINDERS_WEBHOOK_TIMEOUT_MS:-5000}
       # Set enabled=true and dry-run=false only after validating scheduled eval policy counts.
-      AGENTIC_CMS_MANAGED_QUERY_EVALS_ENABLED: "false"
-      AGENTIC_CMS_MANAGED_QUERY_EVALS_DRY_RUN: "true"
-      AGENTIC_CMS_MANAGED_QUERY_EVALS_INTERVAL_MS: "3600000"
-      AGENTIC_CMS_MANAGED_QUERY_EVALS_LIMIT: "100"
+      FORGETBASE_MANAGED_QUERY_EVALS_ENABLED: "false"
+      FORGETBASE_MANAGED_QUERY_EVALS_DRY_RUN: "true"
+      FORGETBASE_MANAGED_QUERY_EVALS_INTERVAL_MS: "3600000"
+      FORGETBASE_MANAGED_QUERY_EVALS_LIMIT: "100"
       # Set enabled=true and dry-run=false only after validating expired action approval counts.
-      AGENTIC_CMS_ACTION_APPROVAL_EXPIRY_ENABLED: "false"
-      AGENTIC_CMS_ACTION_APPROVAL_EXPIRY_DRY_RUN: "true"
-      AGENTIC_CMS_ACTION_APPROVAL_EXPIRY_INTERVAL_MS: "3600000"
-      AGENTIC_CMS_ACTION_APPROVAL_EXPIRY_LIMIT: "500"
+      FORGETBASE_ACTION_APPROVAL_EXPIRY_ENABLED: "false"
+      FORGETBASE_ACTION_APPROVAL_EXPIRY_DRY_RUN: "true"
+      FORGETBASE_ACTION_APPROVAL_EXPIRY_INTERVAL_MS: "3600000"
+      FORGETBASE_ACTION_APPROVAL_EXPIRY_LIMIT: "500"
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -91,9 +91,9 @@ services:
     build:
       context: .
       dockerfile: infra/docker/node.Dockerfile
-    command: ["pnpm", "--filter", "@agentic-cms/web", "exec", "vite", "preview", "--host", "0.0.0.0"]
+    command: ["pnpm", "--filter", "@forgetbase/web", "exec", "vite", "preview", "--host", "0.0.0.0"]
     ports:
-      - "${AGENTIC_CMS_WEB_PORT:-5175}:4173"
+      - "${FORGETBASE_WEB_PORT:-5175}:4173"
     depends_on:
       - api
 

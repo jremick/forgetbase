@@ -12,7 +12,7 @@ import {
   type AgentActionRequest,
   type AgentActionStatus,
   type AgentActionType
-} from "@agentic-cms/schema";
+} from "@forgetbase/schema";
 
 export const DEFAULT_AGENT_ACTION_EXECUTION_POLICY = {
   enabled: false,

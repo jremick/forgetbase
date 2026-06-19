@@ -4,7 +4,7 @@ import {
   retrievalRankingPolicySchema,
   type RetrievalRankingPolicy,
   type RetrievalRankingPolicyInput
-} from "@agentic-cms/schema";
+} from "@forgetbase/schema";
 
 export const DEFAULT_RETRIEVAL_RANKING_POLICY = {
   agentInstructionWeight: 1.2,

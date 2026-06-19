@@ -148,7 +148,7 @@ import {
   type TelemetryAnalyticsInput,
   type TelemetryAnalyticsSummary,
   type TelemetryRetentionPolicy
-} from "@agentic-cms/schema";
+} from "@forgetbase/schema";
 	import {
 	  PostgresAgentActionExecutionRepository,
   PostgresManagedQueryEvalRunRepository,
@@ -201,16 +201,16 @@ import {
   type RegistryRepository,
   type SecretReferencePolicyRepository,
   type TelemetryRetentionPolicyRepository
-} from "@agentic-cms/db";
-import { redactText, validateAssetCollection, type RedactionFinding } from "@agentic-cms/validation";
+} from "@forgetbase/db";
+import { redactText, validateAssetCollection, type RedactionFinding } from "@forgetbase/validation";
 import { buildOpenApiDocument } from "./openapi.js";
 
 const OIDC_STATE_TTL_MS = 10 * 60 * 1000;
 const OIDC_JWT_ALGORITHMS = ["RS256", "RS384", "RS512", "PS256", "PS384", "PS512", "ES256", "ES384", "ES512"];
-const SESSION_COOKIE_NAME = "agentic_cms_session";
-const CSRF_COOKIE_NAME = "agentic_cms_csrf";
-const REFRESH_COOKIE_NAME = "agentic_cms_refresh";
-const CSRF_HEADER_NAME = "x-agentic-cms-csrf";
+const SESSION_COOKIE_NAME = "forgetbase_session";
+const CSRF_COOKIE_NAME = "forgetbase_csrf";
+const REFRESH_COOKIE_NAME = "forgetbase_refresh";
+const CSRF_HEADER_NAME = "x-forgetbase-csrf";
 const DEFAULT_LOGIN_SESSION_MAX_AGE_SECONDS = 60 * 60 * 12;
 const MIN_LOGIN_SESSION_MAX_AGE_SECONDS = 60;
 const MAX_LOGIN_SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 30;
@@ -368,7 +368,7 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
   const telemetryRetentionPolicyRepository = options.telemetryRetentionPolicyRepository ??
     (pool ? new PostgresTelemetryRetentionPolicyRepository(pool) : undefined);
   const oidcRuntime = options.oidcRuntime ?? defaultOidcRuntime;
-  const oidcStateSecret = options.oidcStateSecret ?? process.env.AGENTIC_CMS_OIDC_STATE_SECRET;
+  const oidcStateSecret = options.oidcStateSecret ?? process.env.FORGETBASE_OIDC_STATE_SECRET;
   const modelRuntime = options.modelRuntime ?? defaultModelRuntime;
   const allowedOrigins = readAllowedOrigins(options.allowedOrigins ?? readCorsAllowedOriginsEnv());
   const loginSessionMaxAgeSeconds = readLoginSessionMaxAgeSeconds(options.loginSessionMaxAgeSeconds);
@@ -376,7 +376,7 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
   const loginSessionAbsoluteMaxAgeSeconds = readLoginSessionAbsoluteMaxAgeSeconds(options.loginSessionAbsoluteMaxAgeSeconds);
   const loginRefreshTokenMaxAgeSeconds = readLoginRefreshTokenMaxAgeSeconds(options.loginRefreshTokenMaxAgeSeconds);
   const requireAuthentication = options.requireAuthentication ??
-    readOptionalEnvBoolean(process.env.AGENTIC_CMS_REQUIRE_AUTHENTICATION) ??
+    readOptionalEnvBoolean(process.env.FORGETBASE_REQUIRE_AUTHENTICATION) ??
     false;
 
   server.addHook("onRequest", async (request, reply) => {
@@ -398,7 +398,7 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
     }
 
     reply.header("access-control-allow-methods", "GET,POST,PUT,DELETE,OPTIONS");
-    reply.header("access-control-allow-headers", `authorization,content-type,x-agentic-cms-surface,${CSRF_HEADER_NAME}`);
+    reply.header("access-control-allow-headers", `authorization,content-type,x-forgetbase-surface,${CSRF_HEADER_NAME}`);
 
     if (request.method === "OPTIONS") {
       return reply.code(204).send();
@@ -434,12 +434,12 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
   }
 
   server.get("/health", async () => {
-    return healthResponseSchema.parse(createHealthResponse("agentic-cms-api"));
+    return healthResponseSchema.parse(createHealthResponse("forgetbase-api"));
   });
 
   server.get("/", async () => {
     return {
-      name: "Agentic CMS API",
+      name: "ForgetBase API",
       status: "ready",
       docs: "/health",
       assets: "/assets",
@@ -5882,7 +5882,7 @@ function sortJsonValue(value: unknown): unknown {
 
 function buildManagedQueryInstructions(): string {
   return [
-    "You are the Agentic CMS managed query layer.",
+    "You are the ForgetBase managed query layer.",
     "Answer only from the supplied governed context.",
     "Cite the stable IDs you rely on in square brackets.",
     "If the context is insufficient, say that directly and do not invent missing facts."
@@ -7494,7 +7494,7 @@ function formatCookie(
     parts.splice(1, 0, "HttpOnly");
   }
 
-  if (readOptionalEnvBoolean(process.env.AGENTIC_CMS_SESSION_COOKIE_SECURE) === true) {
+  if (readOptionalEnvBoolean(process.env.FORGETBASE_SESSION_COOKIE_SECURE) === true) {
     parts.push("Secure");
   }
 
@@ -7515,7 +7515,7 @@ function requiresCsrfProtection(request: FastifyRequest): boolean {
 }
 
 function isPublicAuthenticationPath(requestUrl: string): boolean {
-  const pathname = new URL(requestUrl, "http://agentic-cms.local").pathname;
+  const pathname = new URL(requestUrl, "http://forgetbase.local").pathname;
 
   return pathname === "/health" ||
     pathname === "/auth/login" ||
@@ -7569,7 +7569,7 @@ function readSessionCookieMaxAgeSeconds(expiresAt?: string | null): number {
 }
 
 function readLoginSessionMaxAgeSeconds(configuredValue?: number): number {
-  const rawValue = configuredValue ?? readIntegerEnv("AGENTIC_CMS_LOGIN_SESSION_MAX_AGE_SECONDS");
+  const rawValue = configuredValue ?? readIntegerEnv("FORGETBASE_LOGIN_SESSION_MAX_AGE_SECONDS");
 
   if (rawValue === undefined) {
     return DEFAULT_LOGIN_SESSION_MAX_AGE_SECONDS;
@@ -7581,7 +7581,7 @@ function readLoginSessionMaxAgeSeconds(configuredValue?: number): number {
     rawValue > MAX_LOGIN_SESSION_MAX_AGE_SECONDS
   ) {
     throw new Error(
-      `AGENTIC_CMS_LOGIN_SESSION_MAX_AGE_SECONDS must be an integer between ${MIN_LOGIN_SESSION_MAX_AGE_SECONDS} and ${MAX_LOGIN_SESSION_MAX_AGE_SECONDS}.`
+      `FORGETBASE_LOGIN_SESSION_MAX_AGE_SECONDS must be an integer between ${MIN_LOGIN_SESSION_MAX_AGE_SECONDS} and ${MAX_LOGIN_SESSION_MAX_AGE_SECONDS}.`
     );
   }
 
@@ -7591,7 +7591,7 @@ function readLoginSessionMaxAgeSeconds(configuredValue?: number): number {
 function readLoginSessionIdleTimeoutSeconds(configuredValue?: number | null): number | null {
   const rawValue = configuredValue !== undefined
     ? configuredValue
-    : readIntegerEnv("AGENTIC_CMS_LOGIN_SESSION_IDLE_TIMEOUT_SECONDS");
+    : readIntegerEnv("FORGETBASE_LOGIN_SESSION_IDLE_TIMEOUT_SECONDS");
 
   if (rawValue === null) {
     return null;
@@ -7611,7 +7611,7 @@ function readLoginSessionIdleTimeoutSeconds(configuredValue?: number | null): nu
     rawValue > MAX_LOGIN_SESSION_IDLE_TIMEOUT_SECONDS
   ) {
     throw new Error(
-      `AGENTIC_CMS_LOGIN_SESSION_IDLE_TIMEOUT_SECONDS must be 0 or an integer between ${MIN_LOGIN_SESSION_IDLE_TIMEOUT_SECONDS} and ${MAX_LOGIN_SESSION_IDLE_TIMEOUT_SECONDS}.`
+      `FORGETBASE_LOGIN_SESSION_IDLE_TIMEOUT_SECONDS must be 0 or an integer between ${MIN_LOGIN_SESSION_IDLE_TIMEOUT_SECONDS} and ${MAX_LOGIN_SESSION_IDLE_TIMEOUT_SECONDS}.`
     );
   }
 
@@ -7621,7 +7621,7 @@ function readLoginSessionIdleTimeoutSeconds(configuredValue?: number | null): nu
 function readLoginSessionAbsoluteMaxAgeSeconds(configuredValue?: number | null): number | null {
   const rawValue = configuredValue !== undefined
     ? configuredValue
-    : readIntegerEnv("AGENTIC_CMS_LOGIN_SESSION_ABSOLUTE_MAX_AGE_SECONDS");
+    : readIntegerEnv("FORGETBASE_LOGIN_SESSION_ABSOLUTE_MAX_AGE_SECONDS");
 
   if (rawValue === null) {
     return null;
@@ -7641,7 +7641,7 @@ function readLoginSessionAbsoluteMaxAgeSeconds(configuredValue?: number | null):
     rawValue > MAX_LOGIN_SESSION_ABSOLUTE_MAX_AGE_SECONDS
   ) {
     throw new Error(
-      `AGENTIC_CMS_LOGIN_SESSION_ABSOLUTE_MAX_AGE_SECONDS must be 0 or an integer between ${MIN_LOGIN_SESSION_ABSOLUTE_MAX_AGE_SECONDS} and ${MAX_LOGIN_SESSION_ABSOLUTE_MAX_AGE_SECONDS}.`
+      `FORGETBASE_LOGIN_SESSION_ABSOLUTE_MAX_AGE_SECONDS must be 0 or an integer between ${MIN_LOGIN_SESSION_ABSOLUTE_MAX_AGE_SECONDS} and ${MAX_LOGIN_SESSION_ABSOLUTE_MAX_AGE_SECONDS}.`
     );
   }
 
@@ -7651,7 +7651,7 @@ function readLoginSessionAbsoluteMaxAgeSeconds(configuredValue?: number | null):
 function readLoginRefreshTokenMaxAgeSeconds(configuredValue?: number | null): number | null {
   const rawValue = configuredValue !== undefined
     ? configuredValue
-    : readIntegerEnv("AGENTIC_CMS_LOGIN_REFRESH_TOKEN_MAX_AGE_SECONDS");
+    : readIntegerEnv("FORGETBASE_LOGIN_REFRESH_TOKEN_MAX_AGE_SECONDS");
 
   if (rawValue === null) {
     return null;
@@ -7671,7 +7671,7 @@ function readLoginRefreshTokenMaxAgeSeconds(configuredValue?: number | null): nu
     rawValue > MAX_LOGIN_REFRESH_TOKEN_MAX_AGE_SECONDS
   ) {
     throw new Error(
-      `AGENTIC_CMS_LOGIN_REFRESH_TOKEN_MAX_AGE_SECONDS must be 0 or an integer between ${MIN_LOGIN_REFRESH_TOKEN_MAX_AGE_SECONDS} and ${MAX_LOGIN_REFRESH_TOKEN_MAX_AGE_SECONDS}.`
+      `FORGETBASE_LOGIN_REFRESH_TOKEN_MAX_AGE_SECONDS must be 0 or an integer between ${MIN_LOGIN_REFRESH_TOKEN_MAX_AGE_SECONDS} and ${MAX_LOGIN_REFRESH_TOKEN_MAX_AGE_SECONDS}.`
     );
   }
 
@@ -7772,7 +7772,7 @@ function readOptionalEnvBoolean(value: string | undefined): boolean | undefined 
 }
 
 function readCorsAllowedOriginsEnv(): string[] {
-  const value = process.env.AGENTIC_CMS_CORS_ALLOWED_ORIGINS;
+  const value = process.env.FORGETBASE_CORS_ALLOWED_ORIGINS;
 
   if (!value) {
     return DEFAULT_CORS_ALLOWED_ORIGINS;
@@ -7811,7 +7811,7 @@ function readOptionalBooleanQuery(value: string | undefined): boolean | string |
 }
 
 function readSurface(request: FastifyRequest): Surface {
-  const value = request.headers["x-agentic-cms-surface"];
+  const value = request.headers["x-forgetbase-surface"];
 
   if (typeof value === "string" && ["api", "cli", "mcp", "web", "export"].includes(value)) {
     return value as Surface;

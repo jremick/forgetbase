@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Pool } from "pg";
-import type { AssetCreateInput, ManagedQueryEvalReport } from "@agentic-cms/schema";
+import type { AssetCreateInput, ManagedQueryEvalReport } from "@forgetbase/schema";
 import {
   InMemoryAgentActionExecutionRepository,
   InMemoryAuthRepository,
@@ -470,14 +470,14 @@ describe("InMemoryAuthRepository", () => {
       apiKeyId: apiKey.apiKey.id,
       source: "password",
       deviceLabel: "Work laptop",
-      clientUserAgent: "AgenticCMSRepositoryTest/1.0",
+      clientUserAgent: "ForgetBaseRepositoryTest/1.0",
       expiresAt: apiKey.apiKey.expiresAt ?? "",
       absoluteExpiresAt
     });
 
     expect(session?.apiKeyId).toBe(apiKey.apiKey.id);
     expect(session?.deviceLabel).toBe("Work laptop");
-    expect(session?.clientUserAgent).toBe("AgenticCMSRepositoryTest/1.0");
+    expect(session?.clientUserAgent).toBe("ForgetBaseRepositoryTest/1.0");
     expect(session?.absoluteExpiresAt).toBe(absoluteExpiresAt);
     expect((await authRepository.listLoginSessions({ userId: user.id })).map((candidate) => candidate.id))
       .toContain(session?.id);
@@ -503,11 +503,11 @@ describe("InMemoryAuthRepository", () => {
     expect(refreshed.apiKey.id).not.toBe(apiKey.apiKey.id);
     expect(refreshed.session.apiKeyId).toBe(refreshed.apiKey.id);
     expect(refreshed.session.deviceLabel).toBe("Work laptop");
-    expect(refreshed.session.clientUserAgent).toBe("AgenticCMSRepositoryTest/1.0");
+    expect(refreshed.session.clientUserAgent).toBe("ForgetBaseRepositoryTest/1.0");
     expect(Date.parse(refreshed.session.expiresAt)).toBeLessThanOrEqual(Date.parse(absoluteExpiresAt));
     expect(Date.parse(refreshed.apiKey.expiresAt ?? "")).toBeLessThanOrEqual(Date.parse(absoluteExpiresAt));
     expect(Date.parse(refreshed.refreshTokenExpiresAt)).toBeLessThanOrEqual(Date.parse(absoluteExpiresAt));
-    expect(refreshed.refreshToken).toMatch(/^acms_refresh_/);
+    expect(refreshed.refreshToken).toMatch(/^fbase_refresh_/);
     expect(await authRepository.authenticateApiKey(apiKey.secret)).toBeNull();
     expect(await authRepository.authenticateApiKey(refreshed.secret))
       .toMatchObject({ apiKeyId: refreshed.apiKey.id });
@@ -1443,7 +1443,7 @@ describe("InMemoryAuthProviderConfigRepository", () => {
       provider: "microsoft-entra",
       enabled: true,
       issuerUrl: "https://login.microsoftonline.com/common/v2.0",
-      clientId: "agentic-cms",
+      clientId: "forgetbase",
       clientSecretEnvVar: "ENTRA_CLIENT_SECRET",
       groupClaim: "groups",
       allowedDomains: ["example.com"]
@@ -1452,7 +1452,7 @@ describe("InMemoryAuthProviderConfigRepository", () => {
       provider: "microsoft-entra",
       enabled: false,
       issuerUrl: "https://login.microsoftonline.com/common/v2.0",
-      clientId: "agentic-cms",
+      clientId: "forgetbase",
       priority: 20
     });
 
@@ -1480,7 +1480,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("PostgresRegistryRepository", ()
     const id = `900_concurrent_lock_${suffix}`;
     const typeName = `migration_lock_type_${suffix}`;
     const tableName = `migration_lock_table_${suffix}`;
-    const migrationsDir = await mkdtemp(join(tmpdir(), "agentic-cms-migration-lock-"));
+    const migrationsDir = await mkdtemp(join(tmpdir(), "forgetbase-migration-lock-"));
 
     await writeFile(
       join(migrationsDir, `${id}.sql`),
@@ -1844,12 +1844,12 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("PostgresRegistryRepository", ()
       apiKeyId: apiKey.apiKey.id,
       source: "password",
       deviceLabel: "Postgres work laptop",
-      clientUserAgent: "AgenticCMSPostgresRepositoryTest/1.0",
+      clientUserAgent: "ForgetBasePostgresRepositoryTest/1.0",
       expiresAt: apiKey.apiKey.expiresAt ?? "",
       absoluteExpiresAt
     }));
     expect(session.deviceLabel).toBe("Postgres work laptop");
-    expect(session.clientUserAgent).toBe("AgenticCMSPostgresRepositoryTest/1.0");
+    expect(session.clientUserAgent).toBe("ForgetBasePostgresRepositoryTest/1.0");
     expect(session.absoluteExpiresAt).toBe(absoluteExpiresAt);
 
     expect((await authRepository.listLoginSessions({ tenantId, userId: user.id })).map((candidate) => candidate.id))
@@ -1879,11 +1879,11 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("PostgresRegistryRepository", ()
     expect(refreshed.apiKey.id).not.toBe(apiKey.apiKey.id);
     expect(refreshed.session.apiKeyId).toBe(refreshed.apiKey.id);
     expect(refreshed.session.deviceLabel).toBe("Postgres work laptop");
-    expect(refreshed.session.clientUserAgent).toBe("AgenticCMSPostgresRepositoryTest/1.0");
+    expect(refreshed.session.clientUserAgent).toBe("ForgetBasePostgresRepositoryTest/1.0");
     expect(Date.parse(refreshed.session.expiresAt)).toBeLessThanOrEqual(Date.parse(absoluteExpiresAt));
     expect(Date.parse(refreshed.apiKey.expiresAt ?? "")).toBeLessThanOrEqual(Date.parse(absoluteExpiresAt));
     expect(Date.parse(refreshed.refreshTokenExpiresAt)).toBeLessThanOrEqual(Date.parse(absoluteExpiresAt));
-    expect(refreshed.refreshToken).toMatch(/^acms_refresh_/);
+    expect(refreshed.refreshToken).toMatch(/^fbase_refresh_/);
     expect(await authRepository.authenticateApiKey(apiKey.secret)).toBeNull();
     expect(await authRepository.authenticateApiKey(refreshed.secret))
       .toMatchObject({ apiKeyId: refreshed.apiKey.id });
@@ -3027,7 +3027,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("PostgresRegistryRepository", ()
       enabled: true,
       displayName: "Microsoft Entra ID",
       issuerUrl: "https://login.microsoftonline.com/common/v2.0",
-      clientId: "agentic-cms",
+      clientId: "forgetbase",
       clientSecretEnvVar: "ENTRA_CLIENT_SECRET",
 	      redirectUri: "http://localhost:3000/auth/oidc/callback",
 	      groupClaim: "groups",

@@ -21,12 +21,12 @@ This checkpoint integrates the first implementation wave and records the manager
 The manager reran these checks after worker completion:
 
 ```bash
-npx -y pnpm@11.7.0 --filter @agentic-cms/cli start -- validate --file corpus/demo/assets.json --as-of 2026-06-19 --fail-on-warnings
+npx -y pnpm@11.7.0 --filter @forgetbase/cli start -- validate --file corpus/demo/assets.json --as-of 2026-06-19 --fail-on-warnings
 npx -y pnpm@11.7.0 openapi:check
 npx -y pnpm@11.7.0 claims:lint
-npx -y pnpm@11.7.0 --filter @agentic-cms/web typecheck
-npx -y pnpm@11.7.0 --filter @agentic-cms/web test
-npx -y pnpm@11.7.0 --filter @agentic-cms/web build
+npx -y pnpm@11.7.0 --filter @forgetbase/web typecheck
+npx -y pnpm@11.7.0 --filter @forgetbase/web test
+npx -y pnpm@11.7.0 --filter @forgetbase/web build
 ```
 
 Results:

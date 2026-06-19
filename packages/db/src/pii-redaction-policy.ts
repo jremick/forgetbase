@@ -6,7 +6,7 @@ import {
   type PiiRedactionPolicy,
   type PiiRedactionPolicyInput,
   type PiiRedactionRuleKind
-} from "@agentic-cms/schema";
+} from "@forgetbase/schema";
 
 export const DEFAULT_PII_REDACTION_POLICY = {
   redactionEnabled: true,

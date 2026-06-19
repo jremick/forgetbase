@@ -23,7 +23,7 @@ Prerequisites: Node.js 22, Docker, and Docker Compose.
 npx -y pnpm@11.7.0 install
 npx -y pnpm@11.7.0 typecheck
 npx -y pnpm@11.7.0 build
-npx -y pnpm@11.7.0 --filter @agentic-cms/cli start -- validate --file corpus/demo/assets.json --as-of 2026-06-16 --fail-on-warnings
+npx -y pnpm@11.7.0 --filter @forgetbase/cli start -- validate --file corpus/demo/assets.json --as-of 2026-06-16 --fail-on-warnings
 docker compose -f compose.yaml -f compose.same-origin.yaml up --build -d postgres api worker web proxy
 for attempt in $(seq 1 30); do
   curl --silent --show-error --fail http://127.0.0.1:3000/health && break
@@ -40,10 +40,10 @@ curl --silent --show-error --fail \
   -H "content-type: application/json" \
   --data '{"tenantId":"tenant_demo","email":"admin@example.test","displayName":"Admin","password":"local-dev-password","keyName":"local-alpha-admin"}' \
   http://127.0.0.1:3000/auth/bootstrap > "$bootstrap_json"
-export AGENTIC_CMS_API_KEY="$(node -e 'const fs=require("fs"); process.stdout.write(JSON.parse(fs.readFileSync(process.argv[1], "utf8")).secret)' "$bootstrap_json")"
+export FORGETBASE_API_KEY="$(node -e 'const fs=require("fs"); process.stdout.write(JSON.parse(fs.readFileSync(process.argv[1], "utf8")).secret)' "$bootstrap_json")"
 rm "$bootstrap_json"
 
-npx -y pnpm@11.7.0 --filter @agentic-cms/cli start -- corpus import --api-url http://127.0.0.1:3000 --file corpus/demo/assets.json
+npx -y pnpm@11.7.0 --filter @forgetbase/cli start -- corpus import --api-url http://127.0.0.1:3000 --file corpus/demo/assets.json
 curl --silent --show-error --fail "http://127.0.0.1:3000/search?query=PII%20redaction&limit=3"
 ```
 

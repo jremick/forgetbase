@@ -6,7 +6,7 @@ import {
   type TelemetryRetentionPolicy,
   type TelemetryRetentionPolicyInput,
   type TelemetryRetentionPurgeResult
-} from "@agentic-cms/schema";
+} from "@forgetbase/schema";
 import type { AuthRepository } from "./auth.js";
 import type { ManagedQueryFeedbackRepository } from "./feedback.js";
 import type { RetrievalRepository } from "./retrieval.js";

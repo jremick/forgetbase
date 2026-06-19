@@ -4,7 +4,7 @@ import {
   managedQueryEvalRunSchema,
   type ManagedQueryEvalRun,
   type ManagedQueryEvalRunCreateInput
-} from "@agentic-cms/schema";
+} from "@forgetbase/schema";
 
 export interface ManagedQueryEvalRunListOptions {
   tenantId?: string;

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { aiExportPackageSchema, okfExportPackageSchema } from "@agentic-cms/schema";
-import { InMemoryAuthRepository, InMemoryRegistryRepository, InMemoryRetrievalRepository } from "@agentic-cms/db";
+import { aiExportPackageSchema, okfExportPackageSchema } from "@forgetbase/schema";
+import { InMemoryAuthRepository, InMemoryRegistryRepository, InMemoryRetrievalRepository } from "@forgetbase/db";
 import { buildServer } from "./server.js";
 
 describe("beta machine-consumer contract", () => {

@@ -1,4 +1,4 @@
-import type { AssetRecord } from "@agentic-cms/schema";
+import type { AssetRecord } from "@forgetbase/schema";
 import { describe, expect, it } from "vitest";
 import {
   formatCachePolicyTtl,

@@ -15,9 +15,9 @@ This template describes a private Railway-style staging target for operators who
 For any public prototype entrypoint, set the API service to require authentication:
 
 ```text
-AGENTIC_CMS_REQUIRE_AUTHENTICATION=true
-AGENTIC_CMS_SESSION_COOKIE_SECURE=true
-AGENTIC_CMS_CORS_ALLOWED_ORIGINS=https://<approved-origin>
+FORGETBASE_REQUIRE_AUTHENTICATION=true
+FORGETBASE_SESSION_COOKIE_SECURE=true
+FORGETBASE_CORS_ALLOWED_ORIGINS=https://<approved-origin>
 ```
 
 Do not publish a public domain until these are configured and verified. Invalid boolean environment values fail startup, so fix configuration rather than relying on defaults.
@@ -25,11 +25,11 @@ Do not publish a public domain until these are configured and verified. Invalid 
 Run the deployment-default gate for public prototype checks before adding or keeping a public domain:
 
 ```bash
-AGENTIC_CMS_PUBLIC_DEPLOYMENT=true \
-AGENTIC_CMS_PUBLIC_ENTRYPOINT=railway-proxy \
-AGENTIC_CMS_REQUIRE_AUTHENTICATION=true \
-AGENTIC_CMS_SESSION_COOKIE_SECURE=true \
-AGENTIC_CMS_CORS_ALLOWED_ORIGINS=https://<approved-origin> \
+FORGETBASE_PUBLIC_DEPLOYMENT=true \
+FORGETBASE_PUBLIC_ENTRYPOINT=railway-proxy \
+FORGETBASE_REQUIRE_AUTHENTICATION=true \
+FORGETBASE_SESSION_COOKIE_SECURE=true \
+FORGETBASE_CORS_ALLOWED_ORIGINS=https://<approved-origin> \
 npx -y pnpm@11.7.0 security:check-deployment-defaults
 ```
 
@@ -38,7 +38,7 @@ The gate checks the reusable template posture, including the Railway proxy boots
 If you expose the Vite preview service directly for a private test, set its host allowlist through:
 
 ```text
-AGENTIC_CMS_WEB_ALLOWED_HOSTS=<approved-host>[,<approved-host>]
+FORGETBASE_WEB_ALLOWED_HOSTS=<approved-host>[,<approved-host>]
 ```
 
 The preferred public prototype path is still the same-origin `proxy` service, not direct public access to `web`.

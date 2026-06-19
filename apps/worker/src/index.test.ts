@@ -8,7 +8,7 @@ import {
   PostgresRegistryRepository,
   PostgresRetrievalRepository,
   runMigrations
-} from "@agentic-cms/db";
+} from "@forgetbase/db";
 import {
   runActionApprovalExpiryMaintenance,
   runApiKeyRotationReminderMaintenance,
@@ -151,7 +151,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("worker API key rotation reminde
     expect(delivered?.signingSecret).toBe("test-signing-secret");
     expect(delivered?.timeoutMs).toBe(1234);
     expect(payload).toMatchObject({
-      event: "agentic_cms.api_key_rotation_reminders",
+      event: "forgetbase.api_key_rotation_reminders",
       tenantId,
       reminderCount: 1
     });

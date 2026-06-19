@@ -55,7 +55,7 @@ Current routes are grouped as Read, Work, and Operate, but Distribute is not yet
 Lines 237-248 hold API URL, bearer key, session-cookie state, auth state, principal, login credentials, and OIDC provider state. Lines 614-655 define `request<T>`, which owns:
 
 - API base URL normalization.
-- `x-agentic-cms-surface: web`.
+- `x-forgetbase-surface: web`.
 - Bearer authorization.
 - CSRF header attachment for unsafe cookie-backed requests.
 - `credentials: include`.
@@ -137,7 +137,7 @@ Rollback path: paste constants and `normalizePageRoute` back into `App.tsx`.
 Introduce a small `useWebApiClient` or `createWebApiRequest` boundary that preserves the exact current `request<T>` behavior:
 
 - same API URL source,
-- same `x-agentic-cms-surface: web`,
+- same `x-forgetbase-surface: web`,
 - same bearer-vs-cookie behavior,
 - same CSRF behavior for unsafe methods,
 - same `credentials: include`,
@@ -224,8 +224,8 @@ Rollback path: each subroute should be removable independently because the paren
 
 ### Before any extraction
 
-- Run `npx -y pnpm@11.7.0 --filter @agentic-cms/web typecheck`.
-- Run `npx -y pnpm@11.7.0 --filter @agentic-cms/web test`.
+- Run `npx -y pnpm@11.7.0 --filter @forgetbase/web typecheck`.
+- Run `npx -y pnpm@11.7.0 --filter @forgetbase/web test`.
 - Capture a lightweight browser smoke checklist manually until Playwright UAT exists:
   - login or API-key session initializes,
   - assets load,
@@ -251,9 +251,9 @@ Add pure unit tests for:
 Add request/auth tests using mocked `fetch`, localStorage, and cookies:
 
 - bearer key sets `Authorization` and does not require CSRF,
-- unsafe cookie-backed requests attach `x-agentic-cms-csrf`,
+- unsafe cookie-backed requests attach `x-forgetbase-csrf`,
 - requests use `credentials: include`,
-- `x-agentic-cms-surface` remains `web`,
+- `x-forgetbase-surface` remains `web`,
 - local split-origin login keeps the bearer key while same-origin browser login uses the cookie path,
 - 401 clears stale bearer/session state without leaving protected route data visible.
 

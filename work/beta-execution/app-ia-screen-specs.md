@@ -702,10 +702,10 @@ Avoid:
 - `apps/web/src/components/ui/button.tsx`
 - `apps/web/src/components/ui/badge.tsx`
 - `apps/web/src/lib/utils.ts`
-- `docs/design/agentic-cms-design-system/index.html`
-- `docs/design/agentic-cms-main-page-mockups/index.html`
-- `docs/design/agentic-cms-main-page-mockups/styles.css`
-- `docs/design/agentic-cms-main-page-mockups/app.js`
+- `docs/design/forgetbase-design-system/index.html`
+- `docs/design/forgetbase-main-page-mockups/index.html`
+- `docs/design/forgetbase-main-page-mockups/styles.css`
+- `docs/design/forgetbase-main-page-mockups/app.js`
 - `apps/api/src/server.ts` (targeted route/API search)
 - `packages/schema/src/index.ts` (targeted route/API search)
 - `packages/cli/src/index.ts` (targeted CLI surface search)

@@ -2,7 +2,7 @@
 
 ## Summary
 
-Agentic CMS should be built as a containerized, API-first, agent-native platform. The registry, permissions, retrieval, validation, telemetry, and connector surfaces are core. The managed agent orchestration layer is designed from day one but implemented after the MVP proves the foundation.
+ForgetBase should be built as a containerized, API-first, agent-native platform. The registry, permissions, retrieval, validation, telemetry, and connector surfaces are core. The managed agent orchestration layer is designed from day one but implemented after the MVP proves the foundation.
 
 ## Component Model
 

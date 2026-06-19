@@ -11,4 +11,4 @@ COPY packages ./packages
 RUN pnpm install
 RUN pnpm build
 
-CMD ["sh", "-c", "pnpm --filter @agentic-cms/web exec vite preview --host 0.0.0.0 --port ${PORT:-4173}"]
+CMD ["sh", "-c", "pnpm --filter @forgetbase/web exec vite preview --host 0.0.0.0 --port ${PORT:-4173}"]

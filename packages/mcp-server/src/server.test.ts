@@ -1,14 +1,14 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { buildOkfExportPackage, type AiExportPackage, type AssetDetail } from "@agentic-cms/schema";
+import { buildOkfExportPackage, type AiExportPackage, type AssetDetail } from "@forgetbase/schema";
 import { createMcpServer } from "./server.js";
 
 afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("Agentic CMS MCP server contract", () => {
+describe("ForgetBase MCP server contract", () => {
   it("registers core tools and serves static asset type metadata", async () => {
     const { client, server } = await connectMcp();
 
@@ -66,7 +66,7 @@ describe("Agentic CMS MCP server contract", () => {
       expect(calls[0]?.url.searchParams.get("limit")).toBe("10");
       expect(calls[0]?.url.searchParams.get("strategy")).toBe("lexical");
       expect(calls[0]?.headers.get("authorization")).toBe("Bearer test-key");
-      expect(calls[0]?.headers.get("x-agentic-cms-surface")).toBe("mcp");
+      expect(calls[0]?.headers.get("x-forgetbase-surface")).toBe("mcp");
       expect(parseToolText(result)).toMatchObject({
         query: "PII",
         results: []
@@ -110,12 +110,12 @@ describe("Agentic CMS MCP server contract", () => {
         "GET /exports/ai-package"
       ]);
       expect(calls[0]?.headers.get("authorization")).toBe("Bearer test-key");
-      expect(calls[0]?.headers.get("x-agentic-cms-surface")).toBe("mcp");
+      expect(calls[0]?.headers.get("x-forgetbase-surface")).toBe("mcp");
       expect(calls[1]?.url.searchParams.get("package")).toBe("demo-agent-pack");
       expect(calls[1]?.url.searchParams.get("format")).toBe("okf");
       expect(calls[1]?.url.searchParams.get("okfVersion")).toBe("0.1");
       expect(calls[1]?.headers.get("authorization")).toBe("Bearer test-key");
-      expect(calls[1]?.headers.get("x-agentic-cms-surface")).toBe("mcp");
+      expect(calls[1]?.headers.get("x-forgetbase-surface")).toBe("mcp");
       expect(parseToolText(fetchResult)).toMatchObject({
         asset: {
           stableId: "policy.beta-public-export",
@@ -162,7 +162,7 @@ describe("Agentic CMS MCP server contract", () => {
       expect(calls[0]?.url.searchParams.get("format")).toBe("json");
       expect(calls[0]?.url.searchParams.has("okfVersion")).toBe(false);
       expect(calls[0]?.headers.get("authorization")).toBe("Bearer test-key");
-      expect(calls[0]?.headers.get("x-agentic-cms-surface")).toBe("mcp");
+      expect(calls[0]?.headers.get("x-forgetbase-surface")).toBe("mcp");
       expect(parseToolText(exportResult)).toMatchObject({
         packageName: "demo-agent-pack",
         assetCount: 1,
@@ -196,7 +196,7 @@ describe("Agentic CMS MCP server contract", () => {
       expect(calls).toHaveLength(1);
       expect(calls[0]?.method).toBe("GET");
       expect(calls[0]?.url.pathname).toBe("/assets/guardrail.hidden");
-      expect(calls[0]?.headers.get("x-agentic-cms-surface")).toBe("mcp");
+      expect(calls[0]?.headers.get("x-forgetbase-surface")).toBe("mcp");
       expect(parseToolText(result)).toEqual({
         stableId: "guardrail.hidden",
         surface: "mcp",
@@ -216,11 +216,11 @@ async function connectMcp(fetchImpl: typeof fetch = unexpectedFetch()): Promise<
 }> {
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   const client = new Client({
-    name: "agentic-cms-contract-tests",
+    name: "forgetbase-contract-tests",
     version: "0.0.0"
   });
   const server = createMcpServer({
-    apiUrl: "http://agentic-cms.test",
+    apiUrl: "http://forgetbase.test",
     apiKey: "test-key",
     fetchImpl
   });

@@ -11,4 +11,4 @@ COPY packages ./packages
 RUN pnpm install
 RUN pnpm build
 
-CMD ["sh", "-c", "pnpm db:migrate && pnpm --filter @agentic-cms/api start"]
+CMD ["sh", "-c", "pnpm db:migrate && pnpm --filter @forgetbase/api start"]

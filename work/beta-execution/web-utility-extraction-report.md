@@ -115,25 +115,25 @@ Added `apps/web/src/lib/asset-ui.test.ts` covering:
 ## Commands Run
 
 ```bash
-npx -y pnpm@11.7.0 --filter @agentic-cms/web typecheck
+npx -y pnpm@11.7.0 --filter @forgetbase/web typecheck
 ```
 
 Result: failed once due to the new test fixture using `audience: "agents"` instead of the schema array shape. Fixed the fixture to `audience: ["agents"]`.
 
 ```bash
-npx -y pnpm@11.7.0 --filter @agentic-cms/web typecheck
+npx -y pnpm@11.7.0 --filter @forgetbase/web typecheck
 ```
 
 Result: passed.
 
 ```bash
-npx -y pnpm@11.7.0 --filter @agentic-cms/web test
+npx -y pnpm@11.7.0 --filter @forgetbase/web test
 ```
 
 Result: passed, 2 test files and 12 tests.
 
 ```bash
-npx -y pnpm@11.7.0 --filter @agentic-cms/web build
+npx -y pnpm@11.7.0 --filter @forgetbase/web build
 ```
 
 Result: passed.

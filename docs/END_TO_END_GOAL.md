@@ -2,7 +2,7 @@
 
 ## Goal Statement
 
-Build Agentic CMS as an Apache 2.0 open-core, self-hostable, SMB-ready instruction control plane for agentic AI systems.
+Build ForgetBase as an Apache 2.0 open-core, self-hostable, SMB-ready instruction control plane for agentic AI systems.
 
 The system must let AI teams and individual power users manage governed AI instructions, policies, guardrails, playbooks, tool guidance, reusable skills, SOPs, templates, evaluation cases, and human-readable documents as versioned assets. Agents and AI tools must be able to retrieve and apply those assets directly through API, CLI, MCP, ChatGPT-compatible, Claude-compatible, Codex-compatible, and Claude Code-compatible surfaces. Humans must be able to inspect, approve, publish, debug, and read content through an operational web UI.
 

@@ -1,6 +1,6 @@
 # OKF Exports
 
-Agentic CMS supports Open Knowledge Format (OKF) as a generated agent package projection. The canonical source of truth remains the governed Agentic CMS asset and asset version records.
+ForgetBase supports Open Knowledge Format (OKF) as a generated agent package projection. The canonical source of truth remains the governed ForgetBase asset and asset version records.
 
 ## Supported Spec Version
 
@@ -22,13 +22,13 @@ curl --silent --show-error --fail "http://127.0.0.1:3000/exports/ai-package?pack
 CLI JSON wrapper:
 
 ```bash
-npx -y pnpm@11.7.0 --filter @agentic-cms/cli start -- exports ai-package --package demo-agent-pack --format okf --okf-version 0.1
+npx -y pnpm@11.7.0 --filter @forgetbase/cli start -- exports ai-package --package demo-agent-pack --format okf --okf-version 0.1
 ```
 
 CLI Markdown bundle files:
 
 ```bash
-npx -y pnpm@11.7.0 --filter @agentic-cms/cli start -- exports ai-package --package demo-agent-pack --format okf --output-dir work/okf-demo-agent-pack
+npx -y pnpm@11.7.0 --filter @forgetbase/cli start -- exports ai-package --package demo-agent-pack --format okf --output-dir work/okf-demo-agent-pack
 ```
 
 ## Versioning Model
@@ -69,7 +69,7 @@ Before adding support for a newer OKF version:
 
 When regenerating existing OKF content:
 
-1. Start from canonical Agentic CMS asset versions, not from prior generated Markdown.
+1. Start from canonical ForgetBase asset versions, not from prior generated Markdown.
 2. Generate the target OKF version into a new output directory or artifact key.
 3. Compare the old and new `manifest.md`, concept frontmatter, `source_content_hash`, and `projectionHash`.
 4. Review restricted-export leakage before distribution.
@@ -77,4 +77,4 @@ When regenerating existing OKF content:
 
 ## Boundary
 
-OKF is a portable agent knowledge format, not the internal persistence model. Agentic CMS permissions, review state, sensitivity, stable IDs, and source versions remain authoritative.
+OKF is a portable agent knowledge format, not the internal persistence model. ForgetBase permissions, review state, sensitivity, stable IDs, and source versions remain authoritative.

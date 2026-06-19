@@ -2,7 +2,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { aiExportPackageSchema, healthResponseSchema, okfExportPackageSchema } from "@agentic-cms/schema";
+import { aiExportPackageSchema, healthResponseSchema, okfExportPackageSchema } from "@forgetbase/schema";
 import {
   InMemoryAgentActionExecutionRepository,
   InMemoryAuthRepository,
@@ -21,7 +21,7 @@ import {
   InMemoryRetrievalRepository,
   InMemorySecretReferencePolicyRepository,
   InMemoryTelemetryRetentionPolicyRepository
-} from "@agentic-cms/db";
+} from "@forgetbase/db";
 import { buildServer, type ModelRuntimeRequest } from "./server.js";
 
 let server = buildServer({ logger: false });
@@ -75,7 +75,7 @@ describe("API health route", () => {
     expect(response.statusCode).toBe(200);
     expect(healthResponseSchema.parse(response.json())).toEqual({
       status: "ok",
-      service: "agentic-cms-api",
+      service: "forgetbase-api",
       version: "0.1.0"
     });
   });
@@ -93,7 +93,7 @@ describe("API health route", () => {
     expect(response.headers["access-control-allow-origin"]).toBe("http://127.0.0.1:5175");
     expect(response.headers["access-control-allow-credentials"]).toBe("true");
     expect(response.headers["access-control-allow-methods"]).toContain("DELETE");
-    expect(response.headers["access-control-allow-headers"]).toContain("x-agentic-cms-csrf");
+    expect(response.headers["access-control-allow-headers"]).toContain("x-forgetbase-csrf");
   });
 
   it("allows configured credentialed CORS origins", async () => {
@@ -153,20 +153,20 @@ describe("API health route", () => {
   });
 
   it("fails startup on invalid boolean environment values", async () => {
-    const previousValue = process.env.AGENTIC_CMS_REQUIRE_AUTHENTICATION;
-    process.env.AGENTIC_CMS_REQUIRE_AUTHENTICATION = "true ";
+    const previousValue = process.env.FORGETBASE_REQUIRE_AUTHENTICATION;
+    process.env.FORGETBASE_REQUIRE_AUTHENTICATION = "true ";
     let validServer: ReturnType<typeof buildServer> | null = null;
 
     try {
       validServer = buildServer({ logger: false });
-      process.env.AGENTIC_CMS_REQUIRE_AUTHENTICATION = "definitely";
+      process.env.FORGETBASE_REQUIRE_AUTHENTICATION = "definitely";
       expect(() => buildServer({ logger: false })).toThrow("Invalid boolean environment value");
     } finally {
       await validServer?.close();
       if (previousValue === undefined) {
-        delete process.env.AGENTIC_CMS_REQUIRE_AUTHENTICATION;
+        delete process.env.FORGETBASE_REQUIRE_AUTHENTICATION;
       } else {
-        process.env.AGENTIC_CMS_REQUIRE_AUTHENTICATION = previousValue;
+        process.env.FORGETBASE_REQUIRE_AUTHENTICATION = previousValue;
       }
     }
   });
@@ -530,7 +530,7 @@ describe("API asset registry routes", () => {
       method: "POST",
       url: "/auth/login",
       headers: {
-        "user-agent": "AgenticCMSWebTest/1.0"
+        "user-agent": "ForgetBaseWebTest/1.0"
       },
       payload: {
         email: "admin@example.test",
@@ -545,20 +545,20 @@ describe("API asset registry routes", () => {
     expect(login.json().apiKey.name).toBe("admin-login");
     expect(login.json().apiKey.expiresAt).toBeTruthy();
     expect(login.json().apiKey.scopes).toEqual(["admin", "asset:read", "asset:write", "permission:write"]);
-    const sessionCookie = findSetCookie(login.headers["set-cookie"], "agentic_cms_session");
-    const csrfCookie = findSetCookie(login.headers["set-cookie"], "agentic_cms_csrf");
-    const refreshCookie = findSetCookie(login.headers["set-cookie"], "agentic_cms_refresh");
-    expect(sessionCookie).toContain("agentic_cms_session=");
+    const sessionCookie = findSetCookie(login.headers["set-cookie"], "forgetbase_session");
+    const csrfCookie = findSetCookie(login.headers["set-cookie"], "forgetbase_csrf");
+    const refreshCookie = findSetCookie(login.headers["set-cookie"], "forgetbase_refresh");
+    expect(sessionCookie).toContain("forgetbase_session=");
     expect(sessionCookie).toContain("HttpOnly");
     expect(sessionCookie).toContain("SameSite=Lax");
     expect(readCookieMaxAge(sessionCookie)).toBeLessThanOrEqual(600);
     expect(readCookieMaxAge(sessionCookie)).toBeGreaterThan(0);
-    expect(csrfCookie).toContain("agentic_cms_csrf=");
+    expect(csrfCookie).toContain("forgetbase_csrf=");
     expect(csrfCookie).not.toContain("HttpOnly");
     expect(csrfCookie).toContain("SameSite=Lax");
     expect(readCookieMaxAge(csrfCookie)).toBeLessThanOrEqual(600);
     expect(readCookieMaxAge(csrfCookie)).toBeGreaterThan(0);
-    expect(refreshCookie).toContain("agentic_cms_refresh=");
+    expect(refreshCookie).toContain("forgetbase_refresh=");
     expect(refreshCookie).toContain("HttpOnly");
     expect(refreshCookie).toContain("SameSite=Lax");
     expect(readCookieMaxAge(refreshCookie)).toBeLessThanOrEqual(60 * 60 * 24 * 7);
@@ -590,7 +590,7 @@ describe("API asset registry routes", () => {
       method: "GET",
       url: "/auth/me",
       headers: {
-        cookie: `agentic_cms_session=${encodeURIComponent(bootstrap.json().secret)}`
+        cookie: `forgetbase_session=${encodeURIComponent(bootstrap.json().secret)}`
       }
     });
 
@@ -611,7 +611,7 @@ describe("API asset registry routes", () => {
       apiKeyId: login.json().apiKey.id,
       source: "password",
       deviceLabel: "Work laptop",
-      clientUserAgent: "AgenticCMSWebTest/1.0",
+      clientUserAgent: "ForgetBaseWebTest/1.0",
       revokedAt: null
     });
 
@@ -631,16 +631,16 @@ describe("API asset registry routes", () => {
       url: "/auth/logout",
       headers: {
         cookie: `${readCookiePair(sessionCookie)}; ${readCookiePair(csrfCookie)}`,
-        "x-agentic-cms-csrf": readCookieValue(csrfCookie)
+        "x-forgetbase-csrf": readCookieValue(csrfCookie)
       }
     });
 
     expect(logout.statusCode).toBe(200);
     expect(logout.json().apiKey.id).toBe(login.json().apiKey.id);
     expect(logout.json().apiKey.revokedAt).toBeTruthy();
-    expect(findSetCookie(logout.headers["set-cookie"], "agentic_cms_session")).toContain("Max-Age=0");
-    expect(findSetCookie(logout.headers["set-cookie"], "agentic_cms_csrf")).toContain("Max-Age=0");
-    expect(findSetCookie(logout.headers["set-cookie"], "agentic_cms_refresh")).toContain("Max-Age=0");
+    expect(findSetCookie(logout.headers["set-cookie"], "forgetbase_session")).toContain("Max-Age=0");
+    expect(findSetCookie(logout.headers["set-cookie"], "forgetbase_csrf")).toContain("Max-Age=0");
+    expect(findSetCookie(logout.headers["set-cookie"], "forgetbase_refresh")).toContain("Max-Age=0");
 
     const afterLogout = await server.inject({
       method: "GET",
@@ -709,8 +709,8 @@ describe("API asset registry routes", () => {
     expect(login.statusCode).toBe(201);
     expect(Date.parse(login.json().apiKey.expiresAt) - beforeLogin).toBeLessThanOrEqual(65_000);
     expect(Date.parse(login.json().apiKey.expiresAt) - beforeLogin).toBeGreaterThan(0);
-    expect(readCookieMaxAge(findSetCookie(login.headers["set-cookie"], "agentic_cms_session"))).toBeLessThanOrEqual(60);
-    expect(readCookieMaxAge(findSetCookie(login.headers["set-cookie"], "agentic_cms_csrf"))).toBeLessThanOrEqual(60);
+    expect(readCookieMaxAge(findSetCookie(login.headers["set-cookie"], "forgetbase_session"))).toBeLessThanOrEqual(60);
+    expect(readCookieMaxAge(findSetCookie(login.headers["set-cookie"], "forgetbase_csrf"))).toBeLessThanOrEqual(60);
 
     const loginAuditEvent = (await authRepository.listAuditEvents()).find((event) => event.action === "auth.login");
     expect(loginAuditEvent?.metadata).toMatchObject({
@@ -750,7 +750,7 @@ describe("API asset registry routes", () => {
         deviceLabel: "Refresh test browser"
       }
     });
-    const refreshCookie = findSetCookie(login.headers["set-cookie"], "agentic_cms_refresh");
+    const refreshCookie = findSetCookie(login.headers["set-cookie"], "forgetbase_refresh");
 
     expect(login.statusCode).toBe(201);
     expect(refreshCookie).toContain("HttpOnly");
@@ -763,8 +763,8 @@ describe("API asset registry routes", () => {
         cookie: readCookiePair(refreshCookie)
       }
     });
-    const nextSessionCookie = findSetCookie(refreshed.headers["set-cookie"], "agentic_cms_session");
-    const nextRefreshCookie = findSetCookie(refreshed.headers["set-cookie"], "agentic_cms_refresh");
+    const nextSessionCookie = findSetCookie(refreshed.headers["set-cookie"], "forgetbase_session");
+    const nextRefreshCookie = findSetCookie(refreshed.headers["set-cookie"], "forgetbase_refresh");
 
     expect(refreshed.statusCode).toBe(200);
     expect(refreshed.json().secret).toBeUndefined();
@@ -804,7 +804,7 @@ describe("API asset registry routes", () => {
     });
 
     expect(reusedRefresh.statusCode).toBe(401);
-    expect(findSetCookie(reusedRefresh.headers["set-cookie"], "agentic_cms_refresh")).toContain("Max-Age=0");
+    expect(findSetCookie(reusedRefresh.headers["set-cookie"], "forgetbase_refresh")).toContain("Max-Age=0");
     expect((await authRepository.listAuditEvents()).map((event) => event.action)).toContain("auth.session.refresh");
   });
 
@@ -838,8 +838,8 @@ describe("API asset registry routes", () => {
         expiresInSeconds: 120
       }
     });
-    const sessionCookie = findSetCookie(login.headers["set-cookie"], "agentic_cms_session");
-    const refreshCookie = findSetCookie(login.headers["set-cookie"], "agentic_cms_refresh");
+    const sessionCookie = findSetCookie(login.headers["set-cookie"], "forgetbase_session");
+    const refreshCookie = findSetCookie(login.headers["set-cookie"], "forgetbase_refresh");
 
     expect(login.statusCode).toBe(201);
     expect(readCookieMaxAge(sessionCookie)).toBeLessThanOrEqual(60);
@@ -914,7 +914,7 @@ describe("API asset registry routes", () => {
         keyName: "revocable-session"
       }
     });
-    const sessionCookie = findSetCookie(login.headers["set-cookie"], "agentic_cms_session");
+    const sessionCookie = findSetCookie(login.headers["set-cookie"], "forgetbase_session");
     const sessions = await server.inject({
       method: "GET",
       url: "/auth/sessions",
@@ -935,7 +935,7 @@ describe("API asset registry routes", () => {
     expect(revoked.statusCode).toBe(200);
     expect(revoked.json().session.revokedAt).toBeTruthy();
     expect(revoked.json().apiKey.revokedAt).toBeTruthy();
-    expect(findSetCookie(revoked.headers["set-cookie"], "agentic_cms_session")).toContain("Max-Age=0");
+    expect(findSetCookie(revoked.headers["set-cookie"], "forgetbase_session")).toContain("Max-Age=0");
 
     const afterRevokeCookie = await server.inject({
       method: "GET",
@@ -986,8 +986,8 @@ describe("API asset registry routes", () => {
         keyName: "idle-session"
       }
     });
-    const sessionCookie = findSetCookie(login.headers["set-cookie"], "agentic_cms_session");
-    const refreshCookie = findSetCookie(login.headers["set-cookie"], "agentic_cms_refresh");
+    const sessionCookie = findSetCookie(login.headers["set-cookie"], "forgetbase_session");
+    const refreshCookie = findSetCookie(login.headers["set-cookie"], "forgetbase_refresh");
     const session = (await authRepository.listLoginSessions({ userId: login.json().apiKey.userId }))[0];
     expect(session).toBeTruthy();
     const loginSessions = (authRepository as unknown as {
@@ -3926,10 +3926,10 @@ describe("API asset registry routes", () => {
     const feedbackRepository = new InMemoryManagedQueryFeedbackRepository();
     const providerConfigRepository = new InMemoryModelProviderConfigRepository();
     const capturedRequests: ModelRuntimeRequest[] = [];
-    const previousProviderKey = process.env.AGENTIC_CMS_TEST_PROVIDER_KEY;
-    const previousProviderKeyFile = process.env.AGENTIC_CMS_TEST_PROVIDER_KEY_FILE;
+    const previousProviderKey = process.env.FORGETBASE_TEST_PROVIDER_KEY;
+    const previousProviderKeyFile = process.env.FORGETBASE_TEST_PROVIDER_KEY_FILE;
     let tempSecretDirectory: string | null = null;
-    process.env.AGENTIC_CMS_TEST_PROVIDER_KEY = "placeholder-provider-value";
+    process.env.FORGETBASE_TEST_PROVIDER_KEY = "placeholder-provider-value";
 
     server = buildServer({
       logger: false,
@@ -3967,7 +3967,7 @@ describe("API asset registry routes", () => {
       await providerConfigRepository.upsertProviderConfig({
         provider: "openai",
         enabled: true,
-        apiKeyEnvVar: "AGENTIC_CMS_TEST_PROVIDER_KEY",
+        apiKeyEnvVar: "FORGETBASE_TEST_PROVIDER_KEY",
         defaultModel: "gpt-test",
         availableModels: ["gpt-test"],
         priority: 1,
@@ -3993,7 +3993,7 @@ describe("API asset registry routes", () => {
         expect.objectContaining({
           provider: "openai",
           status: "ready",
-          apiKeyEnvVar: "AGENTIC_CMS_TEST_PROVIDER_KEY",
+          apiKeyEnvVar: "FORGETBASE_TEST_PROVIDER_KEY",
           apiKeyConfigured: true,
           reasons: []
         }),
@@ -4144,11 +4144,11 @@ describe("API asset registry routes", () => {
       expect(providerRuntimeRequest.prompt).toContain("playbook.provider-public");
       expect(providerRuntimeRequest.prompt).not.toContain("playbook.provider-restricted");
 
-      tempSecretDirectory = await mkdtemp(join(tmpdir(), "agentic-cms-provider-secret-"));
+      tempSecretDirectory = await mkdtemp(join(tmpdir(), "forgetbase-provider-secret-"));
       const providerSecretFile = join(tempSecretDirectory, "api-key");
       await writeFile(providerSecretFile, "provider-file-secret\n", "utf8");
-      delete process.env.AGENTIC_CMS_TEST_PROVIDER_KEY;
-      process.env.AGENTIC_CMS_TEST_PROVIDER_KEY_FILE = providerSecretFile;
+      delete process.env.FORGETBASE_TEST_PROVIDER_KEY;
+      process.env.FORGETBASE_TEST_PROVIDER_KEY_FILE = providerSecretFile;
       capturedRequests.length = 0;
 
       const fileHealth = await server.inject({
@@ -4164,7 +4164,7 @@ describe("API asset registry routes", () => {
         expect.objectContaining({
           provider: "openai",
           status: "ready",
-          apiKeyEnvVar: "AGENTIC_CMS_TEST_PROVIDER_KEY",
+          apiKeyEnvVar: "FORGETBASE_TEST_PROVIDER_KEY",
           apiKeyConfigured: true,
           reasons: []
         })
@@ -4188,8 +4188,8 @@ describe("API asset registry routes", () => {
       expect(fileSecretResponse.json().generation.status).toBe("completed");
       expect(capturedRequests[0]?.apiKey).toBe("provider-file-secret");
 
-      process.env.AGENTIC_CMS_TEST_PROVIDER_KEY = "placeholder-provider-value";
-      delete process.env.AGENTIC_CMS_TEST_PROVIDER_KEY_FILE;
+      process.env.FORGETBASE_TEST_PROVIDER_KEY = "placeholder-provider-value";
+      delete process.env.FORGETBASE_TEST_PROVIDER_KEY_FILE;
       capturedRequests.length = 0;
 
       const generateAudit = (await authRepository.listAuditEvents())
@@ -4218,7 +4218,7 @@ describe("API asset registry routes", () => {
       await providerConfigRepository.upsertProviderConfig({
         provider: "openai",
         enabled: true,
-        apiKeyEnvVar: "AGENTIC_CMS_TEST_PROVIDER_KEY",
+        apiKeyEnvVar: "FORGETBASE_TEST_PROVIDER_KEY",
         defaultModel: "gpt-test",
         availableModels: ["gpt-test"],
         priority: 1,
@@ -4283,7 +4283,7 @@ describe("API asset registry routes", () => {
         }
       });
 
-      delete process.env.AGENTIC_CMS_TEST_PROVIDER_KEY;
+      delete process.env.FORGETBASE_TEST_PROVIDER_KEY;
 
       const fallbackResponse = await server.inject({
         method: "POST",
@@ -4362,15 +4362,15 @@ describe("API asset registry routes", () => {
       }
 
       if (previousProviderKey === undefined) {
-        delete process.env.AGENTIC_CMS_TEST_PROVIDER_KEY;
+        delete process.env.FORGETBASE_TEST_PROVIDER_KEY;
       } else {
-        process.env.AGENTIC_CMS_TEST_PROVIDER_KEY = previousProviderKey;
+        process.env.FORGETBASE_TEST_PROVIDER_KEY = previousProviderKey;
       }
 
       if (previousProviderKeyFile === undefined) {
-        delete process.env.AGENTIC_CMS_TEST_PROVIDER_KEY_FILE;
+        delete process.env.FORGETBASE_TEST_PROVIDER_KEY_FILE;
       } else {
-        process.env.AGENTIC_CMS_TEST_PROVIDER_KEY_FILE = previousProviderKeyFile;
+        process.env.FORGETBASE_TEST_PROVIDER_KEY_FILE = previousProviderKeyFile;
       }
     }
   });
@@ -4382,8 +4382,8 @@ describe("API asset registry routes", () => {
     const feedbackRepository = new InMemoryManagedQueryFeedbackRepository();
     const providerConfigRepository = new InMemoryModelProviderConfigRepository();
     const capturedRequests: ModelRuntimeRequest[] = [];
-    const previousProviderKey = process.env.AGENTIC_CMS_TEST_RETRY_PROVIDER_KEY;
-    process.env.AGENTIC_CMS_TEST_RETRY_PROVIDER_KEY = "placeholder-retry-provider-value";
+    const previousProviderKey = process.env.FORGETBASE_TEST_RETRY_PROVIDER_KEY;
+    process.env.FORGETBASE_TEST_RETRY_PROVIDER_KEY = "placeholder-retry-provider-value";
 
     server = buildServer({
       logger: false,
@@ -4426,7 +4426,7 @@ describe("API asset registry routes", () => {
       await providerConfigRepository.upsertProviderConfig({
         provider: "openai",
         enabled: true,
-        apiKeyEnvVar: "AGENTIC_CMS_TEST_RETRY_PROVIDER_KEY",
+        apiKeyEnvVar: "FORGETBASE_TEST_RETRY_PROVIDER_KEY",
         defaultModel: "retry-model",
         availableModels: ["retry-model"],
         priority: 1,
@@ -4537,9 +4537,9 @@ describe("API asset registry routes", () => {
       expect(generationAudit?.metadata.attempts).toEqual(response.json().generation.attempts);
     } finally {
       if (previousProviderKey === undefined) {
-        delete process.env.AGENTIC_CMS_TEST_RETRY_PROVIDER_KEY;
+        delete process.env.FORGETBASE_TEST_RETRY_PROVIDER_KEY;
       } else {
-        process.env.AGENTIC_CMS_TEST_RETRY_PROVIDER_KEY = previousProviderKey;
+        process.env.FORGETBASE_TEST_RETRY_PROVIDER_KEY = previousProviderKey;
       }
     }
   });
@@ -4551,10 +4551,10 @@ describe("API asset registry routes", () => {
     const feedbackRepository = new InMemoryManagedQueryFeedbackRepository();
     const providerConfigRepository = new InMemoryModelProviderConfigRepository();
     const capturedRequests: ModelRuntimeRequest[] = [];
-    const previousPrimaryKey = process.env.AGENTIC_CMS_TEST_PRIMARY_PROVIDER_KEY;
-    const previousFallbackKey = process.env.AGENTIC_CMS_TEST_FALLBACK_PROVIDER_KEY;
-    delete process.env.AGENTIC_CMS_TEST_PRIMARY_PROVIDER_KEY;
-    process.env.AGENTIC_CMS_TEST_FALLBACK_PROVIDER_KEY = "placeholder-fallback-provider-value";
+    const previousPrimaryKey = process.env.FORGETBASE_TEST_PRIMARY_PROVIDER_KEY;
+    const previousFallbackKey = process.env.FORGETBASE_TEST_FALLBACK_PROVIDER_KEY;
+    delete process.env.FORGETBASE_TEST_PRIMARY_PROVIDER_KEY;
+    process.env.FORGETBASE_TEST_FALLBACK_PROVIDER_KEY = "placeholder-fallback-provider-value";
 
     server = buildServer({
       logger: false,
@@ -4593,7 +4593,7 @@ describe("API asset registry routes", () => {
       await providerConfigRepository.upsertProviderConfig({
         provider: "openai",
         enabled: true,
-        apiKeyEnvVar: "AGENTIC_CMS_TEST_PRIMARY_PROVIDER_KEY",
+        apiKeyEnvVar: "FORGETBASE_TEST_PRIMARY_PROVIDER_KEY",
         defaultModel: "primary-model",
         availableModels: ["primary-model"],
         priority: 1,
@@ -4604,7 +4604,7 @@ describe("API asset registry routes", () => {
       await providerConfigRepository.upsertProviderConfig({
         provider: "anthropic",
         enabled: true,
-        apiKeyEnvVar: "AGENTIC_CMS_TEST_FALLBACK_PROVIDER_KEY",
+        apiKeyEnvVar: "FORGETBASE_TEST_FALLBACK_PROVIDER_KEY",
         defaultModel: "fallback-model",
         availableModels: ["fallback-model"],
         priority: 2,
@@ -4743,15 +4743,15 @@ describe("API asset registry routes", () => {
       });
     } finally {
       if (previousPrimaryKey === undefined) {
-        delete process.env.AGENTIC_CMS_TEST_PRIMARY_PROVIDER_KEY;
+        delete process.env.FORGETBASE_TEST_PRIMARY_PROVIDER_KEY;
       } else {
-        process.env.AGENTIC_CMS_TEST_PRIMARY_PROVIDER_KEY = previousPrimaryKey;
+        process.env.FORGETBASE_TEST_PRIMARY_PROVIDER_KEY = previousPrimaryKey;
       }
 
       if (previousFallbackKey === undefined) {
-        delete process.env.AGENTIC_CMS_TEST_FALLBACK_PROVIDER_KEY;
+        delete process.env.FORGETBASE_TEST_FALLBACK_PROVIDER_KEY;
       } else {
-        process.env.AGENTIC_CMS_TEST_FALLBACK_PROVIDER_KEY = previousFallbackKey;
+        process.env.FORGETBASE_TEST_FALLBACK_PROVIDER_KEY = previousFallbackKey;
       }
     }
   });
@@ -4766,8 +4766,8 @@ describe("API asset registry routes", () => {
     const managedQueryRetentionPolicyRepository = new InMemoryManagedQueryRetentionPolicyRepository();
     const providerConfigRepository = new InMemoryModelProviderConfigRepository();
     const capturedRequests: ModelRuntimeRequest[] = [];
-    const previousProviderKey = process.env.AGENTIC_CMS_TEST_CACHE_PROVIDER_KEY;
-    process.env.AGENTIC_CMS_TEST_CACHE_PROVIDER_KEY = "placeholder-cache-provider-value";
+    const previousProviderKey = process.env.FORGETBASE_TEST_CACHE_PROVIDER_KEY;
+    process.env.FORGETBASE_TEST_CACHE_PROVIDER_KEY = "placeholder-cache-provider-value";
 
     server = buildServer({
       logger: false,
@@ -4876,7 +4876,7 @@ describe("API asset registry routes", () => {
       await providerConfigRepository.upsertProviderConfig({
         provider: "openai",
         enabled: true,
-        apiKeyEnvVar: "AGENTIC_CMS_TEST_CACHE_PROVIDER_KEY",
+        apiKeyEnvVar: "FORGETBASE_TEST_CACHE_PROVIDER_KEY",
         defaultModel: "gpt-cache-test",
         availableModels: ["gpt-cache-test"],
         priority: 1,
@@ -5203,9 +5203,9 @@ describe("API asset registry routes", () => {
       });
     } finally {
       if (previousProviderKey === undefined) {
-        delete process.env.AGENTIC_CMS_TEST_CACHE_PROVIDER_KEY;
+        delete process.env.FORGETBASE_TEST_CACHE_PROVIDER_KEY;
       } else {
-        process.env.AGENTIC_CMS_TEST_CACHE_PROVIDER_KEY = previousProviderKey;
+        process.env.FORGETBASE_TEST_CACHE_PROVIDER_KEY = previousProviderKey;
       }
     }
   });
@@ -5219,8 +5219,8 @@ describe("API asset registry routes", () => {
     const cachePolicyRepository = new InMemoryManagedQueryCachePolicyRepository();
     const providerConfigRepository = new InMemoryModelProviderConfigRepository();
     const piiRedactionPolicyRepository = new InMemoryPiiRedactionPolicyRepository();
-    const previousProviderKey = process.env.AGENTIC_CMS_TEST_PII_CACHE_PROVIDER_KEY;
-    process.env.AGENTIC_CMS_TEST_PII_CACHE_PROVIDER_KEY = "placeholder-pii-cache-provider-value";
+    const previousProviderKey = process.env.FORGETBASE_TEST_PII_CACHE_PROVIDER_KEY;
+    process.env.FORGETBASE_TEST_PII_CACHE_PROVIDER_KEY = "placeholder-pii-cache-provider-value";
 
     server = buildServer({
       logger: false,
@@ -5260,7 +5260,7 @@ describe("API asset registry routes", () => {
       await providerConfigRepository.upsertProviderConfig({
         provider: "openai",
         enabled: true,
-        apiKeyEnvVar: "AGENTIC_CMS_TEST_PII_CACHE_PROVIDER_KEY",
+        apiKeyEnvVar: "FORGETBASE_TEST_PII_CACHE_PROVIDER_KEY",
         defaultModel: "gpt-cache-test",
         availableModels: ["gpt-cache-test"],
         priority: 1
@@ -5368,9 +5368,9 @@ describe("API asset registry routes", () => {
       expect(await cacheRepository.listEntries()).toHaveLength(1);
     } finally {
       if (previousProviderKey === undefined) {
-        delete process.env.AGENTIC_CMS_TEST_PII_CACHE_PROVIDER_KEY;
+        delete process.env.FORGETBASE_TEST_PII_CACHE_PROVIDER_KEY;
       } else {
-        process.env.AGENTIC_CMS_TEST_PII_CACHE_PROVIDER_KEY = previousProviderKey;
+        process.env.FORGETBASE_TEST_PII_CACHE_PROVIDER_KEY = previousProviderKey;
       }
     }
   });
@@ -5606,7 +5606,7 @@ describe("API asset registry routes", () => {
       },
       payload: {
         issuerUrl: "https://login.microsoftonline.com/common/v2.0",
-        clientId: "agentic-cms",
+        clientId: "forgetbase",
         clientSecretEnvVar: "PATH"
       }
     });
@@ -5622,7 +5622,7 @@ describe("API asset registry routes", () => {
       },
       payload: {
         issuerUrl: "https://login.microsoftonline.com/common/v2.0",
-        clientId: "agentic-cms",
+        clientId: "forgetbase",
         metadata: {
           clientSecret: "do-not-store"
         }
@@ -5642,7 +5642,7 @@ describe("API asset registry routes", () => {
         enabled: true,
         displayName: "Microsoft Entra ID",
         issuerUrl: "https://login.microsoftonline.com/common/v2.0",
-        clientId: "agentic-cms",
+        clientId: "forgetbase",
         clientSecretEnvVar: "ENTRA_CLIENT_SECRET",
         redirectUri: "http://localhost:3000/auth/oidc/callback",
         groupClaim: "groups",
@@ -5715,7 +5715,7 @@ describe("API asset registry routes", () => {
         async verifyIdToken() {
           return {
             iss: "https://idp.example.test",
-            aud: "agentic-cms",
+            aud: "forgetbase",
             sub: "external-subject-1",
 	            email: "reader@example.com",
 	            name: "Reader Example",
@@ -5733,7 +5733,7 @@ describe("API asset registry routes", () => {
       provider: "oidc",
       enabled: true,
       issuerUrl: "https://idp.example.test",
-      clientId: "agentic-cms",
+      clientId: "forgetbase",
 	      redirectUri: "http://localhost:5175/oidc/callback",
 	      roleClaim: "role",
 	      groupClaim: "groups",
@@ -5760,7 +5760,7 @@ describe("API asset registry routes", () => {
       method: "POST",
       url: "/auth/oidc/callback",
       headers: {
-        "user-agent": "AgenticCMSOIDCTest/1.0"
+        "user-agent": "ForgetBaseOIDCTest/1.0"
       },
       payload: {
         tenantId: "tenant_oidc",
@@ -5784,15 +5784,15 @@ describe("API asset registry routes", () => {
 	      externalIssuer: "https://idp.example.test",
 	      externalSubject: "external-subject-1"
 	    });
-	    expect(callback.json().secret).toMatch(/^acms_/);
+	    expect(callback.json().secret).toMatch(/^fbase_/);
 	    expect(Date.parse(callback.json().apiKey.expiresAt) - beforeCallback).toBeLessThanOrEqual(65_000);
-	    expect(readCookieMaxAge(findSetCookie(callback.headers["set-cookie"], "agentic_cms_session"))).toBeLessThanOrEqual(60);
-	    expect(readCookieMaxAge(findSetCookie(callback.headers["set-cookie"], "agentic_cms_csrf"))).toBeLessThanOrEqual(60);
+	    expect(readCookieMaxAge(findSetCookie(callback.headers["set-cookie"], "forgetbase_session"))).toBeLessThanOrEqual(60);
+	    expect(readCookieMaxAge(findSetCookie(callback.headers["set-cookie"], "forgetbase_csrf"))).toBeLessThanOrEqual(60);
 	    expect((await authRepository.listLoginSessions({ tenantId: "tenant_oidc", userId: callback.json().user.id }))[0])
 	      .toMatchObject({
 	        source: "oidc",
 	        deviceLabel: "OIDC work browser",
-	        clientUserAgent: "AgenticCMSOIDCTest/1.0"
+	        clientUserAgent: "ForgetBaseOIDCTest/1.0"
 	      });
 
 	    const syncedGroups = await authRepository.listGroups({ tenantId: "tenant_oidc" });
@@ -5887,7 +5887,7 @@ describe("API asset registry routes", () => {
       provider: "oidc",
       enabled: true,
       issuerUrl: "https://idp.example.test",
-      clientId: "agentic-cms",
+      clientId: "forgetbase",
       redirectUri: "http://localhost:5175/oidc/callback",
       autoProvisionUsers: true
     });
@@ -5966,7 +5966,7 @@ describe("API asset registry routes", () => {
 	      provider: "oidc",
 	      enabled: true,
 	      issuerUrl: "https://idp.example.test",
-	      clientId: "agentic-cms",
+	      clientId: "forgetbase",
 	      redirectUri: "http://localhost:5175/oidc/callback",
 	      autoProvisionUsers: false,
 	      allowedDomains: ["example.com"]
@@ -6088,7 +6088,7 @@ describe("API asset registry routes", () => {
       provider: "oidc",
       enabled: true,
       issuerUrl: "https://idp.example.test",
-      clientId: "agentic-cms",
+      clientId: "forgetbase",
       redirectUri: "http://localhost:5175/oidc/callback",
       autoProvisionUsers: false
     });

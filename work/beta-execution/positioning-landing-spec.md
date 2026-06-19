@@ -394,9 +394,9 @@ Additional grounding files inspected:
 - `docs/DECISIONS.md`
 - `docs/DEVELOPMENT.md`
 - `docs/design/forgetbase-brand/README.md`
-- `docs/design/agentic-cms-design-system/index.html` via targeted search
-- `docs/design/agentic-cms-main-page-mockups/index.html` via targeted search
-- `docs/design/agentic-cms-main-page-mockups/styles.css` via targeted search
+- `docs/design/forgetbase-design-system/index.html` via targeted search
+- `docs/design/forgetbase-main-page-mockups/index.html` via targeted search
+- `docs/design/forgetbase-main-page-mockups/styles.css` via targeted search
 
 Commands run:
 

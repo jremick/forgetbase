@@ -10,7 +10,7 @@ import {
   type PiiRedactionPolicy,
   type PiiRedactionRuleKind,
   type ValidationIssue
-} from "@agentic-cms/schema";
+} from "@forgetbase/schema";
 
 export interface SchemaValidationIssue {
   path: string;
@@ -59,7 +59,7 @@ const redactionRules: Array<{
   {
     kind: "api-key",
     placeholder: "[REDACTED_API_KEY]",
-    pattern: /\b(?:sk-[A-Za-z0-9_-]{20,}|acms_[A-Za-z0-9_-]{20,}|github_pat_[A-Za-z0-9_]{30,}|gh[pousr]_[A-Za-z0-9_]{30,}|AIza[0-9A-Za-z_-]{35}|(?:AKIA|ASIA)[A-Z0-9]{16}|xox[baprs]-[A-Za-z0-9-]{20,})\b/g
+    pattern: /\b(?:sk-[A-Za-z0-9_-]{20,}|fbase_[A-Za-z0-9_-]{20,}|github_pat_[A-Za-z0-9_]{30,}|gh[pousr]_[A-Za-z0-9_]{30,}|AIza[0-9A-Za-z_-]{35}|(?:AKIA|ASIA)[A-Z0-9]{16}|xox[baprs]-[A-Za-z0-9-]{20,})\b/g
   },
   {
     kind: "url-secret",

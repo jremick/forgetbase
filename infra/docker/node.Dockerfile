@@ -11,4 +11,4 @@ COPY packages ./packages
 RUN pnpm install
 RUN pnpm build
 
-CMD ["pnpm", "--filter", "@agentic-cms/api", "start"]
+CMD ["pnpm", "--filter", "@forgetbase/api", "start"]

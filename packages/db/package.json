@@ -1,5 +1,5 @@
 {
-  "name": "@agentic-cms/db",
+  "name": "@forgetbase/db",
   "version": "0.1.0",
   "private": true,
   "license": "Apache-2.0",
@@ -16,7 +16,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@agentic-cms/schema": "workspace:*",
+    "@forgetbase/schema": "workspace:*",
     "pg": "^8.21.0"
   },
   "devDependencies": {

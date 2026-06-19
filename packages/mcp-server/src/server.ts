@@ -6,8 +6,8 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
   managedQueryModeSchema,
   modelProviderSchema,
   piiRedactionRuleKindSchema
-} from "@agentic-cms/schema";
-import { AgenticCmsClient } from "@agentic-cms/sdk";
+} from "@forgetbase/schema";
+import { ForgetBaseClient } from "@forgetbase/sdk";
 import { z } from "zod";
 
 const DEFAULT_API_URL = "http://127.0.0.1:3000";
@@ -20,10 +20,10 @@ export interface CreateMcpServerOptions {
 
 export function createMcpServer(options: CreateMcpServerOptions = {}): McpServer {
   const server = new McpServer({
-    name: "agentic-cms",
+    name: "forgetbase",
     version: "0.1.0"
   });
-  const client = new AgenticCmsClient({
+  const client = new ForgetBaseClient({
     baseUrl: options.apiUrl ?? DEFAULT_API_URL,
     apiKey: options.apiKey,
     surface: "mcp",
@@ -34,7 +34,7 @@ export function createMcpServer(options: CreateMcpServerOptions = {}): McpServer
     "list_asset_types",
     {
       title: "List asset types",
-      description: "List the governed asset types currently known by the Agentic CMS schema.",
+      description: "List the governed asset types currently known by the ForgetBase schema.",
       inputSchema: z.object({})
     },
     async () => ({
@@ -51,7 +51,7 @@ export function createMcpServer(options: CreateMcpServerOptions = {}): McpServer
     "list_assets",
     {
       title: "List assets",
-      description: "List governed registry assets visible through the Agentic CMS API.",
+      description: "List governed registry assets visible through the ForgetBase API.",
       inputSchema: z.object({})
     },
     async () => ({
@@ -89,7 +89,7 @@ export function createMcpServer(options: CreateMcpServerOptions = {}): McpServer
     "get_asset",
     {
       title: "Get asset",
-      description: "Fetch a governed registry asset by stable ID through the Agentic CMS API.",
+      description: "Fetch a governed registry asset by stable ID through the ForgetBase API.",
       inputSchema: z.object({
         stableId: z.string().min(1)
       })
@@ -132,7 +132,7 @@ export function createMcpServer(options: CreateMcpServerOptions = {}): McpServer
     "search_assets",
     {
       title: "Search assets",
-      description: "Search governed Agentic CMS chunks with permission filtering and citations.",
+      description: "Search governed ForgetBase chunks with permission filtering and citations.",
       inputSchema: z.object({
         query: z.string().min(1),
         limit: z.number().int().positive().max(50).default(10),
@@ -153,7 +153,7 @@ export function createMcpServer(options: CreateMcpServerOptions = {}): McpServer
     "managed_query",
     {
       title: "Managed query",
-      description: "Run the managed query layer over permission-filtered Agentic CMS context.",
+      description: "Run the managed query layer over permission-filtered ForgetBase context.",
       inputSchema: z.object({
         query: z.string().min(1),
         limit: z.number().int().positive().max(10).default(5),
@@ -606,7 +606,7 @@ export function createMcpServer(options: CreateMcpServerOptions = {}): McpServer
 	    "run_managed_query_eval",
     {
       title: "Run managed query eval",
-      description: "Run deterministic managed query eval cases against permission-filtered Agentic CMS context.",
+      description: "Run deterministic managed query eval cases against permission-filtered ForgetBase context.",
       inputSchema: z.object({
         limit: z.number().int().positive().max(10).default(5),
         minimumPassRate: z.number().min(0).max(1).default(1),
@@ -895,7 +895,7 @@ export function createMcpServer(options: CreateMcpServerOptions = {}): McpServer
     "complete_oidc_login",
     {
       title: "Complete OIDC login",
-      description: "Exchange an OIDC authorization code, validate the ID token, and issue a short-lived Agentic CMS API key.",
+      description: "Exchange an OIDC authorization code, validate the ID token, and issue a short-lived ForgetBase API key.",
       inputSchema: z.object({
         tenantId: z.string().min(1).default("tenant_demo"),
         provider: z.enum(["oidc", "microsoft-entra"]),
@@ -922,7 +922,7 @@ export function createMcpServer(options: CreateMcpServerOptions = {}): McpServer
     "create_user",
     {
       title: "Create user",
-      description: "Create a local user through the Agentic CMS API. Requires an admin API key.",
+      description: "Create a local user through the ForgetBase API. Requires an admin API key.",
       inputSchema: z.object({
         email: z.string().email(),
         displayName: z.string().min(1),
@@ -986,7 +986,7 @@ export function createMcpServer(options: CreateMcpServerOptions = {}): McpServer
     "create_service_account",
     {
       title: "Create service account",
-      description: "Create a non-human service account through the Agentic CMS API. Requires an admin API key.",
+      description: "Create a non-human service account through the ForgetBase API. Requires an admin API key.",
       inputSchema: z.object({
         slug: z.string().min(1),
         name: z.string().min(1),
@@ -1240,7 +1240,7 @@ export function createMcpServer(options: CreateMcpServerOptions = {}): McpServer
     "create_group",
     {
       title: "Create group",
-      description: "Create a local auth group through the Agentic CMS API. Requires an admin API key.",
+      description: "Create a local auth group through the ForgetBase API. Requires an admin API key.",
       inputSchema: z.object({
         slug: z.string().min(1),
         name: z.string().min(1),
@@ -1386,7 +1386,7 @@ export function createMcpServer(options: CreateMcpServerOptions = {}): McpServer
     "publish_asset",
     {
       title: "Publish asset",
-      description: "Publish a governed asset by setting it active and approved through the Agentic CMS API.",
+      description: "Publish a governed asset by setting it active and approved through the ForgetBase API.",
       inputSchema: z.object({
         stableId: z.string().min(1),
         reviewDueAt: z.string().min(1).optional(),

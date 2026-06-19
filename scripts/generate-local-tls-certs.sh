@@ -3,11 +3,11 @@ set -euo pipefail
 
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 REPO_ROOT="$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)"
-CERT_DIR="${AGENTIC_CMS_LOCAL_TLS_DIR:-$REPO_ROOT/infra/docker/tls}"
+CERT_DIR="${FORGETBASE_LOCAL_TLS_DIR:-$REPO_ROOT/infra/docker/tls}"
 CERT_PATH="$CERT_DIR/tls.crt"
 KEY_PATH="$CERT_DIR/tls.key"
-DAYS="${AGENTIC_CMS_LOCAL_TLS_DAYS:-825}"
-COMMON_NAME="${AGENTIC_CMS_LOCAL_TLS_CN:-Agentic CMS Local TLS}"
+DAYS="${FORGETBASE_LOCAL_TLS_DAYS:-825}"
+COMMON_NAME="${FORGETBASE_LOCAL_TLS_CN:-ForgetBase Local TLS}"
 
 if ! command -v openssl >/dev/null 2>&1; then
   echo "openssl is required to generate local TLS certificates" >&2
@@ -16,13 +16,13 @@ fi
 
 case "$DAYS" in
   ''|*[!0-9]*)
-    echo "AGENTIC_CMS_LOCAL_TLS_DAYS must be a positive whole number" >&2
+    echo "FORGETBASE_LOCAL_TLS_DAYS must be a positive whole number" >&2
     exit 1
     ;;
 esac
 
 if [ "$DAYS" -lt 1 ]; then
-  echo "AGENTIC_CMS_LOCAL_TLS_DAYS must be at least 1" >&2
+  echo "FORGETBASE_LOCAL_TLS_DAYS must be at least 1" >&2
   exit 1
 fi
 

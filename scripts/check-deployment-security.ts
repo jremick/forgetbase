@@ -95,15 +95,15 @@ function checkTemplatePosture(): void {
   const server = readRepoFile("apps/api/src/server.ts");
 
   requireIncludes("compose.yaml", compose, "HOST: 0.0.0.0", "local Compose direct API bind remains explicit");
-  requireIncludes("compose.yaml", compose, "${AGENTIC_CMS_API_PORT:-3000}:3000", "local Compose API port remains overrideable");
+  requireIncludes("compose.yaml", compose, "${FORGETBASE_API_PORT:-3000}:3000", "local Compose API port remains overrideable");
   requireIncludes("compose.same-origin.yaml", composeSameOrigin, "proxy:", "same-origin proxy overlay exists");
   requireIncludes("infra/docker/nginx.same-origin.conf", sameOriginNginx, "location /api/", "same-origin proxy routes API under /api");
-  requireIncludes("compose.tls.yaml", composeTls, "AGENTIC_CMS_SESSION_COOKIE_SECURE: \"true\"", "TLS overlay enables secure browser cookies");
+  requireIncludes("compose.tls.yaml", composeTls, "FORGETBASE_SESSION_COOKIE_SECURE: \"true\"", "TLS overlay enables secure browser cookies");
   requireIncludes("infra/docker/nginx.tls.conf", tlsNginx, "Strict-Transport-Security", "TLS proxy sets HSTS");
   requireIncludes("infra/docker/nginx.railway-proxy.conf.template", railwayNginx, "location = /api/auth/bootstrap", "Railway proxy template gates bootstrap route");
   requireIncludes("infra/docker/nginx.railway-proxy.conf.template", railwayNginx, "return 404;", "Railway proxy template blocks bootstrap exposure");
-  requireIncludes("docs/runbooks/DEPLOY_RAILWAY_PRIVATE_TEMPLATE.md", railwayRunbook, "AGENTIC_CMS_REQUIRE_AUTHENTICATION=true", "Railway public template requires auth");
-  requireIncludes("docs/runbooks/DEPLOY_RAILWAY_PRIVATE_TEMPLATE.md", railwayRunbook, "AGENTIC_CMS_SESSION_COOKIE_SECURE=true", "Railway public template requires secure cookies");
+  requireIncludes("docs/runbooks/DEPLOY_RAILWAY_PRIVATE_TEMPLATE.md", railwayRunbook, "FORGETBASE_REQUIRE_AUTHENTICATION=true", "Railway public template requires auth");
+  requireIncludes("docs/runbooks/DEPLOY_RAILWAY_PRIVATE_TEMPLATE.md", railwayRunbook, "FORGETBASE_SESSION_COOKIE_SECURE=true", "Railway public template requires secure cookies");
   requireIncludes("docs/runbooks/DEPLOY_RAILWAY_PRIVATE_TEMPLATE.md", railwayRunbook, "api` and `web` have no public domains", "Railway template keeps api/web private");
   requireIncludes("docs/runbooks/DEPLOY_DOCKER_COMPOSE.md", dockerRunbook, "security:check-deployment-defaults", "Docker runbook documents deployment-default gate");
 
@@ -123,49 +123,49 @@ function checkTemplatePosture(): void {
 }
 
 function checkPublicEnvironment(): void {
-  const publicDeployment = parseStrictBoolean("AGENTIC_CMS_PUBLIC_DEPLOYMENT") === true;
+  const publicDeployment = parseStrictBoolean("FORGETBASE_PUBLIC_DEPLOYMENT") === true;
 
   if (!publicDeployment) {
     record(
       "pass",
       "public deployment mode",
-      "AGENTIC_CMS_PUBLIC_DEPLOYMENT is not true; local OSS bootstrap defaults are allowed"
+      "FORGETBASE_PUBLIC_DEPLOYMENT is not true; local OSS bootstrap defaults are allowed"
     );
     return;
   }
 
-  const requireAuthentication = parseStrictBoolean("AGENTIC_CMS_REQUIRE_AUTHENTICATION");
-  const secureCookies = parseStrictBoolean("AGENTIC_CMS_SESSION_COOKIE_SECURE");
+  const requireAuthentication = parseStrictBoolean("FORGETBASE_REQUIRE_AUTHENTICATION");
+  const secureCookies = parseStrictBoolean("FORGETBASE_SESSION_COOKIE_SECURE");
 
   record(
     requireAuthentication === true ? "pass" : "fail",
     "public auth requirement",
-    "AGENTIC_CMS_REQUIRE_AUTHENTICATION must be true for public deployment checks"
+    "FORGETBASE_REQUIRE_AUTHENTICATION must be true for public deployment checks"
   );
   record(
     secureCookies === true ? "pass" : "fail",
     "public secure-cookie requirement",
-    "AGENTIC_CMS_SESSION_COOKIE_SECURE must be true for public browser-cookie deployment checks"
+    "FORGETBASE_SESSION_COOKIE_SECURE must be true for public browser-cookie deployment checks"
   );
 
-  const publicEntrypoint = process.env.AGENTIC_CMS_PUBLIC_ENTRYPOINT;
+  const publicEntrypoint = process.env.FORGETBASE_PUBLIC_ENTRYPOINT;
   const validEntrypoints = new Set(["same-origin-proxy", "compose-tls", "external-tls-proxy", "railway-proxy"]);
   record(
     publicEntrypoint !== undefined && validEntrypoints.has(publicEntrypoint) ? "pass" : "fail",
     "public entrypoint shape",
-    "AGENTIC_CMS_PUBLIC_ENTRYPOINT must be one of same-origin-proxy, compose-tls, external-tls-proxy, railway-proxy"
+    "FORGETBASE_PUBLIC_ENTRYPOINT must be one of same-origin-proxy, compose-tls, external-tls-proxy, railway-proxy"
   );
 
-  const corsOrigins = process.env.AGENTIC_CMS_CORS_ALLOWED_ORIGINS;
+  const corsOrigins = process.env.FORGETBASE_CORS_ALLOWED_ORIGINS;
   const origins = corsOrigins?.split(",").map((origin) => origin.trim()).filter(Boolean) ?? [];
   const originsArePublicHttps = origins.length > 0 && origins.every(isHttpsOrigin);
   record(
     originsArePublicHttps ? "pass" : "fail",
     "public CORS origins",
-    "AGENTIC_CMS_CORS_ALLOWED_ORIGINS must contain only approved https origins, not localhost or wildcards"
+    "FORGETBASE_CORS_ALLOWED_ORIGINS must contain only approved https origins, not localhost or wildcards"
   );
 
-  const directPortNames = ["AGENTIC_CMS_API_PORT", "AGENTIC_CMS_WEB_PORT", "AGENTIC_CMS_POSTGRES_PORT"];
+  const directPortNames = ["FORGETBASE_API_PORT", "FORGETBASE_WEB_PORT", "FORGETBASE_POSTGRES_PORT"];
 
   if (publicEntrypoint === "railway-proxy") {
     record("pass", "public direct Compose binds", "railway-proxy mode does not use local Compose direct service port binds");
@@ -181,22 +181,22 @@ function checkPublicEnvironment(): void {
 
   if (publicEntrypoint === "compose-tls") {
     record(
-      Boolean(process.env.AGENTIC_CMS_HTTPS_PORT) ? "pass" : "fail",
+      Boolean(process.env.FORGETBASE_HTTPS_PORT) ? "pass" : "fail",
       "Compose TLS public HTTPS port",
-      "AGENTIC_CMS_HTTPS_PORT must be set when compose-tls is the public entrypoint"
+      "FORGETBASE_HTTPS_PORT must be set when compose-tls is the public entrypoint"
     );
     record(
-      isLocalPortBinding(process.env.AGENTIC_CMS_PROXY_PORT) ? "pass" : "fail",
+      isLocalPortBinding(process.env.FORGETBASE_PROXY_PORT) ? "pass" : "fail",
       "Compose TLS plain HTTP listener",
-      "AGENTIC_CMS_PROXY_PORT should be explicitly localhost-bound so public traffic uses HTTPS"
+      "FORGETBASE_PROXY_PORT should be explicitly localhost-bound so public traffic uses HTTPS"
     );
   }
 
   if (publicEntrypoint === "external-tls-proxy") {
     record(
-      isLocalPortBinding(process.env.AGENTIC_CMS_PROXY_PORT) ? "pass" : "fail",
+      isLocalPortBinding(process.env.FORGETBASE_PROXY_PORT) ? "pass" : "fail",
       "external TLS upstream listener",
-      "AGENTIC_CMS_PROXY_PORT must be localhost-bound behind the external TLS edge"
+      "FORGETBASE_PROXY_PORT must be localhost-bound behind the external TLS edge"
     );
   }
 }
@@ -215,7 +215,7 @@ function main(): void {
   console.log(JSON.stringify({
     ok: true,
     checked: results.length,
-    publicDeployment: parseStrictBoolean("AGENTIC_CMS_PUBLIC_DEPLOYMENT") === true
+    publicDeployment: parseStrictBoolean("FORGETBASE_PUBLIC_DEPLOYMENT") === true
   }, null, 2));
 }
 

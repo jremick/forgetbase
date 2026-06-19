@@ -35,9 +35,9 @@ import { dirname, resolve, sep } from "node:path";
   type ModelProviderConfigInput,
   type PiiRedactionRuleKind,
   type Surface
-} from "@agentic-cms/schema";
-import { AgenticCmsClient } from "@agentic-cms/sdk";
-import { validateAssetCollection } from "@agentic-cms/validation";
+} from "@forgetbase/schema";
+import { ForgetBaseClient } from "@forgetbase/sdk";
+import { validateAssetCollection } from "@forgetbase/validation";
 
 const DEFAULT_API_URL = "http://127.0.0.1:3000";
 
@@ -47,8 +47,8 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
 
   switch (command) {
     case "health": {
-      const apiUrl = readOption(args, "--api-url") ?? process.env.AGENTIC_CMS_API_URL ?? DEFAULT_API_URL;
-      const client = new AgenticCmsClient({ baseUrl: apiUrl });
+      const apiUrl = readOption(args, "--api-url") ?? process.env.FORGETBASE_API_URL ?? DEFAULT_API_URL;
+      const client = new ForgetBaseClient({ baseUrl: apiUrl });
       const health = await client.health();
       console.log(JSON.stringify(health, null, 2));
       return 0;
@@ -514,7 +514,7 @@ async function handleSearch(args: string[]): Promise<number> {
   const query = readOption(args, "--query") ?? readOption(args, "-q") ?? args.find((arg) => !arg.startsWith("--"));
 
   if (!query) {
-    throw new Error("Search query is required: agentic-cms search --query \"PII redaction\"");
+    throw new Error("Search query is required: forgetbase search --query \"PII redaction\"");
   }
 
   const limitOption = readOption(args, "--limit");
@@ -536,7 +536,7 @@ async function handleAgent(args: string[]): Promise<number> {
       const query = readOption(rest, "--query") ?? readOption(rest, "-q") ?? rest.find((arg) => !arg.startsWith("--"));
 
       if (!query) {
-        throw new Error("Managed query is required: agentic-cms agent query --query \"PII redaction\"");
+        throw new Error("Managed query is required: forgetbase agent query --query \"PII redaction\"");
       }
 
       const limitOption = readOption(rest, "--limit");
@@ -684,7 +684,7 @@ async function handleAssets(args: string[]): Promise<number> {
 
     case "get": {
       if (!stableId || stableId.startsWith("--")) {
-        throw new Error("Stable ID is required: agentic-cms assets get <stable-id>");
+        throw new Error("Stable ID is required: forgetbase assets get <stable-id>");
       }
 
       const asset = await client.getAsset(stableId);
@@ -707,7 +707,7 @@ async function handleAssets(args: string[]): Promise<number> {
 
     case "update": {
       if (!stableId || stableId.startsWith("--")) {
-        throw new Error("Stable ID is required: agentic-cms assets update <stable-id> --file update.json");
+        throw new Error("Stable ID is required: forgetbase assets update <stable-id> --file update.json");
       }
 
       const file = requireOption(args, "--file");
@@ -718,7 +718,7 @@ async function handleAssets(args: string[]): Promise<number> {
 
     case "restore": {
       if (!stableId || stableId.startsWith("--")) {
-        throw new Error("Stable ID is required: agentic-cms assets restore <stable-id> --version-number 1");
+        throw new Error("Stable ID is required: forgetbase assets restore <stable-id> --version-number 1");
       }
 
       const versionNumberOption = readOption(args, "--version-number");
@@ -733,7 +733,7 @@ async function handleAssets(args: string[]): Promise<number> {
 
     case "version": {
       if (!stableId || stableId.startsWith("--")) {
-        throw new Error("Stable ID is required: agentic-cms assets version <stable-id> --version-number 1");
+        throw new Error("Stable ID is required: forgetbase assets version <stable-id> --version-number 1");
       }
 
       const versionNumberOption = readOption(args, "--version-number");
@@ -747,7 +747,7 @@ async function handleAssets(args: string[]): Promise<number> {
 
     case "publish": {
       if (!stableId || stableId.startsWith("--")) {
-        throw new Error("Stable ID is required: agentic-cms assets publish <stable-id>");
+        throw new Error("Stable ID is required: forgetbase assets publish <stable-id>");
       }
 
       const publish = assetPublishInputSchema.parse({
@@ -760,7 +760,7 @@ async function handleAssets(args: string[]): Promise<number> {
 
     case "review": {
       if (!stableId || stableId.startsWith("--")) {
-        throw new Error("Stable ID is required: agentic-cms assets review <stable-id> --review-due-at 2027-01-31");
+        throw new Error("Stable ID is required: forgetbase assets review <stable-id> --review-due-at 2027-01-31");
       }
 
       const review = assetReviewInputSchema.parse({
@@ -818,7 +818,7 @@ async function handleAuth(args: string[]): Promise<number> {
         email: requireOption(args, "--email"),
         displayName: requireOption(args, "--display-name"),
         keyName: readOption(args, "--key-name") ?? "bootstrap-admin",
-        password: readOption(args, "--password") ?? process.env.AGENTIC_CMS_PASSWORD
+        password: readOption(args, "--password") ?? process.env.FORGETBASE_PASSWORD
       });
       console.log(JSON.stringify(result, null, 2));
       return 0;
@@ -829,7 +829,7 @@ async function handleAuth(args: string[]): Promise<number> {
       const result = await client.login({
         tenantId: readOption(args, "--tenant-id") ?? "tenant_demo",
         email: requireOption(args, "--email"),
-        password: readOption(args, "--password") ?? process.env.AGENTIC_CMS_PASSWORD ?? "",
+        password: readOption(args, "--password") ?? process.env.FORGETBASE_PASSWORD ?? "",
         keyName: readOption(args, "--key-name") ?? "local-login",
         deviceLabel: readOption(args, "--device-label") ?? "CLI login",
         expiresInSeconds: expiresInSeconds ? Number.parseInt(expiresInSeconds, 10) : undefined
@@ -898,7 +898,7 @@ async function handleAuth(args: string[]): Promise<number> {
         email: requireOption(args, "--email"),
         displayName: requireOption(args, "--display-name"),
         role: readOption(args, "--role") as "admin" | "maintainer" | "reader" | undefined,
-        password: readOption(args, "--password") ?? process.env.AGENTIC_CMS_PASSWORD
+        password: readOption(args, "--password") ?? process.env.FORGETBASE_PASSWORD
       });
       console.log(JSON.stringify(result, null, 2));
       return 0;
@@ -918,7 +918,7 @@ async function handleAuth(args: string[]): Promise<number> {
         displayName: readOption(args, "--display-name"),
         role: readOption(args, "--role") as "admin" | "maintainer" | "reader" | undefined,
         status: readOption(args, "--status") as "active" | "disabled" | undefined,
-        password: readOption(args, "--password") ?? process.env.AGENTIC_CMS_PASSWORD
+        password: readOption(args, "--password") ?? process.env.FORGETBASE_PASSWORD
       });
       console.log(JSON.stringify(result, null, 2));
       return 0;
@@ -1105,10 +1105,10 @@ function resolveInputPath(path: string): string {
   return resolve(process.env.INIT_CWD ?? process.cwd(), path);
 }
 
-function createClient(args: string[], defaultSurface: Surface): AgenticCmsClient {
-  return new AgenticCmsClient({
-    baseUrl: readOption(args, "--api-url") ?? process.env.AGENTIC_CMS_API_URL ?? DEFAULT_API_URL,
-    apiKey: readOption(args, "--api-key") ?? process.env.AGENTIC_CMS_API_KEY,
+function createClient(args: string[], defaultSurface: Surface): ForgetBaseClient {
+  return new ForgetBaseClient({
+    baseUrl: readOption(args, "--api-url") ?? process.env.FORGETBASE_API_URL ?? DEFAULT_API_URL,
+    apiKey: readOption(args, "--api-key") ?? process.env.FORGETBASE_API_KEY,
     surface: (readOption(args, "--surface") as Surface | undefined) ?? defaultSurface
   });
 }
@@ -1312,90 +1312,90 @@ function requireOption(args: string[], name: string): string {
 }
 
 function printHelp(): void {
-  console.log(`Agentic CMS CLI
+  console.log(`ForgetBase CLI
 
 Usage:
-  agentic-cms health [--api-url http://127.0.0.1:3000]
-  agentic-cms capabilities
-  agentic-cms auth bootstrap --email admin@example.test --display-name "Admin" [--tenant-id tenant_demo] [--password ...]
-  agentic-cms auth login --email user@example.test [--tenant-id tenant_demo] [--password ...] [--device-label "Work laptop"]
-  agentic-cms auth oidc-start --provider oidc|microsoft-entra [--tenant-id tenant_demo] [--redirect-uri ...]
-  agentic-cms auth oidc-callback --provider oidc|microsoft-entra --code ... --state ... --nonce ... --code-verifier ... [--tenant-id tenant_demo] [--device-label "Work laptop"]
-  agentic-cms auth me [--api-key ...]
-  agentic-cms auth logout [--api-key ...]
-  agentic-cms auth sessions [--user-id user_123] [--include-revoked true|false] [--limit 50] [--api-key ...]
-  agentic-cms auth session-revoke --session-id login_session_123 [--api-key ...]
-  agentic-cms auth user-create --email user@example.test --display-name "User" --role reader [--password ...] [--api-key ...]
-  agentic-cms auth user-list [--limit 50] [--api-key ...]
-  agentic-cms auth user-update --user-id user_123 [--display-name "User"] [--role reader] [--status active|disabled] [--password ...] [--api-key ...]
-  agentic-cms auth service-account-create --slug automation --name "Automation" [--role reader] [--status active|disabled] [--api-key ...]
-  agentic-cms auth service-account-list [--limit 50] [--api-key ...]
-  agentic-cms auth service-account-update --service-account-id service_account_123 [--name "Automation"] [--role reader] [--status active|disabled] [--api-key ...]
-  agentic-cms auth group-create --slug ai-team --name "AI Team" [--description "..."] [--api-key ...]
-  agentic-cms auth group-list [--limit 50] [--api-key ...]
-  agentic-cms auth group-delete --group-id group_123 [--api-key ...]
-  agentic-cms auth group-member-add --group-id group_123 --user-id user_123 [--api-key ...]
-  agentic-cms auth group-member-remove --group-id group_123 --user-id user_123 [--api-key ...]
-  agentic-cms auth group-members --group-id group_123 [--limit 50] [--api-key ...]
-  agentic-cms auth api-key-create (--user-id user_123 | --service-account-id service_account_123) --name cli --scopes asset:read|agent:execute [--api-key ...]
-  agentic-cms auth api-key-list [--limit 50] [--api-key ...]
-  agentic-cms auth api-key-rotation-due [--as-of 2026-06-16T00:00:00Z] [--due-within-days 14] [--include-user-keys true|false] [--include-revoked true|false] [--limit 50] [--api-key ...]
-  agentic-cms auth api-key-rotate --api-key-id api_key_123 [--name replacement] [--revoke-old] [--api-key ...]
-  agentic-cms auth api-key-revoke --api-key-id api_key_123 [--api-key ...]
-  agentic-cms auth grant --stable-id policy.example --principal-type user|group|service-account --principal-id user_123 [--api-key ...]
-  agentic-cms admin model-providers [--api-key ...]
-  agentic-cms admin model-provider-health [--api-key ...]
-	  agentic-cms admin managed-query-cache [--limit 50] [--api-key ...]
-	  agentic-cms admin managed-query-policy [--api-key ...]
-	  agentic-cms admin managed-query-policy-set [--default-mode deterministic-retrieval|provider-routed] [--allowed-modes deterministic-retrieval,provider-routed] [--minimum-citation-count 1] [--require-grounded true|false] [--api-key ...]
-  agentic-cms admin retrieval-ranking-policy [--api-key ...]
-  agentic-cms admin retrieval-ranking-policy-set [--agent-instruction-weight 1.2] [--asset-summary-weight 1.1] [--human-document-weight 1] [--exact-phrase-boost 0.25] [--api-key ...]
-	  agentic-cms admin managed-query-eval-schedule-policy [--api-key ...]
-	  agentic-cms admin managed-query-eval-schedule-policy-set [--enabled true|false] [--interval-minutes 1440] [--file corpus/demo/evals.json | --clear-eval-input] [--api-key ...]
-	  agentic-cms admin action-execution-policy [--api-key ...]
-	  agentic-cms admin action-execution-policy-set [--enabled true|false] [--allowed-action-types create-task-record] [--require-approval true|false] [--dry-run-default true|false] [--kill-switch true|false] [--max-requests-per-hour 60] [--approval-expires-in-minutes 1440] [--api-key ...]
-	  agentic-cms admin managed-query-cache-policy [--api-key ...]
-  agentic-cms admin managed-query-cache-policy-set [--cache-enabled true|false] [--max-cache-ttl-seconds 3600|unlimited] [--api-key ...]
-  agentic-cms admin managed-query-cache-delete --cache-key CACHE_KEY [--api-key ...]
-  agentic-cms admin managed-query-cache-purge [--expired-before 2026-06-16T00:00:00Z] [--execute] [--api-key ...]
-  agentic-cms admin managed-query-retention-policy [--api-key ...]
-  agentic-cms admin managed-query-retention-policy-set [--prompt-capture-mode disabled|metadata-only] [--response-capture-mode disabled|metadata-only] [--metadata-retention-days 30|none] [--api-key ...]
-  agentic-cms admin secret-reference-policy [--api-key ...]
-  agentic-cms admin secret-reference-policy-set [--allowed-prefixes OPENAI_,ENTRA_] [--allowed-env-vars CUSTOM_PROVIDER_KEY] [--allow-unlisted true|false] [--api-key ...]
-  agentic-cms admin pii-redaction-policy [--api-key ...]
-  agentic-cms admin pii-redaction-policy-set [--redaction-enabled true|false] [--enabled-rule-kinds email,ip-address,url-secret] [--api-key ...]
-  agentic-cms admin service-account-policy [--api-key ...]
-  agentic-cms admin service-account-policy-set [--max-service-accounts 50|unlimited] [--max-active-api-keys 5|unlimited] [--default-key-expires-in-days 90|none] [--api-key ...]
-  agentic-cms admin model-provider-set --provider openai --enabled true --api-key-env-var OPENAI_API_KEY [--default-model gpt-5.1] [--max-output-tokens 700] [--temperature 0.2] [--timeout-ms 20000] [--max-retries 1] [--retry-backoff-ms 250] [--input-cost-per-million-tokens 2] [--output-cost-per-million-tokens 8] [--max-estimated-total-tokens-per-query 3000] [--max-estimated-cost-usd-per-query 0.05] [--cache-enabled true] [--cache-ttl-seconds 3600] [--api-key ...]
-  agentic-cms admin auth-providers [--api-key ...]
-  agentic-cms admin auth-provider-set --provider oidc --issuer-url https://idp.example.com --client-id agentic-cms --client-secret-env-var OIDC_CLIENT_SECRET [--api-key ...]
-  agentic-cms validate --file corpus/demo/assets.json [--as-of 2026-06-16] [--fail-on-warnings]
-  agentic-cms search --query "PII redaction" [--limit 10] [--strategy lexical|vector|hybrid] [--api-key ...]
-  agentic-cms agent query --query "PII redaction" [--limit 5] [--mode deterministic-retrieval|provider-routed] [--provider openai|anthropic|openrouter] [--model MODEL] [--cache true|false] [--api-key ...]
-	  agentic-cms agent feedback --telemetry-event-id retrieval_1 --query "PII redaction" --outcome accepted [--factual-citation-accuracy 5] [--api-key ...]
-	  agentic-cms agent feedback-list [--limit 50] [--api-key ...]
-	  agentic-cms agent eval --file corpus/demo/evals.json [--limit 5] [--minimum-pass-rate 1] [--tag-minimum-pass-rates policy-compliance=1,citation-accuracy=1] [--fail-on-threshold true] [--api-key ...]
-	  agentic-cms agent eval-runs [--limit 50] [--api-key ...]
-	  agentic-cms agent eval-summary [--since 2026-06-16T00:00:00Z] [--until 2026-06-17T00:00:00Z] [--limit 50] [--api-key ...]
-	  agentic-cms agent action-execute --action-type create-task-record --title "Review policy" [--description "..."] [--target stable-id] [--idempotency-key stable-retry-key] [--dry-run true|false] [--payload-file payload.json] [--metadata-file metadata.json] [--api-key ...] # requires admin or agent:execute
-	  agentic-cms agent action-list [--limit 50] [--api-key ...]
-	  agentic-cms agent action-decision --action-request-id agent_action_1 --decision approve|deny [--reason "..."] [--api-key ...]
-	  agentic-cms audit events [--limit 100] [--api-key ...]
-  agentic-cms telemetry summary [--since 2026-06-16T00:00:00Z] [--until 2026-06-17T00:00:00Z] [--limit 200] [--api-key ...]
-  agentic-cms telemetry retention [--api-key ...]
-  agentic-cms telemetry retention-set [--retrieval-event-days 30|forever] [--audit-event-days 365|forever] [--feedback-days 90|forever] [--api-key ...]
-  agentic-cms telemetry purge [--execute] [--api-key ...]
-  agentic-cms exports ai-package [--package demo-agent-pack] [--format json|okf] [--okf-version 0.1] [--output export.json] [--output-dir okf-bundle] [--api-key ...]
-  agentic-cms assets list [--api-key ...] [--api-url http://127.0.0.1:3000]
-  agentic-cms assets review-queue [--as-of 2026-06-16] [--include-approved true|false] [--limit 50] [--api-key ...]
-  agentic-cms assets get <stable-id> [--api-key ...] [--api-url http://127.0.0.1:3000]
-  agentic-cms assets create --file asset.json [--api-key ...] [--api-url http://127.0.0.1:3000]
-  agentic-cms assets update <stable-id> --file update.json [--api-key ...] [--api-url http://127.0.0.1:3000]
-  agentic-cms assets version <stable-id> --version-number 1 [--api-key ...] [--api-url http://127.0.0.1:3000]
-  agentic-cms assets review <stable-id> --review-due-at 2027-01-31 [--status approved] [--source-ref ...] [--change-note "..."] [--api-key ...]
-  agentic-cms assets publish <stable-id> [--review-due-at 2027-01-31] [--change-note "..."] [--api-key ...] [--api-url http://127.0.0.1:3000]
-  agentic-cms assets restore <stable-id> --version-number 1 [--api-key ...] [--api-url http://127.0.0.1:3000]
-  agentic-cms corpus import [--file corpus/demo/assets.json] [--api-key ...] [--api-url http://127.0.0.1:3000]
+  forgetbase health [--api-url http://127.0.0.1:3000]
+  forgetbase capabilities
+  forgetbase auth bootstrap --email admin@example.test --display-name "Admin" [--tenant-id tenant_demo] [--password ...]
+  forgetbase auth login --email user@example.test [--tenant-id tenant_demo] [--password ...] [--device-label "Work laptop"]
+  forgetbase auth oidc-start --provider oidc|microsoft-entra [--tenant-id tenant_demo] [--redirect-uri ...]
+  forgetbase auth oidc-callback --provider oidc|microsoft-entra --code ... --state ... --nonce ... --code-verifier ... [--tenant-id tenant_demo] [--device-label "Work laptop"]
+  forgetbase auth me [--api-key ...]
+  forgetbase auth logout [--api-key ...]
+  forgetbase auth sessions [--user-id user_123] [--include-revoked true|false] [--limit 50] [--api-key ...]
+  forgetbase auth session-revoke --session-id login_session_123 [--api-key ...]
+  forgetbase auth user-create --email user@example.test --display-name "User" --role reader [--password ...] [--api-key ...]
+  forgetbase auth user-list [--limit 50] [--api-key ...]
+  forgetbase auth user-update --user-id user_123 [--display-name "User"] [--role reader] [--status active|disabled] [--password ...] [--api-key ...]
+  forgetbase auth service-account-create --slug automation --name "Automation" [--role reader] [--status active|disabled] [--api-key ...]
+  forgetbase auth service-account-list [--limit 50] [--api-key ...]
+  forgetbase auth service-account-update --service-account-id service_account_123 [--name "Automation"] [--role reader] [--status active|disabled] [--api-key ...]
+  forgetbase auth group-create --slug ai-team --name "AI Team" [--description "..."] [--api-key ...]
+  forgetbase auth group-list [--limit 50] [--api-key ...]
+  forgetbase auth group-delete --group-id group_123 [--api-key ...]
+  forgetbase auth group-member-add --group-id group_123 --user-id user_123 [--api-key ...]
+  forgetbase auth group-member-remove --group-id group_123 --user-id user_123 [--api-key ...]
+  forgetbase auth group-members --group-id group_123 [--limit 50] [--api-key ...]
+  forgetbase auth api-key-create (--user-id user_123 | --service-account-id service_account_123) --name cli --scopes asset:read|agent:execute [--api-key ...]
+  forgetbase auth api-key-list [--limit 50] [--api-key ...]
+  forgetbase auth api-key-rotation-due [--as-of 2026-06-16T00:00:00Z] [--due-within-days 14] [--include-user-keys true|false] [--include-revoked true|false] [--limit 50] [--api-key ...]
+  forgetbase auth api-key-rotate --api-key-id api_key_123 [--name replacement] [--revoke-old] [--api-key ...]
+  forgetbase auth api-key-revoke --api-key-id api_key_123 [--api-key ...]
+  forgetbase auth grant --stable-id policy.example --principal-type user|group|service-account --principal-id user_123 [--api-key ...]
+  forgetbase admin model-providers [--api-key ...]
+  forgetbase admin model-provider-health [--api-key ...]
+	  forgetbase admin managed-query-cache [--limit 50] [--api-key ...]
+	  forgetbase admin managed-query-policy [--api-key ...]
+	  forgetbase admin managed-query-policy-set [--default-mode deterministic-retrieval|provider-routed] [--allowed-modes deterministic-retrieval,provider-routed] [--minimum-citation-count 1] [--require-grounded true|false] [--api-key ...]
+  forgetbase admin retrieval-ranking-policy [--api-key ...]
+  forgetbase admin retrieval-ranking-policy-set [--agent-instruction-weight 1.2] [--asset-summary-weight 1.1] [--human-document-weight 1] [--exact-phrase-boost 0.25] [--api-key ...]
+	  forgetbase admin managed-query-eval-schedule-policy [--api-key ...]
+	  forgetbase admin managed-query-eval-schedule-policy-set [--enabled true|false] [--interval-minutes 1440] [--file corpus/demo/evals.json | --clear-eval-input] [--api-key ...]
+	  forgetbase admin action-execution-policy [--api-key ...]
+	  forgetbase admin action-execution-policy-set [--enabled true|false] [--allowed-action-types create-task-record] [--require-approval true|false] [--dry-run-default true|false] [--kill-switch true|false] [--max-requests-per-hour 60] [--approval-expires-in-minutes 1440] [--api-key ...]
+	  forgetbase admin managed-query-cache-policy [--api-key ...]
+  forgetbase admin managed-query-cache-policy-set [--cache-enabled true|false] [--max-cache-ttl-seconds 3600|unlimited] [--api-key ...]
+  forgetbase admin managed-query-cache-delete --cache-key CACHE_KEY [--api-key ...]
+  forgetbase admin managed-query-cache-purge [--expired-before 2026-06-16T00:00:00Z] [--execute] [--api-key ...]
+  forgetbase admin managed-query-retention-policy [--api-key ...]
+  forgetbase admin managed-query-retention-policy-set [--prompt-capture-mode disabled|metadata-only] [--response-capture-mode disabled|metadata-only] [--metadata-retention-days 30|none] [--api-key ...]
+  forgetbase admin secret-reference-policy [--api-key ...]
+  forgetbase admin secret-reference-policy-set [--allowed-prefixes OPENAI_,ENTRA_] [--allowed-env-vars CUSTOM_PROVIDER_KEY] [--allow-unlisted true|false] [--api-key ...]
+  forgetbase admin pii-redaction-policy [--api-key ...]
+  forgetbase admin pii-redaction-policy-set [--redaction-enabled true|false] [--enabled-rule-kinds email,ip-address,url-secret] [--api-key ...]
+  forgetbase admin service-account-policy [--api-key ...]
+  forgetbase admin service-account-policy-set [--max-service-accounts 50|unlimited] [--max-active-api-keys 5|unlimited] [--default-key-expires-in-days 90|none] [--api-key ...]
+  forgetbase admin model-provider-set --provider openai --enabled true --api-key-env-var OPENAI_API_KEY [--default-model gpt-5.1] [--max-output-tokens 700] [--temperature 0.2] [--timeout-ms 20000] [--max-retries 1] [--retry-backoff-ms 250] [--input-cost-per-million-tokens 2] [--output-cost-per-million-tokens 8] [--max-estimated-total-tokens-per-query 3000] [--max-estimated-cost-usd-per-query 0.05] [--cache-enabled true] [--cache-ttl-seconds 3600] [--api-key ...]
+  forgetbase admin auth-providers [--api-key ...]
+  forgetbase admin auth-provider-set --provider oidc --issuer-url https://idp.example.com --client-id forgetbase --client-secret-env-var OIDC_CLIENT_SECRET [--api-key ...]
+  forgetbase validate --file corpus/demo/assets.json [--as-of 2026-06-16] [--fail-on-warnings]
+  forgetbase search --query "PII redaction" [--limit 10] [--strategy lexical|vector|hybrid] [--api-key ...]
+  forgetbase agent query --query "PII redaction" [--limit 5] [--mode deterministic-retrieval|provider-routed] [--provider openai|anthropic|openrouter] [--model MODEL] [--cache true|false] [--api-key ...]
+	  forgetbase agent feedback --telemetry-event-id retrieval_1 --query "PII redaction" --outcome accepted [--factual-citation-accuracy 5] [--api-key ...]
+	  forgetbase agent feedback-list [--limit 50] [--api-key ...]
+	  forgetbase agent eval --file corpus/demo/evals.json [--limit 5] [--minimum-pass-rate 1] [--tag-minimum-pass-rates policy-compliance=1,citation-accuracy=1] [--fail-on-threshold true] [--api-key ...]
+	  forgetbase agent eval-runs [--limit 50] [--api-key ...]
+	  forgetbase agent eval-summary [--since 2026-06-16T00:00:00Z] [--until 2026-06-17T00:00:00Z] [--limit 50] [--api-key ...]
+	  forgetbase agent action-execute --action-type create-task-record --title "Review policy" [--description "..."] [--target stable-id] [--idempotency-key stable-retry-key] [--dry-run true|false] [--payload-file payload.json] [--metadata-file metadata.json] [--api-key ...] # requires admin or agent:execute
+	  forgetbase agent action-list [--limit 50] [--api-key ...]
+	  forgetbase agent action-decision --action-request-id agent_action_1 --decision approve|deny [--reason "..."] [--api-key ...]
+	  forgetbase audit events [--limit 100] [--api-key ...]
+  forgetbase telemetry summary [--since 2026-06-16T00:00:00Z] [--until 2026-06-17T00:00:00Z] [--limit 200] [--api-key ...]
+  forgetbase telemetry retention [--api-key ...]
+  forgetbase telemetry retention-set [--retrieval-event-days 30|forever] [--audit-event-days 365|forever] [--feedback-days 90|forever] [--api-key ...]
+  forgetbase telemetry purge [--execute] [--api-key ...]
+  forgetbase exports ai-package [--package demo-agent-pack] [--format json|okf] [--okf-version 0.1] [--output export.json] [--output-dir okf-bundle] [--api-key ...]
+  forgetbase assets list [--api-key ...] [--api-url http://127.0.0.1:3000]
+  forgetbase assets review-queue [--as-of 2026-06-16] [--include-approved true|false] [--limit 50] [--api-key ...]
+  forgetbase assets get <stable-id> [--api-key ...] [--api-url http://127.0.0.1:3000]
+  forgetbase assets create --file asset.json [--api-key ...] [--api-url http://127.0.0.1:3000]
+  forgetbase assets update <stable-id> --file update.json [--api-key ...] [--api-url http://127.0.0.1:3000]
+  forgetbase assets version <stable-id> --version-number 1 [--api-key ...] [--api-url http://127.0.0.1:3000]
+  forgetbase assets review <stable-id> --review-due-at 2027-01-31 [--status approved] [--source-ref ...] [--change-note "..."] [--api-key ...]
+  forgetbase assets publish <stable-id> [--review-due-at 2027-01-31] [--change-note "..."] [--api-key ...] [--api-url http://127.0.0.1:3000]
+  forgetbase assets restore <stable-id> --version-number 1 [--api-key ...] [--api-url http://127.0.0.1:3000]
+  forgetbase corpus import [--file corpus/demo/assets.json] [--api-key ...] [--api-url http://127.0.0.1:3000]
 `);
 }
 

@@ -12,7 +12,7 @@ The alpha should not claim production readiness, hosted-service readiness, stabl
 
 ## Current Repository State
 
-- GitHub repository: `jremick/agentic-cms`
+- GitHub repository: `jremick/forgetbase`
 - Visibility: private at last read-back on 2026-06-17
 - Default branch: `main`
 - Current GitHub description: `Agent-native instruction CMS and governed knowledge control plane for AI teams`
@@ -70,7 +70,7 @@ npx -y pnpm@11.7.0 install --frozen-lockfile
 npx -y pnpm@11.7.0 typecheck
 npx -y pnpm@11.7.0 build
 npx -y pnpm@11.7.0 test
-npx -y pnpm@11.7.0 --filter @agentic-cms/cli start -- validate --file corpus/demo/assets.json --as-of 2026-06-16 --fail-on-warnings
+npx -y pnpm@11.7.0 --filter @forgetbase/cli start -- validate --file corpus/demo/assets.json --as-of 2026-06-16 --fail-on-warnings
 npx -y pnpm@11.7.0 security:verify-restricted-leakage
 npx -y pnpm@11.7.0 db:verify-backup-restore
 docker compose -f compose.yaml -f compose.same-origin.yaml config --quiet
@@ -80,7 +80,7 @@ git diff --check
 Run this hygiene scan over tracked release candidates after staging:
 
 ```bash
-pattern='BEGIN (RSA|OPENSSH|PRIVATE) KEY|OPENAI''_API_KEY=|ANTHROPIC''_API_KEY=|OPENROUTER''_API_KEY=|ghp_''[A-Za-z0-9_]{20,}|github_pat_''[A-Za-z0-9_]{30,}|acms_''[A-Za-z0-9_]{24,}'
+pattern='BEGIN (RSA|OPENSSH|PRIVATE) KEY|OPENAI''_API_KEY=|ANTHROPIC''_API_KEY=|OPENROUTER''_API_KEY=|ghp_''[A-Za-z0-9_]{20,}|github_pat_''[A-Za-z0-9_]{30,}|fbase_''[A-Za-z0-9_]{24,}'
 git grep -n -E "$pattern" -- .
 ```
 

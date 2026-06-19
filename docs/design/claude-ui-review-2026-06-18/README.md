@@ -1,6 +1,6 @@
-# Agentic CMS — Claude UI Design Review (2026-06-18)
+# ForgetBase — Claude UI Design Review (2026-06-18)
 
-A fresh, implementation-grounded design review of the Agentic CMS operational web UI,
+A fresh, implementation-grounded design review of the ForgetBase operational web UI,
 with recommended-improvement mockups for every major page as a self-contained static
 artifact.
 
@@ -21,7 +21,7 @@ artifact.
 ## Sources reviewed
 
 - Live UI: `apps/web/src/App.tsx` (~4.4k lines) and `apps/web/src/styles.css` (~1k lines)
-- Saved design package: `docs/design/agentic-cms-design-system/`, `docs/design/agentic-cms-main-page-mockups/`
+- Saved design package: `docs/design/forgetbase-design-system/`, `docs/design/forgetbase-main-page-mockups/`
 - Product model: `README.md`, `docs/END_TO_END_GOAL.md`, `docs/MVP_SCOPE.md`
 - Synthetic corpus: `corpus/demo/assets.json`, `corpus/demo/evals.json`
 
@@ -212,5 +212,5 @@ Steps 1 and 3 are shared primitives that pay off across every later step; do the
 
 ---
 
-*Generated as a self-contained design review for Agentic CMS. Findings reflect the repository state on
+*Generated as a self-contained design review for ForgetBase. Findings reflect the repository state on
 2026-06-18. Synthetic/demo content only; no private, customer, staff, or company content is introduced.*

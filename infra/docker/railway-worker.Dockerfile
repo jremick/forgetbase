@@ -11,4 +11,4 @@ COPY packages ./packages
 RUN pnpm install
 RUN pnpm build
 
-CMD ["sh", "-c", "pnpm db:migrate && pnpm --filter @agentic-cms/worker start"]
+CMD ["sh", "-c", "pnpm db:migrate && pnpm --filter @forgetbase/worker start"]

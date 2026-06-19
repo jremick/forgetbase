@@ -1,5 +1,5 @@
 /* ============================================================================
-   Agentic CMS — Claude UI Design Review (2026-06-18)
+   ForgetBase — Claude UI Design Review (2026-06-18)
    Static interaction layer. No network, no external dependencies, no storage
    writes required. Everything degrades to a readable static page if JS is off.
    ========================================================================== */

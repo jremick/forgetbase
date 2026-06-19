@@ -6,7 +6,7 @@ Audience: Founder/product-builder deciding remaining beta build plan, UI/UX dire
 
 ## Product Context
 
-ForgetBase, also referred to in older repo documents as Agentic CMS, is an open-core, Apache 2.0, self-hostable agent-native instruction management platform. The intended category is an instruction control plane for agentic systems, not a conventional CMS or wiki.
+ForgetBase, also referred to in older repo documents as ForgetBase, is an open-core, Apache 2.0, self-hostable agent-native instruction management platform. The intended category is an instruction control plane for agentic systems, not a conventional CMS or wiki.
 
 The system manages governed AI instructions, policies, guardrails, playbooks, tool guidance, reusable skills, SOPs, templates, learning assets, evaluation cases, and linked human-readable documents as versioned assets. Primary consumers are agents, AI tools, APIs, CLIs, MCP clients, ChatGPT, Claude, Codex, and Claude Code-style harnesses. The web UI is an operational surface for browsing, approval, debugging, and fallback reading.
 

@@ -34,9 +34,9 @@ describe("schema package", () => {
   });
 
   it("builds the shared health response", () => {
-    expect(healthResponseSchema.parse(createHealthResponse("agentic-cms-api"))).toEqual({
+    expect(healthResponseSchema.parse(createHealthResponse("forgetbase-api"))).toEqual({
       status: "ok",
-      service: "agentic-cms-api",
+      service: "forgetbase-api",
       version: "0.1.0"
     });
   });
@@ -120,7 +120,7 @@ describe("schema package", () => {
       provider: "microsoft-entra",
       enabled: true,
       issuerUrl: "https://login.microsoftonline.com/common/v2.0",
-      clientId: "agentic-cms-client",
+      clientId: "forgetbase-client",
       clientSecretEnvVar: "ENTRA_CLIENT_SECRET",
       groupClaim: "groups",
       allowedDomains: ["example.com"]

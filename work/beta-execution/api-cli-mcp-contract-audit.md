@@ -135,40 +135,40 @@ Observed in `packages/cli/src/index.ts`.
 
 Beta-critical commands:
 
-- `agentic-cms health`
-- `agentic-cms capabilities`
-- `agentic-cms validate --file ... --fail-on-warnings`
-- `agentic-cms corpus import --file ...`
-- `agentic-cms auth bootstrap`
-- `agentic-cms auth login`
-- `agentic-cms auth me`
-- `agentic-cms auth api-key-create`
-- `agentic-cms auth api-key-list`
-- `agentic-cms auth api-key-rotate`
-- `agentic-cms auth api-key-revoke`
-- `agentic-cms auth service-account-create`
-- `agentic-cms auth service-account-list`
-- `agentic-cms auth group-create`
-- `agentic-cms auth group-member-add`
-- `agentic-cms auth grant`
-- `agentic-cms assets list`
-- `agentic-cms assets get <stable-id>`
-- `agentic-cms assets create --file ...`
-- `agentic-cms assets update <stable-id> --file ...`
-- `agentic-cms assets version <stable-id> --version-number ...`
-- `agentic-cms assets review-queue`
-- `agentic-cms assets review <stable-id>`
-- `agentic-cms assets publish <stable-id>`
-- `agentic-cms assets restore <stable-id>`
-- `agentic-cms search --query ... --strategy lexical|vector|hybrid`
-- `agentic-cms agent query --query ... --mode deterministic-retrieval|provider-routed`
-- `agentic-cms agent eval --file ... --fail-on-threshold true`
-- `agentic-cms agent eval-runs`
-- `agentic-cms agent eval-summary`
-- `agentic-cms exports ai-package --format json`
-- `agentic-cms exports ai-package --format okf --okf-version 0.1`
-- `agentic-cms telemetry summary`
-- `agentic-cms audit events`
+- `forgetbase health`
+- `forgetbase capabilities`
+- `forgetbase validate --file ... --fail-on-warnings`
+- `forgetbase corpus import --file ...`
+- `forgetbase auth bootstrap`
+- `forgetbase auth login`
+- `forgetbase auth me`
+- `forgetbase auth api-key-create`
+- `forgetbase auth api-key-list`
+- `forgetbase auth api-key-rotate`
+- `forgetbase auth api-key-revoke`
+- `forgetbase auth service-account-create`
+- `forgetbase auth service-account-list`
+- `forgetbase auth group-create`
+- `forgetbase auth group-member-add`
+- `forgetbase auth grant`
+- `forgetbase assets list`
+- `forgetbase assets get <stable-id>`
+- `forgetbase assets create --file ...`
+- `forgetbase assets update <stable-id> --file ...`
+- `forgetbase assets version <stable-id> --version-number ...`
+- `forgetbase assets review-queue`
+- `forgetbase assets review <stable-id>`
+- `forgetbase assets publish <stable-id>`
+- `forgetbase assets restore <stable-id>`
+- `forgetbase search --query ... --strategy lexical|vector|hybrid`
+- `forgetbase agent query --query ... --mode deterministic-retrieval|provider-routed`
+- `forgetbase agent eval --file ... --fail-on-threshold true`
+- `forgetbase agent eval-runs`
+- `forgetbase agent eval-summary`
+- `forgetbase exports ai-package --format json`
+- `forgetbase exports ai-package --format okf --okf-version 0.1`
+- `forgetbase telemetry summary`
+- `forgetbase audit events`
 
 Long-tail or preview commands:
 
@@ -348,7 +348,7 @@ Concept frontmatter includes:
 - `allowed_surfaces`
 - `allowed_exports`
 
-Boundary: OKF is an export projection only. Canonical storage remains governed ForgetBase/Agentic CMS asset and asset-version records.
+Boundary: OKF is an export projection only. Canonical storage remains governed ForgetBase/ForgetBase asset and asset-version records.
 
 ## Gap Analysis
 
@@ -365,7 +365,7 @@ Boundary: OKF is an export projection only. Canonical storage remains governed F
 Minimum missing before beta freeze:
 
 - `openapi:check`: route/method inventory, beta-critical params, and saved artifact diff.
-- SDK contract tests for `AgenticCmsClient`.
+- SDK contract tests for `ForgetBaseClient`.
 - CLI contract tests for `validate`, `corpus import`, `assets get`, `assets review/publish`, JSON export, and auth/grant commands.
 - MCP snapshot test for the beta-critical tool list and input schemas.
 - MCP call tests for `get_asset`, `managed_query`, `generate_ai_export` JSON, `generate_ai_export` OKF, and `validate_context_access`.
@@ -530,7 +530,7 @@ Add a deterministic contract suite that does not need live provider secrets:
 2. SDK contract tests
    - mock `fetch`
    - assert URL/method/header/body for `health`, `search`, `managedQuery`, `exportAiPackage`, `exportOkfPackage`, `validateAssets`, `getAsset`, `publishAsset`
-   - assert `x-agentic-cms-surface: api` default or configured surface behavior
+   - assert `x-forgetbase-surface: api` default or configured surface behavior
 3. CLI contract tests
    - extend existing stubbed-fetch tests to cover beta-critical commands
    - assert output remains parseable JSON for machine use
@@ -552,8 +552,8 @@ Candidate future `smoke:compose` flow:
 2. `GET /health`
 3. `GET /openapi.json`
 4. `POST /auth/bootstrap`
-5. import synthetic corpus with `agentic-cms corpus import`
-6. validate corpus with `agentic-cms validate --fail-on-warnings`
+5. import synthetic corpus with `forgetbase corpus import`
+6. validate corpus with `forgetbase validate --fail-on-warnings`
 7. verify an asset through API `GET /assets/:stableId`
 8. review/publish or confirm active approved state
 9. create a scoped service-account/API key for machine access
