@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  localDevLoginDefaults,
   localSplitOriginAuthKey,
   localSplitOriginDefaultApiUrl,
   readInitialApiUrl,
@@ -44,27 +43,24 @@ describe("local dev auth defaults", () => {
     );
   });
 
-  it("prefills disposable local login credentials only for local Vite review", () => {
+  it("does not prefill login credentials from local defaults or deployed storage", () => {
     const local = location("localhost", "5173");
     const deployed = location("app.example.test", "");
-
-    expect(readInitialLoginTenantId(undefined, local)).toBe(localDevLoginDefaults.tenantId);
-    expect(readInitialLoginEmail(undefined, local)).toBe(localDevLoginDefaults.email);
-    expect(readInitialLoginPassword(local)).toBe(localDevLoginDefaults.password);
-
-    expect(readInitialLoginTenantId(undefined, deployed)).toBe("");
-    expect(readInitialLoginEmail(undefined, deployed)).toBe("");
-    expect(readInitialLoginPassword(deployed)).toBe("");
-  });
-
-  it("preserves stored tenant and email over local defaults", () => {
     const stored = storage({
       "agentic-cms-login-tenant": "tenant_custom",
       "agentic-cms-login-email": "operator@example.test"
     });
 
-    expect(readInitialLoginTenantId(stored, location("localhost", "5173"))).toBe("tenant_custom");
-    expect(readInitialLoginEmail(stored, location("localhost", "5173"))).toBe("operator@example.test");
+    expect(readInitialLoginTenantId(undefined, local)).toBe("");
+    expect(readInitialLoginEmail(undefined, local)).toBe("");
+    expect(readInitialLoginPassword(local)).toBe("");
+
+    expect(readInitialLoginTenantId(undefined, deployed)).toBe("");
+    expect(readInitialLoginEmail(undefined, deployed)).toBe("");
+    expect(readInitialLoginPassword(deployed)).toBe("");
+
+    expect(readInitialLoginTenantId(stored, local)).toBe("");
+    expect(readInitialLoginEmail(stored, local)).toBe("");
   });
 
   it("uses the login response key only for local split-origin review", () => {

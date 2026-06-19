@@ -16,7 +16,6 @@ import type {
   AssetVersionSnapshot,
   AuditEvent,
   AuthLoginResponse,
-  AuthOidcAuthorizeResponse,
   AuthOidcLoginResponse,
   AuthPrincipal,
   AuthProviderConfig,
@@ -53,7 +52,7 @@ import type {
   TelemetryRetentionPolicy,
   TelemetryRetentionPurgeResult
 } from "@agentic-cms/schema";
-import { Copy, Download, LogOut, RefreshCw, Search, SlidersHorizontal } from "lucide-react";
+import { Copy, Download, LogOut, RefreshCw, Search, SlidersHorizontal, X } from "lucide-react";
 import { Badge } from "./components/ui/badge.js";
 import { Button } from "./components/ui/button.js";
 import {
@@ -82,6 +81,7 @@ import {
 } from "./lib/asset-ui.js";
 import {
   apiUrlStorageKey,
+  localDevLoginDefaults,
   localSplitOriginAuthKey,
   readInitialApiUrl,
   readInitialLoginEmail,
@@ -269,10 +269,10 @@ export function App() {
   );
   const [authState, setAuthState] = useState<AuthState>("checking");
   const [currentPrincipal, setCurrentPrincipal] = useState<AuthPrincipal | null>(null);
-  const [loginTenantId, setLoginTenantId] = useState(readInitialLoginTenantId);
+  const [loginTenantId] = useState(readInitialLoginTenantId);
   const [loginEmail, setLoginEmail] = useState(readInitialLoginEmail);
   const [loginPassword, setLoginPassword] = useState(readInitialLoginPassword);
-  const [oidcProvider, setOidcProvider] = useState<ExternalAuthProvider>("microsoft-entra");
+  const [showLoginPanel, setShowLoginPanel] = useState(false);
   const [assets, setAssets] = useState<AssetRecord[]>([]);
   const [selectedStableId, setSelectedStableId] = useState<string>("");
   const [assetDetail, setAssetDetail] = useState<AssetDetail | null>(null);
@@ -554,6 +554,17 @@ export function App() {
   const displayIdentity = currentPrincipal?.displayName || currentPrincipal?.email || "Guest";
   const displayInitials = isAuthenticated ? initialsFor(displayIdentity) : "GU";
 
+  function openLoginPanel() {
+    setShowLoginPanel(true);
+    window.requestAnimationFrame(() => {
+      document.getElementById("login-dialog")?.scrollIntoView({ block: "center" });
+      const emailInput = document.getElementById("login-email");
+      if (emailInput instanceof HTMLInputElement) {
+        emailInput.focus();
+      }
+    });
+  }
+
   useEffect(() => {
     localStorage.setItem(apiUrlStorageKey, apiUrl);
   }, [apiUrl]);
@@ -575,16 +586,9 @@ export function App() {
   }, [sessionCookieActive]);
 
   useEffect(() => {
-    localStorage.setItem("agentic-cms-login-tenant", loginTenantId);
-  }, [loginTenantId]);
-
-  useEffect(() => {
-    if (loginEmail) {
-      localStorage.setItem("agentic-cms-login-email", loginEmail);
-    } else {
-      localStorage.removeItem("agentic-cms-login-email");
-    }
-  }, [loginEmail]);
+    localStorage.removeItem("agentic-cms-login-tenant");
+    localStorage.removeItem("agentic-cms-login-email");
+  }, []);
 
   useEffect(() => {
     void initializeSession();
@@ -791,11 +795,12 @@ export function App() {
     setError("");
 
     try {
+      const tenantId = loginTenantId.trim() || localDevLoginDefaults.tenantId;
       const response = await request<AuthLoginResponse>("/auth/login", {
         method: "POST",
         body: JSON.stringify({
-          tenantId: loginTenantId,
-          email: loginEmail,
+          tenantId,
+          email: loginEmail.trim(),
           password: loginPassword,
           keyName: "web-login",
           deviceLabel: "Web browser"
@@ -887,34 +892,6 @@ export function App() {
     await refreshHealth("");
     setError(logoutErrorMessage);
     setMessage(nextMessage);
-  }
-
-  async function startOidcLogin(event: FormEvent) {
-    event.preventDefault();
-    setError("");
-
-    try {
-      const redirectUri = `${window.location.origin}${window.location.pathname}`;
-      const response = await request<AuthOidcAuthorizeResponse>("/auth/oidc/authorize", {
-        method: "POST",
-        body: JSON.stringify({
-          tenantId: loginTenantId,
-          provider: oidcProvider,
-          redirectUri
-        })
-      }, "");
-
-      localStorage.setItem("agentic-cms-oidc-transaction", JSON.stringify({
-        tenantId: response.tenantId,
-        provider: response.provider,
-        nonce: response.nonce,
-        codeVerifier: response.codeVerifier,
-        redirectUri: response.redirectUri
-      }));
-      window.location.assign(response.authorizationUrl);
-    } catch (oidcError) {
-      setError(oidcError instanceof Error ? oidcError.message : String(oidcError));
-    }
   }
 
   async function completeOidcLogin(code: string, state: string, transaction: OidcWebTransaction) {
@@ -4993,18 +4970,14 @@ export function App() {
                 <Button
                   variant="primary"
                   type="button"
-                  onClick={() => {
-                    navigatePage("distribute");
-                    document.getElementById("login-title")?.scrollIntoView({ block: "center" });
-                  }}
+                  onClick={openLoginPanel}
                 >
-                  Run locally
+                  Log in
                 </Button>
                 <Button
                   type="button"
                   onClick={() => {
-                    navigatePage("distribute");
-                    document.getElementById("login-title")?.scrollIntoView({ block: "center" });
+                    document.getElementById("public-proof-title")?.scrollIntoView({ block: "start" });
                   }}
                 >
                   View the demo path
@@ -5079,62 +5052,7 @@ rootIndexPath=index.md`}</pre>
             </div>
           </section>
 
-          <section className="auth-entry-grid" aria-label="Sign in and beta boundary">
-            <section className="login-panel" aria-labelledby="login-title">
-              <div className="login-header">
-                <span className="mark login-mark" aria-hidden="true">
-                  <img className="mark-image" src="/favicon.svg" alt="" />
-                </span>
-                <h1 id="login-title">Sign in to ForgetBase</h1>
-                <p className="lede">Private alpha. Access by invitation.</p>
-                {currentPage === "distribute" || currentPage === "exports" ? (
-                  <p className="queued-route">Demo path queued: <code>#{currentPage}</code></p>
-                ) : null}
-              </div>
-              <form className="auth-settings-form" onSubmit={(event) => {
-                event.preventDefault();
-                void refresh();
-              }}>
-                <label>
-                  API URL
-                  <input value={apiUrl} onChange={(event) => setApiUrl(event.target.value)} autoComplete="url" />
-                </label>
-                <label>
-                  API key
-                  <input value={apiKey} onChange={(event) => setApiKey(event.target.value)} type="password" autoComplete="off" />
-                </label>
-                <button type="submit" disabled={!apiKey.trim() || authState === "checking"}>Use API key</button>
-              </form>
-              <form className="classic-login-form" onSubmit={(event) => void login(event)}>
-                <label>
-                  Tenant ID
-                  <input value={loginTenantId} onChange={(event) => setLoginTenantId(event.target.value)} autoComplete="organization" />
-                </label>
-                <label>
-                  Email
-                  <input value={loginEmail} onChange={(event) => setLoginEmail(event.target.value)} type="email" autoComplete="username" />
-                </label>
-                <label>
-                  Password
-                  <input value={loginPassword} onChange={(event) => setLoginPassword(event.target.value)} type="password" autoComplete="current-password" />
-                </label>
-                <button type="submit" disabled={authState === "checking"}>Sign in</button>
-              </form>
-              <form className="oidc-login-form" onSubmit={(event) => void startOidcLogin(event)}>
-                <label>
-                  SSO provider
-                  <select value={oidcProvider} onChange={(event) => setOidcProvider(event.target.value as ExternalAuthProvider)}>
-                    <option value="microsoft-entra">microsoft-entra</option>
-                    <option value="oidc">oidc</option>
-                  </select>
-                </label>
-                <button type="submit" disabled={!loginTenantId || authState === "checking"}>Continue with SSO</button>
-              </form>
-              {authState === "checking" ? <p className="message">Checking session</p> : null}
-              {message ? <p className="message">{message}</p> : null}
-              {error ? <p className="error">{error}</p> : null}
-            </section>
-
+          <section className="auth-entry-grid auth-entry-grid--boundary" aria-label="Private beta boundary">
             <aside className="beta-boundary-panel" aria-labelledby="beta-boundary-title">
               <p className="eyebrow">Clear beta boundary</p>
               <h2 id="beta-boundary-title">Built in public boundaries, not inflated claims.</h2>
@@ -5144,7 +5062,78 @@ rootIndexPath=index.md`}</pre>
                 orchestration, broad enterprise search parity, or certification-level compliance.
               </p>
             </aside>
+            <aside className="beta-access-panel" aria-labelledby="beta-access-title">
+              <p className="eyebrow">Private beta</p>
+              <h2 id="beta-access-title">Access by invitation.</h2>
+              <p>
+                Beta users can log in with their invitation credentials. The self-hostable demo path remains visible
+                before sign-in for reviewing scope and beta boundaries.
+              </p>
+              <Button variant="primary" type="button" onClick={openLoginPanel}>Log in</Button>
+              {authState === "checking" ? <p className="message">Checking session</p> : null}
+            </aside>
           </section>
+          {showLoginPanel ? (
+            <div className="login-dialog-backdrop" role="presentation">
+              <section
+                className="login-dialog"
+                id="login-dialog"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="login-title"
+              >
+                <div className="login-dialog-header">
+                  <span className="mark login-mark" aria-hidden="true">
+                    <img className="mark-image" src="/favicon.svg" alt="" />
+                  </span>
+                  <div>
+                    <h1 id="login-title">Log in to ForgetBase</h1>
+                    <p className="lede">Private beta. Access by invitation.</p>
+                  </div>
+                  <button
+                    className="dialog-close-button"
+                    type="button"
+                    aria-label="Close login"
+                    onClick={() => setShowLoginPanel(false)}
+                  >
+                    <X aria-hidden="true" />
+                  </button>
+                </div>
+                {currentPage === "distribute" || currentPage === "exports" ? (
+                  <p className="queued-route">Demo path queued: <code>#{currentPage}</code></p>
+                ) : null}
+                <form className="classic-login-form public-login-form" onSubmit={(event) => void login(event)}>
+                  <label htmlFor="login-email">
+                    Username / email
+                    <input
+                      id="login-email"
+                      value={loginEmail}
+                      onChange={(event) => setLoginEmail(event.target.value)}
+                      type="text"
+                      autoComplete="username"
+                      required
+                    />
+                  </label>
+                  <label htmlFor="login-password">
+                    Password
+                    <input
+                      id="login-password"
+                      value={loginPassword}
+                      onChange={(event) => setLoginPassword(event.target.value)}
+                      type="password"
+                      autoComplete="current-password"
+                      required
+                    />
+                  </label>
+                  <button type="submit" disabled={authState === "checking" || !loginEmail.trim() || !loginPassword}>
+                    Log in
+                  </button>
+                </form>
+                {message ? <p className="message">{message}</p> : null}
+                {error ? <p className="error">{error}</p> : null}
+              </section>
+            </div>
+          ) : null}
         </main>
       )}
     </div>

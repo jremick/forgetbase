@@ -68,21 +68,21 @@ export function readInitialApiUrl(
 }
 
 export function readInitialLoginTenantId(
-  storage: BrowserStorage | undefined = getBrowserStorage(),
-  location: BrowserLocation | undefined = getBrowserLocation()
+  _storage: BrowserStorage | undefined = getBrowserStorage(),
+  _location: BrowserLocation | undefined = getBrowserLocation()
 ): string {
-  return storage?.getItem("agentic-cms-login-tenant") ?? (isLocalSplitOriginWeb(location) ? localDevLoginDefaults.tenantId : "");
+  return "";
 }
 
 export function readInitialLoginEmail(
-  storage: BrowserStorage | undefined = getBrowserStorage(),
-  location: BrowserLocation | undefined = getBrowserLocation()
+  _storage: BrowserStorage | undefined = getBrowserStorage(),
+  _location: BrowserLocation | undefined = getBrowserLocation()
 ): string {
-  return storage?.getItem("agentic-cms-login-email") ?? (isLocalSplitOriginWeb(location) ? localDevLoginDefaults.email : "");
+  return "";
 }
 
-export function readInitialLoginPassword(location: BrowserLocation | undefined = getBrowserLocation()): string {
-  return isLocalSplitOriginWeb(location) ? localDevLoginDefaults.password : "";
+export function readInitialLoginPassword(_location: BrowserLocation | undefined = getBrowserLocation()): string {
+  return "";
 }
 
 export function localSplitOriginAuthKey(secret: string, location: BrowserLocation | undefined = getBrowserLocation()): string {
