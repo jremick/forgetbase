@@ -106,15 +106,15 @@ API:
 
 ```bash
 curl --silent --show-error --fail \
-  -H "authorization: Bearer $AGENTIC_CMS_API_KEY" \
-  -H "x-agentic-cms-surface: api" \
+  -H "authorization: Bearer $FORGETBASE_API_KEY" \
+  -H "x-forgetbase-surface: api" \
   "http://127.0.0.1:3000/exports/ai-package?package=demo-agent-pack&format=json"
 ```
 
 CLI:
 
 ```bash
-npx -y pnpm@11.7.0 --filter @agentic-cms/cli start -- exports ai-package --package demo-agent-pack --format json \
+npx -y pnpm@11.7.0 --filter @forgetbase/cli start -- exports ai-package --package demo-agent-pack --format json \
   --output export.json \
   --api-url http://127.0.0.1:3000
 ```
@@ -143,19 +143,19 @@ The snippets update live when the package name or selected format changes.
 ## Verification
 
 ```bash
-npx -y pnpm@11.7.0 --filter @agentic-cms/web typecheck
+npx -y pnpm@11.7.0 --filter @forgetbase/web typecheck
 ```
 
 Result: passed.
 
 ```bash
-npx -y pnpm@11.7.0 --filter @agentic-cms/web test
+npx -y pnpm@11.7.0 --filter @forgetbase/web test
 ```
 
 Result: passed, 2 test files and 12 tests.
 
 ```bash
-npx -y pnpm@11.7.0 --filter @agentic-cms/web build
+npx -y pnpm@11.7.0 --filter @forgetbase/web build
 ```
 
 Result: passed.

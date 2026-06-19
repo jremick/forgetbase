@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Agentic CMS — Claude UI Design Review (2026-06-18)</title>
+  <title>ForgetBase — Claude UI Design Review (2026-06-18)</title>
   <link rel="stylesheet" href="styles.css">
 </head>
 <body data-role="admin">
@@ -16,7 +16,7 @@
     <header class="topbar">
       <div class="brand">
         <span class="mark">AC</span>
-        <span>Agentic CMS</span>
+        <span>ForgetBase</span>
         <span class="brand-env">Private alpha</span>
       </div>
       <div class="topbar-main">
@@ -264,7 +264,7 @@
         <div class="panel" style="overflow:hidden">
           <div class="auth-shell" style="min-height:560px">
             <div class="auth-brand">
-              <div class="lockup"><span class="mark">AC</span><b>Agentic CMS</b><span class="brand-env">Private alpha</span></div>
+              <div class="lockup"><span class="mark">AC</span><b>ForgetBase</b><span class="brand-env">Private alpha</span></div>
               <div>
                 <h1 style="font-size:22px">Instruction control plane for agents</h1>
                 <p class="lede" style="margin-top:8px">Governed policies, guardrails, playbooks, skills, and templates that AI tools retrieve directly through API, CLI, MCP, and managed query — with permission-aware retrieval before any context reaches a model.</p>
@@ -867,9 +867,9 @@ mcp://asset/fetch?stableId=
               <div class="panel-body flush"><div class="table-wrap"><table>
                 <thead><tr><th>Owner</th><th>Scope</th><th>Preview</th><th>Expires</th><th>Status</th><th></th></tr></thead>
                 <tbody>
-                  <tr><td>svc-mcp-demo</td><td>asset:read</td><td class="mono">acms_live_…7Qp</td><td><span class="chip warn">6 days</span></td><td><span class="chip ok">active</span></td><td><button class="btn small">Rotate</button></td></tr>
-                  <tr><td>svc-exporter</td><td>asset:read · export</td><td class="mono">acms_live_…9Dz</td><td><span class="chip bad">expired</span></td><td><span class="chip bad">disabled</span></td><td><button class="btn small">Rotate</button></td></tr>
-                  <tr><td>svc-agent-planner</td><td>agent:execute</td><td class="mono">acms_live_…2Kx</td><td><span class="chip warn">9 days</span></td><td><span class="chip ok">active</span></td><td><button class="btn small">Rotate</button></td></tr>
+                  <tr><td>svc-mcp-demo</td><td>asset:read</td><td class="mono">fbase_live_…7Qp</td><td><span class="chip warn">6 days</span></td><td><span class="chip ok">active</span></td><td><button class="btn small">Rotate</button></td></tr>
+                  <tr><td>svc-exporter</td><td>asset:read · export</td><td class="mono">fbase_live_…9Dz</td><td><span class="chip bad">expired</span></td><td><span class="chip bad">disabled</span></td><td><button class="btn small">Rotate</button></td></tr>
+                  <tr><td>svc-agent-planner</td><td>agent:execute</td><td class="mono">fbase_live_…2Kx</td><td><span class="chip warn">9 days</span></td><td><span class="chip ok">active</span></td><td><button class="btn small">Rotate</button></td></tr>
                 </tbody>
               </table></div></div>
             </div>
@@ -878,8 +878,8 @@ mcp://asset/fetch?stableId=
                 <div class="staging-head"><h2 style="margin:0">One-time reveal</h2><span class="chip bad">shown once</span></div>
                 <div class="staging-body">
                   <p class="hint" style="margin:0">The raw secret is shown once on create or rotate. After you close this, only the safe preview remains — there is no second reveal.</p>
-                  <pre class="code-block">acms_demo_redacted_fixture</pre>
-                  <div class="chip-row"><button class="copy" data-copy="acms_demo_redacted_fixture">Copy secret</button><button class="btn small">I've stored it — close</button></div>
+                  <pre class="code-block">fbase_demo_redacted_fixture</pre>
+                  <div class="chip-row"><button class="copy" data-copy="fbase_demo_redacted_fixture">Copy secret</button><button class="btn small">I've stored it — close</button></div>
                 </div>
               </div>
               <div class="panel">
@@ -1090,7 +1090,7 @@ mcp://asset/fetch?stableId=
             <div class="section-panel" data-section-panel="secrets" data-scope="pol">
               <div class="panel"><div class="panel-header"><h2>Secret references</h2></div>
                 <div class="panel-body"><div class="form-grid">
-                  <div class="field"><label>Allowed prefixes</label><input class="input" value="AGENTIC_CMS_, OPENAI_, ANTHROPIC_, OPENROUTER_, ENTRA_, OIDC_"></div>
+                  <div class="field"><label>Allowed prefixes</label><input class="input" value="FORGETBASE_, OPENAI_, ANTHROPIC_, OPENROUTER_, ENTRA_, OIDC_"></div>
                   <div class="field"><label>Allow unlisted</label><select class="select"><option>false</option><option>true</option></select></div>
                 </div><p class="hint" style="margin-top:10px">Provider and OIDC config may reference only env-var names matching this policy.</p></div>
               </div>

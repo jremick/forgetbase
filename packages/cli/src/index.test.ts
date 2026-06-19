@@ -2,7 +2,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { buildOkfExportPackage, type AiExportPackage } from "@agentic-cms/schema";
+import { buildOkfExportPackage, type AiExportPackage } from "@forgetbase/schema";
 import { main } from "./index.js";
 
 const tempDirs: string[] = [];
@@ -13,7 +13,7 @@ afterEach(async () => {
   await Promise.all(tempDirs.splice(0, tempDirs.length).map((dir) => rm(dir, { recursive: true, force: true })));
 });
 
-describe("Agentic CMS CLI contract", () => {
+describe("ForgetBase CLI contract", () => {
   it("maps local bootstrap flags to the private-beta setup API contract", async () => {
     const { fetchMock, calls } = mockFetch(() => authBootstrapFixture());
     const logs = captureStdout();
@@ -33,7 +33,7 @@ describe("Agentic CMS CLI contract", () => {
       "--key-name",
       "beta-admin",
       "--api-url",
-      "http://agentic-cms.test"
+      "http://forgetbase.test"
     ]);
 
     expect(code).toBe(0);
@@ -82,7 +82,7 @@ describe("Agentic CMS CLI contract", () => {
       "--file",
       corpusFile,
       "--api-url",
-      "http://agentic-cms.test",
+      "http://forgetbase.test",
       "--api-key",
       "test-key"
     ]);
@@ -93,7 +93,7 @@ describe("Agentic CMS CLI contract", () => {
       "POST /assets"
     ]);
     expect(calls[0]?.headers.get("authorization")).toBe("Bearer test-key");
-    expect(calls[0]?.headers.get("x-agentic-cms-surface")).toBe("cli");
+    expect(calls[0]?.headers.get("x-forgetbase-surface")).toBe("cli");
     expect(calls[1]?.headers.get("authorization")).toBe("Bearer test-key");
     expect(calls[1]?.body).toMatchObject({
       stableId: "policy.beta-public-export",
@@ -115,7 +115,7 @@ describe("Agentic CMS CLI contract", () => {
       "get",
       "policy.beta-public-export",
       "--api-url",
-      "http://agentic-cms.test",
+      "http://forgetbase.test",
       "--api-key",
       "test-key"
     ]);
@@ -145,7 +145,7 @@ describe("Agentic CMS CLI contract", () => {
       "--strategy",
       "hybrid",
       "--api-url",
-      "http://agentic-cms.test",
+      "http://forgetbase.test",
       "--api-key",
       "test-key"
     ]);
@@ -158,7 +158,7 @@ describe("Agentic CMS CLI contract", () => {
     expect(calls[0]?.url.searchParams.get("limit")).toBe("3");
     expect(calls[0]?.url.searchParams.get("strategy")).toBe("hybrid");
     expect(calls[0]?.headers.get("authorization")).toBe("Bearer test-key");
-    expect(calls[0]?.headers.get("x-agentic-cms-surface")).toBe("cli");
+    expect(calls[0]?.headers.get("x-forgetbase-surface")).toBe("cli");
     expect(JSON.parse(logs[0] ?? "{}")).toMatchObject({
       query: "PII redaction",
       results: []
@@ -186,7 +186,7 @@ describe("Agentic CMS CLI contract", () => {
       "--cache",
       "false",
       "--api-url",
-      "http://agentic-cms.test",
+      "http://forgetbase.test",
       "--api-key",
       "test-key"
     ]);
@@ -196,7 +196,7 @@ describe("Agentic CMS CLI contract", () => {
     expect(calls[0]?.method).toBe("POST");
     expect(calls[0]?.url.pathname).toBe("/agent/query");
     expect(calls[0]?.headers.get("content-type")).toBe("application/json");
-    expect(calls[0]?.headers.get("x-agentic-cms-surface")).toBe("cli");
+    expect(calls[0]?.headers.get("x-forgetbase-surface")).toBe("cli");
     expect(calls[0]?.body).toMatchObject({
       tenantId: "tenant_demo",
       query: "PII redaction",
@@ -225,7 +225,7 @@ describe("Agentic CMS CLI contract", () => {
       "--require-grounded",
       "false",
       "--api-url",
-      "http://agentic-cms.test",
+      "http://forgetbase.test",
       "--api-key",
       "admin-key"
     ]);
@@ -259,7 +259,7 @@ describe("Agentic CMS CLI contract", () => {
       "--okf-version",
       "0.1",
       "--api-url",
-      "http://agentic-cms.test",
+      "http://forgetbase.test",
       "--api-key",
       "test-key"
     ]);
@@ -306,7 +306,7 @@ describe("Agentic CMS CLI contract", () => {
       "--format",
       "json",
       "--api-url",
-      "http://agentic-cms.test",
+      "http://forgetbase.test",
       "--api-key",
       "test-key"
     ]);
@@ -319,7 +319,7 @@ describe("Agentic CMS CLI contract", () => {
     expect(calls[0]?.url.searchParams.get("format")).toBe("json");
     expect(calls[0]?.url.searchParams.has("okfVersion")).toBe(false);
     expect(calls[0]?.headers.get("authorization")).toBe("Bearer test-key");
-    expect(calls[0]?.headers.get("x-agentic-cms-surface")).toBe("cli");
+    expect(calls[0]?.headers.get("x-forgetbase-surface")).toBe("cli");
     expect(JSON.parse(logs[0] ?? "{}")).toMatchObject({
       packageName: "demo-agent-pack",
       assetCount: 1,
@@ -388,7 +388,7 @@ function isMockHttpResponse(value: unknown): value is MockHttpResponse {
 }
 
 async function writeTempCorpus(assets: unknown[]): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), "agentic-cms-cli-contract-"));
+  const dir = await mkdtemp(join(tmpdir(), "forgetbase-cli-contract-"));
   tempDirs.push(dir);
   const file = join(dir, "assets.json");
   await writeFile(file, JSON.stringify({ assets }, null, 2));

@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 
-export const agenticCmsVersion = "0.1.0";
+export const forgetBaseVersion = "0.1.0";
 export const okfCurrentVersion = "0.1";
 export const okfSpecStatus = "draft";
 export const okfSpecCheckedAt = "2026-06-18";
@@ -1463,7 +1463,7 @@ function buildOkfIndex(
 ): string {
   const lines = [
     frontmatter({ okf_version: okfVersion }),
-    `# Agentic CMS OKF Export: ${sourcePackage.packageName}`,
+    `# ForgetBase OKF Export: ${sourcePackage.packageName}`,
     "",
     `Generated: ${sourcePackage.generatedAt}`,
     `Tenant: ${sourcePackage.tenantId}`,
@@ -1491,8 +1491,8 @@ function buildOkfManifest(
     frontmatter({
       type: "Export Manifest",
       title: `${sourcePackage.packageName} OKF Manifest`,
-      description: "Generation metadata for an Agentic CMS Open Knowledge Format export.",
-      tags: ["agentic-cms", "okf", "manifest"],
+      description: "Generation metadata for an ForgetBase Open Knowledge Format export.",
+      tags: ["forgetbase", "okf", "manifest"],
       timestamp: sourcePackage.generatedAt,
       okf_version: okfVersion
     }),
@@ -1511,7 +1511,7 @@ function buildOkfManifest(
     "",
     "# Update Process",
     "",
-    "1. Treat Agentic CMS asset versions as canonical.",
+    "1. Treat ForgetBase asset versions as canonical.",
     "2. Check the official OKF spec before adding support for a newer version.",
     "3. Preserve existing generated bundles with their declared `okf_version`, source content hashes, and projection hash.",
     "4. Generate a new bundle from the same source asset versions when upgrading the OKF projection.",
@@ -1549,9 +1549,9 @@ function buildOkfConcept(
     type: okfTypeForAssetType(asset.type),
     title: asset.title,
     description: asset.summary ?? asset.title,
-    resource: `agentic-cms://assets/${asset.stableId}`,
+    resource: `forgetbase://assets/${asset.stableId}`,
     tags: [
-      "agentic-cms",
+      "forgetbase",
       asset.type,
       `sensitivity-${asset.sensitivity}`,
       `status-${asset.status}`,
@@ -1619,7 +1619,7 @@ function buildOkfConcept(
   lines.push("", "# Citations");
 
   if (asset.citations.length === 0) {
-    lines.push("", "[1] Agentic CMS governed asset export metadata.");
+    lines.push("", "[1] ForgetBase governed asset export metadata.");
   } else {
     asset.citations.forEach((citation, index) => {
       lines.push(
@@ -1982,14 +1982,14 @@ export const managedQueryRetentionPolicySchema = z.object({
 export const healthResponseSchema = z.object({
   status: z.literal("ok"),
   service: z.string().min(1),
-  version: z.literal(agenticCmsVersion)
+  version: z.literal(forgetBaseVersion)
 });
 
 export function createHealthResponse(service: string): HealthResponse {
   return {
     status: "ok",
     service,
-    version: agenticCmsVersion
+    version: forgetBaseVersion
   };
 }
 

@@ -13,9 +13,9 @@ Use these goals after the authenticated shell/nav/command slice is integrated. D
 Migrate the Distribute route (`#distribute` and `#exports` legacy alias) to shadcn-style route composition while preserving export behavior and beta safety boundaries.
 
 Source of truth:
-- /Users/jarel/Documents/agentic-cms/AGENTS.md
-- /Users/jarel/Documents/agentic-cms/work/shadcn-migration/shadcn-target-ux-spec.md
-- /Users/jarel/Documents/agentic-cms/work/shadcn-migration/route-migration-inventory.md
+- /Users/jarel/Documents/forgetbase/AGENTS.md
+- /Users/jarel/Documents/forgetbase/work/shadcn-migration/shadcn-target-ux-spec.md
+- /Users/jarel/Documents/forgetbase/work/shadcn-migration/route-migration-inventory.md
 - current `apps/web/src/App.tsx`, `apps/web/src/styles.css`, and `apps/web/src/components/{ui,app,domain}/**`
 
 Ownership:
@@ -51,9 +51,9 @@ Stop and ask:
 Migrate the Read/Search route cluster (`#library`, `#asset-read`, `#versions`, `#search`) to shadcn-style route composition while preserving governed asset selection, public-reader gating, and managed-query behavior.
 
 Source of truth:
-- /Users/jarel/Documents/agentic-cms/AGENTS.md
-- /Users/jarel/Documents/agentic-cms/work/shadcn-migration/shadcn-target-ux-spec.md
-- /Users/jarel/Documents/agentic-cms/work/shadcn-migration/route-migration-inventory.md
+- /Users/jarel/Documents/forgetbase/AGENTS.md
+- /Users/jarel/Documents/forgetbase/work/shadcn-migration/shadcn-target-ux-spec.md
+- /Users/jarel/Documents/forgetbase/work/shadcn-migration/route-migration-inventory.md
 - `apps/web/src/lib/asset-ui.ts` and `apps/web/src/lib/asset-ui.test.ts`
 - current `apps/web/src/App.tsx`, `apps/web/src/styles.css`, and `apps/web/src/components/{ui,app,domain}/**`
 
@@ -91,9 +91,9 @@ Stop and ask:
 Migrate the Operate landing and shared route action surfaces to shadcn-style composition while preserving all route navigation and load-action behavior.
 
 Source of truth:
-- /Users/jarel/Documents/agentic-cms/AGENTS.md
-- /Users/jarel/Documents/agentic-cms/work/shadcn-migration/shadcn-target-ux-spec.md
-- /Users/jarel/Documents/agentic-cms/work/shadcn-migration/route-migration-inventory.md
+- /Users/jarel/Documents/forgetbase/AGENTS.md
+- /Users/jarel/Documents/forgetbase/work/shadcn-migration/shadcn-target-ux-spec.md
+- /Users/jarel/Documents/forgetbase/work/shadcn-migration/route-migration-inventory.md
 - current `apps/web/src/App.tsx`, `apps/web/src/styles.css`, and `apps/web/src/components/{ui,app,domain}/**`
 
 Ownership:

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-API_URL="${AGENTIC_CMS_API_URL:-http://127.0.0.1:3000}"
+API_URL="${FORGETBASE_API_URL:-http://127.0.0.1:3000}"
 
 API_URL="$API_URL" node --input-type=module <<'NODE'
 import { randomUUID } from "node:crypto";

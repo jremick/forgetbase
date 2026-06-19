@@ -62,7 +62,7 @@ import {
   type UserAuthProvider,
   type UserRole,
   type AssetRecord
-} from "@agentic-cms/schema";
+} from "@forgetbase/schema";
 
 export interface AccessCheckInput {
   principal: AuthPrincipal | null;
@@ -3046,11 +3046,11 @@ export function verifyPassword(password: string, passwordHash: string): boolean 
 }
 
 function generateApiKeySecret(): string {
-  return `acms_${randomBytes(32).toString("base64url")}`;
+  return `fbase_${randomBytes(32).toString("base64url")}`;
 }
 
 function generateRefreshTokenSecret(): string {
-  return `acms_refresh_${randomBytes(32).toString("base64url")}`;
+  return `fbase_refresh_${randomBytes(32).toString("base64url")}`;
 }
 
 function previewSecret(secret: string): string {

@@ -7,9 +7,9 @@ Baseline commit: `21d0da5628e8f20fab4ea704e932df504b60dd91`
 ## Commands
 
 ```bash
-npx -y pnpm@11.7.0 --filter @agentic-cms/web test
+npx -y pnpm@11.7.0 --filter @forgetbase/web test
 npx -y pnpm@11.7.0 claims:lint
-npx -y pnpm@11.7.0 --filter @agentic-cms/web build
+npx -y pnpm@11.7.0 --filter @forgetbase/web build
 ```
 
 ## Results

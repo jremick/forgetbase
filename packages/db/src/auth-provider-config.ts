@@ -6,7 +6,7 @@ import {
   type AuthProviderConfigInput,
   type ExternalAuthProvider,
   type UserRole
-} from "@agentic-cms/schema";
+} from "@forgetbase/schema";
 
 export interface AuthProviderConfigListOptions {
   tenantId?: string;

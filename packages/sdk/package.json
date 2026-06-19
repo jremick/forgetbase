@@ -1,5 +1,5 @@
 {
-  "name": "@agentic-cms/sdk",
+  "name": "@forgetbase/sdk",
   "version": "0.1.0",
   "private": true,
   "license": "Apache-2.0",
@@ -15,7 +15,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@agentic-cms/schema": "workspace:*"
+    "@forgetbase/schema": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.9.3"

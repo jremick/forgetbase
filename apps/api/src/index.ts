@@ -7,8 +7,8 @@ const server = buildServer();
 
 try {
   const address = await server.listen({ port, host });
-  server.log.info({ address }, "Agentic CMS API listening");
+  server.log.info({ address }, "ForgetBase API listening");
 } catch (error) {
-  server.log.error(error, "Failed to start Agentic CMS API");
+  server.log.error(error, "Failed to start ForgetBase API");
   process.exit(1);
 }

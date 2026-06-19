@@ -184,9 +184,9 @@ Remove unused custom component system after routes no longer reference those sel
 Commands:
 
 ```bash
-npx -y pnpm@11.7.0 --filter @agentic-cms/web typecheck
-npx -y pnpm@11.7.0 --filter @agentic-cms/web test
-npx -y pnpm@11.7.0 --filter @agentic-cms/web build
+npx -y pnpm@11.7.0 --filter @forgetbase/web typecheck
+npx -y pnpm@11.7.0 --filter @forgetbase/web test
+npx -y pnpm@11.7.0 --filter @forgetbase/web build
 ```
 
 Regression smoke:

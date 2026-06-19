@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-API_URL="${AGENTIC_CMS_API_URL:-http://127.0.0.1:3000}"
+API_URL="${FORGETBASE_API_URL:-http://127.0.0.1:3000}"
 
-API_URL="$API_URL" npx -y pnpm@11.7.0 --filter @agentic-cms/api exec node --input-type=module <<'NODE'
+API_URL="$API_URL" npx -y pnpm@11.7.0 --filter @forgetbase/api exec node --input-type=module <<'NODE'
 import { createServer } from "node:http";
 import { randomUUID } from "node:crypto";
 import { exportJWK, generateKeyPair, SignJWT } from "jose";
@@ -13,7 +13,7 @@ const unique = `${Date.now()}-${randomUUID().slice(0, 8)}`;
 const tenantId = `tenant_oidc_verify_${unique}`;
 const adminEmail = `admin-${unique}@example.test`;
 const oidcEmail = `oidc-${unique}@example.test`;
-const clientId = "agentic-cms-oidc-verify";
+const clientId = "forgetbase-oidc-verify";
 const redirectUri = "http://127.0.0.1:5175/";
 const keyId = `oidc-verify-${unique}`;
 let currentNonce = "";
@@ -118,7 +118,7 @@ const server = createServer(async (request, response) => {
 });
 
 await new Promise((resolve) => server.listen(0, "0.0.0.0", resolve));
-const issuerHost = process.env.AGENTIC_CMS_FAKE_OIDC_ISSUER_HOST ?? "host.docker.internal";
+const issuerHost = process.env.FORGETBASE_FAKE_OIDC_ISSUER_HOST ?? "host.docker.internal";
 issuer = `http://${issuerHost}:${server.address().port}`;
 
 try {

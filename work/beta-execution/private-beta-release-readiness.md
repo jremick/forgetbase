@@ -3,7 +3,7 @@
 Status: ready for private self-hosted beta; not ready for public beta or a shared hosted endpoint
 Date: 2026-06-19
 Branch: `codex/forgetbase-beta-readiness`
-PR: `https://github.com/jremick/agentic-cms/pull/1`
+PR: `https://github.com/jremick/forgetbase/pull/1`
 Hosted CI evidence: read back from PR #1 before merge.
 
 ## Decision
@@ -40,9 +40,9 @@ A shared public or private hosted URL is not cleared by this record. Before any 
 
 - only the same-origin proxy has a public domain
 - direct `api` and `web` services have no public domains
-- `AGENTIC_CMS_REQUIRE_AUTHENTICATION=true`
-- `AGENTIC_CMS_SESSION_COOKIE_SECURE=true`
-- `AGENTIC_CMS_CORS_ALLOWED_ORIGINS` is an approved HTTPS origin
+- `FORGETBASE_REQUIRE_AUTHENTICATION=true`
+- `FORGETBASE_SESSION_COOKIE_SECURE=true`
+- `FORGETBASE_CORS_ALLOWED_ORIGINS` is an approved HTTPS origin
 - `/api/auth/bootstrap` is blocked at the public proxy
 - unauthenticated protected API routes return `401 {"error":"authentication_required"}`
 
@@ -53,7 +53,7 @@ The default local Compose path remains optimized for local bootstrap and is not 
 Hosted CI:
 
 - GitHub Actions `Verify` passed on PR #1 before the final release-readiness record was amended.
-- Prior evidence run: `https://github.com/jremick/agentic-cms/actions/runs/27816817227`
+- Prior evidence run: `https://github.com/jremick/forgetbase/actions/runs/27816817227`
 - Required merge condition: PR #1 must show `Verify` passing on its latest head before merge.
 - CI steps covered by `Verify`: install, typecheck, build, strict demo corpus validation, base/same-origin/TLS Compose config parsing, OpenAPI drift, claims lint, beta contracts, and full tests.
 
@@ -63,10 +63,10 @@ Local release gates passed:
 npx -y pnpm@11.7.0 claims:lint
 npx -y pnpm@11.7.0 openapi:check
 npx -y pnpm@11.7.0 security:check-deployment-defaults
-AGENTIC_CMS_PUBLIC_DEPLOYMENT=true AGENTIC_CMS_REQUIRE_AUTHENTICATION=true AGENTIC_CMS_SESSION_COOKIE_SECURE=true AGENTIC_CMS_PUBLIC_ENTRYPOINT=railway-proxy AGENTIC_CMS_CORS_ALLOWED_ORIGINS=https://cms.example.com npx -y pnpm@11.7.0 security:check-deployment-defaults
+FORGETBASE_PUBLIC_DEPLOYMENT=true FORGETBASE_REQUIRE_AUTHENTICATION=true FORGETBASE_SESSION_COOKIE_SECURE=true FORGETBASE_PUBLIC_ENTRYPOINT=railway-proxy FORGETBASE_CORS_ALLOWED_ORIGINS=https://cms.example.com npx -y pnpm@11.7.0 security:check-deployment-defaults
 npx -y pnpm@11.7.0 contracts:check
 npx -y pnpm@11.7.0 test
-npx -y pnpm@11.7.0 --filter @agentic-cms/cli start -- validate --file corpus/demo/assets.json --as-of 2026-06-16 --fail-on-warnings
+npx -y pnpm@11.7.0 --filter @forgetbase/cli start -- validate --file corpus/demo/assets.json --as-of 2026-06-16 --fail-on-warnings
 docker compose -f compose.yaml config --quiet
 docker compose -f compose.yaml -f compose.same-origin.yaml config --quiet
 docker compose -f compose.yaml -f compose.same-origin.yaml -f compose.tls.yaml config --quiet

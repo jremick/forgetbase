@@ -621,7 +621,7 @@ Safety:
 
 - Package preview shows safe metadata only.
 - Do not preview instruction bodies, human document bodies, OKF file contents, denied assets, or restricted snippets.
-- Commands use env var placeholders such as `$AGENTIC_CMS_API_KEY`.
+- Commands use env var placeholders such as `$FORGETBASE_API_KEY`.
 - API key creation remains in Access/API consumers with one-time secret handling.
 
 ### Packages

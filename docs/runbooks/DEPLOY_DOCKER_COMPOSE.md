@@ -13,17 +13,17 @@ This runbook covers the pragmatic SMB self-hosting path for one Docker Compose d
 
 - Docker Desktop or a compatible Docker daemon.
 - Node.js with `npx` available.
-- A checked-out Agentic CMS revision or release tag.
+- A checked-out ForgetBase revision or release tag.
 - A target DNS/TLS/proxy layer if exposing beyond localhost, or real certificate and key files mounted into the Compose TLS overlay.
-- `AGENTIC_CMS_OIDC_STATE_SECRET` set to a high-entropy random value if OIDC login is enabled.
-- `AGENTIC_CMS_LOGIN_SESSION_MAX_AGE_SECONDS` set to the intended maximum password/OIDC login lifetime. The Compose default is `43200`, or 12 hours.
-- `AGENTIC_CMS_LOGIN_SESSION_IDLE_TIMEOUT_SECONDS` set to the intended rolling idle timeout for cookie-backed browser sessions. The Compose default is `14400`, or 4 hours. Use `0` only when explicitly disabling idle timeout.
-- `AGENTIC_CMS_LOGIN_SESSION_ABSOLUTE_MAX_AGE_SECONDS` set to the intended hard browser-session lifetime from login time. The Compose default is `2592000`, or 30 days. Use `0` only when explicitly disabling the absolute cap.
-- `AGENTIC_CMS_LOGIN_REFRESH_TOKEN_MAX_AGE_SECONDS` set to the intended browser refresh-token lifetime. The Compose default is `604800`, or 7 days. Use `0` only when explicitly disabling refresh-token issuance.
+- `FORGETBASE_OIDC_STATE_SECRET` set to a high-entropy random value if OIDC login is enabled.
+- `FORGETBASE_LOGIN_SESSION_MAX_AGE_SECONDS` set to the intended maximum password/OIDC login lifetime. The Compose default is `43200`, or 12 hours.
+- `FORGETBASE_LOGIN_SESSION_IDLE_TIMEOUT_SECONDS` set to the intended rolling idle timeout for cookie-backed browser sessions. The Compose default is `14400`, or 4 hours. Use `0` only when explicitly disabling idle timeout.
+- `FORGETBASE_LOGIN_SESSION_ABSOLUTE_MAX_AGE_SECONDS` set to the intended hard browser-session lifetime from login time. The Compose default is `2592000`, or 30 days. Use `0` only when explicitly disabling the absolute cap.
+- `FORGETBASE_LOGIN_REFRESH_TOKEN_MAX_AGE_SECONDS` set to the intended browser refresh-token lifetime. The Compose default is `604800`, or 7 days. Use `0` only when explicitly disabling refresh-token issuance.
 - Prefer the same-origin proxy overlay for browser login, with the web UI and API exposed through one public origin and API calls routed under `/api`.
-- Use HTTPS for any non-local browser deployment. Either terminate TLS in front of Compose and set `AGENTIC_CMS_SESSION_COOKIE_SECURE=true` on the API, or use `compose.tls.yaml`, which sets secure-cookie mode for the API service.
-- `AGENTIC_CMS_CORS_ALLOWED_ORIGINS` set to the exact public web origin list, such as `https://cms.example.com`, if browser login is intentionally exposed as a split-origin deployment.
-- Custom browser clients using cookie auth must echo the `agentic_cms_csrf` cookie in `x-agentic-cms-csrf` for unsafe requests. The bundled web UI handles this automatically.
+- Use HTTPS for any non-local browser deployment. Either terminate TLS in front of Compose and set `FORGETBASE_SESSION_COOKIE_SECURE=true` on the API, or use `compose.tls.yaml`, which sets secure-cookie mode for the API service.
+- `FORGETBASE_CORS_ALLOWED_ORIGINS` set to the exact public web origin list, such as `https://cms.example.com`, if browser login is intentionally exposed as a split-origin deployment.
+- Custom browser clients using cookie auth must echo the `forgetbase_csrf` cookie in `x-forgetbase-csrf` for unsafe requests. The bundled web UI handles this automatically.
 - Environment variables for any configured model/auth provider client secrets. Provider config records should reference env var names only; the API can also read mounted secret files through derived env vars such as `OPENAI_API_KEY_FILE=/run/secrets/openai_api_key`.
 
 ## First Deploy
@@ -42,16 +42,16 @@ The build step creates the workspace `dist/` outputs used by host-run CLI and wo
 The deployment-default check is safe to run before first boot. With no public-deployment flag it verifies the repository templates and keeps the local direct API/bootstrap path usable. Before exposing a Compose deployment beyond localhost, run it in public mode with the intended entrypoint and public browser origins. For example, a Compose TLS deployment should make the direct service ports private while exposing only the HTTPS proxy:
 
 ```bash
-AGENTIC_CMS_PUBLIC_DEPLOYMENT=true \
-AGENTIC_CMS_PUBLIC_ENTRYPOINT=compose-tls \
-AGENTIC_CMS_REQUIRE_AUTHENTICATION=true \
-AGENTIC_CMS_SESSION_COOKIE_SECURE=true \
-AGENTIC_CMS_CORS_ALLOWED_ORIGINS=https://cms.example.com \
-AGENTIC_CMS_API_PORT=127.0.0.1:3000 \
-AGENTIC_CMS_WEB_PORT=127.0.0.1:5175 \
-AGENTIC_CMS_POSTGRES_PORT=127.0.0.1:5432 \
-AGENTIC_CMS_PROXY_PORT=127.0.0.1:8080 \
-AGENTIC_CMS_HTTPS_PORT=443 \
+FORGETBASE_PUBLIC_DEPLOYMENT=true \
+FORGETBASE_PUBLIC_ENTRYPOINT=compose-tls \
+FORGETBASE_REQUIRE_AUTHENTICATION=true \
+FORGETBASE_SESSION_COOKIE_SECURE=true \
+FORGETBASE_CORS_ALLOWED_ORIGINS=https://cms.example.com \
+FORGETBASE_API_PORT=127.0.0.1:3000 \
+FORGETBASE_WEB_PORT=127.0.0.1:5175 \
+FORGETBASE_POSTGRES_PORT=127.0.0.1:5432 \
+FORGETBASE_PROXY_PORT=127.0.0.1:8080 \
+FORGETBASE_HTTPS_PORT=443 \
 npx -y pnpm@11.7.0 security:check-deployment-defaults
 ```
 
@@ -82,19 +82,19 @@ Local generated certificates are written under `infra/docker/tls/` and ignored b
 Bootstrap the first admin. Store the returned API key secret in your password manager or deployment secret store. It is returned only once.
 
 ```bash
-npx -y pnpm@11.7.0 --filter @agentic-cms/cli start -- auth bootstrap --email admin@example.test --display-name "Admin"
+npx -y pnpm@11.7.0 --filter @forgetbase/cli start -- auth bootstrap --email admin@example.test --display-name "Admin"
 ```
 
 Import the demo corpus only when you want the open-source sample content:
 
 ```bash
-npx -y pnpm@11.7.0 --filter @agentic-cms/cli start -- corpus import --api-url http://127.0.0.1:3000 --file corpus/demo/assets.json
+npx -y pnpm@11.7.0 --filter @forgetbase/cli start -- corpus import --api-url http://127.0.0.1:3000 --file corpus/demo/assets.json
 ```
 
 Run a one-off retrieval index pass after importing or restoring content:
 
 ```bash
-DATABASE_URL=postgres://agentic_cms:agentic_cms_dev@127.0.0.1:5432/agentic_cms npx -y pnpm@11.7.0 --filter @agentic-cms/worker start -- --once
+DATABASE_URL=postgres://forgetbase:forgetbase_dev@127.0.0.1:5432/forgetbase npx -y pnpm@11.7.0 --filter @forgetbase/worker start -- --once
 ```
 
 ## Health Checks
@@ -118,8 +118,8 @@ Then run authenticated and permission checks:
 
 ```bash
 npx -y pnpm@11.7.0 smoke:compose
-npx -y pnpm@11.7.0 --filter @agentic-cms/cli start -- auth me --api-url http://127.0.0.1:3000
-npx -y pnpm@11.7.0 --filter @agentic-cms/cli start -- search --api-url http://127.0.0.1:3000 --query "PII redaction" --limit 3
+npx -y pnpm@11.7.0 --filter @forgetbase/cli start -- auth me --api-url http://127.0.0.1:3000
+npx -y pnpm@11.7.0 --filter @forgetbase/cli start -- search --api-url http://127.0.0.1:3000 --query "PII redaction" --limit 3
 ```
 
 For a restricted-access smoke check, run:
@@ -142,7 +142,7 @@ Example:
 
 ```bash
 export OPENAI_API_KEY_FILE=/run/secrets/openai_api_key
-npx -y pnpm@11.7.0 --filter @agentic-cms/cli start -- admin model-provider-set --provider openai --enabled true --api-key-env-var OPENAI_API_KEY --default-model gpt-5.1
+npx -y pnpm@11.7.0 --filter @forgetbase/cli start -- admin model-provider-set --provider openai --enabled true --api-key-env-var OPENAI_API_KEY --default-model gpt-5.1
 ```
 
 Use this for Docker secrets, Kubernetes-style mounts, or local mounted secret files. Do not commit the secret file, the secret value, or ad hoc `.env` files with secret values. The configured base env var name must still pass tenant secret-reference policy; the `_FILE` companion is deployment-local plumbing and is not stored in the config record.
@@ -173,13 +173,13 @@ The helper below creates a local self-signed certificate for localhost testing o
 bash scripts/generate-local-tls-certs.sh
 ```
 
-For production, replace the local self-signed files with real certificates, set `AGENTIC_CMS_HTTPS_PORT=443` when binding the TLS listener directly, and set `AGENTIC_CMS_CORS_ALLOWED_ORIGINS` to the exact public browser origins when using split-origin browser clients. The TLS overlay also keeps an HTTP listener for redirects; bind `AGENTIC_CMS_PROXY_PORT` to a private interface or front it with your edge/firewall if you do not want plain HTTP exposed. CLI, MCP, SDK, and direct API clients may continue to use the API origin directly or use the proxied API base URL such as `https://cms.example.com/api`.
+For production, replace the local self-signed files with real certificates, set `FORGETBASE_HTTPS_PORT=443` when binding the TLS listener directly, and set `FORGETBASE_CORS_ALLOWED_ORIGINS` to the exact public browser origins when using split-origin browser clients. The TLS overlay also keeps an HTTP listener for redirects; bind `FORGETBASE_PROXY_PORT` to a private interface or front it with your edge/firewall if you do not want plain HTTP exposed. CLI, MCP, SDK, and direct API clients may continue to use the API origin directly or use the proxied API base URL such as `https://cms.example.com/api`.
 
-For production behind an external reverse proxy or load balancer, TLS can terminate at the edge instead of inside Compose. In that shape, still use the same-origin `/api` routing contract, set `AGENTIC_CMS_SESSION_COOKIE_SECURE=true` on the API, forward standard `X-Forwarded-*` headers, and use the public proxy origin as the browser entry point.
+For production behind an external reverse proxy or load balancer, TLS can terminate at the edge instead of inside Compose. In that shape, still use the same-origin `/api` routing contract, set `FORGETBASE_SESSION_COOKIE_SECURE=true` on the API, forward standard `X-Forwarded-*` headers, and use the public proxy origin as the browser entry point.
 
-For an external TLS edge, use `AGENTIC_CMS_PUBLIC_ENTRYPOINT=external-tls-proxy` in `security:check-deployment-defaults` and bind `AGENTIC_CMS_PROXY_PORT` to localhost or another private interface. The base API, web, and Postgres port variables should also be explicitly localhost-bound in public Compose checks; bare port values are local-development convenience, not a public deployment posture.
+For an external TLS edge, use `FORGETBASE_PUBLIC_ENTRYPOINT=external-tls-proxy` in `security:check-deployment-defaults` and bind `FORGETBASE_PROXY_PORT` to localhost or another private interface. The base API, web, and Postgres port variables should also be explicitly localhost-bound in public Compose checks; bare port values are local-development convenience, not a public deployment posture.
 
-Keep `AGENTIC_CMS_LOGIN_SESSION_MAX_AGE_SECONDS`, `AGENTIC_CMS_LOGIN_SESSION_IDLE_TIMEOUT_SECONDS`, `AGENTIC_CMS_LOGIN_SESSION_ABSOLUTE_MAX_AGE_SECONDS`, and `AGENTIC_CMS_LOGIN_REFRESH_TOKEN_MAX_AGE_SECONDS` at the shortest operationally acceptable values. Browser cookie authentication requires an active `login_sessions` row created by password/OIDC login; refresh uses hash-only one-time tokens stored in `login_session_refresh_tokens` and cannot extend beyond `login_sessions.absolute_expires_at` when configured; admin-created user keys and service-account keys remain bearer credentials only. Use admin-created user or service-account API keys, not the login endpoint, for longer-lived automation credentials.
+Keep `FORGETBASE_LOGIN_SESSION_MAX_AGE_SECONDS`, `FORGETBASE_LOGIN_SESSION_IDLE_TIMEOUT_SECONDS`, `FORGETBASE_LOGIN_SESSION_ABSOLUTE_MAX_AGE_SECONDS`, and `FORGETBASE_LOGIN_REFRESH_TOKEN_MAX_AGE_SECONDS` at the shortest operationally acceptable values. Browser cookie authentication requires an active `login_sessions` row created by password/OIDC login; refresh uses hash-only one-time tokens stored in `login_session_refresh_tokens` and cannot extend beyond `login_sessions.absolute_expires_at` when configured; admin-created user keys and service-account keys remain bearer credentials only. Use admin-created user or service-account API keys, not the login endpoint, for longer-lived automation credentials.
 
 ## Update Deploy
 
@@ -209,7 +209,7 @@ npx -y pnpm@11.7.0 security:verify-restricted-leakage
 If you run only Postgres through Compose and start the API or worker directly on the host, run migrations manually before starting those local processes:
 
 ```bash
-DATABASE_URL=postgres://agentic_cms:agentic_cms_dev@127.0.0.1:${AGENTIC_CMS_POSTGRES_PORT:-5432}/agentic_cms npx -y pnpm@11.7.0 db:migrate
+DATABASE_URL=postgres://forgetbase:forgetbase_dev@127.0.0.1:${FORGETBASE_POSTGRES_PORT:-5432}/forgetbase npx -y pnpm@11.7.0 db:migrate
 ```
 
 If OIDC login is enabled, also run:
@@ -225,42 +225,42 @@ Scheduled telemetry retention is disabled by default and dry-run by default when
 Preview a manual purge:
 
 ```bash
-npx -y pnpm@11.7.0 --filter @agentic-cms/cli start -- telemetry purge
+npx -y pnpm@11.7.0 --filter @forgetbase/cli start -- telemetry purge
 ```
 
 Execute only after reviewing the preview:
 
 ```bash
-npx -y pnpm@11.7.0 --filter @agentic-cms/cli start -- telemetry purge --execute
+npx -y pnpm@11.7.0 --filter @forgetbase/cli start -- telemetry purge --execute
 ```
 
 Scheduled managed-query cache cleanup is also disabled by default and dry-run by default when enabled. Preview a worker cleanup run:
 
 ```bash
-DATABASE_URL=postgres://agentic_cms:agentic_cms_dev@127.0.0.1:5432/agentic_cms npx -y pnpm@11.7.0 --filter @agentic-cms/worker start -- --cache-purge-once
+DATABASE_URL=postgres://forgetbase:forgetbase_dev@127.0.0.1:5432/forgetbase npx -y pnpm@11.7.0 --filter @forgetbase/worker start -- --cache-purge-once
 ```
 
 Execute only after reviewing the preview counts:
 
 ```bash
-DATABASE_URL=postgres://agentic_cms:agentic_cms_dev@127.0.0.1:5432/agentic_cms npx -y pnpm@11.7.0 --filter @agentic-cms/worker start -- --cache-purge-once --execute
+DATABASE_URL=postgres://forgetbase:forgetbase_dev@127.0.0.1:5432/forgetbase npx -y pnpm@11.7.0 --filter @forgetbase/worker start -- --cache-purge-once --execute
 ```
 
-API-key rotation reminders are disabled and dry-run by default. If you enable scheduled reminders, preview counts first, then set `AGENTIC_CMS_API_KEY_ROTATION_REMINDERS_DRY_RUN=false` only after the output is acceptable. Optional webhook delivery is controlled by `AGENTIC_CMS_API_KEY_ROTATION_REMINDERS_WEBHOOK_URL`; keep the HMAC secret in `AGENTIC_CMS_API_KEY_ROTATION_REMINDERS_WEBHOOK_SIGNING_SECRET`, not in command history or repo files. Dry-runs and duplicate-skipped reports do not call the webhook.
+API-key rotation reminders are disabled and dry-run by default. If you enable scheduled reminders, preview counts first, then set `FORGETBASE_API_KEY_ROTATION_REMINDERS_DRY_RUN=false` only after the output is acceptable. Optional webhook delivery is controlled by `FORGETBASE_API_KEY_ROTATION_REMINDERS_WEBHOOK_URL`; keep the HMAC secret in `FORGETBASE_API_KEY_ROTATION_REMINDERS_WEBHOOK_SIGNING_SECRET`, not in command history or repo files. Dry-runs and duplicate-skipped reports do not call the webhook.
 
 Action approval expiry maintenance is also disabled and dry-run by default. Preview stale pending approvals before enabling execution:
 
 ```bash
-DATABASE_URL=postgres://agentic_cms:agentic_cms_dev@127.0.0.1:5432/agentic_cms npx -y pnpm@11.7.0 --filter @agentic-cms/worker start -- --action-approval-expiry-once
+DATABASE_URL=postgres://forgetbase:forgetbase_dev@127.0.0.1:5432/forgetbase npx -y pnpm@11.7.0 --filter @forgetbase/worker start -- --action-approval-expiry-once
 ```
 
 Execute only after reviewing the candidate counts:
 
 ```bash
-DATABASE_URL=postgres://agentic_cms:agentic_cms_dev@127.0.0.1:5432/agentic_cms npx -y pnpm@11.7.0 --filter @agentic-cms/worker start -- --action-approval-expiry-once --execute
+DATABASE_URL=postgres://forgetbase:forgetbase_dev@127.0.0.1:5432/forgetbase npx -y pnpm@11.7.0 --filter @forgetbase/worker start -- --action-approval-expiry-once --execute
 ```
 
-For scheduled operation, set `AGENTIC_CMS_ACTION_APPROVAL_EXPIRY_ENABLED=true`, keep `AGENTIC_CMS_ACTION_APPROVAL_EXPIRY_DRY_RUN=true` until previews are acceptable, and tune `AGENTIC_CMS_ACTION_APPROVAL_EXPIRY_LIMIT` plus `AGENTIC_CMS_ACTION_APPROVAL_EXPIRY_INTERVAL_MS`. Executed maintenance marks stale `approval-required` action requests `expired`, records `agent.action.approval_expiry` audit evidence, and does not execute the requested action.
+For scheduled operation, set `FORGETBASE_ACTION_APPROVAL_EXPIRY_ENABLED=true`, keep `FORGETBASE_ACTION_APPROVAL_EXPIRY_DRY_RUN=true` until previews are acceptable, and tune `FORGETBASE_ACTION_APPROVAL_EXPIRY_LIMIT` plus `FORGETBASE_ACTION_APPROVAL_EXPIRY_INTERVAL_MS`. Executed maintenance marks stale `approval-required` action requests `expired`, records `agent.action.approval_expiry` audit evidence, and does not execute the requested action.
 
 ## Rollback
 

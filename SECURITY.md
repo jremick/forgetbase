@@ -2,7 +2,7 @@
 
 ## Supported Versions
 
-Agentic CMS is pre-release software. Public alpha builds are intended for inspection and trial use, not production workloads with sensitive data.
+ForgetBase is pre-release software. Public alpha builds are intended for inspection and trial use, not production workloads with sensitive data.
 
 Security fixes will target the latest alpha branch or tag once the first public alpha is created.
 

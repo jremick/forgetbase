@@ -5,6 +5,6 @@ services:
       - api
       - web
     ports:
-      - "${AGENTIC_CMS_PROXY_PORT:-8080}:8080"
+      - "${FORGETBASE_PROXY_PORT:-8080}:8080"
     volumes:
       - ./infra/docker/nginx.same-origin.conf:/etc/nginx/conf.d/default.conf:ro

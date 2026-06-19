@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-db_service="${AGENTIC_CMS_DB_SERVICE:-postgres}"
-db_name="${AGENTIC_CMS_DB_NAME:-agentic_cms}"
-db_user="${AGENTIC_CMS_DB_USER:-agentic_cms}"
-backup_dir="${AGENTIC_CMS_BACKUP_DIR:-backups}"
+db_service="${FORGETBASE_DB_SERVICE:-postgres}"
+db_name="${FORGETBASE_DB_NAME:-forgetbase}"
+db_user="${FORGETBASE_DB_USER:-forgetbase}"
+backup_dir="${FORGETBASE_BACKUP_DIR:-backups}"
 timestamp="$(date -u +"%Y%m%dT%H%M%SZ")"
-output_path="${1:-${backup_dir}/agentic-cms-${timestamp}.dump}"
+output_path="${1:-${backup_dir}/forgetbase-${timestamp}.dump}"
 tmp_path="${output_path}.tmp"
 
 mkdir -p "$(dirname "${output_path}")"

@@ -12,7 +12,7 @@ import {
   type PiiRedactionPolicy,
   type SearchResult,
   type TelemetryRetentionPurgeResult
-} from "@agentic-cms/schema";
+} from "@forgetbase/schema";
 import {
   createPool,
   createEmbeddingProviderFromEnv,
@@ -29,8 +29,8 @@ import {
   purgeTelemetryForRetentionPolicy,
   runMigrations,
   type ManagedQueryCacheTenantPurgeResult
-} from "@agentic-cms/db";
-import { redactText } from "@agentic-cms/validation";
+} from "@forgetbase/db";
+import { redactText } from "@forgetbase/validation";
 
 interface RetentionMaintenanceResult {
   dryRun: boolean;
@@ -122,7 +122,7 @@ interface ApiKeyRotationReminderNotificationDeliveryResult {
 }
 
 interface ApiKeyRotationReminderNotificationPayload {
-  event: "agentic_cms.api_key_rotation_reminders";
+  event: "forgetbase.api_key_rotation_reminders";
   version: 1;
   deliveryId: string;
   generatedAt: string;
@@ -177,7 +177,7 @@ interface ApiKeyRotationReminderMaintenanceInput {
 
 export async function runOnce(): Promise<void> {
   const supportedTypes = assetTypeSchema.options.join(", ");
-  console.log(`Agentic CMS worker ready. Supported asset types: ${supportedTypes}`);
+  console.log(`ForgetBase worker ready. Supported asset types: ${supportedTypes}`);
 
   if (!process.env.DATABASE_URL) {
     console.log("DATABASE_URL is not set; skipping retrieval indexing.");
@@ -192,52 +192,52 @@ export async function runOnce(): Promise<void> {
     const result = await retrievalRepository.indexAllAssets();
     console.log(`Indexed ${result.assetsIndexed} assets into ${result.chunksIndexed} retrieval chunks.`);
 
-    if (readBooleanEnv("AGENTIC_CMS_RETENTION_PURGE_RUN_ONCE", false)) {
+    if (readBooleanEnv("FORGETBASE_RETENTION_PURGE_RUN_ONCE", false)) {
       const retention = await runRetentionMaintenance({
-        dryRun: readBooleanEnv("AGENTIC_CMS_RETENTION_PURGE_DRY_RUN", true)
+        dryRun: readBooleanEnv("FORGETBASE_RETENTION_PURGE_DRY_RUN", true)
       });
       logRetentionMaintenance(retention);
     }
 
-    if (readBooleanEnv("AGENTIC_CMS_CACHE_PURGE_RUN_ONCE", false)) {
+    if (readBooleanEnv("FORGETBASE_CACHE_PURGE_RUN_ONCE", false)) {
       const cache = await runCacheMaintenance({
-        dryRun: readBooleanEnv("AGENTIC_CMS_CACHE_PURGE_DRY_RUN", true)
+        dryRun: readBooleanEnv("FORGETBASE_CACHE_PURGE_DRY_RUN", true)
       });
       logCacheMaintenance(cache);
     }
 
-    if (readBooleanEnv("AGENTIC_CMS_API_KEY_ROTATION_REMINDERS_RUN_ONCE", false)) {
+    if (readBooleanEnv("FORGETBASE_API_KEY_ROTATION_REMINDERS_RUN_ONCE", false)) {
       const reminders = await runApiKeyRotationReminderMaintenance({
-        dryRun: readBooleanEnv("AGENTIC_CMS_API_KEY_ROTATION_REMINDERS_DRY_RUN", true),
-        dueWithinDays: readPositiveIntegerEnv("AGENTIC_CMS_API_KEY_ROTATION_REMINDERS_DUE_WITHIN_DAYS", 14),
+        dryRun: readBooleanEnv("FORGETBASE_API_KEY_ROTATION_REMINDERS_DRY_RUN", true),
+        dueWithinDays: readPositiveIntegerEnv("FORGETBASE_API_KEY_ROTATION_REMINDERS_DUE_WITHIN_DAYS", 14),
         dedupeWindowHours: readNonNegativeIntegerEnv(
-          "AGENTIC_CMS_API_KEY_ROTATION_REMINDERS_DEDUPE_WINDOW_HOURS",
+          "FORGETBASE_API_KEY_ROTATION_REMINDERS_DEDUPE_WINDOW_HOURS",
           24
         ),
-        notificationWebhookUrl: readOptionalEnv("AGENTIC_CMS_API_KEY_ROTATION_REMINDERS_WEBHOOK_URL"),
+        notificationWebhookUrl: readOptionalEnv("FORGETBASE_API_KEY_ROTATION_REMINDERS_WEBHOOK_URL"),
         notificationWebhookSigningSecret: readOptionalEnv(
-          "AGENTIC_CMS_API_KEY_ROTATION_REMINDERS_WEBHOOK_SIGNING_SECRET"
+          "FORGETBASE_API_KEY_ROTATION_REMINDERS_WEBHOOK_SIGNING_SECRET"
         ),
         notificationWebhookTimeoutMs: readPositiveIntegerEnv(
-          "AGENTIC_CMS_API_KEY_ROTATION_REMINDERS_WEBHOOK_TIMEOUT_MS",
+          "FORGETBASE_API_KEY_ROTATION_REMINDERS_WEBHOOK_TIMEOUT_MS",
           5000
         )
       });
       logApiKeyRotationReminderMaintenance(reminders);
     }
 
-    if (readBooleanEnv("AGENTIC_CMS_MANAGED_QUERY_EVALS_RUN_ONCE", false)) {
+    if (readBooleanEnv("FORGETBASE_MANAGED_QUERY_EVALS_RUN_ONCE", false)) {
       const evals = await runManagedQueryEvalScheduleMaintenance({
-        dryRun: readBooleanEnv("AGENTIC_CMS_MANAGED_QUERY_EVALS_DRY_RUN", true),
-        limit: readPositiveIntegerEnv("AGENTIC_CMS_MANAGED_QUERY_EVALS_LIMIT", 100)
+        dryRun: readBooleanEnv("FORGETBASE_MANAGED_QUERY_EVALS_DRY_RUN", true),
+        limit: readPositiveIntegerEnv("FORGETBASE_MANAGED_QUERY_EVALS_LIMIT", 100)
       });
       logManagedQueryEvalScheduleMaintenance(evals);
     }
 
-    if (readBooleanEnv("AGENTIC_CMS_ACTION_APPROVAL_EXPIRY_RUN_ONCE", false)) {
+    if (readBooleanEnv("FORGETBASE_ACTION_APPROVAL_EXPIRY_RUN_ONCE", false)) {
       const actionExpiry = await runActionApprovalExpiryMaintenance({
-        dryRun: readBooleanEnv("AGENTIC_CMS_ACTION_APPROVAL_EXPIRY_DRY_RUN", true),
-        limit: readPositiveIntegerEnv("AGENTIC_CMS_ACTION_APPROVAL_EXPIRY_LIMIT", 500)
+        dryRun: readBooleanEnv("FORGETBASE_ACTION_APPROVAL_EXPIRY_DRY_RUN", true),
+        limit: readPositiveIntegerEnv("FORGETBASE_ACTION_APPROVAL_EXPIRY_LIMIT", 500)
       });
       logActionApprovalExpiryMaintenance(actionExpiry);
     }
@@ -744,56 +744,56 @@ export async function runActionApprovalExpiryMaintenance(
 
 export async function startWorker(): Promise<void> {
   await runOnce();
-  console.log("Agentic CMS worker idle loop started.");
+  console.log("ForgetBase worker idle loop started.");
 
-  const retentionEnabled = readBooleanEnv("AGENTIC_CMS_RETENTION_PURGE_ENABLED", false);
-  const retentionDryRun = readBooleanEnv("AGENTIC_CMS_RETENTION_PURGE_DRY_RUN", true);
+  const retentionEnabled = readBooleanEnv("FORGETBASE_RETENTION_PURGE_ENABLED", false);
+  const retentionDryRun = readBooleanEnv("FORGETBASE_RETENTION_PURGE_DRY_RUN", true);
   const retentionIntervalMs = readPositiveIntegerEnv(
-    "AGENTIC_CMS_RETENTION_PURGE_INTERVAL_MS",
+    "FORGETBASE_RETENTION_PURGE_INTERVAL_MS",
     24 * 60 * 60 * 1000
   );
-  const cacheEnabled = readBooleanEnv("AGENTIC_CMS_CACHE_PURGE_ENABLED", false);
-  const cacheDryRun = readBooleanEnv("AGENTIC_CMS_CACHE_PURGE_DRY_RUN", true);
+  const cacheEnabled = readBooleanEnv("FORGETBASE_CACHE_PURGE_ENABLED", false);
+  const cacheDryRun = readBooleanEnv("FORGETBASE_CACHE_PURGE_DRY_RUN", true);
   const cacheIntervalMs = readPositiveIntegerEnv(
-    "AGENTIC_CMS_CACHE_PURGE_INTERVAL_MS",
+    "FORGETBASE_CACHE_PURGE_INTERVAL_MS",
     60 * 60 * 1000
   );
-  const apiKeyRotationRemindersEnabled = readBooleanEnv("AGENTIC_CMS_API_KEY_ROTATION_REMINDERS_ENABLED", false);
-  const apiKeyRotationRemindersDryRun = readBooleanEnv("AGENTIC_CMS_API_KEY_ROTATION_REMINDERS_DRY_RUN", true);
+  const apiKeyRotationRemindersEnabled = readBooleanEnv("FORGETBASE_API_KEY_ROTATION_REMINDERS_ENABLED", false);
+  const apiKeyRotationRemindersDryRun = readBooleanEnv("FORGETBASE_API_KEY_ROTATION_REMINDERS_DRY_RUN", true);
   const apiKeyRotationRemindersDueWithinDays = readPositiveIntegerEnv(
-    "AGENTIC_CMS_API_KEY_ROTATION_REMINDERS_DUE_WITHIN_DAYS",
+    "FORGETBASE_API_KEY_ROTATION_REMINDERS_DUE_WITHIN_DAYS",
     14
   );
   const apiKeyRotationRemindersDedupeWindowHours = readNonNegativeIntegerEnv(
-    "AGENTIC_CMS_API_KEY_ROTATION_REMINDERS_DEDUPE_WINDOW_HOURS",
+    "FORGETBASE_API_KEY_ROTATION_REMINDERS_DEDUPE_WINDOW_HOURS",
     24
   );
   const apiKeyRotationRemindersIntervalMs = readPositiveIntegerEnv(
-    "AGENTIC_CMS_API_KEY_ROTATION_REMINDERS_INTERVAL_MS",
+    "FORGETBASE_API_KEY_ROTATION_REMINDERS_INTERVAL_MS",
     24 * 60 * 60 * 1000
   );
-  const apiKeyRotationRemindersWebhookUrl = readOptionalEnv("AGENTIC_CMS_API_KEY_ROTATION_REMINDERS_WEBHOOK_URL");
+  const apiKeyRotationRemindersWebhookUrl = readOptionalEnv("FORGETBASE_API_KEY_ROTATION_REMINDERS_WEBHOOK_URL");
   const apiKeyRotationRemindersWebhookSigningSecret = readOptionalEnv(
-    "AGENTIC_CMS_API_KEY_ROTATION_REMINDERS_WEBHOOK_SIGNING_SECRET"
+    "FORGETBASE_API_KEY_ROTATION_REMINDERS_WEBHOOK_SIGNING_SECRET"
   );
   const apiKeyRotationRemindersWebhookTimeoutMs = readPositiveIntegerEnv(
-    "AGENTIC_CMS_API_KEY_ROTATION_REMINDERS_WEBHOOK_TIMEOUT_MS",
+    "FORGETBASE_API_KEY_ROTATION_REMINDERS_WEBHOOK_TIMEOUT_MS",
     5000
   );
-  const managedQueryEvalsEnabled = readBooleanEnv("AGENTIC_CMS_MANAGED_QUERY_EVALS_ENABLED", false);
-  const managedQueryEvalsDryRun = readBooleanEnv("AGENTIC_CMS_MANAGED_QUERY_EVALS_DRY_RUN", true);
+  const managedQueryEvalsEnabled = readBooleanEnv("FORGETBASE_MANAGED_QUERY_EVALS_ENABLED", false);
+  const managedQueryEvalsDryRun = readBooleanEnv("FORGETBASE_MANAGED_QUERY_EVALS_DRY_RUN", true);
   const managedQueryEvalsIntervalMs = readPositiveIntegerEnv(
-    "AGENTIC_CMS_MANAGED_QUERY_EVALS_INTERVAL_MS",
+    "FORGETBASE_MANAGED_QUERY_EVALS_INTERVAL_MS",
     60 * 60 * 1000
   );
-  const managedQueryEvalsLimit = readPositiveIntegerEnv("AGENTIC_CMS_MANAGED_QUERY_EVALS_LIMIT", 100);
-  const actionApprovalExpiryEnabled = readBooleanEnv("AGENTIC_CMS_ACTION_APPROVAL_EXPIRY_ENABLED", false);
-  const actionApprovalExpiryDryRun = readBooleanEnv("AGENTIC_CMS_ACTION_APPROVAL_EXPIRY_DRY_RUN", true);
+  const managedQueryEvalsLimit = readPositiveIntegerEnv("FORGETBASE_MANAGED_QUERY_EVALS_LIMIT", 100);
+  const actionApprovalExpiryEnabled = readBooleanEnv("FORGETBASE_ACTION_APPROVAL_EXPIRY_ENABLED", false);
+  const actionApprovalExpiryDryRun = readBooleanEnv("FORGETBASE_ACTION_APPROVAL_EXPIRY_DRY_RUN", true);
   const actionApprovalExpiryIntervalMs = readPositiveIntegerEnv(
-    "AGENTIC_CMS_ACTION_APPROVAL_EXPIRY_INTERVAL_MS",
+    "FORGETBASE_ACTION_APPROVAL_EXPIRY_INTERVAL_MS",
     60 * 60 * 1000
   );
-  const actionApprovalExpiryLimit = readPositiveIntegerEnv("AGENTIC_CMS_ACTION_APPROVAL_EXPIRY_LIMIT", 500);
+  const actionApprovalExpiryLimit = readPositiveIntegerEnv("FORGETBASE_ACTION_APPROVAL_EXPIRY_LIMIT", 500);
   let retentionRunning = false;
   let cacheRunning = false;
   let apiKeyRotationRemindersRunning = false;
@@ -915,7 +915,7 @@ export async function startWorker(): Promise<void> {
       void runScheduledRetention();
     }, retentionIntervalMs);
 
-    if (readBooleanEnv("AGENTIC_CMS_RETENTION_PURGE_ON_START", false)) {
+    if (readBooleanEnv("FORGETBASE_RETENTION_PURGE_ON_START", false)) {
       void runScheduledRetention();
     }
   }
@@ -926,7 +926,7 @@ export async function startWorker(): Promise<void> {
       void runScheduledCacheMaintenance();
     }, cacheIntervalMs);
 
-    if (readBooleanEnv("AGENTIC_CMS_CACHE_PURGE_ON_START", false)) {
+    if (readBooleanEnv("FORGETBASE_CACHE_PURGE_ON_START", false)) {
       void runScheduledCacheMaintenance();
     }
   }
@@ -942,7 +942,7 @@ export async function startWorker(): Promise<void> {
       void runScheduledApiKeyRotationReminders();
     }, apiKeyRotationRemindersIntervalMs);
 
-    if (readBooleanEnv("AGENTIC_CMS_API_KEY_ROTATION_REMINDERS_ON_START", false)) {
+    if (readBooleanEnv("FORGETBASE_API_KEY_ROTATION_REMINDERS_ON_START", false)) {
       void runScheduledApiKeyRotationReminders();
     }
   }
@@ -956,7 +956,7 @@ export async function startWorker(): Promise<void> {
       void runScheduledManagedQueryEvals();
     }, managedQueryEvalsIntervalMs);
 
-    if (readBooleanEnv("AGENTIC_CMS_MANAGED_QUERY_EVALS_ON_START", false)) {
+    if (readBooleanEnv("FORGETBASE_MANAGED_QUERY_EVALS_ON_START", false)) {
       void runScheduledManagedQueryEvals();
     }
   }
@@ -970,7 +970,7 @@ export async function startWorker(): Promise<void> {
       void runScheduledActionApprovalExpiry();
     }, actionApprovalExpiryIntervalMs);
 
-    if (readBooleanEnv("AGENTIC_CMS_ACTION_APPROVAL_EXPIRY_ON_START", false)) {
+    if (readBooleanEnv("FORGETBASE_ACTION_APPROVAL_EXPIRY_ON_START", false)) {
       void runScheduledActionApprovalExpiry();
     }
   }
@@ -1001,7 +1001,7 @@ export async function startWorker(): Promise<void> {
     }
 
     clearInterval(heartbeat);
-    console.log("Agentic CMS worker shutting down.");
+    console.log("ForgetBase worker shutting down.");
     process.exitCode = 0;
   };
 
@@ -1026,13 +1026,13 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       dueWithinDays: readPositiveIntegerArg("--due-within-days", 14),
       dedupeWindowHours: readNonNegativeIntegerArg("--dedupe-window-hours", 24),
       notificationWebhookUrl: readStringArg("--notification-webhook-url") ??
-        readOptionalEnv("AGENTIC_CMS_API_KEY_ROTATION_REMINDERS_WEBHOOK_URL"),
+        readOptionalEnv("FORGETBASE_API_KEY_ROTATION_REMINDERS_WEBHOOK_URL"),
       notificationWebhookSigningSecret: readOptionalEnv(
-        "AGENTIC_CMS_API_KEY_ROTATION_REMINDERS_WEBHOOK_SIGNING_SECRET"
+        "FORGETBASE_API_KEY_ROTATION_REMINDERS_WEBHOOK_SIGNING_SECRET"
       ),
       notificationWebhookTimeoutMs: readPositiveIntegerArg(
         "--notification-webhook-timeout-ms",
-        readPositiveIntegerEnv("AGENTIC_CMS_API_KEY_ROTATION_REMINDERS_WEBHOOK_TIMEOUT_MS", 5000)
+        readPositiveIntegerEnv("FORGETBASE_API_KEY_ROTATION_REMINDERS_WEBHOOK_TIMEOUT_MS", 5000)
       )
     });
     logApiKeyRotationReminderMaintenance(result);
@@ -1457,7 +1457,7 @@ function buildApiKeyRotationReminderNotificationPayload(input: {
   deliveryId: string;
 }): ApiKeyRotationReminderNotificationPayload {
   return {
-    event: "agentic_cms.api_key_rotation_reminders",
+    event: "forgetbase.api_key_rotation_reminders",
     version: 1,
     deliveryId: input.deliveryId,
     generatedAt: new Date().toISOString(),
@@ -1494,13 +1494,13 @@ async function sendApiKeyRotationReminderWebhook(
   const body = JSON.stringify(input.payload);
   const headers: Record<string, string> = {
     "content-type": "application/json",
-    "user-agent": "agentic-cms-worker/0.1",
-    "x-agentic-cms-event": input.payload.event,
-    "x-agentic-cms-delivery-id": input.payload.deliveryId
+    "user-agent": "forgetbase-worker/0.1",
+    "x-forgetbase-event": input.payload.event,
+    "x-forgetbase-delivery-id": input.payload.deliveryId
   };
 
   if (input.signingSecret) {
-    headers["x-agentic-cms-signature"] = `sha256=${createHmac("sha256", input.signingSecret)
+    headers["x-forgetbase-signature"] = `sha256=${createHmac("sha256", input.signingSecret)
       .update(body)
       .digest("hex")}`;
   }

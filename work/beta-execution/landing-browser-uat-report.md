@@ -238,9 +238,9 @@ Worker-side screenshots retained:
 Worker-reported commands:
 
 ```bash
-npx -y pnpm@11.7.0 --filter @agentic-cms/web typecheck
-npx -y pnpm@11.7.0 --filter @agentic-cms/web test
-npx -y pnpm@11.7.0 --filter @agentic-cms/web build
+npx -y pnpm@11.7.0 --filter @forgetbase/web typecheck
+npx -y pnpm@11.7.0 --filter @forgetbase/web test
+npx -y pnpm@11.7.0 --filter @forgetbase/web build
 npx -y pnpm@11.7.0 claims:lint
 npx -y pnpm@11.7.0 smoke:compose
 ```
@@ -248,15 +248,15 @@ npx -y pnpm@11.7.0 smoke:compose
 Manager rerun commands:
 
 ```bash
-npx -y pnpm@11.7.0 --filter @agentic-cms/web typecheck
-npx -y pnpm@11.7.0 --filter @agentic-cms/web test
-npx -y pnpm@11.7.0 --filter @agentic-cms/web build
+npx -y pnpm@11.7.0 --filter @forgetbase/web typecheck
+npx -y pnpm@11.7.0 --filter @forgetbase/web test
+npx -y pnpm@11.7.0 --filter @forgetbase/web build
 npx -y pnpm@11.7.0 openapi:check
 npx -y pnpm@11.7.0 claims:lint
 npx -y pnpm@11.7.0 contracts:check
 npx -y pnpm@11.7.0 smoke:compose
 npx -y pnpm@11.7.0 test
-npx -y pnpm@11.7.0 --filter @agentic-cms/cli start -- validate --file corpus/demo/assets.json --as-of 2026-06-16 --fail-on-warnings
+npx -y pnpm@11.7.0 --filter @forgetbase/cli start -- validate --file corpus/demo/assets.json --as-of 2026-06-16 --fail-on-warnings
 docker compose -f compose.yaml config --quiet
 docker compose -f compose.yaml -f compose.same-origin.yaml config --quiet
 docker compose -f compose.yaml -f compose.same-origin.yaml -f compose.tls.yaml config --quiet

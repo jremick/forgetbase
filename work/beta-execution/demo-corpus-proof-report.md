@@ -81,8 +81,8 @@ sed -n '120,430p' packages/validation/src/index.ts
 jq -e '.assets | length, map(.stableId)' corpus/demo/assets.json
 jq -e '.cases | length, map(.id)' corpus/demo/evals.json
 git diff -- corpus/demo/assets.json corpus/demo/evals.json
-npx -y pnpm@11.7.0 --filter @agentic-cms/cli start -- validate --file corpus/demo/assets.json --as-of 2026-06-19 --fail-on-warnings
-npx -y pnpm@11.7.0 --filter @agentic-cms/schema exec tsx -e 'import { readFileSync } from "node:fs"; import { managedQueryEvalInputSchema } from "./src/index.ts"; const parsed = managedQueryEvalInputSchema.parse(JSON.parse(readFileSync("../../corpus/demo/evals.json", "utf8"))); console.log(JSON.stringify({ ok: true, caseCount: parsed.cases.length, tags: parsed.tagMinimumPassRates }, null, 2));'
+npx -y pnpm@11.7.0 --filter @forgetbase/cli start -- validate --file corpus/demo/assets.json --as-of 2026-06-19 --fail-on-warnings
+npx -y pnpm@11.7.0 --filter @forgetbase/schema exec tsx -e 'import { readFileSync } from "node:fs"; import { managedQueryEvalInputSchema } from "./src/index.ts"; const parsed = managedQueryEvalInputSchema.parse(JSON.parse(readFileSync("../../corpus/demo/evals.json", "utf8"))); console.log(JSON.stringify({ ok: true, caseCount: parsed.cases.length, tags: parsed.tagMinimumPassRates }, null, 2));'
 git diff --check -- corpus/demo/assets.json corpus/demo/evals.json work/beta-execution/demo-corpus-proof-report.md
 git status --short -- corpus/demo/assets.json corpus/demo/evals.json work/beta-execution/demo-corpus-proof-report.md
 ```

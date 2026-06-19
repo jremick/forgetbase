@@ -72,12 +72,12 @@ This is the target walkthrough after the minimal corpus additions above land. Co
 ### 0. Fresh Clone And Baseline
 
 ```bash
-git clone https://github.com/jremick/agentic-cms.git
-cd agentic-cms
+git clone https://github.com/jremick/forgetbase.git
+cd forgetbase
 npx -y pnpm@11.7.0 install
 npx -y pnpm@11.7.0 typecheck
 npx -y pnpm@11.7.0 build
-npx -y pnpm@11.7.0 --filter @agentic-cms/cli start -- validate --file corpus/demo/assets.json --as-of 2026-06-19 --fail-on-warnings
+npx -y pnpm@11.7.0 --filter @forgetbase/cli start -- validate --file corpus/demo/assets.json --as-of 2026-06-19 --fail-on-warnings
 ```
 
 Evidence to capture:
@@ -111,9 +111,9 @@ curl --silent --show-error --fail \
   -H "content-type: application/json" \
   --data '{"tenantId":"tenant_demo","email":"admin@example.test","displayName":"Admin","password":"local-dev-password","keyName":"local-beta-demo-admin"}' \
   http://127.0.0.1:3000/auth/bootstrap > "$bootstrap_json"
-export AGENTIC_CMS_API_KEY="$(node -e 'const fs=require("fs"); process.stdout.write(JSON.parse(fs.readFileSync(process.argv[1], "utf8")).secret)' "$bootstrap_json")"
+export FORGETBASE_API_KEY="$(node -e 'const fs=require("fs"); process.stdout.write(JSON.parse(fs.readFileSync(process.argv[1], "utf8")).secret)' "$bootstrap_json")"
 rm "$bootstrap_json"
-npx -y pnpm@11.7.0 --filter @agentic-cms/cli start -- auth me --api-url http://127.0.0.1:3000
+npx -y pnpm@11.7.0 --filter @forgetbase/cli start -- auth me --api-url http://127.0.0.1:3000
 ```
 
 Evidence to capture:
@@ -124,10 +124,10 @@ Evidence to capture:
 ### 3. Import The Synthetic Corpus
 
 ```bash
-npx -y pnpm@11.7.0 --filter @agentic-cms/cli start -- corpus import --api-url http://127.0.0.1:3000 --file corpus/demo/assets.json
-DATABASE_URL=postgres://agentic_cms:agentic_cms_dev@127.0.0.1:${AGENTIC_CMS_POSTGRES_PORT:-5432}/agentic_cms npx -y pnpm@11.7.0 --filter @agentic-cms/worker start -- --once
-npx -y pnpm@11.7.0 --filter @agentic-cms/cli start -- assets list --api-url http://127.0.0.1:3000
-npx -y pnpm@11.7.0 --filter @agentic-cms/cli start -- assets review-queue --as-of 2026-06-19 --api-url http://127.0.0.1:3000
+npx -y pnpm@11.7.0 --filter @forgetbase/cli start -- corpus import --api-url http://127.0.0.1:3000 --file corpus/demo/assets.json
+DATABASE_URL=postgres://forgetbase:forgetbase_dev@127.0.0.1:${FORGETBASE_POSTGRES_PORT:-5432}/forgetbase npx -y pnpm@11.7.0 --filter @forgetbase/worker start -- --once
+npx -y pnpm@11.7.0 --filter @forgetbase/cli start -- assets list --api-url http://127.0.0.1:3000
+npx -y pnpm@11.7.0 --filter @forgetbase/cli start -- assets review-queue --as-of 2026-06-19 --api-url http://127.0.0.1:3000
 ```
 
 Evidence to capture:
@@ -163,9 +163,9 @@ Evidence to capture:
 CLI path:
 
 ```bash
-npx -y pnpm@11.7.0 --filter @agentic-cms/cli start -- assets review playbook.incident-triage --review-due-at 2027-06-30 --status approved --change-note "Approve synthetic beta walkthrough playbook" --api-url http://127.0.0.1:3000
-npx -y pnpm@11.7.0 --filter @agentic-cms/cli start -- assets publish playbook.incident-triage --review-due-at 2027-06-30 --change-note "Publish for beta demo" --api-url http://127.0.0.1:3000
-DATABASE_URL=postgres://agentic_cms:agentic_cms_dev@127.0.0.1:${AGENTIC_CMS_POSTGRES_PORT:-5432}/agentic_cms npx -y pnpm@11.7.0 --filter @agentic-cms/worker start -- --once
+npx -y pnpm@11.7.0 --filter @forgetbase/cli start -- assets review playbook.incident-triage --review-due-at 2027-06-30 --status approved --change-note "Approve synthetic beta walkthrough playbook" --api-url http://127.0.0.1:3000
+npx -y pnpm@11.7.0 --filter @forgetbase/cli start -- assets publish playbook.incident-triage --review-due-at 2027-06-30 --change-note "Publish for beta demo" --api-url http://127.0.0.1:3000
+DATABASE_URL=postgres://forgetbase:forgetbase_dev@127.0.0.1:${FORGETBASE_POSTGRES_PORT:-5432}/forgetbase npx -y pnpm@11.7.0 --filter @forgetbase/worker start -- --once
 ```
 
 UI path:
@@ -184,8 +184,8 @@ Evidence to capture:
 ### 6. Search And Managed Query
 
 ```bash
-npx -y pnpm@11.7.0 --filter @agentic-cms/cli start -- search --query "PII redaction" --limit 3 --strategy hybrid --api-url http://127.0.0.1:3000
-npx -y pnpm@11.7.0 --filter @agentic-cms/cli start -- agent query --query "What should an agent do before storing personal identifiers in telemetry?" --limit 3 --api-url http://127.0.0.1:3000
+npx -y pnpm@11.7.0 --filter @forgetbase/cli start -- search --query "PII redaction" --limit 3 --strategy hybrid --api-url http://127.0.0.1:3000
+npx -y pnpm@11.7.0 --filter @forgetbase/cli start -- agent query --query "What should an agent do before storing personal identifiers in telemetry?" --limit 3 --api-url http://127.0.0.1:3000
 curl --silent --show-error --fail "http://127.0.0.1:3000/search?query=PII%20redaction&limit=3&strategy=hybrid"
 ```
 
@@ -201,32 +201,32 @@ API fetch:
 
 ```bash
 curl --silent --show-error --fail \
-  -H "authorization: Bearer $AGENTIC_CMS_API_KEY" \
-  -H "x-agentic-cms-surface: api" \
+  -H "authorization: Bearer $FORGETBASE_API_KEY" \
+  -H "x-forgetbase-surface: api" \
   http://127.0.0.1:3000/assets/guardrail.pii-redaction
 ```
 
 CLI fetch:
 
 ```bash
-npx -y pnpm@11.7.0 --filter @agentic-cms/cli start -- assets get guardrail.pii-redaction --api-url http://127.0.0.1:3000
+npx -y pnpm@11.7.0 --filter @forgetbase/cli start -- assets get guardrail.pii-redaction --api-url http://127.0.0.1:3000
 ```
 
 MCP fetch:
 
 ```bash
-AGENTIC_CMS_API_URL=http://127.0.0.1:3000 AGENTIC_CMS_API_KEY="$AGENTIC_CMS_API_KEY" npx -y pnpm@11.7.0 --filter @agentic-cms/mcp-server exec node --input-type=module - <<'NODE'
+FORGETBASE_API_URL=http://127.0.0.1:3000 FORGETBASE_API_KEY="$FORGETBASE_API_KEY" npx -y pnpm@11.7.0 --filter @forgetbase/mcp-server exec node --input-type=module - <<'NODE'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 
 const transport = new StdioClientTransport({
   command: 'npx',
-  args: ['-y', 'pnpm@11.7.0', '--filter', '@agentic-cms/mcp-server', 'start'],
+  args: ['-y', 'pnpm@11.7.0', '--filter', '@forgetbase/mcp-server', 'start'],
   cwd: process.cwd(),
   env: {
     ...process.env,
-    AGENTIC_CMS_API_URL: 'http://127.0.0.1:3000',
-    AGENTIC_CMS_API_KEY: process.env.AGENTIC_CMS_API_KEY ?? ''
+    FORGETBASE_API_URL: 'http://127.0.0.1:3000',
+    FORGETBASE_API_KEY: process.env.FORGETBASE_API_KEY ?? ''
   }
 });
 const client = new Client({ name: 'forgetbase-beta-demo', version: '0.1.0' });
@@ -255,25 +255,25 @@ Evidence to capture:
 ```bash
 curl --silent --show-error --fail "http://127.0.0.1:3000/exports/ai-package?package=demo-agent-pack" > work/demo-agent-pack.json
 curl --silent --show-error --fail "http://127.0.0.1:3000/exports/ai-package?package=demo-agent-pack&format=okf&okfVersion=0.1" > work/demo-agent-pack-okf.json
-npx -y pnpm@11.7.0 --filter @agentic-cms/cli start -- exports ai-package --package demo-agent-pack --api-url http://127.0.0.1:3000 --output work/demo-agent-pack-cli.json
-npx -y pnpm@11.7.0 --filter @agentic-cms/cli start -- exports ai-package --package demo-agent-pack --format okf --okf-version 0.1 --api-url http://127.0.0.1:3000 --output-dir work/okf-demo-agent-pack
+npx -y pnpm@11.7.0 --filter @forgetbase/cli start -- exports ai-package --package demo-agent-pack --api-url http://127.0.0.1:3000 --output work/demo-agent-pack-cli.json
+npx -y pnpm@11.7.0 --filter @forgetbase/cli start -- exports ai-package --package demo-agent-pack --format okf --okf-version 0.1 --api-url http://127.0.0.1:3000 --output-dir work/okf-demo-agent-pack
 ```
 
 MCP export:
 
 ```bash
-AGENTIC_CMS_API_URL=http://127.0.0.1:3000 AGENTIC_CMS_API_KEY="$AGENTIC_CMS_API_KEY" npx -y pnpm@11.7.0 --filter @agentic-cms/mcp-server exec node --input-type=module - <<'NODE'
+FORGETBASE_API_URL=http://127.0.0.1:3000 FORGETBASE_API_KEY="$FORGETBASE_API_KEY" npx -y pnpm@11.7.0 --filter @forgetbase/mcp-server exec node --input-type=module - <<'NODE'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 
 const transport = new StdioClientTransport({
   command: 'npx',
-  args: ['-y', 'pnpm@11.7.0', '--filter', '@agentic-cms/mcp-server', 'start'],
+  args: ['-y', 'pnpm@11.7.0', '--filter', '@forgetbase/mcp-server', 'start'],
   cwd: process.cwd(),
   env: {
     ...process.env,
-    AGENTIC_CMS_API_URL: 'http://127.0.0.1:3000',
-    AGENTIC_CMS_API_KEY: process.env.AGENTIC_CMS_API_KEY ?? ''
+    FORGETBASE_API_URL: 'http://127.0.0.1:3000',
+    FORGETBASE_API_KEY: process.env.FORGETBASE_API_KEY ?? ''
   }
 });
 const client = new Client({ name: 'forgetbase-export-demo', version: '0.1.0' });
@@ -331,13 +331,13 @@ Evidence to capture:
 ### 10. Telemetry And Audit Read-Back
 
 ```bash
-npx -y pnpm@11.7.0 --filter @agentic-cms/cli start -- telemetry summary --api-url http://127.0.0.1:3000
-npx -y pnpm@11.7.0 --filter @agentic-cms/cli start -- audit events --limit 50 --api-url http://127.0.0.1:3000
+npx -y pnpm@11.7.0 --filter @forgetbase/cli start -- telemetry summary --api-url http://127.0.0.1:3000
+npx -y pnpm@11.7.0 --filter @forgetbase/cli start -- audit events --limit 50 --api-url http://127.0.0.1:3000
 curl --silent --show-error --fail \
-  -H "authorization: Bearer $AGENTIC_CMS_API_KEY" \
+  -H "authorization: Bearer $FORGETBASE_API_KEY" \
   http://127.0.0.1:3000/telemetry/retrieval-events?limit=20
 curl --silent --show-error --fail \
-  -H "authorization: Bearer $AGENTIC_CMS_API_KEY" \
+  -H "authorization: Bearer $FORGETBASE_API_KEY" \
   http://127.0.0.1:3000/audit/events?limit=50
 ```
 
@@ -350,7 +350,7 @@ Evidence to capture:
 ### 11. Cleanup
 
 ```bash
-unset AGENTIC_CMS_API_KEY
+unset FORGETBASE_API_KEY
 docker compose -f compose.yaml -f compose.same-origin.yaml down
 ```
 
@@ -488,7 +488,7 @@ Commands run:
 
 ```text
 read local maintainer ADHD helper skill instructions
-search local maintainer Codex memory registry for agentic-cms, ForgetBase, OKF, demo spine, and restricted-leakage context
+search local maintainer Codex memory registry for forgetbase, ForgetBase, OKF, demo spine, and restricted-leakage context
 pwd && rg --files | rg '(^README\.md$|^docs/(BETA_RELEASE_PLAN|DEVELOPMENT|MVP_SCOPE|REMAINING_FUNCTIONAL_GAPS|END_TO_END_GOAL|TECHNICAL_SPEC|DECISIONS)\.md$|^work/beta-execution/manager-execution-map\.md$|^corpus/demo/(assets|evals)\.json$|AGENTS\.md$)'
 git status --short
 sed -n '1,240p' README.md
@@ -526,7 +526,7 @@ sed -n '261,620p' work/beta-execution/demo-spine-15-minute-path.md
 sed -n '621,980p' work/beta-execution/demo-spine-15-minute-path.md
 git status --short -- work/beta-execution/demo-spine-15-minute-path.md
 sed -n '1,120p' packages/cli/src/index.ts
-rg -n "api-url|AGENTIC_CMS_API_URL|baseUrl|readOption\(.*--api-url" packages/cli/src/index.ts packages/sdk/src/index.ts
+rg -n "api-url|FORGETBASE_API_URL|baseUrl|readOption\(.*--api-url" packages/cli/src/index.ts packages/sdk/src/index.ts
 rg -n "auth me|case \"me\"|telemetry summary|case \"summary\"|case \"search\"" packages/cli/src/index.ts
 sed -n '1100,1120p' packages/cli/src/index.ts
 sed -n '340,390p' packages/cli/src/index.ts

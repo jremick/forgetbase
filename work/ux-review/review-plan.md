@@ -1,7 +1,7 @@
 # ForgetBase Human UX / IA Review Plan
 
 Date: 2026-06-19
-Goal: Produce a practical human-perspective UX and design-architecture review for the current ForgetBase / Agentic CMS web UI, grounded in repo state, current design artifacts, and reputable UX frameworks.
+Goal: Produce a practical human-perspective UX and design-architecture review for the current ForgetBase / ForgetBase web UI, grounded in repo state, current design artifacts, and reputable UX frameworks.
 
 ## Source Of Truth
 
@@ -61,7 +61,7 @@ Follow-on lane: split `App.tsx` route modules and rebuild Policies/Telemetry as 
 
 ## Verification
 
-- Static: `npx -y pnpm@11.7.0 --filter @agentic-cms/web typecheck`, then web build and focused route tests.
+- Static: `npx -y pnpm@11.7.0 --filter @forgetbase/web typecheck`, then web build and focused route tests.
 - Browser: 15-minute beta path from login to Library, Asset Reader, Search/Managed Query, Review, Distribute export, restricted-omission proof, Telemetry read-back.
 - IA truth test: every nav leaf lands on a distinct, single-purpose, populated page.
 - Accessibility: keyboard nav, visible focus, status messages, accessible folder labels, contrast checks for success/warning badges, one `h1` per page.

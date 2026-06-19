@@ -5,7 +5,7 @@ import {
   type ModelProvider,
   type ModelProviderConfig,
   type ModelProviderConfigInput
-} from "@agentic-cms/schema";
+} from "@forgetbase/schema";
 
 export interface ModelProviderConfigListOptions {
   tenantId?: string;

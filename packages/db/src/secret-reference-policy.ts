@@ -4,10 +4,10 @@ import {
   secretReferencePolicySchema,
   type SecretReferencePolicy,
   type SecretReferencePolicyInput
-} from "@agentic-cms/schema";
+} from "@forgetbase/schema";
 
 export const DEFAULT_SECRET_REFERENCE_POLICY = {
-  allowedEnvVarPrefixes: ["AGENTIC_CMS_", "OPENAI_", "ANTHROPIC_", "OPENROUTER_", "ENTRA_", "OIDC_"],
+  allowedEnvVarPrefixes: ["FORGETBASE_", "OPENAI_", "ANTHROPIC_", "OPENROUTER_", "ENTRA_", "OIDC_"],
   allowedEnvVars: [] as string[],
   allowUnlistedEnvVars: false
 };

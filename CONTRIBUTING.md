@@ -1,6 +1,6 @@
 # Contributing
 
-Agentic CMS is a public-alpha candidate. Contributions are welcome after the repository is public, but the project is still changing quickly.
+ForgetBase is a public-alpha candidate. Contributions are welcome after the repository is public, but the project is still changing quickly.
 
 ## Good Alpha Contributions
 
@@ -18,7 +18,7 @@ Run the core checks:
 npx -y pnpm@11.7.0 install
 npx -y pnpm@11.7.0 typecheck
 npx -y pnpm@11.7.0 test
-npx -y pnpm@11.7.0 --filter @agentic-cms/cli start -- validate --file corpus/demo/assets.json --as-of 2026-06-16 --fail-on-warnings
+npx -y pnpm@11.7.0 --filter @forgetbase/cli start -- validate --file corpus/demo/assets.json --as-of 2026-06-16 --fail-on-warnings
 ```
 
 When Docker is available, also run:

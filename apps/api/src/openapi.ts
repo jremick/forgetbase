@@ -1,11 +1,11 @@
-import { agenticCmsVersion } from "@agentic-cms/schema";
+import { forgetBaseVersion } from "@forgetbase/schema";
 
 export function buildOpenApiDocument() {
   return {
     openapi: "3.1.0",
     info: {
-      title: "Agentic CMS API",
-      version: agenticCmsVersion,
+      title: "ForgetBase API",
+      version: forgetBaseVersion,
       description: "Agent-native instruction registry, permission, retrieval, and export API."
     },
     servers: [

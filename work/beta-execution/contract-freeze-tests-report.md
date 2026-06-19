@@ -56,7 +56,7 @@ The frozen beta path is:
   - Added an in-memory API contract test for OpenAPI path/parameter exposure, public fetch, public search, JSON export, OKF export, source-version metadata, projection metadata, and restricted export omission.
 
 - `packages/sdk/src/index.test.ts`
-  - Added SDK contract coverage for search, JSON export, OKF export, query parameters, bearer auth, and `x-agentic-cms-surface: api`.
+  - Added SDK contract coverage for search, JSON export, OKF export, query parameters, bearer auth, and `x-forgetbase-surface: api`.
 
 - `packages/cli/src/index.test.ts`
   - Strengthened OKF export assertions to cover generated OKF metadata and restricted-content omission.
@@ -64,7 +64,7 @@ The frozen beta path is:
 
 - `packages/mcp-server/src/server.test.ts`
   - Strengthened MCP tool-shape assertions for `get_asset`, `search_assets`, and `generate_ai_export`.
-  - Added MCP fetch and OKF export forwarding coverage with `x-agentic-cms-surface: mcp`.
+  - Added MCP fetch and OKF export forwarding coverage with `x-forgetbase-surface: mcp`.
 
 ## Contract Boundary Covered
 

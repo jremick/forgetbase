@@ -13,7 +13,7 @@ import {
   type SearchInput,
   type SearchRanking,
   type SearchResult
-} from "@agentic-cms/schema";
+} from "@forgetbase/schema";
 import {
   defaultRetrievalRankingPolicy,
   type RetrievalRankingPolicyRepository

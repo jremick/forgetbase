@@ -199,9 +199,9 @@ import {
   type TelemetryRetentionPolicyInput,
   type TelemetryRetentionPurgeInput,
   type TelemetryRetentionPurgeResult
-} from "@agentic-cms/schema";
+} from "@forgetbase/schema";
 
-export interface AgenticCmsClientOptions {
+export interface ForgetBaseClientOptions {
   baseUrl: string;
   apiKey?: string;
   surface?: Surface;
@@ -213,13 +213,13 @@ export interface ExportAiPackageOptions {
   okfVersion?: OkfVersion;
 }
 
-export class AgenticCmsClient {
+export class ForgetBaseClient {
   private readonly baseUrl: string;
   private readonly apiKey: string | undefined;
   private readonly surface: Surface;
   private readonly fetchImpl: typeof fetch;
 
-  constructor(options: AgenticCmsClientOptions) {
+  constructor(options: ForgetBaseClientOptions) {
     this.baseUrl = options.baseUrl.replace(/\/$/, "");
     this.apiKey = options.apiKey;
     this.surface = options.surface ?? "api";
@@ -939,7 +939,7 @@ export class AgenticCmsClient {
 
   private authHeaders(extra?: HeadersInit): HeadersInit {
     const headers = new Headers(extra);
-    headers.set("x-agentic-cms-surface", this.surface);
+    headers.set("x-forgetbase-surface", this.surface);
 
     if (this.apiKey) {
       headers.set("authorization", `Bearer ${this.apiKey}`);

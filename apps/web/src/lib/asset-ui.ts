@@ -1,4 +1,4 @@
-import type { AssetRecord } from "@agentic-cms/schema";
+import type { AssetRecord } from "@forgetbase/schema";
 import type { BadgeVariant } from "../components/ui/badge.js";
 
 export type LibraryViewFilter = "all" | "public-reader" | "needs-governance" | "approved-active";

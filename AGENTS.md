@@ -1,7 +1,7 @@
-# Agentic CMS Project Instructions
+# ForgetBase Project Instructions
 
-Version: 0.1.0
-Last updated: 2026-06-16
+Version: 0.1.1
+Last updated: 2026-06-20
 
 ## Project Purpose
 

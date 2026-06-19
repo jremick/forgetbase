@@ -2,6 +2,36 @@
 
 This log records current product and architecture decisions. Revisit dates are review prompts, not automatic expiry.
 
+## 0076: Product And Codebase Name Is ForgetBase
+
+### Context
+
+The project began as Agentic CMS, then adopted ForgetBase as the product-facing identity while the codebase, package names, CLI, runtime env vars, headers, cookies, and deployment defaults still used the old namespace. Keeping both names would make beta docs, contracts, and troubleshooting ambiguous.
+
+### Options Considered
+
+- Keep Agentic CMS internally and use ForgetBase only as the public brand
+- Rename visible docs and UI only
+- Hard-rename the repo and codebase to ForgetBase
+- Rename with a legacy compatibility cycle
+
+### Decision And Rationale
+
+Hard-rename the product and codebase to ForgetBase with no planned legacy compatibility cycle. The canonical package scope is `@forgetbase/*`, the CLI command is `forgetbase`, the runtime env prefix is `FORGETBASE_`, browser cookies and local storage use `forgetbase`, and machine-readable headers use `x-forgetbase-*`.
+
+The product category remains an agent-native instruction control plane. ForgetBase is the product name, not a shift toward a generic CMS, wiki, or knowledge-base category.
+
+### Consequences
+
+- Existing local env files, scripts, database URLs, API clients, MCP configs, and browser state that use `AGENTIC_CMS`, `agentic-cms`, or `agentic_cms` must be updated.
+- Fresh Docker Compose installs use `forgetbase` database defaults.
+- The beta contract intentionally changes before public beta rather than carrying old identifiers forward.
+- Any missed old-name references should be fixed as discovered rather than supported as compatibility aliases.
+
+### Follow-Ups / Review
+
+Review residual old-name references before public beta and again before any package publishing.
+
 ## 0001: Product Category Is Agent-Native Instruction Control Plane
 
 ### Context
@@ -909,7 +939,7 @@ Review when adding configurable telemetry retention, hosted analytics, cost repo
 
 ### Context
 
-Agentic CMS stores operational retrieval telemetry, audit events, and managed-query feedback. These records are useful for quality, compliance, and debugging, but they can contain redacted user queries, actor attribution, feedback notes, and other operational metadata. SMB operators need a practical retention control before the hosted analytics layer exists.
+ForgetBase stores operational retrieval telemetry, audit events, and managed-query feedback. These records are useful for quality, compliance, and debugging, but they can contain redacted user queries, actor attribution, feedback notes, and other operational metadata. SMB operators need a practical retention control before the hosted analytics layer exists.
 
 ### Options Considered
 
@@ -951,9 +981,9 @@ Manual telemetry retention controls are now available across admin surfaces, but
 
 ### Decision And Rationale
 
-Run scheduled telemetry retention maintenance in the worker. The worker can execute a one-off `--retention-once` command or schedule maintenance in the long-running process when `AGENTIC_CMS_RETENTION_PURGE_ENABLED=true`.
+Run scheduled telemetry retention maintenance in the worker. The worker can execute a one-off `--retention-once` command or schedule maintenance in the long-running process when `FORGETBASE_RETENTION_PURGE_ENABLED=true`.
 
-Automated maintenance remains dry-run by default through `AGENTIC_CMS_RETENTION_PURGE_DRY_RUN=true`. Operators must explicitly disable dry-run or pass `--execute` for deletion.
+Automated maintenance remains dry-run by default through `FORGETBASE_RETENTION_PURGE_DRY_RUN=true`. Operators must explicitly disable dry-run or pass `--execute` for deletion.
 
 This keeps background work out of the API request path, avoids adding a new scheduler dependency before the MVP needs one, and preserves the same retention policy and purge implementation used by API, CLI, MCP, and web controls.
 
@@ -1015,7 +1045,7 @@ External auth provider configuration exists for generic OIDC and Microsoft Entra
 
 Implement a first OIDC login slice over the existing provider config and user/API-key model. The API generates an authorization URL with signed state, nonce, and PKCE verifier. The callback verifies the signed state, nonce, PKCE verifier, issuer, audience, and ID-token signature through `jose` remote JWKS validation before issuing a short-lived scoped API key.
 
-The signed state uses `AGENTIC_CMS_OIDC_STATE_SECRET`; provider client secrets are still read only from configured environment variables and are not stored in database config records. Users are found by tenant/email. Unknown users require `autoProvisionUsers`; disabled users are denied. The first slice supports web, API, CLI, SDK, and MCP entry points while keeping bearer API keys as the runtime authorization mechanism.
+The signed state uses `FORGETBASE_OIDC_STATE_SECRET`; provider client secrets are still read only from configured environment variables and are not stored in database config records. Users are found by tenant/email. Unknown users require `autoProvisionUsers`; disabled users are denied. The first slice supports web, API, CLI, SDK, and MCP entry points while keeping bearer API keys as the runtime authorization mechanism.
 
 ### Consequences
 
@@ -1264,7 +1294,7 @@ Decision `0042` added short-lived provider response caching, and decision `0043`
 
 ### Decision And Rationale
 
-Run scheduled expired managed-query cache cleanup in the worker. The worker can execute a one-off `--cache-purge-once` command or schedule maintenance in the long-running process when `AGENTIC_CMS_CACHE_PURGE_ENABLED=true`. Cleanup is dry-run by default for both one-off and scheduled operation; operators must explicitly pass `--execute` or set `AGENTIC_CMS_CACHE_PURGE_DRY_RUN=false` after reviewing counts.
+Run scheduled expired managed-query cache cleanup in the worker. The worker can execute a one-off `--cache-purge-once` command or schedule maintenance in the long-running process when `FORGETBASE_CACHE_PURGE_ENABLED=true`. Cleanup is dry-run by default for both one-off and scheduled operation; operators must explicitly pass `--execute` or set `FORGETBASE_CACHE_PURGE_DRY_RUN=false` after reviewing counts.
 
 This keeps destructive cleanup out of the API request path, reuses the existing worker deployment, avoids a scheduler dependency before the MVP needs one, and preserves the existing cache safety rule: broad surfaces expose only tenant IDs and counts, not cached answer bodies.
 
@@ -1447,7 +1477,7 @@ Provider and external auth configs already avoid storing provider API keys or OI
 
 ### Decision And Rationale
 
-Add a tenant-scoped `secret_reference_policies` table and expose admin controls across API, SDK, CLI, MCP, OpenAPI, and the operational web UI. The default policy allows common Agentic CMS, OpenAI, Anthropic, OpenRouter, Entra, and OIDC prefixes while rejecting unrelated env vars. Admins can replace allowed prefixes, add exact env-var names, or explicitly allow all valid env-var names for unusual self-hosted deployments.
+Add a tenant-scoped `secret_reference_policies` table and expose admin controls across API, SDK, CLI, MCP, OpenAPI, and the operational web UI. The default policy allows common ForgetBase, OpenAI, Anthropic, OpenRouter, Entra, and OIDC prefixes while rejecting unrelated env vars. Admins can replace allowed prefixes, add exact env-var names, or explicitly allow all valid env-var names for unusual self-hosted deployments.
 
 Provider config `apiKeyEnvVar` and auth provider config `clientSecretEnvVar` writes are checked against the tenant policy before the config is saved. Policy updates are audited with actor attribution. Backup/restore verification includes the policy table.
 
@@ -1456,7 +1486,7 @@ This improves the existing env-var-only secret posture without prematurely addin
 ### Consequences
 
 - Accidental references to broad runtime env vars are rejected by default.
-- Existing documented examples using `OPENAI_API_KEY`, `ANTHROPIC_*`, `OPENROUTER_*`, `ENTRA_*`, `OIDC_*`, and `AGENTIC_CMS_*` remain supported.
+- Existing documented examples using `OPENAI_API_KEY`, `ANTHROPIC_*`, `OPENROUTER_*`, `ENTRA_*`, `OIDC_*`, and `FORGETBASE_*` remain supported.
 - Self-hosted deployments with custom naming can add exact names or prefixes before saving provider/auth-provider config.
 - The policy governs env-var names only; it does not store, validate, rotate, encrypt, mount, or broker secret values.
 - This is not yet a hosted secret manager, secret-file adapter, secret health scanner, automated rotation workflow, or per-provider credential vault.
@@ -1571,7 +1601,7 @@ Decision 0053 added worker-executed API-key rotation reminders that write one te
 
 Add a configurable dedupe window to API-key rotation reminder execution. The worker computes a stable fingerprint from the tenant's due API key IDs and rotation states. Before writing an `auth.api_key.rotation_reminder` audit event, it checks recent successful reminder audit events for the same tenant and skips the write when the fingerprint already exists inside the window.
 
-The default window is 24 hours through `AGENTIC_CMS_API_KEY_ROTATION_REMINDERS_DEDUPE_WINDOW_HOURS` and `--dedupe-window-hours`. Operators can set the value to `0` to intentionally record duplicate evidence. Dry-run and execute logs include `skippedDuplicateCount` so operators can see whether dedupe affected the run.
+The default window is 24 hours through `FORGETBASE_API_KEY_ROTATION_REMINDERS_DEDUPE_WINDOW_HOURS` and `--dedupe-window-hours`. Operators can set the value to `0` to intentionally record duplicate evidence. Dry-run and execute logs include `skippedDuplicateCount` so operators can see whether dedupe affected the run.
 
 This uses existing audit events as the operational evidence store and avoids adding notification-delivery state before email/Slack/webhook requirements are settled.
 
@@ -1601,7 +1631,7 @@ The operational web UI previously used the same login secret returned to API cli
 
 ### Decision And Rationale
 
-Add an `HttpOnly`, `SameSite=Lax` browser session cookie named `agentic_cms_session` on password and OIDC login. The cookie stores the same short-lived login key that the API already issues, so authentication, scope checks, expiry, revocation, and audit behavior continue to flow through the existing API-key path. Authorization headers remain preferred when present, preserving CLI, MCP, SDK, and direct API client behavior.
+Add an `HttpOnly`, `SameSite=Lax` browser session cookie named `forgetbase_session` on password and OIDC login. The cookie stores the same short-lived login key that the API already issues, so authentication, scope checks, expiry, revocation, and audit behavior continue to flow through the existing API-key path. Authorization headers remain preferred when present, preserving CLI, MCP, SDK, and direct API client behavior.
 
 The web UI now sends credentialed requests, uses the cookie after password/OIDC login, clears JavaScript-readable login-key storage, and keeps manual API-key entry available for operator workflows. Logout clears the cookie and revokes the current key. The API reflects request origins for credentialed CORS instead of using wildcard CORS when an `Origin` header is present.
 
@@ -1610,7 +1640,7 @@ This closes the immediate browser-secret exposure gap without adding hosted iden
 ### Consequences
 
 - Browser login no longer requires persisting login secrets in `localStorage`.
-- The cookie is bearer-equivalent until the short-lived login key expires or is revoked, so it must be served over HTTPS with `AGENTIC_CMS_SESSION_COOKIE_SECURE=true` outside local HTTP development.
+- The cookie is bearer-equivalent until the short-lived login key expires or is revoked, so it must be served over HTTPS with `FORGETBASE_SESSION_COOKIE_SECURE=true` outside local HTTP development.
 - API, CLI, MCP, and SDK clients can continue using bearer keys with no protocol change.
 - The implementation remains intentionally below a full enterprise session lifecycle.
 
@@ -1632,7 +1662,7 @@ Decision 0055 moved the operational web UI from JavaScript-readable login secret
 
 ### Decision And Rationale
 
-Add an exact-origin allowlist for credentialed browser CORS. The API reads `AGENTIC_CMS_CORS_ALLOWED_ORIGINS` as a comma-separated list and defaults to local development origins `http://127.0.0.1:5175` and `http://localhost:5175`. Allowed origins receive `Access-Control-Allow-Origin` plus `Access-Control-Allow-Credentials`; unlisted browser preflight requests fail with `origin_not_allowed`. Originless API, CLI, SDK, and MCP requests keep working without credentialed CORS.
+Add an exact-origin allowlist for credentialed browser CORS. The API reads `FORGETBASE_CORS_ALLOWED_ORIGINS` as a comma-separated list and defaults to local development origins `http://127.0.0.1:5175` and `http://localhost:5175`. Allowed origins receive `Access-Control-Allow-Origin` plus `Access-Control-Allow-Credentials`; unlisted browser preflight requests fail with `origin_not_allowed`. Originless API, CLI, SDK, and MCP requests keep working without credentialed CORS.
 
 This keeps the open-source Docker Compose path easy locally while making production browser-cookie deployments explicit about which web origins may send credentialed requests.
 
@@ -1661,14 +1691,14 @@ Decisions 0055 and 0056 moved the operational web UI to an `HttpOnly` session co
 
 ### Decision And Rationale
 
-Add a signed double-submit CSRF token for browser session-cookie authentication. Password and OIDC login now set the existing `agentic_cms_session` `HttpOnly` cookie plus a readable `agentic_cms_csrf` cookie. For unsafe methods, requests authenticated by the session cookie must echo the CSRF cookie value in `x-agentic-cms-csrf`; missing, mismatched, malformed, or wrongly signed values fail with `csrf_required` before the action runs.
+Add a signed double-submit CSRF token for browser session-cookie authentication. Password and OIDC login now set the existing `forgetbase_session` `HttpOnly` cookie plus a readable `forgetbase_csrf` cookie. For unsafe methods, requests authenticated by the session cookie must echo the CSRF cookie value in `x-forgetbase-csrf`; missing, mismatched, malformed, or wrongly signed values fail with `csrf_required` before the action runs.
 
 The CSRF token is signed with the short-lived session key, so a client cannot satisfy the check by inventing an unrelated token. Authorization bearer headers still take precedence over cookies and do not require CSRF headers, preserving CLI, MCP, SDK, service-account, and manual API clients.
 
 ### Consequences
 
 - The bundled web UI can keep cookie-backed login while protecting POST, PUT, PATCH, and DELETE operations from missing-token CSRF attempts.
-- Custom browser clients using cookies must read `agentic_cms_csrf` and send it as `x-agentic-cms-csrf` for unsafe requests.
+- Custom browser clients using cookies must read `forgetbase_csrf` and send it as `x-forgetbase-csrf` for unsafe requests.
 - Bearer-token clients are unaffected and remain the explicit non-browser auth protocol.
 - This does not add a full refresh-token/session table, per-device sessions, idle-timeout state, same-origin reverse-proxy templates, or tenant-specific browser origin policy.
 
@@ -1698,7 +1728,7 @@ This gives self-hosted SMB operators a clearer browser-cookie deployment shape w
 
 - Browser-cookie deployments have a recommended same-origin path that reduces reliance on credentialed CORS for the bundled UI.
 - Split-origin local development continues to work with the existing Compose web preview and CORS allowlist.
-- Operators exposing the same-origin proxy over HTTPS must still set `AGENTIC_CMS_SESSION_COOKIE_SECURE=true` on the API.
+- Operators exposing the same-origin proxy over HTTPS must still set `FORGETBASE_SESSION_COOKIE_SECURE=true` on the API.
 - This is not a hosted tenant-domain policy, TLS automation layer, refresh-token/session lifecycle, or full ingress story.
 
 ### Follow-Ups / Review
@@ -1749,7 +1779,7 @@ Password and OIDC login issue short-lived API keys that can be used directly by 
 
 ### Decision And Rationale
 
-Cap password/OIDC login-created API keys with a server-side max session age. The API reads `AGENTIC_CMS_LOGIN_SESSION_MAX_AGE_SECONDS`, defaults to 43200 seconds, and requires a whole-second value between 60 and 2592000. Password and OIDC login use the lesser of the client-requested expiry and the server cap when creating the login key. The `agentic_cms_session` and `agentic_cms_csrf` cookies derive their `Max-Age` from that same effective expiry.
+Cap password/OIDC login-created API keys with a server-side max session age. The API reads `FORGETBASE_LOGIN_SESSION_MAX_AGE_SECONDS`, defaults to 43200 seconds, and requires a whole-second value between 60 and 2592000. Password and OIDC login use the lesser of the client-requested expiry and the server cap when creating the login key. The `forgetbase_session` and `forgetbase_csrf` cookies derive their `Max-Age` from that same effective expiry.
 
 This keeps interactive session lifetime centrally controlled, preserves the existing short-lived key implementation, and keeps longer-lived automation credentials on the admin-created user/service-account API-key path where listing, rotation reporting, service-account policy, and revocation controls already exist.
 
@@ -1813,7 +1843,7 @@ Decision 0061 added login-session records and cookie-authentication checks, but 
 
 Add rolling idle-timeout enforcement to cookie-backed browser login sessions. Cookie-authenticated requests require an active login-session row whose `last_seen_at`, or `created_at` before first use, is inside the configured idle window. Successful cookie authentication updates `last_seen_at`.
 
-The API reads `AGENTIC_CMS_LOGIN_SESSION_IDLE_TIMEOUT_SECONDS`. Compose defaults it to 14400 seconds, or 4 hours. A value of `0` disables idle-timeout enforcement, and non-zero values must be whole seconds between 60 and 2592000. Bearer API keys remain governed by key expiry and revocation, not login-session idle timeout.
+The API reads `FORGETBASE_LOGIN_SESSION_IDLE_TIMEOUT_SECONDS`. Compose defaults it to 14400 seconds, or 4 hours. A value of `0` disables idle-timeout enforcement, and non-zero values must be whole seconds between 60 and 2592000. Bearer API keys remain governed by key expiry and revocation, not login-session idle timeout.
 
 This uses the existing session table and keeps the security improvement narrowly scoped without prematurely introducing refresh tokens, rotating session secrets, device labels, or remembered-device policy.
 
@@ -1833,7 +1863,7 @@ Review when adding refresh-token rotation, user-facing device labels, remembered
 
 ### Context
 
-Decisions 0061 and 0062 gave browser login sessions database-backed inventory, revocation, and rolling idle-timeout enforcement. Browser sessions still depended on the short-lived login key in the `agentic_cms_session` cookie, so a user had to complete password/OIDC login again when that key expired. SMB deployments need a practical refresh path that keeps raw access keys out of JavaScript without jumping straight to remembered-device policy, MFA enforcement, or hosted identity lifecycle complexity.
+Decisions 0061 and 0062 gave browser login sessions database-backed inventory, revocation, and rolling idle-timeout enforcement. Browser sessions still depended on the short-lived login key in the `forgetbase_session` cookie, so a user had to complete password/OIDC login again when that key expired. SMB deployments need a practical refresh path that keeps raw access keys out of JavaScript without jumping straight to remembered-device policy, MFA enforcement, or hosted identity lifecycle complexity.
 
 ### Options Considered
 
@@ -1843,9 +1873,9 @@ Decisions 0061 and 0062 gave browser login sessions database-backed inventory, r
 
 ### Decision And Rationale
 
-Add `login_session_refresh_tokens` for browser login sessions. Password and OIDC login create a hash-only refresh-token row and set an `HttpOnly`, `SameSite=Lax` `agentic_cms_refresh` cookie. `POST /auth/session/refresh` accepts only that cookie, rejects missing, reused, revoked, expired, disabled-user, or idle-expired refresh attempts, marks the old refresh token used, creates a new short-lived login API key, moves the existing `login_sessions` row to that key, revokes the old login key, creates the next refresh token, and sets fresh HttpOnly cookies.
+Add `login_session_refresh_tokens` for browser login sessions. Password and OIDC login create a hash-only refresh-token row and set an `HttpOnly`, `SameSite=Lax` `forgetbase_refresh` cookie. `POST /auth/session/refresh` accepts only that cookie, rejects missing, reused, revoked, expired, disabled-user, or idle-expired refresh attempts, marks the old refresh token used, creates a new short-lived login API key, moves the existing `login_sessions` row to that key, revokes the old login key, creates the next refresh token, and sets fresh HttpOnly cookies.
 
-The API reads `AGENTIC_CMS_LOGIN_REFRESH_TOKEN_MAX_AGE_SECONDS`. Compose defaults it to 604800 seconds, or 7 days. A value of `0` disables refresh-token issuance, and non-zero values must be whole seconds between 60 and 2592000. Refresh responses return safe key/session metadata only; the new raw login key is set only in the HttpOnly session cookie.
+The API reads `FORGETBASE_LOGIN_REFRESH_TOKEN_MAX_AGE_SECONDS`. Compose defaults it to 604800 seconds, or 7 days. A value of `0` disables refresh-token issuance, and non-zero values must be whole seconds between 60 and 2592000. Refresh responses return safe key/session metadata only; the new raw login key is set only in the HttpOnly session cookie.
 
 This keeps the browser session model anchored to the existing API-key and login-session controls while closing the practical re-login gap. It avoids creating a parallel auth system and keeps bearer API, CLI, SDK, and MCP behavior unchanged.
 
@@ -1876,7 +1906,7 @@ Decision 0063 added one-time refresh-token rotation for browser login sessions. 
 
 ### Decision And Rationale
 
-Add nullable `login_sessions.absolute_expires_at`, set on password/OIDC login from `AGENTIC_CMS_LOGIN_SESSION_ABSOLUTE_MAX_AGE_SECONDS`. Compose defaults this to 2592000 seconds, or 30 days. A value of `0` disables the absolute cap, and non-zero values must be whole seconds between 60 and 31536000.
+Add nullable `login_sessions.absolute_expires_at`, set on password/OIDC login from `FORGETBASE_LOGIN_SESSION_ABSOLUTE_MAX_AGE_SECONDS`. Compose defaults this to 2592000 seconds, or 30 days. A value of `0` disables the absolute cap, and non-zero values must be whole seconds between 60 and 31536000.
 
 Cookie authentication and refresh require the login session to be before `absolute_expires_at` when one is set. Login-created access-key expiry, refresh-token expiry, and refreshed cookie max ages are capped to the absolute expiry. Bearer API-key authentication remains governed by key expiry and revocation, matching the existing boundary that browser-session policy does not silently change CLI, MCP, SDK, or direct API behavior.
 
@@ -1939,7 +1969,7 @@ Decision 0058 added a same-origin Docker Compose proxy so browser login could us
 
 ### Decision And Rationale
 
-Add `compose.tls.yaml`, `infra/docker/nginx.tls.conf`, and a local certificate helper for self-signed smoke tests. The TLS overlay composes with the base services and `compose.same-origin.yaml`, serves the web UI over HTTPS, routes `/api/*` to the API service, sets `AGENTIC_CMS_SESSION_COOKIE_SECURE=true` for the API service, and expects mounted certificate files at `infra/docker/tls/tls.crt` and `infra/docker/tls/tls.key`.
+Add `compose.tls.yaml`, `infra/docker/nginx.tls.conf`, and a local certificate helper for self-signed smoke tests. The TLS overlay composes with the base services and `compose.same-origin.yaml`, serves the web UI over HTTPS, routes `/api/*` to the API service, sets `FORGETBASE_SESSION_COOKIE_SECURE=true` for the API service, and expects mounted certificate files at `infra/docker/tls/tls.crt` and `infra/docker/tls/tls.key`.
 
 The helper script creates localhost-only self-signed certs in an ignored runtime directory. Production operators must replace those files with real certificates or terminate TLS at an external edge while still setting secure-cookie mode on the API.
 
@@ -2032,9 +2062,9 @@ Decision 0053 added dry-run-first API-key rotation reminder audit events, and De
 
 ### Decision And Rationale
 
-Add opt-in webhook delivery to worker API-key rotation reminder maintenance. Dry-runs never deliver. Executed reminder runs write audit evidence first, then POST one reduced tenant reminder payload per non-duplicate report when `AGENTIC_CMS_API_KEY_ROTATION_REMINDERS_WEBHOOK_URL` or `--notification-webhook-url` is configured.
+Add opt-in webhook delivery to worker API-key rotation reminder maintenance. Dry-runs never deliver. Executed reminder runs write audit evidence first, then POST one reduced tenant reminder payload per non-duplicate report when `FORGETBASE_API_KEY_ROTATION_REMINDERS_WEBHOOK_URL` or `--notification-webhook-url` is configured.
 
-Payloads include tenant ID, reminder counts, key IDs, key names, owner IDs, scopes, expiry metadata, rotation state, reason, and days until expiry. They intentionally omit raw API-key secrets and secret previews. Operators can set `AGENTIC_CMS_API_KEY_ROTATION_REMINDERS_WEBHOOK_SIGNING_SECRET` to add an HMAC SHA-256 signature header over the exact JSON body; the signing secret is read only from process environment, not CLI arguments or database records.
+Payloads include tenant ID, reminder counts, key IDs, key names, owner IDs, scopes, expiry metadata, rotation state, reason, and days until expiry. They intentionally omit raw API-key secrets and secret previews. Operators can set `FORGETBASE_API_KEY_ROTATION_REMINDERS_WEBHOOK_SIGNING_SECRET` to add an HMAC SHA-256 signature header over the exact JSON body; the signing secret is read only from process environment, not CLI arguments or database records.
 
 This closes the pragmatic external-notification gap for SMB self-hosting while keeping delivery dependency-free and dry-run-first. It also avoids adding durable delivery state before there are clear requirements for hosted notification UX, acknowledgement, and escalation.
 
@@ -2140,7 +2170,7 @@ This gives SMB operators a real governance foundation and gives agent harnesses 
 - Action execution remains off unless an admin explicitly enables policy and allowed action types.
 - Blocked action attempts are still durable records and audit evidence.
 - Approval workflow is intentionally single-step and admin-only for now.
-- The first executable action is side-effect-free outside Agentic CMS.
+- The first executable action is side-effect-free outside ForgetBase.
 - External adapters for HTTP, MCP tools, Git repositories, document connectors, and local commands remain future work.
 - Backup/restore verification includes the new policy and request tables.
 
@@ -2202,7 +2232,7 @@ This keeps database schema changes explicit and observable without coupling migr
 - `docker compose up -d postgres api worker web` also starts the migration dependency unless operators use `--no-deps`.
 - API and worker containers do not start until migrations complete successfully.
 - A failed migration leaves API/worker stopped rather than running against a partial or missing schema.
-- Host ports are configurable with `AGENTIC_CMS_POSTGRES_PORT`, `AGENTIC_CMS_API_PORT`, and `AGENTIC_CMS_WEB_PORT` so clean-start verification can run beside another local stack.
+- Host ports are configurable with `FORGETBASE_POSTGRES_PORT`, `FORGETBASE_API_PORT`, and `FORGETBASE_WEB_PORT` so clean-start verification can run beside another local stack.
 - This does not replace managed migration orchestration for hosted deployments, blue/green releases, online migration safety, backup-before-migration policy, or Kubernetes jobs.
 
 ### Follow-Ups / Review
@@ -2368,7 +2398,7 @@ Review when adding scheduled eval runs, LLM-as-judge scoring, provider-routed ev
 
 ### Context
 
-Decision 0063 added disabled-by-default tenant action execution policy, durable action requests, admin approval/denial, and a side-effect-free internal `create-task-record` action. That protected action behavior with tenant policy, but `/agent/actions/execute` still accepted any authenticated principal before evaluating policy. Agentic CMS needs least-privilege automation credentials that can request governed tasks without granting full admin access.
+Decision 0063 added disabled-by-default tenant action execution policy, durable action requests, admin approval/denial, and a side-effect-free internal `create-task-record` action. That protected action behavior with tenant policy, but `/agent/actions/execute` still accepted any authenticated principal before evaluating policy. ForgetBase needs least-privilege automation credentials that can request governed tasks without granting full admin access.
 
 ### Options Considered
 
@@ -2399,7 +2429,7 @@ Review when adding external side-effecting action adapters, connector credential
 
 ### Context
 
-Agentic CMS now has deterministic eval cases, persisted run history, redacted stored eval reports, and recent-run analytics. The product priorities put factual citation accuracy, policy compliance, task completion quality, consistency, and response/action effectiveness ahead of cost and convenience. Manual eval runs are useful, but they do not give SMB operators a repeatable maintenance loop before full managed orchestration exists.
+ForgetBase now has deterministic eval cases, persisted run history, redacted stored eval reports, and recent-run analytics. The product priorities put factual citation accuracy, policy compliance, task completion quality, consistency, and response/action effectiveness ahead of cost and convenience. Manual eval runs are useful, but they do not give SMB operators a repeatable maintenance loop before full managed orchestration exists.
 
 ### Options Considered
 
@@ -2412,7 +2442,7 @@ Agentic CMS now has deterministic eval cases, persisted run history, redacted st
 
 Add `managed_query_eval_schedule_policies` as a tenant-scoped admin policy with disabled-by-default scheduling, interval minutes, inline deterministic eval input, last-run fields, status, error, and update actor references. Expose the policy through API, SDK, CLI, MCP, and a compact operational web control.
 
-The worker can preview due policies or execute them through `--managed-query-evals-once --execute`; long-running scheduling is opt-in through `AGENTIC_CMS_MANAGED_QUERY_EVALS_ENABLED=true` and remains dry-run by default. Execution searches the tenant retrieval corpus as system maintenance, records scheduled retrieval telemetry, persists redacted eval-run history, updates schedule status, and writes safe audit metadata without raw query text.
+The worker can preview due policies or execute them through `--managed-query-evals-once --execute`; long-running scheduling is opt-in through `FORGETBASE_MANAGED_QUERY_EVALS_ENABLED=true` and remains dry-run by default. Execution searches the tenant retrieval corpus as system maintenance, records scheduled retrieval telemetry, persists redacted eval-run history, updates schedule status, and writes safe audit metadata without raw query text.
 
 This avoids storing a standing admin API key for cron, gives operators repeatable quality evidence, and keeps orchestration simple enough for the current self-hosted SMB target. It also creates the quality-control hook future routing and cache policy can read without needing LLM-as-judge automation today.
 
@@ -2611,7 +2641,7 @@ Decision 0086 added `approvalExpiresAt` to approval-required action requests and
 
 Add repository support for listing `approval-required` action requests whose `approvalExpiresAt` is in the past, and add worker maintenance exposed as `--action-approval-expiry-once`. The job defaults to dry-run, reports tenant/candidate/expired counts, and accepts `--execute` to mark stale requests `expired`. Executed runs record `agent.action.approval_expiry` audit evidence with action type, expiry deadline, execution timestamp, and `externalSideEffects: false`.
 
-The long-running worker can schedule the same job through `AGENTIC_CMS_ACTION_APPROVAL_EXPIRY_ENABLED=true`; Compose defaults keep scheduling disabled and dry-run enabled. `AGENTIC_CMS_ACTION_APPROVAL_EXPIRY_LIMIT` bounds each pass.
+The long-running worker can schedule the same job through `FORGETBASE_ACTION_APPROVAL_EXPIRY_ENABLED=true`; Compose defaults keep scheduling disabled and dry-run enabled. `FORGETBASE_ACTION_APPROVAL_EXPIRY_LIMIT` bounds each pass.
 
 This keeps approval queues operationally accurate while preserving the project's dry-run-first maintenance posture. It avoids hiding mutations behind read paths and avoids notification/workflow complexity before external adapters exist.
 
@@ -2631,7 +2661,7 @@ Review when adding notification routing, assigned approvers, multi-step approval
 
 ### Context
 
-The default tenant PII redaction policy already applies before stored retrieval telemetry, managed-query feedback text, stored eval-run report queries, and generated-answer cache-bypass decisions. It treats `api-key` as one deterministic rule kind, but the first rule focused on OpenAI-style `sk-` values and Agentic CMS API keys. In practice, agent operators often paste cloud access key IDs, GitHub tokens, Google API keys, and chat-ops tokens into prompts, bug reports, or retrieval queries while debugging tool access.
+The default tenant PII redaction policy already applies before stored retrieval telemetry, managed-query feedback text, stored eval-run report queries, and generated-answer cache-bypass decisions. It treats `api-key` as one deterministic rule kind, but the first rule focused on OpenAI-style `sk-` values and ForgetBase API keys. In practice, agent operators often paste cloud access key IDs, GitHub tokens, Google API keys, and chat-ops tokens into prompts, bug reports, or retrieval queries while debugging tool access.
 
 ### Options Considered
 
@@ -2642,7 +2672,7 @@ The default tenant PII redaction policy already applies before stored retrieval 
 
 ### Decision And Rationale
 
-Broaden the existing `api-key` deterministic rule to cover common high-signal provider, cloud, repository, and chat-ops token prefixes: OpenAI/Anthropic/OpenRouter-style `sk-`, Agentic CMS `acms_`, GitHub classic and fine-grained tokens, Google API keys, AWS access key IDs, and Slack token prefixes.
+Broaden the existing `api-key` deterministic rule to cover common high-signal provider, cloud, repository, and chat-ops token prefixes: OpenAI/Anthropic/OpenRouter-style `sk-`, ForgetBase `fbase_`, GitHub classic and fine-grained tokens, Google API keys, AWS access key IDs, and Slack token prefixes.
 
 Keep these under the existing `api-key` rule kind instead of adding many new enum values. Admins already understand `api-key` as a secret-token category, and existing tenant policies continue to work without schema, API, MCP, CLI, or web control churn.
 
@@ -2729,7 +2759,7 @@ Review before generating any Railway public domain, adding a custom domain, enab
 
 ### Context
 
-Google Cloud introduced Open Knowledge Format (OKF) v0.1 as a draft, vendor-neutral Markdown and YAML frontmatter format for agent-readable knowledge bundles. Agentic CMS already exposes permission-filtered AI export packages through API, SDK, CLI, and MCP, but the package shape was JSON-only.
+Google Cloud introduced Open Knowledge Format (OKF) v0.1 as a draft, vendor-neutral Markdown and YAML frontmatter format for agent-readable knowledge bundles. ForgetBase already exposes permission-filtered AI export packages through API, SDK, CLI, and MCP, but the package shape was JSON-only.
 
 ### Options Considered
 
@@ -2740,7 +2770,7 @@ Google Cloud introduced Open Knowledge Format (OKF) v0.1 as a draft, vendor-neut
 
 ### Decision And Rationale
 
-Add OKF as a versioned generated export projection. Keep Agentic CMS governed assets and asset versions as canonical, then generate OKF bundles with explicit `okfVersion`, source asset version metadata, source content hashes, and a projection hash.
+Add OKF as a versioned generated export projection. Keep ForgetBase governed assets and asset versions as canonical, then generate OKF bundles with explicit `okfVersion`, source asset version metadata, source content hashes, and a projection hash.
 
 This keeps the product agent-native and interoperable without turning the core into a Markdown CMS or breaking existing JSON-package consumers.
 
@@ -2801,7 +2831,7 @@ The private alpha can be exposed through a same-origin proxy for live prototype 
 
 ### Decision And Rationale
 
-Fail startup on invalid boolean env values, require explicit `AGENTIC_CMS_REQUIRE_AUTHENTICATION=true` for public prototypes, and block `/api/auth/bootstrap` at the Railway proxy. Keep live Railway project IDs, personal workspace names, and prototype domains in maintainer-only files, with a sanitized public Railway template for reusable guidance.
+Fail startup on invalid boolean env values, require explicit `FORGETBASE_REQUIRE_AUTHENTICATION=true` for public prototypes, and block `/api/auth/bootstrap` at the Railway proxy. Keep live Railway project IDs, personal workspace names, and prototype domains in maintainer-only files, with a sanitized public Railway template for reusable guidance.
 
 Also keep local private artifacts out of Docker/Railway build contexts through `.dockerignore`.
 
@@ -2835,7 +2865,7 @@ CLI and MCP surfaces also had broad command/tool coverage but no executable cont
 
 ### Decision And Rationale
 
-Add an embedding provider abstraction with deterministic local hash as the default and an OpenAI-compatible provider selected by environment variables. Keep provider secrets in deployment env only, referenced through `AGENTIC_CMS_EMBEDDINGS_API_KEY_ENV_VAR`; do not store embedding provider secrets in the database.
+Add an embedding provider abstraction with deterministic local hash as the default and an OpenAI-compatible provider selected by environment variables. Keep provider secrets in deployment env only, referenced through `FORGETBASE_EMBEDDINGS_API_KEY_ENV_VAR`; do not store embedding provider secrets in the database.
 
 Add `embedding_provider`, `embedding_model`, and `embedding_dimensions` to `asset_chunks`. Indexing writes those fields, and vector/hybrid search only compares query vectors with chunks that match the active provider, model, and dimensions. Local hash results keep `vector-hash-v1` / `hybrid-hash-lexical-v1`; provider embeddings return `vector-provider-v1` / `hybrid-provider-lexical-v1`.
 

@@ -1,7 +1,7 @@
 # ForgetBase Comparable Apps UX / IA Review
 
 Date: 2026-06-19
-Scope: Human-perspective information architecture and page-purpose review for the current ForgetBase / Agentic CMS web UI.
+Scope: Human-perspective information architecture and page-purpose review for the current ForgetBase / ForgetBase web UI.
 
 ## Executive Summary
 

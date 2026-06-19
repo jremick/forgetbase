@@ -5,7 +5,7 @@ import {
   type ManagedQueryRetentionCaptureMode,
   type ManagedQueryRetentionPolicy,
   type ManagedQueryRetentionPolicyInput
-} from "@agentic-cms/schema";
+} from "@forgetbase/schema";
 
 export const DEFAULT_MANAGED_QUERY_RETENTION_POLICY = {
   promptCaptureMode: "disabled",

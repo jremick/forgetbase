@@ -9,7 +9,7 @@ COPY apps ./apps
 COPY packages ./packages
 
 RUN pnpm install
-RUN pnpm --filter @agentic-cms/web build
+RUN pnpm --filter @forgetbase/web build
 
 FROM nginx:1.27-alpine
 

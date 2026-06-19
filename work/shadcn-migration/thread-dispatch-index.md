@@ -46,7 +46,7 @@ Migrate ForgetBase web UI to a shadcn/ui-based interface while preserving only t
 ## Integration Checkpoints
 
 - 2026-06-19: Public/auth entry and composition wrappers integrated after adding `tslib` as a direct web dependency for the Radix dialog/scroll-lock bundle path.
-- 2026-06-19: Verification passed: `npx -y pnpm@11.7.0 --filter @agentic-cms/web typecheck`, `npx -y pnpm@11.7.0 --filter @agentic-cms/web test`, `npx -y pnpm@11.7.0 --filter @agentic-cms/web build`, `npx -y pnpm@11.7.0 claims:lint`, and `git diff --check`.
+- 2026-06-19: Verification passed: `npx -y pnpm@11.7.0 --filter @forgetbase/web typecheck`, `npx -y pnpm@11.7.0 --filter @forgetbase/web test`, `npx -y pnpm@11.7.0 --filter @forgetbase/web build`, `npx -y pnpm@11.7.0 claims:lint`, and `git diff --check`.
 - 2026-06-19: Browser verification passed against `http://127.0.0.1:4173/`: initial public page showed no username/email, password, API URL, API key, tenant ID, or SSO provider controls; login dialog showed only blank username/email and password fields; desktop and 390px mobile had no horizontal overflow; browser console had zero warnings/errors.
 - Screenshot artifacts: `work/shadcn-migration/public-login-desktop.png`, `work/shadcn-migration/public-login-mobile.png`.
 - 2026-06-19: `Button` and `Badge` primitives migrated off the legacy `.ui-*` CSS classes and now expose shadcn-style `data-slot` markers plus Tailwind/CVA variants. Verification passed: web typecheck, web tests, web build, and desktop/mobile browser assertions for public login blank values, removed auth controls, zero console warnings/errors, and no horizontal overflow.

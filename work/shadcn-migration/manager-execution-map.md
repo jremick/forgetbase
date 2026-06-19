@@ -140,9 +140,9 @@ Do not edit `App.tsx` or route/business logic.
 Verification:
 
 ```bash
-npx -y pnpm@11.7.0 --filter @agentic-cms/web typecheck
-npx -y pnpm@11.7.0 --filter @agentic-cms/web test
-npx -y pnpm@11.7.0 --filter @agentic-cms/web build
+npx -y pnpm@11.7.0 --filter @forgetbase/web typecheck
+npx -y pnpm@11.7.0 --filter @forgetbase/web test
+npx -y pnpm@11.7.0 --filter @forgetbase/web build
 ```
 
 ## Planned Implementation Waves
@@ -291,8 +291,8 @@ Scope:
 Verification:
 
 ```bash
-npx -y pnpm@11.7.0 --filter @agentic-cms/web test
-npx -y pnpm@11.7.0 --filter @agentic-cms/web build
+npx -y pnpm@11.7.0 --filter @forgetbase/web test
+npx -y pnpm@11.7.0 --filter @forgetbase/web build
 npx -y pnpm@11.7.0 claims:lint
 npx -y pnpm@11.7.0 typecheck
 ```
@@ -369,7 +369,7 @@ The migration is complete only when:
 - Public content remains synthetic/claim-safe.
 - API/auth/CSRF/session behavior remains intact.
 - Read, Work, Distribute, and Operate representative paths pass browser checks.
-- `npx -y pnpm@11.7.0 --filter @agentic-cms/web test` passes.
-- `npx -y pnpm@11.7.0 --filter @agentic-cms/web build` passes.
+- `npx -y pnpm@11.7.0 --filter @forgetbase/web test` passes.
+- `npx -y pnpm@11.7.0 --filter @forgetbase/web build` passes.
 - `npx -y pnpm@11.7.0 claims:lint` passes.
 - Final diff is reviewed for unused bespoke CSS and dependency bloat.

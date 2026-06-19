@@ -1,5 +1,5 @@
 {
-  "name": "@agentic-cms/worker",
+  "name": "@forgetbase/worker",
   "version": "0.1.0",
   "private": true,
   "license": "Apache-2.0",
@@ -11,9 +11,9 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@agentic-cms/db": "workspace:*",
-    "@agentic-cms/schema": "workspace:*",
-    "@agentic-cms/validation": "workspace:*"
+    "@forgetbase/db": "workspace:*",
+    "@forgetbase/schema": "workspace:*",
+    "@forgetbase/validation": "workspace:*"
   },
   "devDependencies": {
     "tsx": "^4.21.0",

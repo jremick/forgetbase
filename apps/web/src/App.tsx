@@ -51,7 +51,7 @@ import type {
   TelemetryAnalyticsSummary,
   TelemetryRetentionPolicy,
   TelemetryRetentionPurgeResult
-} from "@agentic-cms/schema";
+} from "@forgetbase/schema";
 import { BookOpen, ClipboardCheck, Copy, Download, LogOut, PackageOpen, RefreshCw, Search, Settings2 } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "./components/ui/alert.js";
 import { Badge, type BadgeVariant } from "./components/ui/badge.js";
@@ -155,9 +155,9 @@ import {
 } from "./local-dev-auth.js";
 import "./styles.css";
 
-const sessionCookieActiveStorageKey = "agentic-cms-session-cookie-active";
-const csrfCookieName = "agentic_cms_csrf";
-const configuredApiUrl = import.meta.env.VITE_AGENTIC_CMS_API_URL?.trim();
+const sessionCookieActiveStorageKey = "forgetbase-session-cookie-active";
+const csrfCookieName = "forgetbase_csrf";
+const configuredApiUrl = import.meta.env.VITE_FORGETBASE_API_URL?.trim();
 const demoEvalCases = [
   {
     id: "eval.pii-redaction-citation",
@@ -196,7 +196,7 @@ const actionTypes: AgentActionType[] = [
 ];
 
 const unsafeMethods = new Set(["POST", "PUT", "PATCH", "DELETE"]);
-const densityStorageKey = "agentic-cms-web-density";
+const densityStorageKey = "forgetbase-web-density";
 type AuthState = "checking" | "authenticated" | "unauthenticated";
 type NavBadgeTone = "warn" | "bad" | "ok";
 type NavLeafConfig = {
@@ -469,7 +469,7 @@ function readCookie(name: string): string {
 
 export function App() {
   const [apiUrl, setApiUrl] = useState(() => readInitialApiUrl(configuredApiUrl));
-  const [apiKey, setApiKey] = useState(() => localStorage.getItem("agentic-cms-api-key") ?? "");
+  const [apiKey, setApiKey] = useState(() => localStorage.getItem("forgetbase-api-key") ?? "");
   const [sessionCookieActive, setSessionCookieActive] = useState(
     () => localStorage.getItem(sessionCookieActiveStorageKey) === "true"
   );
@@ -553,7 +553,7 @@ export function App() {
   const [queryRetentionMetadataDays, setQueryRetentionMetadataDays] = useState("30");
   const [secretReferencePolicy, setSecretReferencePolicy] = useState<SecretReferencePolicy | null>(null);
   const [secretReferencePrefixes, setSecretReferencePrefixes] =
-    useState("AGENTIC_CMS_,OPENAI_,ANTHROPIC_,OPENROUTER_,ENTRA_,OIDC_");
+    useState("FORGETBASE_,OPENAI_,ANTHROPIC_,OPENROUTER_,ENTRA_,OIDC_");
   const [secretReferenceEnvVars, setSecretReferenceEnvVars] = useState("");
   const [secretReferenceAllowUnlisted, setSecretReferenceAllowUnlisted] = useState<"true" | "false">("false");
   const [piiRedactionPolicy, setPiiRedactionPolicy] = useState<PiiRedactionPolicy | null>(null);
@@ -649,7 +649,7 @@ export function App() {
     enabled: false,
     displayName: "Microsoft Entra ID",
     issuerUrl: "https://login.microsoftonline.com/common/v2.0",
-    clientId: "agentic-cms",
+    clientId: "forgetbase",
     clientSecretEnvVar: "ENTRA_CLIENT_SECRET",
     redirectUri: "http://localhost:5175/",
     scopes: "openid,profile,email",
@@ -766,12 +766,12 @@ export function App() {
   const exportEndpointPath = `/exports/ai-package?${exportQueryParams.toString()}`;
   const apiCommand = [
     "curl --silent --show-error --fail \\",
-    "  -H \"authorization: Bearer $AGENTIC_CMS_API_KEY\" \\",
-    "  -H \"x-agentic-cms-surface: api\" \\",
+    "  -H \"authorization: Bearer $FORGETBASE_API_KEY\" \\",
+    "  -H \"x-forgetbase-surface: api\" \\",
     `  \"${normalizedApiUrl}${exportEndpointPath}\"`
   ].join("\n");
   const cliCommand = [
-    `npx -y pnpm@11.7.0 --filter @agentic-cms/cli start -- exports ai-package --package ${packageNameInput} --format ${exportFormat}`,
+    `npx -y pnpm@11.7.0 --filter @forgetbase/cli start -- exports ai-package --package ${packageNameInput} --format ${exportFormat}`,
     exportFormat === "okf" ? `  --okf-version ${okfVersion} --output-dir okf-bundle` : "  --output export.json",
     `  --api-url ${normalizedApiUrl}`
   ].join(" \\\n");
@@ -830,9 +830,9 @@ export function App() {
 
   useEffect(() => {
     if (apiKey) {
-      localStorage.setItem("agentic-cms-api-key", apiKey);
+      localStorage.setItem("forgetbase-api-key", apiKey);
     } else {
-      localStorage.removeItem("agentic-cms-api-key");
+      localStorage.removeItem("forgetbase-api-key");
     }
   }, [apiKey]);
 
@@ -845,8 +845,8 @@ export function App() {
   }, [sessionCookieActive]);
 
   useEffect(() => {
-    localStorage.removeItem("agentic-cms-login-tenant");
-    localStorage.removeItem("agentic-cms-login-email");
+    localStorage.removeItem("forgetbase-login-tenant");
+    localStorage.removeItem("forgetbase-login-email");
   }, []);
 
   useEffect(() => {
@@ -901,7 +901,7 @@ export function App() {
       return;
     }
 
-    const rawTransaction = localStorage.getItem("agentic-cms-oidc-transaction");
+    const rawTransaction = localStorage.getItem("forgetbase-oidc-transaction");
 
     if (!rawTransaction) {
       setError("Missing OIDC login state");
@@ -909,7 +909,7 @@ export function App() {
       return;
     }
 
-    localStorage.removeItem("agentic-cms-oidc-transaction");
+    localStorage.removeItem("forgetbase-oidc-transaction");
     window.history.replaceState({}, document.title, window.location.pathname);
 
     try {
@@ -994,7 +994,7 @@ export function App() {
 
   async function request<T>(path: string, init: RequestInit = {}, authKey = apiKey): Promise<T> {
     const headers = new Headers(init.headers);
-    headers.set("x-agentic-cms-surface", "web");
+    headers.set("x-forgetbase-surface", "web");
 
     if (init.body && !headers.has("content-type")) {
       headers.set("content-type", "application/json");
@@ -1006,7 +1006,7 @@ export function App() {
       const csrfToken = readCookie(csrfCookieName);
 
       if (csrfToken) {
-        headers.set("x-agentic-cms-csrf", csrfToken);
+        headers.set("x-forgetbase-csrf", csrfToken);
       }
     }
 

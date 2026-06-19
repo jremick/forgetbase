@@ -15,7 +15,7 @@ This runbook covers the Docker Compose self-hosting path.
 npx -y pnpm@11.7.0 db:backup
 ```
 
-By default this writes to `backups/agentic-cms-<timestamp>.dump`. The `backups/` directory is gitignored.
+By default this writes to `backups/forgetbase-<timestamp>.dump`. The `backups/` directory is gitignored.
 
 To choose a path:
 
@@ -34,19 +34,19 @@ npx -y pnpm@11.7.0 db:verify-backup-restore
 The verifier:
 
 - creates a fresh custom-format backup
-- restores it into a temporary `agentic_cms_restore_*` database
+- restores it into a temporary `forgetbase_restore_*` database
 - compares counts for core registry, auth, audit, retrieval, and migration tables
 - drops the temporary database
 
-Set `KEEP_AGENTIC_CMS_BACKUP=1` only when you need to inspect the temporary dump after verification.
+Set `KEEP_FORGETBASE_BACKUP=1` only when you need to inspect the temporary dump after verification.
 
 ## Restore To A Temporary Database
 
 ```bash
-npx -y pnpm@11.7.0 db:restore -- backups/manual.dump agentic_cms_restore_manual
+npx -y pnpm@11.7.0 db:restore -- backups/manual.dump forgetbase_restore_manual
 ```
 
-Temporary restore targets must start with `agentic_cms_restore_` unless explicitly confirmed.
+Temporary restore targets must start with `forgetbase_restore_` unless explicitly confirmed.
 
 ## Restore The Main Database
 
@@ -59,7 +59,7 @@ docker compose stop api worker
 Restore with an explicit confirmation:
 
 ```bash
-AGENTIC_CMS_RESTORE_CONFIRM=agentic_cms npx -y pnpm@11.7.0 db:restore -- backups/manual.dump agentic_cms
+FORGETBASE_RESTORE_CONFIRM=forgetbase npx -y pnpm@11.7.0 db:restore -- backups/manual.dump forgetbase
 ```
 
 Restart services:
@@ -72,5 +72,5 @@ Smoke-check after restore:
 
 ```bash
 curl --silent --show-error --fail http://127.0.0.1:3000/health
-npx -y pnpm@11.7.0 --filter @agentic-cms/cli start -- assets list --api-url http://127.0.0.1:3000
+npx -y pnpm@11.7.0 --filter @forgetbase/cli start -- assets list --api-url http://127.0.0.1:3000
 ```

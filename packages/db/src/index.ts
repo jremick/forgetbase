@@ -29,7 +29,7 @@ import {
   type AssetUpdateInput,
   type AssetVersionSnapshot,
   type AssetVersionSnapshotInput
-} from "@agentic-cms/schema";
+} from "@forgetbase/schema";
 
 export * from "./auth.js";
 export * from "./auth-provider-config.js";

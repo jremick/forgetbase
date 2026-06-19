@@ -1,10 +1,10 @@
 You are Claude Code running as a delegated worker for Codex.
 
 Task:
-Perform a careful, practical human-perspective UX and information-architecture review of the current ForgetBase / Agentic CMS design and web UI. Focus on whether the purpose of each page is clear to a human operator, whether elements are located where humans would logically expect them, whether the overall page architecture feels intuitive, and where the current interface is impractical for real beta users.
+Perform a careful, practical human-perspective UX and information-architecture review of the current ForgetBase / ForgetBase design and web UI. Focus on whether the purpose of each page is clear to a human operator, whether elements are located where humans would logically expect them, whether the overall page architecture feels intuitive, and where the current interface is impractical for real beta users.
 
 Context:
-- Repo/path: /Users/jarel/Documents/agentic-cms
+- Repo/path: /Users/jarel/Documents/forgetbase
 - Product framing: ForgetBase is an open-core, Apache-2.0, agent-native instruction management platform / instruction control plane. The human web UI is secondary but operationally important: humans inspect, approve, publish, debug, configure, and read governed assets.
 - Current design direction: "Quiet Control Plane with a Governed Reading Room." Dense, restrained, provenance/trust-forward, operational-console UI. Avoid generic AI landing-page aesthetics.
 - Current implementation note: `apps/web/src/App.tsx` has existing unstaged local changes from another work lane. Treat those changes as part of the current local UI state for review, but do not edit or revert anything.
@@ -18,9 +18,9 @@ Relevant source files and artifacts to inspect:
 - docs/MVP_SCOPE.md
 - docs/DEVELOPMENT.md
 - docs/design/README.md
-- docs/design/agentic-cms-design-system/index.html
-- docs/design/agentic-cms-main-page-mockups/index.html
-- docs/design/agentic-cms-main-page-mockups/styles.css
+- docs/design/forgetbase-design-system/index.html
+- docs/design/forgetbase-main-page-mockups/index.html
+- docs/design/forgetbase-main-page-mockups/styles.css
 - apps/web/src/App.tsx
 - apps/web/src/styles.css
 - apps/web/src/components/app/*.tsx

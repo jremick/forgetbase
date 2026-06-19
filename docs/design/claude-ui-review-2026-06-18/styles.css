@@ -1,10 +1,10 @@
 /* ============================================================================
-   Agentic CMS — Claude UI Design Review (2026-06-18)
+   ForgetBase — Claude UI Design Review (2026-06-18)
    Self-contained stylesheet. No external/network dependencies.
 
    Direction: "Quiet Control Plane with a Governed Reading Room".
    Tokens are inherited verbatim from the established design system
-   (docs/design/agentic-cms-design-system + apps/web/src/styles.css) so this
+   (docs/design/forgetbase-design-system + apps/web/src/styles.css) so this
    review is a continuation, not a re-skin. New patterns added in this file:
    summary strip, breadcrumb context bar, answer/evidence split, destructive
    staging panel, sub-nav rail, approval queue, device frame, state system,

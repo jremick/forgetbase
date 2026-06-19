@@ -32,13 +32,13 @@ describe("local dev auth defaults", () => {
   });
 
   it("replaces stale local API storage when moving between local Vite and same-origin builds", () => {
-    expect(readInitialApiUrl(undefined, storage({ "agentic-cms-api-url": "/api" }), location("localhost", "5173"))).toBe(
+    expect(readInitialApiUrl(undefined, storage({ "forgetbase-api-url": "/api" }), location("localhost", "5173"))).toBe(
       localSplitOriginDefaultApiUrl
     );
-    expect(readInitialApiUrl(undefined, storage({ "agentic-cms-api-url": localSplitOriginDefaultApiUrl }), location("app.example.test", ""))).toBe(
+    expect(readInitialApiUrl(undefined, storage({ "forgetbase-api-url": localSplitOriginDefaultApiUrl }), location("app.example.test", ""))).toBe(
       "/api"
     );
-    expect(readInitialApiUrl(undefined, storage({ "agentic-cms-api-url": "https://custom.example.test" }), location("localhost", "5173"))).toBe(
+    expect(readInitialApiUrl(undefined, storage({ "forgetbase-api-url": "https://custom.example.test" }), location("localhost", "5173"))).toBe(
       "https://custom.example.test"
     );
   });
@@ -47,8 +47,8 @@ describe("local dev auth defaults", () => {
     const local = location("localhost", "5173");
     const deployed = location("app.example.test", "");
     const stored = storage({
-      "agentic-cms-login-tenant": "tenant_custom",
-      "agentic-cms-login-email": "operator@example.test"
+      "forgetbase-login-tenant": "tenant_custom",
+      "forgetbase-login-email": "operator@example.test"
     });
 
     expect(readInitialLoginTenantId(undefined, local)).toBe("");

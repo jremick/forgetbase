@@ -4,7 +4,7 @@ import {
   managedQueryFeedbackSchema,
   type ManagedQueryFeedback,
   type ManagedQueryFeedbackCreateInput
-} from "@agentic-cms/schema";
+} from "@forgetbase/schema";
 
 export interface ManagedQueryFeedbackListOptions {
   tenantId?: string;

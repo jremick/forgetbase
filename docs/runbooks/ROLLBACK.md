@@ -39,7 +39,7 @@ docker compose stop api worker
 2. Restore the selected backup:
 
 ```bash
-AGENTIC_CMS_RESTORE_CONFIRM=agentic_cms npx -y pnpm@11.7.0 db:restore -- backups/<selected>.dump agentic_cms
+FORGETBASE_RESTORE_CONFIRM=forgetbase npx -y pnpm@11.7.0 db:restore -- backups/<selected>.dump forgetbase
 ```
 
 3. Restart services and verify:
@@ -47,7 +47,7 @@ AGENTIC_CMS_RESTORE_CONFIRM=agentic_cms npx -y pnpm@11.7.0 db:restore -- backups
 ```bash
 docker compose up -d migrate api worker web
 curl --silent --show-error --fail http://127.0.0.1:3000/health
-npx -y pnpm@11.7.0 --filter @agentic-cms/cli start -- search --query "PII redaction" --limit 3 --api-url http://127.0.0.1:3000
+npx -y pnpm@11.7.0 --filter @forgetbase/cli start -- search --query "PII redaction" --limit 3 --api-url http://127.0.0.1:3000
 ```
 
 ## Content Rollback
@@ -57,8 +57,8 @@ Asset-version rollback is available for governed assets.
 1. Inspect the asset versions and preview the target version:
 
 ```bash
-npx -y pnpm@11.7.0 --filter @agentic-cms/cli start -- assets get <stable-id>
-npx -y pnpm@11.7.0 --filter @agentic-cms/cli start -- assets version <stable-id> --version-number 1
+npx -y pnpm@11.7.0 --filter @forgetbase/cli start -- assets get <stable-id>
+npx -y pnpm@11.7.0 --filter @forgetbase/cli start -- assets version <stable-id> --version-number 1
 ```
 
 You can also inspect and restore versions from the web UI with an admin key.
@@ -66,13 +66,13 @@ You can also inspect and restore versions from the web UI with an admin key.
 2. Restore the desired version:
 
 ```bash
-npx -y pnpm@11.7.0 --filter @agentic-cms/cli start -- assets restore <stable-id> --version-number 1
+npx -y pnpm@11.7.0 --filter @forgetbase/cli start -- assets restore <stable-id> --version-number 1
 ```
 
 3. Verify search reflects the restored content:
 
 ```bash
-npx -y pnpm@11.7.0 --filter @agentic-cms/cli start -- search --query "<restored content phrase>"
+npx -y pnpm@11.7.0 --filter @forgetbase/cli start -- search --query "<restored content phrase>"
 ```
 
 Required future work:

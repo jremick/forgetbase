@@ -7,9 +7,9 @@ type SmokeStep = {
   detail?: unknown;
 };
 
-const apiUrl = stripTrailingSlash(process.env.AGENTIC_CMS_API_URL ?? `http://127.0.0.1:${process.env.AGENTIC_CMS_API_PORT ?? "3000"}`);
-const packageName = process.env.AGENTIC_CMS_SMOKE_EXPORT_PACKAGE ?? "demo-agent-pack";
-const requestTimeoutMs = parsePositiveInteger(process.env.AGENTIC_CMS_SMOKE_TIMEOUT_MS, 10_000);
+const apiUrl = stripTrailingSlash(process.env.FORGETBASE_API_URL ?? `http://127.0.0.1:${process.env.FORGETBASE_API_PORT ?? "3000"}`);
+const packageName = process.env.FORGETBASE_SMOKE_EXPORT_PACKAGE ?? "demo-agent-pack";
+const requestTimeoutMs = parsePositiveInteger(process.env.FORGETBASE_SMOKE_TIMEOUT_MS, 10_000);
 const steps: SmokeStep[] = [];
 const failures: string[] = [];
 
@@ -295,7 +295,7 @@ async function main(): Promise<void> {
     if (dockerInfo.ok) {
       recordPass("docker daemon", { serverVersion: dockerInfo.stdout.replace(/^"|"$/g, "") });
     } else {
-      recordFail("docker daemon", "Docker daemon is unavailable; start Docker Desktop or target an already reachable API with AGENTIC_CMS_API_URL", dockerInfo);
+      recordFail("docker daemon", "Docker daemon is unavailable; start Docker Desktop or target an already reachable API with FORGETBASE_API_URL", dockerInfo);
     }
   }
 
@@ -309,8 +309,8 @@ async function main(): Promise<void> {
     const tcpStatus = await checkTcpReachability(apiUrl);
     const composePs = composeAvailable ? runCommand("docker compose ps", "docker", ["compose", "ps"]) : undefined;
     const message = tcpStatus === "open"
-      ? `API health check failed even though ${apiUrl} accepts TCP connections; this often means a port conflict or a non-Agentic CMS service is on the configured port`
-      : `No running Agentic CMS API is reachable at ${apiUrl}; start the Compose stack first or set AGENTIC_CMS_API_URL to a reachable API`;
+      ? `API health check failed even though ${apiUrl} accepts TCP connections; this often means a port conflict or a non-ForgetBase service is on the configured port`
+      : `No running ForgetBase API is reachable at ${apiUrl}; start the Compose stack first or set FORGETBASE_API_URL to a reachable API`;
     recordFail("API /health", message, {
       error: summarizeError(error),
       tcpStatus,
@@ -346,7 +346,7 @@ async function main(): Promise<void> {
 
     const leakage = runCommand("restricted leakage verifier", "bash", ["scripts/verify-restricted-leakage.sh"], {
       ...process.env,
-      AGENTIC_CMS_API_URL: apiUrl
+      FORGETBASE_API_URL: apiUrl
     });
 
     if (leakage.ok) {

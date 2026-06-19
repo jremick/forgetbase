@@ -43,11 +43,11 @@ Manager integration update: the manager thread rebuilt the current `migrate` and
   - Adds a deterministic running-stack smoke gate.
   - Validates base, same-origin, and TLS Compose config.
   - Checks Docker CLI, Docker Compose plugin, and Docker daemon availability with readable failure messages.
-  - Checks `/health`, `/openapi.json`, JSON `demo-agent-pack` export, OKF `demo-agent-pack` export, and `scripts/verify-restricted-leakage.sh` against `AGENTIC_CMS_API_URL` or `http://127.0.0.1:3000`.
+  - Checks `/health`, `/openapi.json`, JSON `demo-agent-pack` export, OKF `demo-agent-pack` export, and `scripts/verify-restricted-leakage.sh` against `FORGETBASE_API_URL` or `http://127.0.0.1:3000`.
   - Fails clearly for unreachable API, likely port conflict/wrong service, empty demo exports, stale/non-OKF export shape, and leakage verifier failure.
   - Does not start, stop, or mutate containers.
 - `docs/DEVELOPMENT.md`
-  - Documents `npx -y pnpm@11.7.0 smoke:compose`, running-stack assumptions, `AGENTIC_CMS_API_URL`, and the demo-corpus import assumption.
+  - Documents `npx -y pnpm@11.7.0 smoke:compose`, running-stack assumptions, `FORGETBASE_API_URL`, and the demo-corpus import assumption.
 - `docs/runbooks/DEPLOY_DOCKER_COMPOSE.md`
   - Adds `smoke:compose` to post-health Compose checks.
 - `work/beta-execution/runtime-smoke-leakage-report.md`
@@ -77,7 +77,7 @@ Passing parts:
   "dockerDaemon": "29.5.3",
   "health": {
     "status": "ok",
-    "service": "agentic-cms-api",
+    "service": "forgetbase-api",
     "version": "0.1.0"
   },
   "openapi": {
@@ -136,8 +136,8 @@ Claims lint OK: scanned 28 public copy/source files with 8 claim rules.
 Commands run by the manager after this worker report:
 
 ```bash
-AGENTIC_CMS_POSTGRES_PORT=55432 docker compose build migrate api
-AGENTIC_CMS_POSTGRES_PORT=55432 docker compose up -d migrate api
+FORGETBASE_POSTGRES_PORT=55432 docker compose build migrate api
+FORGETBASE_POSTGRES_PORT=55432 docker compose up -d migrate api
 npx -y pnpm@11.7.0 smoke:compose
 curl --silent --show-error --fail "http://127.0.0.1:3000/exports/ai-package?package=demo-agent-pack&format=okf&okfVersion=0.1"
 ```

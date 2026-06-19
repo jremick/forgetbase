@@ -6,7 +6,7 @@ const navResizer = document.querySelector("[data-nav-resizer]");
 const treeToggleSelector = "[data-tree-toggle], .nav-folder[aria-expanded], .content-folder[aria-expanded], .tree-folder[aria-expanded], button.tree-folder, [role='button'][aria-expanded]";
 const treeChildrenSelector = "[data-tree-children], .tree-children, .nav-branch, .content-branch";
 const treeFolderSelector = "[data-tree-folder], [data-tree-node], .nav-branch, .content-branch, .tree-folder, li";
-const navWidthStorageKey = "agentic-cms-main-nav-width";
+const navWidthStorageKey = "forgetbase-main-nav-width";
 
 function readCssPixel(name, fallback) {
   const value = Number.parseInt(getComputedStyle(document.documentElement).getPropertyValue(name), 10);
@@ -208,7 +208,7 @@ function showRoute(route) {
   updateTreeActiveState(target);
 
   const heading = document.querySelector(`[data-page="${target}"] h1`);
-  document.title = heading ? `${heading.textContent} - Agentic CMS Mockups` : "Agentic CMS Mockups";
+  document.title = heading ? `${heading.textContent} - ForgetBase Mockups` : "ForgetBase Mockups";
 }
 
 function applyRole(role) {

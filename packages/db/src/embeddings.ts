@@ -56,7 +56,7 @@ export class OpenAiEmbeddingProvider implements EmbeddingProvider {
 
     if (this.dimensions !== DEFAULT_EMBEDDING_DIMENSIONS) {
       throw new Error(
-        `AGENTIC_CMS_EMBEDDINGS_DIMENSIONS must be ${DEFAULT_EMBEDDING_DIMENSIONS} for the current pgvector schema`
+        `FORGETBASE_EMBEDDINGS_DIMENSIONS must be ${DEFAULT_EMBEDDING_DIMENSIONS} for the current pgvector schema`
       );
     }
   }
@@ -114,7 +114,7 @@ export class OpenAiEmbeddingProvider implements EmbeddingProvider {
 }
 
 export function createEmbeddingProviderFromEnv(env: NodeJS.ProcessEnv = process.env): EmbeddingProvider {
-  const provider = (env.AGENTIC_CMS_EMBEDDINGS_PROVIDER ?? LOCAL_HASH_EMBEDDING_PROVIDER).trim().toLowerCase();
+  const provider = (env.FORGETBASE_EMBEDDINGS_PROVIDER ?? LOCAL_HASH_EMBEDDING_PROVIDER).trim().toLowerCase();
 
   switch (provider) {
     case "":
@@ -122,23 +122,23 @@ export function createEmbeddingProviderFromEnv(env: NodeJS.ProcessEnv = process.
     case "local-hash":
       return new LocalHashEmbeddingProvider();
     case "openai": {
-      const apiKeyEnvVar = env.AGENTIC_CMS_EMBEDDINGS_API_KEY_ENV_VAR ?? "OPENAI_API_KEY";
+      const apiKeyEnvVar = env.FORGETBASE_EMBEDDINGS_API_KEY_ENV_VAR ?? "OPENAI_API_KEY";
       const apiKey = env[apiKeyEnvVar];
 
       if (!apiKey) {
-        throw new Error(`AGENTIC_CMS_EMBEDDINGS_PROVIDER=openai requires ${apiKeyEnvVar} to be set`);
+        throw new Error(`FORGETBASE_EMBEDDINGS_PROVIDER=openai requires ${apiKeyEnvVar} to be set`);
       }
 
       return new OpenAiEmbeddingProvider({
         apiKey,
-        model: env.AGENTIC_CMS_EMBEDDINGS_MODEL,
-        baseUrl: env.AGENTIC_CMS_EMBEDDINGS_BASE_URL,
-        dimensions: readPositiveIntegerEnv(env, "AGENTIC_CMS_EMBEDDINGS_DIMENSIONS", DEFAULT_EMBEDDING_DIMENSIONS),
-        timeoutMs: readPositiveIntegerEnv(env, "AGENTIC_CMS_EMBEDDINGS_TIMEOUT_MS", DEFAULT_OPENAI_EMBEDDING_TIMEOUT_MS)
+        model: env.FORGETBASE_EMBEDDINGS_MODEL,
+        baseUrl: env.FORGETBASE_EMBEDDINGS_BASE_URL,
+        dimensions: readPositiveIntegerEnv(env, "FORGETBASE_EMBEDDINGS_DIMENSIONS", DEFAULT_EMBEDDING_DIMENSIONS),
+        timeoutMs: readPositiveIntegerEnv(env, "FORGETBASE_EMBEDDINGS_TIMEOUT_MS", DEFAULT_OPENAI_EMBEDDING_TIMEOUT_MS)
       });
     }
     default:
-      throw new Error(`Unsupported AGENTIC_CMS_EMBEDDINGS_PROVIDER: ${provider}`);
+      throw new Error(`Unsupported FORGETBASE_EMBEDDINGS_PROVIDER: ${provider}`);
   }
 }
 

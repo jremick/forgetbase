@@ -10,7 +10,7 @@ The production product must support permission-aware retrieval, admin-controlled
 
 ## Product Category
 
-Agentic CMS is not primarily a wiki, intranet, or conventional CMS.
+ForgetBase is not primarily a wiki, intranet, or conventional CMS.
 
 It is an instruction control plane for agentic systems:
 

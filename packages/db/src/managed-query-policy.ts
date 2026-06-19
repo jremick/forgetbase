@@ -5,7 +5,7 @@ import {
   type ManagedQueryMode,
   type ManagedQueryPolicy,
   type ManagedQueryPolicyInput
-} from "@agentic-cms/schema";
+} from "@forgetbase/schema";
 
 export const DEFAULT_MANAGED_QUERY_POLICY = {
   defaultMode: "deterministic-retrieval" as ManagedQueryMode,

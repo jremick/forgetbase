@@ -116,7 +116,7 @@ The generated asset file content must include the source stable ID, source versi
 
 The private beta SDK compatibility target covers:
 
-- `new AgenticCmsClient({ baseUrl, apiKey, surface, fetchImpl })`
+- `new ForgetBaseClient({ baseUrl, apiKey, surface, fetchImpl })`
 - `client.health()`
 - `client.search({ query, limit, strategy })`
 - `client.exportAiPackage(packageName, { format: "json" })`
@@ -128,14 +128,14 @@ Other SDK methods remain preview unless listed here in a later contract update.
 
 The private beta CLI compatibility target covers:
 
-- `agentic-cms health --api-url ...`
-- `agentic-cms auth bootstrap --email ... --display-name ... --tenant-id ... --password ... --api-url ...`
-- `agentic-cms validate --file corpus/demo/assets.json --as-of ... --fail-on-warnings`
-- `agentic-cms corpus import --file corpus/demo/assets.json --api-url ... --api-key ...`
-- `agentic-cms assets get <stable-id> --api-url ... --api-key ...`
-- `agentic-cms search --query ... --limit ... --strategy lexical|vector|hybrid --api-url ... --api-key ...`
-- `agentic-cms exports ai-package --package demo-agent-pack --format json --api-url ... --api-key ...`
-- `agentic-cms exports ai-package --package demo-agent-pack --format okf --okf-version 0.1 --api-url ... --api-key ...`
+- `forgetbase health --api-url ...`
+- `forgetbase auth bootstrap --email ... --display-name ... --tenant-id ... --password ... --api-url ...`
+- `forgetbase validate --file corpus/demo/assets.json --as-of ... --fail-on-warnings`
+- `forgetbase corpus import --file corpus/demo/assets.json --api-url ... --api-key ...`
+- `forgetbase assets get <stable-id> --api-url ... --api-key ...`
+- `forgetbase search --query ... --limit ... --strategy lexical|vector|hybrid --api-url ... --api-key ...`
+- `forgetbase exports ai-package --package demo-agent-pack --format json --api-url ... --api-key ...`
+- `forgetbase exports ai-package --package demo-agent-pack --format okf --okf-version 0.1 --api-url ... --api-key ...`
 
 Other CLI commands remain preview unless listed here in a later contract update.
 
@@ -149,7 +149,7 @@ The private beta MCP compatibility target covers consumer-path tools:
 - `generate_ai_export`
 - `validate_context_access`
 
-The frozen MCP behavior is limited to forwarding fetch/search/export/access-check calls to the API with `x-agentic-cms-surface: mcp`, preserving bearer authentication, and returning JSON text content suitable for machine clients.
+The frozen MCP behavior is limited to forwarding fetch/search/export/access-check calls to the API with `x-forgetbase-surface: mcp`, preserving bearer authentication, and returning JSON text content suitable for machine clients.
 
 ## Error Envelope
 
@@ -190,7 +190,7 @@ npx -y pnpm@11.7.0 openapi:check
 npx -y pnpm@11.7.0 contracts:check
 npx -y pnpm@11.7.0 test
 npx -y pnpm@11.7.0 security:check-deployment-defaults
-AGENTIC_CMS_PUBLIC_DEPLOYMENT=true AGENTIC_CMS_REQUIRE_AUTHENTICATION=true AGENTIC_CMS_SESSION_COOKIE_SECURE=true AGENTIC_CMS_PUBLIC_ENTRYPOINT=railway-proxy AGENTIC_CMS_CORS_ALLOWED_ORIGINS=https://cms.example.com npx -y pnpm@11.7.0 security:check-deployment-defaults
+FORGETBASE_PUBLIC_DEPLOYMENT=true FORGETBASE_REQUIRE_AUTHENTICATION=true FORGETBASE_SESSION_COOKIE_SECURE=true FORGETBASE_PUBLIC_ENTRYPOINT=railway-proxy FORGETBASE_CORS_ALLOWED_ORIGINS=https://cms.example.com npx -y pnpm@11.7.0 security:check-deployment-defaults
 npx -y pnpm@11.7.0 smoke:compose
 npx -y pnpm@11.7.0 security:verify-restricted-leakage
 npx -y pnpm@11.7.0 db:verify-backup-restore

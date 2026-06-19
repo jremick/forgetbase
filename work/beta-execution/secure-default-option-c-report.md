@@ -14,7 +14,7 @@ Local OSS bootstrap remains workable. Public deployment review now has an explic
 npx -y pnpm@11.7.0 security:check-deployment-defaults
 ```
 
-The script passes local defaults while checking public template guardrails. When `AGENTIC_CMS_PUBLIC_DEPLOYMENT=true`, it requires explicit public settings for authentication, secure browser cookies, public entrypoint shape, HTTPS CORS origins, and safe direct service binds where relevant.
+The script passes local defaults while checking public template guardrails. When `FORGETBASE_PUBLIC_DEPLOYMENT=true`, it requires explicit public settings for authentication, secure browser cookies, public entrypoint shape, HTTPS CORS origins, and safe direct service binds where relevant.
 
 ## Files Inspected
 
@@ -73,11 +73,11 @@ Result: passed with 14 checks, including local Compose bind clarity, same-origin
 Public Railway-style happy path:
 
 ```bash
-AGENTIC_CMS_PUBLIC_DEPLOYMENT=true \
-AGENTIC_CMS_REQUIRE_AUTHENTICATION=true \
-AGENTIC_CMS_SESSION_COOKIE_SECURE=true \
-AGENTIC_CMS_PUBLIC_ENTRYPOINT=railway-proxy \
-AGENTIC_CMS_CORS_ALLOWED_ORIGINS=https://cms.example.com \
+FORGETBASE_PUBLIC_DEPLOYMENT=true \
+FORGETBASE_REQUIRE_AUTHENTICATION=true \
+FORGETBASE_SESSION_COOKIE_SECURE=true \
+FORGETBASE_PUBLIC_ENTRYPOINT=railway-proxy \
+FORGETBASE_CORS_ALLOWED_ORIGINS=https://cms.example.com \
 npx -y pnpm@11.7.0 security:check-deployment-defaults
 ```
 

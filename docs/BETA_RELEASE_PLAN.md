@@ -478,7 +478,7 @@ docker compose -f compose.yaml -f compose.same-origin.yaml -f compose.tls.yaml c
 Product-specific checks:
 
 ```bash
-npx -y pnpm@11.7.0 --filter @agentic-cms/cli start -- validate --file corpus/demo/assets.json --as-of 2026-06-16 --fail-on-warnings
+npx -y pnpm@11.7.0 --filter @forgetbase/cli start -- validate --file corpus/demo/assets.json --as-of 2026-06-16 --fail-on-warnings
 npx -y pnpm@11.7.0 security:verify-restricted-leakage
 npx -y pnpm@11.7.0 db:verify-backup-restore
 ```

@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import { buildOkfExportPackage, type AiExportPackage } from "@agentic-cms/schema";
-import { AgenticCmsClient } from "./index.js";
+import { buildOkfExportPackage, type AiExportPackage } from "@forgetbase/schema";
+import { ForgetBaseClient } from "./index.js";
 
-describe("Agentic CMS SDK beta contract", () => {
+describe("ForgetBase SDK beta contract", () => {
   it("maps search and export calls to the canonical machine-consumer API path", async () => {
     const jsonPackage = betaJsonExportPackage();
     const okfPackage = buildOkfExportPackage(jsonPackage, { okfVersion: "0.1" });
@@ -21,8 +21,8 @@ describe("Agentic CMS SDK beta contract", () => {
 
       return jsonPackage;
     });
-    const client = new AgenticCmsClient({
-      baseUrl: "http://agentic-cms.test/",
+    const client = new ForgetBaseClient({
+      baseUrl: "http://forgetbase.test/",
       apiKey: "test-key",
       surface: "api",
       fetchImpl: fetchMock
@@ -77,7 +77,7 @@ describe("Agentic CMS SDK beta contract", () => {
 
     for (const call of calls) {
       expect(call.headers.get("authorization")).toBe("Bearer test-key");
-      expect(call.headers.get("x-agentic-cms-surface")).toBe("api");
+      expect(call.headers.get("x-forgetbase-surface")).toBe("api");
     }
   });
 });
