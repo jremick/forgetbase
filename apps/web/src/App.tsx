@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import type {
   AccountLinkingMode,
   AgentActionExecutionPolicy,
@@ -195,7 +195,6 @@ const actionTypes: AgentActionType[] = [
 ];
 
 const unsafeMethods = new Set(["POST", "PUT", "PATCH", "DELETE"]);
-const navWidthStorageKey = "agentic-cms-web-nav-width";
 const densityStorageKey = "agentic-cms-web-density";
 type AuthState = "checking" | "authenticated" | "unauthenticated";
 type NavBadgeTone = "warn" | "bad" | "ok";
@@ -299,15 +298,6 @@ function routePanelClass(currentPage: string, routes: string[], baseClass = "gri
 
 function normalizePageRoute(route: string): string {
   return pageRoutes.has(route) ? route : "library";
-}
-
-function readStoredNavWidth(): number {
-  if (typeof window === "undefined") {
-    return 292;
-  }
-
-  const stored = Number.parseInt(localStorage.getItem(navWidthStorageKey) ?? "", 10);
-  return Number.isFinite(stored) ? Math.min(420, Math.max(240, stored)) : 292;
 }
 
 function navBadgeVariant(tone?: NavBadgeTone): BadgeVariant {
@@ -551,8 +541,6 @@ export function App() {
   const [density, setDensity] = useState(() =>
     typeof window === "undefined" ? "comfortable" : localStorage.getItem(densityStorageKey) || "comfortable"
   );
-  const [navWidth, setNavWidth] = useState(readStoredNavWidth);
-  const [isResizingNav, setIsResizingNav] = useState(false);
   const [isCommandOpen, setIsCommandOpen] = useState(false);
   const commandTriggerRef = useRef<HTMLButtonElement | null>(null);
 
@@ -687,10 +675,6 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    localStorage.setItem(navWidthStorageKey, String(navWidth));
-  }, [navWidth]);
-
-  useEffect(() => {
     localStorage.setItem(densityStorageKey, density);
   }, [density]);
 
@@ -709,28 +693,6 @@ export function App() {
     window.addEventListener("keydown", openCommandShortcut);
     return () => window.removeEventListener("keydown", openCommandShortcut);
   }, [isAuthenticated]);
-
-  useEffect(() => {
-    if (!isResizingNav) {
-      return undefined;
-    }
-
-    const handlePointerMove = (event: PointerEvent) => {
-      const nav = document.querySelector(".side-nav");
-      const navLeft = nav?.getBoundingClientRect().left ?? 0;
-      setNavWidth(Math.min(420, Math.max(240, Math.round(event.clientX - navLeft))));
-    };
-    const stopResize = () => setIsResizingNav(false);
-
-    window.addEventListener("pointermove", handlePointerMove);
-    window.addEventListener("pointerup", stopResize);
-    window.addEventListener("pointercancel", stopResize);
-    return () => {
-      window.removeEventListener("pointermove", handlePointerMove);
-      window.removeEventListener("pointerup", stopResize);
-      window.removeEventListener("pointercancel", stopResize);
-    };
-  }, [isResizingNav]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -2543,27 +2505,6 @@ export function App() {
     setDensity((current) => current === "comfortable" ? "compact" : "comfortable");
   }
 
-  function handleNavResizeKey(event: ReactKeyboardEvent<HTMLDivElement>) {
-    const step = event.shiftKey ? 32 : 16;
-
-    if (event.key === "ArrowLeft") {
-      event.preventDefault();
-      setNavWidth((current) => Math.max(240, current - step));
-    } else if (event.key === "ArrowRight") {
-      event.preventDefault();
-      setNavWidth((current) => Math.min(420, current + step));
-    } else if (event.key === "Home") {
-      event.preventDefault();
-      setNavWidth(240);
-    } else if (event.key === "End") {
-      event.preventDefault();
-      setNavWidth(420);
-    }
-  }
-
-  const appShellStyle = {
-    "--nav": `${navWidth}px`
-  } as CSSProperties;
   const operationsPage = operationsPageCopy[currentPage] ?? defaultOperationsPageCopy;
   const isOperationsLanding = currentPage === "operations";
   const activeAssetContentView = currentPage === "versions" ? "version" : assetContentView;
@@ -2651,9 +2592,8 @@ export function App() {
 
   return (
     <div
-      className={`app-shell ${isAuthenticated ? "" : "auth-shell"} ${isResizingNav ? "is-resizing-nav" : ""}`}
+      className={`app-shell ${isAuthenticated ? "" : "auth-shell"}`}
       data-density={density}
-      style={appShellStyle}
     >
       <a className="skip-link" href="#main">Skip to content</a>
       <header className="topbar">
@@ -2805,23 +2745,6 @@ export function App() {
             </div>
           ))}
         </ScrollArea>
-        <div
-          className="nav-resizer"
-          role="separator"
-          aria-label="Resize page navigation"
-          aria-orientation="vertical"
-          aria-controls="page-nav main"
-          aria-valuemin={240}
-          aria-valuemax={420}
-          aria-valuenow={navWidth}
-          tabIndex={0}
-          onKeyDown={handleNavResizeKey}
-          onPointerDown={(event) => {
-            event.preventDefault();
-            event.currentTarget.setPointerCapture(event.pointerId);
-            setIsResizingNav(true);
-          }}
-        ></div>
       </nav>
 
       <main className="main" id="main">

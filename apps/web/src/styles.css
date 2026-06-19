@@ -130,6 +130,90 @@ button {
   cursor: pointer;
 }
 
+[data-slot="progress-indicator"] {
+  transform: translateX(-100%);
+}
+
+[data-slot="progress-indicator"][data-value="5"] {
+  transform: translateX(-95%);
+}
+
+[data-slot="progress-indicator"][data-value="10"] {
+  transform: translateX(-90%);
+}
+
+[data-slot="progress-indicator"][data-value="15"] {
+  transform: translateX(-85%);
+}
+
+[data-slot="progress-indicator"][data-value="20"] {
+  transform: translateX(-80%);
+}
+
+[data-slot="progress-indicator"][data-value="25"] {
+  transform: translateX(-75%);
+}
+
+[data-slot="progress-indicator"][data-value="30"] {
+  transform: translateX(-70%);
+}
+
+[data-slot="progress-indicator"][data-value="35"] {
+  transform: translateX(-65%);
+}
+
+[data-slot="progress-indicator"][data-value="40"] {
+  transform: translateX(-60%);
+}
+
+[data-slot="progress-indicator"][data-value="45"] {
+  transform: translateX(-55%);
+}
+
+[data-slot="progress-indicator"][data-value="50"] {
+  transform: translateX(-50%);
+}
+
+[data-slot="progress-indicator"][data-value="55"] {
+  transform: translateX(-45%);
+}
+
+[data-slot="progress-indicator"][data-value="60"] {
+  transform: translateX(-40%);
+}
+
+[data-slot="progress-indicator"][data-value="65"] {
+  transform: translateX(-35%);
+}
+
+[data-slot="progress-indicator"][data-value="70"] {
+  transform: translateX(-30%);
+}
+
+[data-slot="progress-indicator"][data-value="75"] {
+  transform: translateX(-25%);
+}
+
+[data-slot="progress-indicator"][data-value="80"] {
+  transform: translateX(-20%);
+}
+
+[data-slot="progress-indicator"][data-value="85"] {
+  transform: translateX(-15%);
+}
+
+[data-slot="progress-indicator"][data-value="90"] {
+  transform: translateX(-10%);
+}
+
+[data-slot="progress-indicator"][data-value="95"] {
+  transform: translateX(-5%);
+}
+
+[data-slot="progress-indicator"][data-value="100"] {
+  transform: translateX(0);
+}
+
 button,
 .btn {
   display: inline-flex;
@@ -322,12 +406,6 @@ tr.empty-row:hover {
   grid-template-columns: minmax(0, 1fr);
 }
 
-.app-shell.is-resizing-nav,
-.app-shell.is-resizing-nav * {
-  cursor: col-resize !important;
-  user-select: none !important;
-}
-
 .topbar {
   position: sticky;
   top: 0;
@@ -513,36 +591,6 @@ tr.empty-row:hover {
 
 .side-nav-scroll [data-slot="scroll-area-viewport"] {
   padding: 18px 14px;
-}
-
-.nav-resizer {
-  position: absolute;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  z-index: 5;
-  width: 10px;
-  cursor: col-resize;
-  touch-action: none;
-}
-
-.nav-resizer::before {
-  content: "";
-  position: absolute;
-  top: 12px;
-  bottom: 12px;
-  left: 4px;
-  width: 2px;
-  border-radius: 999px;
-  background: transparent;
-  transition: background 120ms ease, box-shadow 120ms ease;
-}
-
-.nav-resizer:hover::before,
-.nav-resizer:focus-visible::before,
-.app-shell.is-resizing-nav .nav-resizer::before {
-  background: var(--brand-500);
-  box-shadow: 0 0 0 3px var(--brand-100);
 }
 
 .nav-group {
@@ -1382,10 +1430,6 @@ button.danger:hover:not(:disabled) {
 
   .side-nav-scroll {
     height: 100%;
-  }
-
-  .nav-resizer {
-    display: none;
   }
 
   .main {

@@ -6,6 +6,10 @@ import * as ProgressPrimitive from "@radix-ui/react-progress";
 import { cn } from "@/lib/utils.js";
 
 function Progress({ className, value, ...props }: React.ComponentProps<typeof ProgressPrimitive.Root>) {
+  const numericValue = typeof value === "number" && Number.isFinite(value) ? value : 0;
+  const boundedValue = Math.max(0, Math.min(100, numericValue));
+  const progressValue = Math.round(boundedValue / 5) * 5;
+
   return (
     <ProgressPrimitive.Root
       data-slot="progress"
@@ -14,8 +18,8 @@ function Progress({ className, value, ...props }: React.ComponentProps<typeof Pr
     >
       <ProgressPrimitive.Indicator
         data-slot="progress-indicator"
+        data-value={progressValue}
         className="h-full w-full flex-1 bg-primary transition-all"
-        style={{ transform: `translateX(-${100 - (value ?? 0)}%)` }}
       />
     </ProgressPrimitive.Root>
   );
