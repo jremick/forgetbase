@@ -346,6 +346,7 @@ function renderMarkdownDocument(body: string, title: string): ReactNode[] {
 
 const pageRouteValues = [
   "reader",
+  "account-settings",
   "library",
   "search",
   "asset-read",
@@ -685,6 +686,7 @@ export function App() {
   const loadedWorkspaceRoutesRef = useRef<Set<string>>(new Set());
 
   const readerRouteRequested = currentPage === "reader";
+  const accountSettingsRouteRequested = currentPage === "account-settings";
   const shouldUseReaderAssetScope = currentPrincipal?.role === "reader" || readerRouteRequested;
   const readerPublishedAssets = useMemo(
     () => assets.filter(isPublishedReaderAsset),
@@ -797,7 +799,16 @@ export function App() {
   const isAuthenticated = authState === "authenticated";
   const displayIdentity = currentPrincipal?.displayName || currentPrincipal?.email || "Guest";
   const displayInitials = isAuthenticated ? initialsFor(displayIdentity) : "GU";
-  const readerSurfaceActive = isAuthenticated && shouldUseReaderAssetScope;
+  const readerSurfaceActive = isAuthenticated && (shouldUseReaderAssetScope || accountSettingsRouteRequested);
+  const readerLibrarySurfaceActive = readerSurfaceActive && !accountSettingsRouteRequested;
+  const canUseAdministration = Boolean(
+    currentPrincipal &&
+    (currentPrincipal.role === "admin" ||
+      currentPrincipal.role === "maintainer" ||
+      currentPrincipal.scopes.includes("admin") ||
+      currentPrincipal.scopes.includes("asset:write") ||
+      currentPrincipal.scopes.includes("permission:write"))
+  );
   const readerSelectedAsset = readerPublishedAssets.find((asset) => asset.stableId === selectedStableId) ??
     filteredReaderAssets[0] ??
     readerPublishedAssets[0];
@@ -910,7 +921,7 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    if (currentPrincipal?.role === "reader" && currentPage !== "reader") {
+    if (currentPrincipal?.role === "reader" && currentPage !== "reader" && currentPage !== "account-settings") {
       setCurrentPage("reader");
       setCurrentHashRoute("reader");
       window.history.replaceState({}, document.title, `${window.location.pathname}${window.location.search}#reader`);
@@ -918,7 +929,7 @@ export function App() {
   }, [currentPage, currentPrincipal?.role]);
 
   useEffect(() => {
-    if (!readerSurfaceActive) {
+    if (!readerLibrarySurfaceActive) {
       return;
     }
 
@@ -937,13 +948,13 @@ export function App() {
       setSelectedStableId(nextStableId);
       setAssetContentView("human");
     }
-  }, [readerPublishedAssets, readerSurfaceActive, selectedStableId]);
+  }, [readerPublishedAssets, readerLibrarySurfaceActive, selectedStableId]);
 
   useEffect(() => {
-    if (isAuthenticated && selectedAsset) {
+    if (isAuthenticated && selectedAsset && !accountSettingsRouteRequested) {
       void loadAsset(selectedAsset.stableId);
     }
-  }, [isAuthenticated, selectedAsset?.stableId]);
+  }, [accountSettingsRouteRequested, isAuthenticated, selectedAsset?.stableId]);
 
   useEffect(() => {
     if (!isAuthenticated || readerSurfaceActive) {
@@ -3003,6 +3014,16 @@ export function App() {
                   </DropdownMenuLabel>
                   <DropdownMenuSeparator />
                   <DropdownMenuGroup>
+                    <DropdownMenuItem onSelect={() => navigatePage("account-settings")}>
+                      Settings
+                      <DropdownMenuShortcut>#account</DropdownMenuShortcut>
+                    </DropdownMenuItem>
+                    {canUseAdministration ? (
+                      <DropdownMenuItem onSelect={() => navigatePage("library")}>
+                        Administration
+                        <DropdownMenuShortcut>#admin</DropdownMenuShortcut>
+                      </DropdownMenuItem>
+                    ) : null}
                     <DropdownMenuItem onSelect={() => void refresh()}>
                       Refresh library
                       <DropdownMenuShortcut>sync</DropdownMenuShortcut>
@@ -3045,10 +3066,16 @@ export function App() {
                   </DropdownMenuLabel>
                   <DropdownMenuSeparator />
                   <DropdownMenuGroup>
-                    <DropdownMenuItem onSelect={() => navigatePage("settings")}>
+                    <DropdownMenuItem onSelect={() => navigatePage("account-settings")}>
                       Settings
-                      <DropdownMenuShortcut>#settings</DropdownMenuShortcut>
+                      <DropdownMenuShortcut>#account</DropdownMenuShortcut>
                     </DropdownMenuItem>
+                    {canUseAdministration ? (
+                      <DropdownMenuItem onSelect={() => navigatePage("library")}>
+                        Administration
+                        <DropdownMenuShortcut>#admin</DropdownMenuShortcut>
+                      </DropdownMenuItem>
+                    ) : null}
                     <DropdownMenuItem onSelect={toggleDensity}>
                       {density === "comfortable" ? "Compact density" : "Comfortable density"}
                       <DropdownMenuShortcut>view</DropdownMenuShortcut>
@@ -3071,7 +3098,49 @@ export function App() {
       </header>
 
       {isAuthenticated ? readerSurfaceActive ? (
-        <main className="reader-main" id="main">
+        <main className={`reader-main ${accountSettingsRouteRequested ? "reader-main--account" : ""}`} id="main">
+          {accountSettingsRouteRequested ? (
+            <section className="account-settings-page" aria-labelledby="account-settings-title">
+              <header className="account-settings-header">
+                <p className="eyebrow">Account</p>
+                <h1 id="account-settings-title">Settings</h1>
+                <p>Review the signed-in identity, role, groups, and access scopes used for this session.</p>
+              </header>
+              <dl className="account-settings-grid">
+                <div>
+                  <dt>Name</dt>
+                  <dd>{displayIdentity}</dd>
+                </div>
+                <div>
+                  <dt>Email</dt>
+                  <dd>{currentPrincipal?.email ?? "not available"}</dd>
+                </div>
+                <div>
+                  <dt>Role</dt>
+                  <dd>{currentPrincipal?.role ?? "unknown"}</dd>
+                </div>
+                <div>
+                  <dt>Principal</dt>
+                  <dd>{currentPrincipal?.principalType ?? "unknown"}</dd>
+                </div>
+                <div>
+                  <dt>Groups</dt>
+                  <dd>{formatList(currentPrincipal?.groupIds ?? [])}</dd>
+                </div>
+                <div>
+                  <dt>Scopes</dt>
+                  <dd>{formatList(currentPrincipal?.scopes ?? [])}</dd>
+                </div>
+              </dl>
+              <div className="account-settings-actions">
+                {canUseAdministration ? (
+                  <Button type="button" onClick={() => navigatePage("library")}>Administration</Button>
+                ) : null}
+                <Button type="button" variant="ghost" onClick={() => void logout()}>Sign out</Button>
+              </div>
+            </section>
+          ) : (
+            <>
           {error ? (
             <Alert variant="destructive" className="reader-alert">
               <AlertTitle>Request failed</AlertTitle>
@@ -3196,6 +3265,8 @@ export function App() {
               )}
             </article>
           </section>
+            </>
+          )}
         </main>
       ) : (
         <>
