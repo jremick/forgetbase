@@ -20,6 +20,7 @@ Migrate ForgetBase web UI to a shadcn/ui-based interface while preserving only t
 | Route migration inventory | manager | Complete | `work/shadcn-migration/route-migration-inventory.md` |
 | Wave 3 worker goals | manager | Prepared | `work/shadcn-migration/worker-goals-wave3.md` |
 | Authenticated shell/nav/command | manager after closing `019edf8c-83f1-7cf0-8b13-0a53f9d115bf` | Complete | Authenticated topbar, nav, command dialog, connection panel, global shell alerts |
+| Distribute route migration | manager-integrated patch from `019edfa0-0804-7dc2-b4bb-057f8344c8c2` | Complete | `#distribute` / `#exports` package builder, package result, consumer examples |
 
 ## Replaced / Closed Threads
 
@@ -27,6 +28,7 @@ Migrate ForgetBase web UI to a shadcn/ui-based interface while preserving only t
 |---|---|
 | `019edf6a-8590-7721-a7b6-7d095540b22b` | Failed immediately because the Claude UI/UX role expected `PERPLEXITY_API_KEY`; replaced with local-doc-only design/spec worker `019edf6b-366a-7393-ae85-5d5ce7872ae6`. |
 | `019edf8c-83f1-7cf0-8b13-0a53f9d115bf` | Did not return a status checkpoint or patch after interruption; manager closed it and completed the shell slice locally. |
+| `019edfa0-0804-7dc2-b4bb-057f8344c8c2` | Produced a scoped Distribute patch but did not return a final handoff; manager verified and integrated the patch. |
 
 ## Dependency Order
 
@@ -48,6 +50,8 @@ Migrate ForgetBase web UI to a shadcn/ui-based interface while preserving only t
 - 2026-06-19: Added route/shell primitives for upcoming authenticated migration: `Command`, `AlertDialog`, `ToggleGroup`, `Collapsible`, and updated `Table`. Verification passed: web typecheck and web build.
 - 2026-06-19: Authenticated shell/nav/command integration completed locally. Verification passed: web typecheck, web test, web build, `git diff --check`, real local login on `http://127.0.0.1:5175/`, command palette `Meta+K` navigation to `#distribute` and `#library`, identity dropdown render, desktop and 390px mobile no horizontal overflow, and zero fresh browser warnings/errors after command focus fix.
 - Screenshot artifacts: `work/shadcn-migration/shell-desktop.png`, `work/shadcn-migration/shell-mobile.png`.
+- 2026-06-19: Distribute route migrated to shadcn-style route composition with `MetricCard`, `SectionCard`, `FormField`, `Select`, `Input`, `DefinitionGrid`, `StatusAlert`, `EmptyState`, and `Textarea`. Verification passed: web typecheck, web test, web build, `git diff --check`, and owned-section grep found no raw `<input>`, `<select>`, raw `<button>`, `.metric`, `.workflow-panel`, `.export-summary`, or `.command-examples` in the Distribute block.
+- Build note: the web production bundle crossed Vite's default 500 kB chunk warning after the shadcn/command migration; this is tracked as an optimization follow-up, not a functional gate failure.
 
 ## Manager-Owned Decisions
 

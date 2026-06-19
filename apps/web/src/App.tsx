@@ -58,6 +58,14 @@ import { Badge, type BadgeVariant } from "./components/ui/badge.js";
 import { Button } from "./components/ui/button.js";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "./components/ui/card.js";
 import {
+  DefinitionGrid,
+  EmptyState,
+  FormField,
+  MetricCard,
+  SectionCard,
+  StatusAlert
+} from "./components/app/index.js";
+import {
   Command,
   CommandDialog,
   CommandEmpty,
@@ -89,6 +97,14 @@ import { Input } from "./components/ui/input.js";
 import { Label } from "./components/ui/label.js";
 import { ScrollArea } from "./components/ui/scroll-area.js";
 import { Separator } from "./components/ui/separator.js";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue
+} from "./components/ui/select.js";
+import { Textarea } from "./components/ui/textarea.js";
 import {
   formatCachePolicyTtl,
   formatCounts,
@@ -3373,120 +3389,201 @@ export function App() {
         </div>
 
         {currentPage === "exports" ? (
-          <p className="message">
-            Legacy <code>#exports</code> opens the Distribute package builder. Use <code>#distribute</code> for the first-class route.
-          </p>
+          <StatusAlert
+            status="info"
+            title="Legacy alias"
+            description={<>Legacy <code>#exports</code> opens the Distribute package builder. Use <code>#distribute</code> for the first-class route.</>}
+            className="mb-4"
+          />
         ) : null}
 
         <div className="grid four">
-          <div className="metric"><div className="metric-value">{packageNameInput}</div><div className="metric-label">Package</div><div className="metric-note">Generated on demand from current API state.</div></div>
-          <div className="metric"><div className="metric-value">{exportFormat.toUpperCase()}</div><div className="metric-label">Format</div><div className="metric-note">{exportFormat === "okf" ? `OKF ${okfVersion} projection` : "JSON connector package"}</div></div>
-          <div className="metric"><div className="metric-value">{exportPackage?.assetCount ?? exportEligibleAssets}</div><div className="metric-label">Assets</div><div className="metric-note">{exportPackage ? "Last generated package count." : "Loaded assets with matching export eligibility."}</div></div>
-          <div className="metric"><div className="metric-value">{exportPackage?.deniedCount ?? 0}</div><div className="metric-label">Denied</div><div className="metric-note">Restricted omissions are counted, not previewed.</div></div>
+          <MetricCard
+            label="Package"
+            value={<span className="block break-words text-base leading-6">{packageNameInput}</span>}
+            note="Generated on demand from current API state."
+          />
+          <MetricCard
+            label="Format"
+            value={exportFormat.toUpperCase()}
+            note={exportFormat === "okf" ? `OKF ${okfVersion} projection` : "JSON connector package"}
+          />
+          <MetricCard
+            label="Assets"
+            value={exportPackage?.assetCount ?? exportEligibleAssets}
+            note={exportPackage ? "Last generated package count." : "Loaded assets with matching export eligibility."}
+          />
+          <MetricCard
+            label="Denied"
+            value={exportPackage?.deniedCount ?? 0}
+            note="Restricted omissions are counted, not previewed."
+          />
         </div>
 
-        <section className="distribute-grid">
-          <div className="workflow-panel package-builder" aria-labelledby="package-builder-title">
-            <div className="section-heading">
-              <div>
-                <h2 id="package-builder-title">Package builder</h2>
-                <p className="section-note">No package history is saved by this UI; generated state stays local to this browser session.</p>
-              </div>
-            </div>
-            <form className="ops-form" onSubmit={(event) => {
+        <section className="mt-4 grid gap-4 xl:grid-cols-[minmax(360px,0.8fr)_minmax(460px,1.2fr)]">
+          <SectionCard
+            title="Package builder"
+            description="No package history is saved by this UI; generated state stays local to this browser session."
+            variant="tool"
+            className="min-w-0 self-start"
+            contentClassName="grid gap-4"
+          >
+            <form className="grid gap-4" onSubmit={(event) => {
               event.preventDefault();
               void generateExport();
             }}>
-              <label>
-                Package name
-                <input value={packageName} onChange={(event) => setPackageName(event.target.value)} placeholder="demo-agent-pack" />
-              </label>
-              <label>
-                Format
-                <select value={exportFormat} onChange={(event) => setExportFormat(event.target.value as AiExportFormat)}>
-                  <option value="json">json</option>
-                  <option value="okf">okf</option>
-                </select>
-              </label>
-              <label>
-                OKF version
-                <select
-                  value={okfVersion}
-                  onChange={(event) => setOkfVersion(event.target.value as OkfVersion)}
-                  disabled={exportFormat !== "okf"}
+              <FormField
+                label="Package name"
+                htmlFor="package-name-input"
+                helpText="Defaults to demo-agent-pack when left blank."
+              >
+                <Input
+                  id="package-name-input"
+                  value={packageName}
+                  onChange={(event) => setPackageName(event.target.value)}
+                  placeholder="demo-agent-pack"
+                />
+              </FormField>
+
+              <div className="grid gap-4 sm:grid-cols-2">
+                <FormField label="Format" htmlFor="export-format-select">
+                  <Select value={exportFormat} onValueChange={(value) => setExportFormat(value as AiExportFormat)}>
+                    <SelectTrigger id="export-format-select">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="json">json</SelectItem>
+                      <SelectItem value="okf">okf</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </FormField>
+
+                <FormField
+                  label="OKF version"
+                  htmlFor="okf-version-select"
+                  helpText={exportFormat === "okf" ? "Pinned versioned projection." : "Used only when OKF is selected."}
                 >
-                  <option value="0.1">0.1</option>
-                </select>
-              </label>
-              <div className="wide-field button-row">
+                  <Select
+                    value={okfVersion}
+                    onValueChange={(value) => setOkfVersion(value as OkfVersion)}
+                    disabled={exportFormat !== "okf"}
+                  >
+                    <SelectTrigger id="okf-version-select">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="0.1">0.1</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </FormField>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
                 <Button variant="primary" type="submit" disabled={isGeneratingExport}>
                   <Download aria-hidden="true" />{isGeneratingExport ? "Generating package" : "Generate package"}
                 </Button>
-                <Button type="button" onClick={() => setExportPackage(null)}>Clear local result</Button>
+                <Button type="button" onClick={() => setExportPackage(null)} disabled={!exportPackage}>Clear local result</Button>
               </div>
             </form>
-          </div>
+          </SectionCard>
 
-          <div className="export-summary package-result" aria-labelledby="package-result-title">
-            <div className="section-heading">
-              <div>
-                <h2 id="package-result-title">Package result</h2>
-                <p className="section-note">Safe metadata only. Restricted content and package bodies are not previewed here.</p>
-              </div>
-            </div>
+          <SectionCard
+            title="Package result"
+            description="Safe metadata only. Restricted content and package bodies are not previewed here."
+            variant="tool"
+            className="min-w-0 self-start"
+            contentClassName="grid gap-4"
+          >
             {exportPackage ? (
               <>
-                <dl className="metadata-grid compact">
-                  <div><dt>Name</dt><dd>{exportPackage.packageName}</dd></div>
-                  <div><dt>Format</dt><dd>{"format" in exportPackage ? exportPackage.format : "json"}</dd></div>
-                  <div><dt>Assets</dt><dd>{exportPackage.assetCount}</dd></div>
-                  <div><dt>Denied</dt><dd>{exportPackage.deniedCount}</dd></div>
-                  <div><dt>Generated</dt><dd>{new Date(exportPackage.generatedAt).toLocaleString()}</dd></div>
-                  <div><dt>Tenant</dt><dd>{exportPackage.tenantId}</dd></div>
-                  {"okfVersion" in exportPackage ? <div><dt>OKF version</dt><dd>{exportPackage.okfVersion}</dd></div> : null}
-                  {"sourcePackageHash" in exportPackage ? <div><dt>Source hash</dt><dd>{exportPackage.sourcePackageHash}</dd></div> : null}
-                  {"projectionHash" in exportPackage ? <div><dt>Projection hash</dt><dd>{exportPackage.projectionHash}</dd></div> : null}
-                  {"rootIndexPath" in exportPackage ? <div><dt>Root index</dt><dd>{exportPackage.rootIndexPath}</dd></div> : null}
-                </dl>
+                <DefinitionGrid
+                  compact
+                  items={[
+                    { term: "Name", description: exportPackage.packageName },
+                    { term: "Format", description: "format" in exportPackage ? exportPackage.format : "json" },
+                    { term: "Assets", description: exportPackage.assetCount },
+                    { term: "Denied", description: exportPackage.deniedCount },
+                    { term: "Generated", description: new Date(exportPackage.generatedAt).toLocaleString() },
+                    { term: "Tenant", description: exportPackage.tenantId },
+                    ...("okfVersion" in exportPackage ? [{ term: "OKF version", description: exportPackage.okfVersion }] : []),
+                    ...("sourcePackageHash" in exportPackage ? [{ term: "Source hash", description: exportPackage.sourcePackageHash }] : []),
+                    ...("projectionHash" in exportPackage ? [{ term: "Projection hash", description: exportPackage.projectionHash }] : []),
+                    ...("rootIndexPath" in exportPackage ? [{ term: "Root index", description: exportPackage.rootIndexPath }] : [])
+                  ]}
+                />
+                {exportPackage.deniedCount > 0 ? (
+                  <StatusAlert
+                    status="warning"
+                    title="Restricted items omitted"
+                    description={`${exportPackage.deniedCount} restricted or unauthorized item${exportPackage.deniedCount === 1 ? "" : "s"} counted by the API and not previewed.`}
+                  />
+                ) : null}
                 {"assets" in exportPackage && exportPackage.assets.length ? (
-                  <div className="safe-asset-list">
-                    <h3>Included stable IDs</h3>
-                    <ul>
+                  <div className="grid gap-2">
+                    <div className="flex min-w-0 items-center justify-between gap-2">
+                      <h3 className="m-0 text-sm font-semibold text-foreground">Included stable IDs</h3>
+                      <Badge variant="neutral">{exportPackage.assets.length}</Badge>
+                    </div>
+                    <ul className="grid gap-2">
                       {exportPackage.assets.map((asset) => (
-                        <li key={asset.stableId}>
+                        <li
+                          key={asset.stableId}
+                          className="grid min-w-0 gap-1 rounded-md border border-border bg-muted/40 p-3 text-sm"
+                        >
                           <strong>{asset.stableId}</strong>
-                          <span>{asset.type} · {asset.status} · {asset.sensitivity}</span>
+                          <span className="min-w-0 break-words text-muted-foreground">{asset.type} · {asset.status} · {asset.sensitivity}</span>
                         </li>
                       ))}
                     </ul>
                   </div>
-                ) : null}
+                ) : (
+                  <StatusAlert
+                    status="info"
+                    title="No package body preview"
+                    description="This browser view shows generated package metadata only. Use the API, CLI, or MCP consumer to retrieve the package payload."
+                  />
+                )}
               </>
             ) : (
-              <p className="empty">No package generated in this browser session.</p>
+              <EmptyState
+                title="No package generated"
+                description="Generate a package to inspect safe metadata for this browser session."
+                actions={(
+                  <Button type="button" onClick={() => void generateExport()} disabled={isGeneratingExport}>
+                    <Download aria-hidden="true" />Generate package
+                  </Button>
+                )}
+              />
             )}
-          </div>
+          </SectionCard>
         </section>
 
-        <section className="workflow-panel command-examples" aria-labelledby="consumer-examples-title">
-          <div className="section-heading">
-            <div>
-              <h2 id="consumer-examples-title">Consumer examples</h2>
-              <p className="section-note">Copy these after setting a scoped API key in your shell or MCP runtime. The commands call the same export endpoint as the builder.</p>
-            </div>
-          </div>
-          {commandExamples.map(([label, command]) => (
-            <div className="command-example" key={label}>
-              <div className="command-example-header">
-                <h3>{label}</h3>
-                <Button size="sm" type="button" onClick={() => void copyText(command, `${label} example`)}>
-                  <Copy aria-hidden="true" />Copy
-                </Button>
+        <SectionCard
+          title="Consumer examples"
+          description="Copy these after setting a scoped API key in your shell or MCP runtime. The commands call the same export endpoint as the builder."
+          variant="tool"
+          className="mt-4 min-w-0"
+          contentClassName="grid gap-3"
+        >
+          <div className="grid gap-3 lg:grid-cols-2">
+            {commandExamples.map(([label, command]) => (
+              <div className="grid min-w-0 gap-2 rounded-md border border-border bg-card p-3" key={label}>
+                <div className="flex min-w-0 items-center justify-between gap-2">
+                  <h3 className="m-0 text-sm font-semibold text-foreground">{label}</h3>
+                  <Button size="sm" type="button" onClick={() => void copyText(command, `${label} example`)}>
+                    <Copy aria-hidden="true" />Copy
+                  </Button>
+                </div>
+                <Textarea
+                  readOnly
+                  value={command}
+                  aria-label={`${label} export example`}
+                  className="min-h-28 resize-y font-mono text-xs leading-5"
+                />
               </div>
-              <pre>{command}</pre>
-            </div>
-          ))}
-        </section>
+            ))}
+          </div>
+        </SectionCard>
       </section>
 
       <section className={`page ${visibleOperationsPage ? "active" : ""}`} data-page="operations">

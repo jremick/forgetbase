@@ -1233,13 +1233,6 @@ tr.empty-row:hover {
   grid-template-columns: minmax(0, 1fr);
 }
 
-.distribute-grid {
-  display: grid;
-  grid-template-columns: minmax(360px, 0.8fr) minmax(460px, 1.2fr);
-  gap: 16px;
-  margin-top: 18px;
-}
-
 .ops-pane.operations-shell {
   padding: 0;
   border: 0;
@@ -1274,80 +1267,6 @@ tr.empty-row:hover {
 .workflow-panel,
 .content-block {
   padding: 14px;
-}
-
-.package-builder,
-.package-result,
-.command-examples {
-  align-self: start;
-}
-
-.command-examples {
-  display: grid;
-  gap: 12px;
-  margin-top: 16px;
-}
-
-.command-example {
-  display: grid;
-  gap: 8px;
-  min-width: 0;
-  padding-top: 12px;
-  border-top: 1px solid var(--n-200);
-}
-
-.command-example:first-of-type {
-  padding-top: 0;
-  border-top: 0;
-}
-
-.command-example-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-}
-
-.command-example pre {
-  min-width: 0;
-  padding: 10px;
-  border: 1px solid var(--n-200);
-  border-radius: 6px;
-  background: var(--n-25);
-  color: var(--n-800);
-}
-
-.safe-asset-list {
-  display: grid;
-  gap: 8px;
-}
-
-.safe-asset-list ul {
-  display: grid;
-  gap: 6px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.safe-asset-list li {
-  display: grid;
-  gap: 2px;
-  min-width: 0;
-  padding: 8px 10px;
-  border: 1px solid var(--n-200);
-  border-radius: 6px;
-  background: var(--n-25);
-}
-
-.safe-asset-list strong,
-.safe-asset-list span {
-  overflow-wrap: anywhere;
-}
-
-.safe-asset-list span {
-  color: var(--n-600);
-  font-size: 12px;
 }
 
 .ops-pane {
@@ -1875,8 +1794,7 @@ button.danger:hover:not(:disabled) {
   }
 
   .workspace,
-  .lower-grid,
-  .distribute-grid {
+  .lower-grid {
     grid-template-columns: 1fr;
   }
 
