@@ -245,6 +245,451 @@
       "changeNote": "Initial synthetic template."
     },
     {
+      "stableId": "guideline.reader-navigation",
+      "type": "guideline",
+      "ownerId": "user_admin",
+      "title": "Reader Navigation Guide",
+      "summary": "Plain-language guide for finding approved material in the reader interface.",
+      "lifecycleState": "active",
+      "sensitivity": "public-demo",
+      "audience": ["all-staff", "reader-users"],
+      "status": "approved",
+      "reviewDueAt": "2027-06-30",
+      "sourceKind": "synthetic-demo",
+      "sourceRef": "corpus/demo/guideline.reader-navigation",
+      "allowedSurfaces": ["api", "cli", "mcp", "web", "export"],
+      "allowedExports": ["demo-agent-pack"],
+      "allowedActions": [],
+      "metadata": {
+        "persona": "reader-user",
+        "domain": "reader-experience"
+      },
+      "instruction": {
+        "instructionKind": "guideline",
+        "targetAgents": ["support-agent", "research-agent"],
+        "body": "When helping a reader find material, route them to the published reader library first. Use the page tree to narrow by asset type, then use header search when the reader knows a term but not the page location. Do not send reader users to management controls unless they are also responsible for editing or approving content.",
+        "inputContract": {
+          "required": ["reader_goal", "known_terms"]
+        },
+        "outputContract": {
+          "required": ["recommended_page", "reason", "fallback_search"]
+        },
+        "constraints": [
+          "Keep reader instructions separate from operator workflows.",
+          "Do not expose draft, restricted, or internal-only records to reader users."
+        ],
+        "failureModes": [
+          "Treating the reader as a content manager.",
+          "Assuming search is better than the page tree for broad browsing."
+        ],
+        "escalation": "Ask a content manager when a reader cannot find expected published material."
+      },
+      "humanDocument": {
+        "format": "markdown",
+        "body": "# Reader Navigation Guide\n\nUse the left page tree when you want to browse the published library by category. Open a folder, choose a page, and read the approved version in the main pane.\n\n## When to use search\n\nUse the header search when you remember a phrase, policy name, or topic. Search is best for targeted lookup. Browsing is better when you need to understand what material exists.\n\n## What readers should see\n\nReaders should see active, approved pages that are safe for the published web surface. Drafts, review queues, permissions, exports, API diagnostics, and operator settings belong in the control interface.\n\n## If something is missing\n\nIf a page appears missing, ask a content manager to verify status, lifecycle state, allowed surfaces, and permissions.",
+        "renderOptions": {
+          "audience": "reader-users"
+        }
+      },
+      "changeNote": "Added expanded reader demo content."
+    },
+    {
+      "stableId": "reference.asset-lifecycle-states",
+      "type": "reference",
+      "ownerId": "user_admin",
+      "title": "Asset Lifecycle States Reference",
+      "summary": "Reference page explaining draft, active, deprecated, archived, and restricted states.",
+      "lifecycleState": "active",
+      "sensitivity": "public-demo",
+      "audience": ["content-managers", "reader-users"],
+      "status": "approved",
+      "reviewDueAt": "2027-07-31",
+      "sourceKind": "synthetic-demo",
+      "sourceRef": "corpus/demo/reference.asset-lifecycle-states",
+      "allowedSurfaces": ["api", "cli", "mcp", "web", "export"],
+      "allowedExports": ["demo-agent-pack"],
+      "allowedActions": [],
+      "metadata": {
+        "persona": "content-manager",
+        "domain": "governance"
+      },
+      "instruction": {
+        "instructionKind": "reference",
+        "targetAgents": ["coding-agent", "research-agent", "ops-agent"],
+        "body": "Interpret lifecycle state as the primary publishing signal. Draft material is not ready for broad reader use. Active approved material may be shown on allowed surfaces. Deprecated material should be used only when no replacement exists. Archived material is retained for history. Restricted material requires explicit permission checks before retrieval, export, or display.",
+        "inputContract": {
+          "required": ["asset_lifecycle_state", "requested_surface"]
+        },
+        "outputContract": {
+          "required": ["availability_decision", "reason"]
+        },
+        "constraints": [
+          "Do not treat approved status alone as sufficient for reader publication.",
+          "Always combine lifecycle, status, sensitivity, and allowed surface."
+        ],
+        "failureModes": [
+          "Publishing a draft because it has a human-readable body.",
+          "Exporting restricted content because it appears in search results."
+        ]
+      },
+      "humanDocument": {
+        "format": "markdown",
+        "body": "# Asset Lifecycle States Reference\n\nLifecycle state tells readers and agents how a governed asset should be treated.\n\n## Draft\n\nThe page is being written or reviewed. Drafts are not reader-ready.\n\n## Active\n\nThe page is current and may be used when status, sensitivity, permission, and allowed surface also permit use.\n\n## Deprecated\n\nThe page is still available for historical context, but teams should prefer a replacement.\n\n## Archived\n\nThe page is retained for audit or history and should not guide new work.\n\n## Restricted\n\nThe page requires additional permission checks before display, export, or execution.",
+        "renderOptions": {
+          "audience": "content-managers"
+        }
+      },
+      "changeNote": "Added expanded reader demo content."
+    },
+    {
+      "stableId": "sop.support-summary-intake",
+      "type": "sop",
+      "ownerId": "user_ops",
+      "title": "Support Summary Intake SOP",
+      "summary": "Synthetic operating procedure for turning a support thread into a safe AI-ready summary.",
+      "lifecycleState": "active",
+      "sensitivity": "public-demo",
+      "audience": ["support-ops", "ai-team"],
+      "status": "approved",
+      "reviewDueAt": "2027-08-31",
+      "sourceKind": "synthetic-demo",
+      "sourceRef": "corpus/demo/sop.support-summary-intake",
+      "allowedSurfaces": ["api", "cli", "mcp", "web", "export"],
+      "allowedExports": ["demo-agent-pack"],
+      "allowedActions": ["create-support-summary"],
+      "metadata": {
+        "persona": "support-automation-owner",
+        "domain": "support"
+      },
+      "instruction": {
+        "instructionKind": "sop",
+        "targetAgents": ["support-agent", "research-agent"],
+        "body": "Convert support threads into short AI-ready summaries by separating customer claim, observed evidence, product area, account impact, prior troubleshooting, and requested next step. Apply PII redaction before model use and cite the source ticket or transcript identifier only when the surface allows it.",
+        "inputContract": {
+          "required": ["support_thread", "target_surface", "redaction_status"]
+        },
+        "outputContract": {
+          "required": ["summary", "evidence", "open_questions", "next_step"]
+        },
+        "constraints": [
+          "Do not include raw contact details.",
+          "Do not turn customer speculation into a confirmed fact.",
+          "Do not omit prior troubleshooting that changes the next action."
+        ],
+        "failureModes": [
+          "Summarizing sentiment but dropping reproduction steps.",
+          "Leaving personal identifiers in copied transcript text."
+        ],
+        "escalation": "Escalate when the support issue involves legal, billing, or regulated data."
+      },
+      "humanDocument": {
+        "format": "markdown",
+        "body": "# Support Summary Intake SOP\n\nUse this procedure when a support conversation needs to become safe, structured context for an AI helper.\n\n## Required sections\n\n1. Customer claim\n2. Observed evidence\n3. Product area\n4. Account or workflow impact\n5. Prior troubleshooting\n6. Open questions\n7. Recommended next step\n\n## Redaction requirement\n\nRemove names, emails, phone numbers, addresses, ticket IDs, and account IDs unless the target surface explicitly allows them. Preserve the operational facts needed to solve the issue.\n\n## Quality check\n\nA good support summary lets another person or agent understand what happened, what has been tried, and what should happen next without reading the full thread.",
+        "renderOptions": {
+          "audience": "support-ops"
+        }
+      },
+      "changeNote": "Added expanded reader demo content."
+    },
+    {
+      "stableId": "playbook.customer-escalation-brief",
+      "type": "playbook",
+      "ownerId": "user_ops",
+      "title": "Customer Escalation Brief Playbook",
+      "summary": "Playbook for producing a concise, factual escalation brief from governed source material.",
+      "lifecycleState": "active",
+      "sensitivity": "public-demo",
+      "audience": ["support-ops", "customer-success"],
+      "status": "approved",
+      "reviewDueAt": "2027-09-30",
+      "sourceKind": "synthetic-demo",
+      "sourceRef": "corpus/demo/playbook.customer-escalation-brief",
+      "allowedSurfaces": ["api", "cli", "mcp", "web", "export"],
+      "allowedExports": ["demo-agent-pack"],
+      "allowedActions": ["create-escalation-brief"],
+      "metadata": {
+        "persona": "customer-success-manager",
+        "domain": "customer-operations"
+      },
+      "instruction": {
+        "instructionKind": "playbook",
+        "targetAgents": ["support-agent", "ops-agent"],
+        "body": "Build an escalation brief from verified facts only. Start with current customer impact, then timeline, evidence, owner, next decision, and risk. Distinguish confirmed facts from assumptions. Include citations or source references for claims that drive the escalation.",
+        "inputContract": {
+          "required": ["customer_impact", "timeline_evidence", "requested_decision"]
+        },
+        "outputContract": {
+          "required": ["impact", "timeline", "evidence", "owner", "next_decision", "risks"]
+        },
+        "constraints": [
+          "Do not assign blame.",
+          "Do not hide uncertainty.",
+          "Do not promise a fix date unless approved by the accountable owner."
+        ],
+        "failureModes": [
+          "Writing a status update instead of a decision brief.",
+          "Merging assumptions into the evidence timeline."
+        ],
+        "escalation": "Escalate to the incident owner when customer impact is ongoing or scope is unclear."
+      },
+      "humanDocument": {
+        "format": "markdown",
+        "body": "# Customer Escalation Brief Playbook\n\nUse this playbook when a customer issue needs a clear, factual escalation path.\n\n## Brief structure\n\n- Current impact\n- Timeline of verified events\n- Evidence and citations\n- Accountable owner\n- Next decision needed\n- Risks and unknowns\n\n## Writing standard\n\nUse short, direct sentences. Separate facts from assumptions. Name uncertainty instead of filling gaps.\n\n## Exit criteria\n\nThe brief is ready when a decision maker can see what happened, who owns the next step, and what risk remains.",
+        "renderOptions": {
+          "audience": "customer-success"
+        }
+      },
+      "changeNote": "Added expanded reader demo content."
+    },
+    {
+      "stableId": "policy.model-context-boundaries",
+      "type": "policy",
+      "ownerId": "user_admin",
+      "title": "Model Context Boundaries Policy",
+      "summary": "Policy for deciding what governed material may enter an AI model context.",
+      "lifecycleState": "active",
+      "sensitivity": "public-demo",
+      "audience": ["all-staff", "ai-team"],
+      "status": "approved",
+      "reviewDueAt": "2027-10-31",
+      "sourceKind": "synthetic-demo",
+      "sourceRef": "corpus/demo/policy.model-context-boundaries",
+      "allowedSurfaces": ["api", "cli", "mcp", "web", "export"],
+      "allowedExports": ["demo-agent-pack"],
+      "allowedActions": [],
+      "metadata": {
+        "persona": "ai-governance-lead",
+        "domain": "privacy"
+      },
+      "instruction": {
+        "instructionKind": "policy",
+        "targetAgents": ["coding-agent", "research-agent", "ops-agent", "support-agent"],
+        "body": "Before placing governed material into model context, verify sensitivity, allowed surface, user permission, retrieval purpose, and whether export is requested. Public-demo material may be used broadly. Internal material requires authenticated business purpose. Restricted, confidential, and secret material require explicit permission and the narrowest possible context.",
+        "inputContract": {
+          "required": ["material_sensitivity", "requested_surface", "user_permission", "purpose"]
+        },
+        "outputContract": {
+          "required": ["allow_or_deny", "scope", "rationale"]
+        },
+        "constraints": [
+          "Use the smallest context that can answer the request.",
+          "Do not include credentials, tokens, or raw secrets.",
+          "Do not export material unless export is explicitly allowed."
+        ],
+        "failureModes": [
+          "Treating an authenticated session as blanket permission.",
+          "Copying full source documents when a cited excerpt is enough."
+        ],
+        "escalation": "Escalate any request involving regulated data, credentials, or third-party publication."
+      },
+      "humanDocument": {
+        "format": "markdown",
+        "body": "# Model Context Boundaries Policy\n\nModel context is a controlled surface. Before using governed material with an AI system, verify the material, the person, the purpose, and the destination.\n\n## Required checks\n\n- Sensitivity\n- Allowed surface\n- User permission\n- Retrieval purpose\n- Export intent\n\n## Practical rule\n\nUse the smallest useful context. A short cited passage is usually better than a full document. Never include credentials or raw secrets.\n\n## High-risk cases\n\nEscalate requests that involve regulated data, hidden policy bypass, external publication, or broad exports.",
+        "renderOptions": {
+          "audience": "all-staff"
+        }
+      },
+      "changeNote": "Added expanded reader demo content."
+    },
+    {
+      "stableId": "template.grounded-answer",
+      "type": "template",
+      "ownerId": "user_admin",
+      "title": "Grounded Answer Template",
+      "summary": "Reusable answer format for AI responses that need citations and uncertainty handling.",
+      "lifecycleState": "active",
+      "sensitivity": "public-demo",
+      "audience": ["ai-team", "support-ops", "reader-users"],
+      "status": "approved",
+      "reviewDueAt": "2027-11-30",
+      "sourceKind": "synthetic-demo",
+      "sourceRef": "corpus/demo/template.grounded-answer",
+      "allowedSurfaces": ["api", "cli", "mcp", "web", "export"],
+      "allowedExports": ["demo-agent-pack", "public-demo"],
+      "allowedActions": [],
+      "metadata": {
+        "persona": "research-agent-owner",
+        "domain": "answer-quality"
+      },
+      "instruction": {
+        "instructionKind": "template",
+        "targetAgents": ["research-agent", "support-agent"],
+        "body": "Answer with a short conclusion, supporting evidence, cited sources, and uncertainty. If the source set is insufficient, say what is missing instead of guessing. Keep recommendations separate from verified facts.",
+        "inputContract": {
+          "required": ["question", "retrieved_sources"]
+        },
+        "outputContract": {
+          "required": ["answer", "evidence", "citations", "uncertainty"]
+        },
+        "constraints": [
+          "Do not invent citations.",
+          "Do not hide missing evidence.",
+          "Do not present recommendations as source-backed facts."
+        ],
+        "examples": [
+          "Answer: The approved policy allows public-demo material on web surfaces. Evidence: asset sensitivity and allowed surface both permit web display."
+        ],
+        "failureModes": [
+          "Confidently answering from incomplete retrieval.",
+          "Mixing facts, assumptions, and recommendations in one paragraph."
+        ]
+      },
+      "humanDocument": {
+        "format": "markdown",
+        "body": "# Grounded Answer Template\n\nUse this structure when an answer needs to be traceable.\n\n## Answer\n\nState the conclusion in one or two sentences.\n\n## Evidence\n\nList the source-backed facts that matter.\n\n## Citations\n\nName the governed assets or excerpts that support the answer.\n\n## Uncertainty\n\nSay what is unknown, stale, missing, or inferred.\n\n## Recommendation\n\nIf a recommendation is needed, keep it separate from the verified facts.",
+        "renderOptions": {
+          "audience": "ai-team"
+        }
+      },
+      "changeNote": "Added expanded reader demo content."
+    },
+    {
+      "stableId": "guideline.citation-quality-standard",
+      "type": "guideline",
+      "ownerId": "user_admin",
+      "title": "Citation Quality Standard",
+      "summary": "Quality bar for citations in reader-facing and agent-facing answers.",
+      "lifecycleState": "active",
+      "sensitivity": "public-demo",
+      "audience": ["ai-team", "content-managers"],
+      "status": "approved",
+      "reviewDueAt": "2027-12-31",
+      "sourceKind": "synthetic-demo",
+      "sourceRef": "corpus/demo/guideline.citation-quality-standard",
+      "allowedSurfaces": ["api", "cli", "mcp", "web", "export"],
+      "allowedExports": ["demo-agent-pack"],
+      "allowedActions": [],
+      "metadata": {
+        "persona": "ai-quality-reviewer",
+        "domain": "answer-quality"
+      },
+      "instruction": {
+        "instructionKind": "guideline",
+        "targetAgents": ["research-agent", "support-agent"],
+        "body": "Use citations that point to the smallest source unit needed to verify a claim. Prefer current active approved assets. Mark stale, deprecated, or restricted sources clearly. Do not cite a source that only loosely resembles the claim.",
+        "inputContract": {
+          "required": ["claim", "candidate_sources"]
+        },
+        "outputContract": {
+          "required": ["selected_citations", "fit_reason", "limitations"]
+        },
+        "constraints": [
+          "Citations must support the exact claim.",
+          "Avoid citation padding.",
+          "Call out source limitations when evidence is indirect."
+        ],
+        "failureModes": [
+          "Citing a broad policy when a specific SOP is required.",
+          "Using old material without noting deprecation or review risk."
+        ]
+      },
+      "humanDocument": {
+        "format": "markdown",
+        "body": "# Citation Quality Standard\n\nA citation should let a reader verify the claim quickly.\n\n## Good citations\n\n- Point to the smallest useful source unit\n- Support the exact claim\n- Prefer current, active, approved assets\n- Include limitations when evidence is indirect\n\n## Poor citations\n\n- Link to a broad document without pointing to the relevant idea\n- Cite a source that is only topically related\n- Hide that a source is stale, deprecated, or permission-limited\n\n## Review question\n\nCould a reader use this citation to confirm the sentence without reading unrelated material?",
+        "renderOptions": {
+          "audience": "content-managers"
+        }
+      },
+      "changeNote": "Added expanded reader demo content."
+    },
+    {
+      "stableId": "human-document.release-readiness-overview",
+      "type": "human-document",
+      "ownerId": "user_ops",
+      "title": "Release Readiness Overview",
+      "summary": "Human-readable overview of the synthetic release readiness process.",
+      "lifecycleState": "active",
+      "sensitivity": "public-demo",
+      "audience": ["all-staff", "release-ops"],
+      "status": "approved",
+      "reviewDueAt": "2028-01-31",
+      "sourceKind": "synthetic-demo",
+      "sourceRef": "corpus/demo/human-document.release-readiness-overview",
+      "allowedSurfaces": ["api", "cli", "mcp", "web", "export"],
+      "allowedExports": ["demo-agent-pack"],
+      "allowedActions": [],
+      "metadata": {
+        "persona": "release-owner",
+        "domain": "release-management"
+      },
+      "instruction": {
+        "instructionKind": "human-document",
+        "targetAgents": ["ops-agent", "coding-agent"],
+        "body": "Use the release readiness overview as human-readable context only. When deciding whether a release can proceed, require evidence for tests, permissions, rollback, telemetry, and owner approval. Do not treat this overview as a substitute for the release checklist.",
+        "inputContract": {
+          "required": ["release_candidate", "evidence_links"]
+        },
+        "outputContract": {
+          "required": ["readiness_summary", "missing_evidence", "go_no_go"]
+        },
+        "constraints": [
+          "Do not approve a release based on narrative alone.",
+          "Do not skip rollback or telemetry evidence."
+        ],
+        "failureModes": [
+          "Confusing an overview with the checklist.",
+          "Ignoring missing evidence because the release looks small."
+        ],
+        "escalation": "Escalate when release evidence is missing or rollback is unclear."
+      },
+      "humanDocument": {
+        "format": "markdown",
+        "body": "# Release Readiness Overview\n\nRelease readiness means the team can explain what changed, prove the change works, observe it after deploy, and roll it back if needed.\n\n## Required evidence\n\n- Scope of change\n- Test results\n- Permission and data boundary review\n- Deployment target\n- Rollback path\n- Owner approval\n- Post-deploy observation plan\n\n## Reader expectation\n\nA reader should be able to understand the release at a glance without seeing internal control screens.\n\n## Not a checklist\n\nThis overview explains the concept. The release owner still needs to complete the operational checklist before promoting a release.",
+        "renderOptions": {
+          "audience": "release-ops"
+        }
+      },
+      "changeNote": "Added expanded reader demo content."
+    },
+    {
+      "stableId": "tool-instruction.search-query-planning",
+      "type": "tool-instruction",
+      "ownerId": "user_engineering",
+      "title": "Search Query Planning Tool Instruction",
+      "summary": "Instruction for forming narrow search queries against governed assets.",
+      "lifecycleState": "active",
+      "sensitivity": "public-demo",
+      "audience": ["ai-team", "support-ops"],
+      "status": "approved",
+      "reviewDueAt": "2028-02-29",
+      "sourceKind": "synthetic-demo",
+      "sourceRef": "corpus/demo/tool-instruction.search-query-planning",
+      "allowedSurfaces": ["api", "cli", "mcp", "web", "export"],
+      "allowedExports": ["demo-agent-pack"],
+      "allowedActions": ["run-managed-search"],
+      "metadata": {
+        "persona": "agent-toolsmith",
+        "domain": "retrieval"
+      },
+      "instruction": {
+        "instructionKind": "tool-instruction",
+        "targetAgents": ["research-agent", "support-agent", "coding-agent"],
+        "body": "Before calling search, convert the user need into two or three focused queries. Use asset names, known policy terms, and required action words. Avoid broad single-word searches. After results return, compare source type, lifecycle state, and citation fit before answering.",
+        "inputContract": {
+          "required": ["user_question", "known_context"]
+        },
+        "outputContract": {
+          "required": ["queries", "selection_reason", "answer_plan"]
+        },
+        "constraints": [
+          "Do not over-retrieve when one precise query is enough.",
+          "Do not answer from search snippets without opening the source when detail matters."
+        ],
+        "failureModes": [
+          "Using vague terms that return unrelated policy pages.",
+          "Choosing the first result even when lifecycle or sensitivity is wrong."
+        ]
+      },
+      "humanDocument": {
+        "format": "markdown",
+        "body": "# Search Query Planning Tool Instruction\n\nGood search starts before the tool call.\n\n## Plan the query\n\nTurn the request into focused terms. Include asset names, policy words, workflow names, or action words when they are known.\n\n## Run narrow searches first\n\nA precise query is easier to verify than a broad one. Use two or three variants when the vocabulary is uncertain.\n\n## Evaluate results\n\nCheck title, type, lifecycle state, sensitivity, and citation fit. Do not answer from a result that only seems related.",
+        "renderOptions": {
+          "audience": "ai-team"
+        }
+      },
+      "changeNote": "Added expanded reader demo content."
+    },
+    {
       "stableId": "sop.internal-agent-release",
       "type": "sop",
       "ownerId": "user_ops",

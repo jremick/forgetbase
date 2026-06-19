@@ -52,7 +52,7 @@ import type {
   TelemetryRetentionPolicy,
   TelemetryRetentionPurgeResult
 } from "@agentic-cms/schema";
-import { BookOpen, ClipboardCheck, Copy, Download, LogOut, PackageOpen, RefreshCw, Search, Settings2, SlidersHorizontal } from "lucide-react";
+import { BookOpen, ClipboardCheck, Copy, Download, LogOut, PackageOpen, RefreshCw, Search, Settings2 } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "./components/ui/alert.js";
 import { Badge, type BadgeVariant } from "./components/ui/badge.js";
 import { Button } from "./components/ui/button.js";
@@ -222,6 +222,128 @@ type NavSectionConfig = {
 type AssetContentView = "human" | "instruction" | "version" | "raw";
 type ManagedQueryView = "answer" | "evidence" | "diagnostics";
 type GeneratedPackage = AiExportPackage | OkfExportPackage;
+const assetTypeLabels: Record<string, string> = {
+  "agent-instruction": "Agent Instruction",
+  "eval-case": "Eval Case",
+  "guardrail": "Guardrail",
+  "guideline": "Guideline",
+  "human-document": "Human Document",
+  "playbook": "Playbook",
+  "policy": "Policy",
+  "reference": "Reference",
+  "skill": "Skill",
+  "sop": "SOP",
+  "telemetry-policy": "Telemetry Policy",
+  "template": "Template",
+  "tool-instruction": "Tool Instruction"
+};
+
+function formatAssetTypeLabel(type: string): string {
+  if (assetTypeLabels[type]) {
+    return assetTypeLabels[type];
+  }
+
+  return type
+    .split("-")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function normalizeHeadingText(value: string): string {
+  return value.trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+function renderMarkdownDocument(body: string, title: string): ReactNode[] {
+  const output: ReactNode[] = [];
+  const lines = body.split(/\r?\n/);
+  const firstContentIndex = lines.findIndex((line) => line.trim());
+
+  if (firstContentIndex >= 0) {
+    const firstHeading = lines[firstContentIndex]?.match(/^#\s+(.+)$/);
+
+    if (firstHeading && normalizeHeadingText(firstHeading[1] ?? "") === normalizeHeadingText(title)) {
+      lines.splice(firstContentIndex, 1);
+    }
+  }
+
+  let paragraphLines: string[] = [];
+  let list: { ordered: boolean; items: string[] } | null = null;
+
+  function flushParagraph() {
+    if (!paragraphLines.length) {
+      return;
+    }
+
+    output.push(<p key={`p-${output.length}`}>{paragraphLines.join(" ")}</p>);
+    paragraphLines = [];
+  }
+
+  function flushList() {
+    if (!list) {
+      return;
+    }
+
+    const ListTag = list.ordered ? "ol" : "ul";
+    output.push(
+      <ListTag key={`list-${output.length}`}>
+        {list.items.map((item, index) => <li key={`${index}-${item}`}>{item}</li>)}
+      </ListTag>
+    );
+    list = null;
+  }
+
+  lines.forEach((rawLine) => {
+    const line = rawLine.trim();
+
+    if (!line) {
+      flushParagraph();
+      flushList();
+      return;
+    }
+
+    const heading = line.match(/^(#{1,3})\s+(.+)$/);
+    if (heading) {
+      flushParagraph();
+      flushList();
+      const level = heading[1]?.length ?? 1;
+      const text = heading[2] ?? "";
+
+      if (level === 1) {
+        output.push(<h1 key={`h1-${output.length}`}>{text}</h1>);
+      } else if (level === 2) {
+        output.push(<h2 key={`h2-${output.length}`}>{text}</h2>);
+      } else {
+        output.push(<h3 key={`h3-${output.length}`}>{text}</h3>);
+      }
+      return;
+    }
+
+    const orderedItem = line.match(/^\d+\.\s+(.+)$/);
+    const unorderedItem = line.match(/^[-*]\s+(.+)$/);
+    if (orderedItem || unorderedItem) {
+      flushParagraph();
+      const ordered = Boolean(orderedItem);
+      const item = (orderedItem?.[1] ?? unorderedItem?.[1] ?? "").trim();
+
+      if (!list || list.ordered !== ordered) {
+        flushList();
+        list = { ordered, items: [] };
+      }
+
+      list.items.push(item);
+      return;
+    }
+
+    flushList();
+    paragraphLines.push(line);
+  });
+
+  flushParagraph();
+  flushList();
+
+  return output;
+}
+
 const pageRouteValues = [
   "reader",
   "library",
@@ -604,6 +726,22 @@ export function App() {
     () => readerPublishedAssets.filter((asset) => libraryAssetMatches(asset, libraryQuery)),
     [libraryQuery, readerPublishedAssets]
   );
+  const readerAssetGroups = useMemo(() => {
+    const groups = new Map<string, AssetRecord[]>();
+
+    filteredReaderAssets.forEach((asset) => {
+      const group = groups.get(asset.type) ?? [];
+      group.push(asset);
+      groups.set(asset.type, group);
+    });
+
+    return Array.from(groups.entries())
+      .map(([type, groupAssets]) => ({
+        type,
+        assets: groupAssets.sort((left, right) => left.title.localeCompare(right.title))
+      }))
+      .sort((left, right) => left.type.localeCompare(right.type));
+  }, [filteredReaderAssets]);
   const libraryFilterActive = Boolean(
     libraryQuery.trim() || libraryViewFilter !== "all" || librarySensitivityFilter !== "all"
   );
@@ -2813,60 +2951,78 @@ export function App() {
           <span className="mark" aria-hidden="true">
             <img className="mark-image" src="/favicon.svg" alt="" />
           </span>
-          <span>ForgetBase</span>
+          <span className="brand-name">ForgetBase</span>
+          {isAuthenticated && !readerSurfaceActive ? (
+            <div className="health brand-health">
+              <span className={`health-dot ${health === "ok" ? "ok" : "bad"}`}></span>
+              <span>API {health}</span>
+            </div>
+          ) : null}
         </div>
         {isAuthenticated ? readerSurfaceActive ? (
           <div className="topbar-main reader-topbar-main">
-            <form className="reader-topbar-search" onSubmit={(event) => void runSearch(event)}>
+            <form
+              className="reader-topbar-search"
+              onSubmit={(event) => {
+                setLibraryQuery(searchQuery);
+                void runSearch(event);
+              }}
+            >
               <Search aria-hidden="true" />
               <Input
                 value={searchQuery}
-                onChange={(event) => setSearchQuery(event.target.value)}
+                onChange={(event) => {
+                  setSearchQuery(event.target.value);
+                  setLibraryQuery(event.target.value);
+                }}
                 placeholder="Search published material"
                 aria-label="Search published material"
               />
             </form>
-            <Button
-              variant="ghost"
-              size="sm"
-              type="button"
-              onClick={() => void refresh()}
-            >
-              <RefreshCw aria-hidden="true" />
-              Refresh
-            </Button>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="sm" type="button" className="identity-trigger">
-                  <span className="avatar">{displayInitials}</span>
-                  <span className="identity-name">{displayIdentity}</span>
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="identity-menu">
-                <DropdownMenuLabel>
-                  <span className="identity-menu-label">Signed in</span>
-                  <span className="identity-menu-value">{displayIdentity}</span>
-                </DropdownMenuLabel>
-                <DropdownMenuSeparator />
-                <DropdownMenuGroup>
-                  <DropdownMenuItem onSelect={() => void refresh()}>
-                    Refresh library
-                    <DropdownMenuShortcut>sync</DropdownMenuShortcut>
+            <div className="topbar-actions">
+              <Button
+                variant="ghost"
+                size="sm"
+                type="button"
+                onClick={() => void refresh()}
+              >
+                <RefreshCw aria-hidden="true" />
+                Refresh
+              </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" size="sm" type="button" className="identity-trigger">
+                    <span className="avatar">{displayInitials}</span>
+                    <span className="identity-name">{displayIdentity}</span>
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="identity-menu">
+                  <DropdownMenuLabel>
+                    <span className="identity-menu-label">Signed in</span>
+                    <span className="identity-menu-value">{displayIdentity}</span>
+                  </DropdownMenuLabel>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuGroup>
+                    <DropdownMenuItem onSelect={() => void refresh()}>
+                      Refresh library
+                      <DropdownMenuShortcut>sync</DropdownMenuShortcut>
+                    </DropdownMenuItem>
+                  </DropdownMenuGroup>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem variant="destructive" onSelect={() => void logout()}>
+                    Sign out
+                    <DropdownMenuShortcut>auth</DropdownMenuShortcut>
                   </DropdownMenuItem>
-                </DropdownMenuGroup>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem variant="destructive" onSelect={() => void logout()}>
-                  Sign out
-                  <DropdownMenuShortcut>auth</DropdownMenuShortcut>
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
           </div>
         ) : (
           <div className="topbar-main">
             <Button
               ref={commandTriggerRef}
               variant="command"
+              className="command"
               type="button"
               onClick={() => handleCommandOpenChange(true)}
             >
@@ -2874,86 +3030,48 @@ export function App() {
               <span>Go to page or route</span>
               <span className="kbd">Cmd K</span>
             </Button>
-            <div className="health"><span className={`health-dot ${health === "ok" ? "ok" : "bad"}`}></span><span>API {health}</span></div>
-            <Button
-              variant="ghost"
-              size="sm"
-              type="button"
-              onClick={toggleDensity}
-            >
-              <SlidersHorizontal aria-hidden="true" />
-              {density === "comfortable" ? "Comfortable" : "Compact"}
-            </Button>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="sm" type="button" className="identity-trigger">
-                  <span className="avatar">{displayInitials}</span>
-                  <span className="identity-name">{displayIdentity}</span>
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="identity-menu">
-                <DropdownMenuLabel>
-                  <span className="identity-menu-label">Signed in</span>
-                  <span className="identity-menu-value">{displayIdentity}</span>
-                </DropdownMenuLabel>
-                <DropdownMenuSeparator />
-                <DropdownMenuGroup>
-                  <DropdownMenuItem onSelect={() => navigatePage("settings")}>
-                    Settings
-                    <DropdownMenuShortcut>#settings</DropdownMenuShortcut>
+            <div className="topbar-actions">
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" size="sm" type="button" className="identity-trigger">
+                    <span className="avatar">{displayInitials}</span>
+                    <span className="identity-name">{displayIdentity}</span>
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="identity-menu">
+                  <DropdownMenuLabel>
+                    <span className="identity-menu-label">Signed in</span>
+                    <span className="identity-menu-value">{displayIdentity}</span>
+                  </DropdownMenuLabel>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuGroup>
+                    <DropdownMenuItem onSelect={() => navigatePage("settings")}>
+                      Settings
+                      <DropdownMenuShortcut>#settings</DropdownMenuShortcut>
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onSelect={toggleDensity}>
+                      {density === "comfortable" ? "Compact density" : "Comfortable density"}
+                      <DropdownMenuShortcut>view</DropdownMenuShortcut>
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onSelect={() => void refresh()}>
+                      Refresh
+                      <DropdownMenuShortcut>sync</DropdownMenuShortcut>
+                    </DropdownMenuItem>
+                  </DropdownMenuGroup>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem variant="destructive" onSelect={() => void logout()}>
+                    Sign out
+                    <DropdownMenuShortcut>auth</DropdownMenuShortcut>
                   </DropdownMenuItem>
-                  <DropdownMenuItem onSelect={toggleDensity}>
-                    {density === "comfortable" ? "Compact density" : "Comfortable density"}
-                    <DropdownMenuShortcut>view</DropdownMenuShortcut>
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onSelect={() => void refresh()}>
-                    Refresh
-                    <DropdownMenuShortcut>sync</DropdownMenuShortcut>
-                  </DropdownMenuItem>
-                </DropdownMenuGroup>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem variant="destructive" onSelect={() => void logout()}>
-                  Sign out
-                  <DropdownMenuShortcut>auth</DropdownMenuShortcut>
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
           </div>
         ) : null}
       </header>
 
       {isAuthenticated ? readerSurfaceActive ? (
         <main className="reader-main" id="main">
-          <section className="reader-hero" aria-labelledby="reader-title">
-            <div className="reader-hero-copy">
-              <p className="eyebrow">Published knowledge base</p>
-              <h1 id="reader-title">Read approved ForgetBase material.</h1>
-              <p>
-                This view is for people who need the published content, not the management console. It shows active,
-                approved web material from the governed library with lightweight source and version context.
-              </p>
-            </div>
-            <div className="reader-hero-stats" aria-label="Published library summary">
-              <div>
-                <strong>{readerPublishedAssets.length}</strong>
-                <span>published item{readerPublishedAssets.length === 1 ? "" : "s"}</span>
-              </div>
-              <div>
-                <strong>{searchResponse?.results.length ?? 0}</strong>
-                <span>search citation{searchResponse?.results.length === 1 ? "" : "s"}</span>
-              </div>
-              <div>
-                <strong>{readerSelectedAsset ? "ready" : "empty"}</strong>
-                <span>reader library</span>
-              </div>
-            </div>
-          </section>
-
-          {message ? (
-            <Alert variant="success" className="reader-alert">
-              <AlertDescription>{message}</AlertDescription>
-            </Alert>
-          ) : null}
           {error ? (
             <Alert variant="destructive" className="reader-alert">
               <AlertTitle>Request failed</AlertTitle>
@@ -2961,82 +3079,64 @@ export function App() {
             </Alert>
           ) : null}
 
-          <section className="reader-search-panel" aria-label="Published material search">
-            <form className="reader-search-form" onSubmit={(event) => void runSearch(event)}>
-              <FormField label="Search published material" htmlFor="reader-search-query">
-                <Input
-                  id="reader-search-query"
-                  value={searchQuery}
-                  onChange={(event) => setSearchQuery(event.target.value)}
-                  placeholder="Find a policy, guide, SOP, template, or playbook"
-                />
-              </FormField>
-              <Button type="submit" disabled={!searchQuery.trim()}>
-                <Search aria-hidden="true" />
-                Search
-              </Button>
-            </form>
-            {searchResponse ? (
-              <div className="reader-search-results">
-                {searchResponse.results.length ? searchResponse.results.map((result) => (
-                  <button
-                    type="button"
-                    className="reader-search-result"
-                    key={result.chunkId}
-                    onClick={() => {
-                      setSelectedStableId(result.asset.stableId);
-                      setAssetContentView("human");
-                    }}
-                  >
-                    <span>{result.asset.title}</span>
-                    <small>{result.citation.snippet}</small>
-                  </button>
-                )) : (
-                  <p className="empty">No permitted citations matched this search.</p>
-                )}
-              </div>
-            ) : null}
-          </section>
-
           <section className="reader-layout" aria-label="Published library">
             <aside className="reader-library" aria-label="Published material list">
-              <div className="reader-library-header">
-                <div>
-                  <p className="eyebrow">Library</p>
-                  <h2>Published material</h2>
-                </div>
-                {readerFilterActive ? (
-                  <Button type="button" size="sm" variant="ghost" onClick={() => setLibraryQuery("")}>Clear</Button>
-                ) : null}
-              </div>
-              <div className="reader-list">
-                {filteredReaderAssets.length ? filteredReaderAssets.map((asset) => (
-                  <button
-                    type="button"
-                    key={asset.id}
-                    className={`reader-card ${asset.stableId === readerSelectedAsset?.stableId ? "is-selected" : ""}`}
-                    aria-current={asset.stableId === readerSelectedAsset?.stableId ? "true" : undefined}
-                    onClick={() => {
-                      setSelectedStableId(asset.stableId);
-                      setAssetContentView("human");
-                    }}
-                  >
-                    <span className="reader-card-title">{asset.title}</span>
-                    <span className="reader-card-summary">{asset.summary || asset.stableId}</span>
-                    <span className="reader-card-meta">
-                      <Badge variant="neutral">{asset.type}</Badge>
-                      <Badge variant={isPublicReaderEligible(asset) ? "success" : "info"}>
-                        {isPublicReaderEligible(asset) ? "public" : "authenticated"}
-                      </Badge>
-                    </span>
-                  </button>
-                )) : (
-                  <div className="reader-empty-state">
-                    <h3>No published material found</h3>
-                    <p>{readerFilterActive ? "Clear search to see all published material." : "No active, approved web material is available to this reader account yet."}</p>
+              <ScrollArea className="reader-library-scroll">
+                <div className="nav-group reader-nav-group">
+                  <div className="reader-library-heading">
+                    <p className="nav-label">Published Library</p>
+                    {readerFilterActive ? (
+                      <Button type="button" size="sm" variant="ghost" onClick={() => {
+                        setLibraryQuery("");
+                        setSearchQuery("");
+                      }}>
+                        Clear
+                      </Button>
+                    ) : null}
                   </div>
-                )}
-              </div>
+                  <div className="nav-tree">
+                    {readerAssetGroups.length ? readerAssetGroups.map((group) => (
+                      <div className="reader-tree-group" key={group.type}>
+                        <Button
+                          className={`nav-folder ${group.assets.some((asset) => asset.stableId === readerSelectedAsset?.stableId) ? "is-active-ancestor" : ""}`}
+                          type="button"
+                          variant="ghost"
+                          onClick={() => {
+                            setSelectedStableId(group.assets[0]?.stableId ?? "");
+                            setAssetContentView("human");
+                          }}
+                        >
+                          <span className="folder-glyph" aria-hidden="true">{group.type.slice(0, 2).toUpperCase()}</span>
+                          <span className="nav-text">{formatAssetTypeLabel(group.type)}</span>
+                          <Badge variant="neutral" className="nav-count">{group.assets.length}</Badge>
+                        </Button>
+                        <div className="nav-branch">
+                          {group.assets.map((asset) => (
+                            <Button
+                              type="button"
+                              key={asset.id}
+                              className={`nav-link nav-leaf is-iconless ${asset.stableId === readerSelectedAsset?.stableId ? "active" : ""}`}
+                              variant="ghost"
+                              aria-current={asset.stableId === readerSelectedAsset?.stableId ? "page" : undefined}
+                              onClick={() => {
+                                setSelectedStableId(asset.stableId);
+                                setAssetContentView("human");
+                              }}
+                            >
+                              <span className="nav-text">{asset.title}</span>
+                            </Button>
+                          ))}
+                        </div>
+                      </div>
+                    )) : (
+                      <div className="reader-empty-state">
+                        <h3>No published material found</h3>
+                        <p>{readerFilterActive ? "Clear search to see all published material." : "No active, approved web material is available to this reader account yet."}</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </ScrollArea>
             </aside>
 
             <article className="reader-article">
@@ -3056,7 +3156,9 @@ export function App() {
 
                   <div className="reader-document">
                     {currentHumanBody ? (
-                      <pre className="reader-document-body">{currentHumanBody}</pre>
+                      <div className="reader-document-body">
+                        {renderMarkdownDocument(currentHumanBody, assetDetail.asset.title)}
+                      </div>
                     ) : (
                       <div className="reader-empty-state">
                         <h3>No human-readable page</h3>
