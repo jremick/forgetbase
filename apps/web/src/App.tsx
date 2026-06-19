@@ -99,6 +99,7 @@ import {
 } from "./components/ui/dropdown-menu.js";
 import { Input } from "./components/ui/input.js";
 import { Label } from "./components/ui/label.js";
+import { NativeSelect } from "./components/ui/native-select.js";
 import { ScrollArea } from "./components/ui/scroll-area.js";
 import { Separator } from "./components/ui/separator.js";
 import {
@@ -292,7 +293,7 @@ const operationsPageCopy: Record<string, { eyebrow: string; title: string; lede:
   }
 };
 
-function routePanelClass(currentPage: string, routes: string[], baseClass = "event-list"): string {
+function routePanelClass(currentPage: string, routes: string[], baseClass = "grid gap-4"): string {
   return `${baseClass} ${routes.includes(currentPage) ? "" : "is-hidden"}`;
 }
 
@@ -3632,90 +3633,73 @@ export function App() {
             <p className="lede">{operationsPage.lede}</p>
           </div>
           <div className="actions">
-            {currentPage === "exports" ? (
-              <button type="button" onClick={() => void generateExport()}>Generate export</button>
-            ) : null}
             {currentPage === "review" ? (
-              <button type="button" onClick={() => void loadReviewQueue()}>Review queue</button>
+              <Button type="button" onClick={() => void loadReviewQueue()}>Review queue</Button>
             ) : null}
             {currentPage === "telemetry" ? (
-              <button type="button" onClick={() => void loadTelemetrySummary()}>Load summary</button>
+              <Button type="button" onClick={() => void loadTelemetrySummary()}>Load summary</Button>
             ) : null}
           </div>
         </div>
         <section className="operations-grid">
-        <section className="ops-pane operations-shell" aria-labelledby="ops-title">
-          <div className={routePanelClass(currentPage, ["operations"], "operations-overview")}>
-            <div className="overview-copy">
-              <p className="eyebrow">Operational surface</p>
-              <h2 id={isOperationsLanding ? "ops-title" : undefined}>Instruction control plane routes</h2>
-              <p>Each workspace keeps its own forms and load actions visible without carrying every admin panel into every route.</p>
-            </div>
-            <div className="summary-strip" aria-label="Instruction control route summaries">
-              <button className="summary-link" type="button" onClick={() => navigatePage("review")}>
-                <span>Reviews</span>
-                <strong>{reviewQueue?.assets.length ?? reviewDueAssets}</strong>
-                <em>needs governance</em>
-              </button>
-              <button className="summary-link" type="button" onClick={() => navigatePage("access")}>
-                <span>Access</span>
-                <strong>{users.length + serviceAccounts.length}</strong>
-                <em>principals loaded</em>
-              </button>
-              <button className="summary-link" type="button" onClick={() => navigatePage("providers")}>
-                <span>Providers</span>
-                <strong>{providerConfigs.length + authProviderConfigs.length}</strong>
-                <em>configs loaded</em>
-              </button>
-              <button className="summary-link" type="button" onClick={() => navigatePage("policies")}>
-                <span>Policies</span>
-                <strong>{managedQueryPolicy || retrievalRankingPolicy ? "loaded" : "setup"}</strong>
-                <em>guardrails</em>
-              </button>
-              <button className="summary-link" type="button" onClick={() => navigatePage("telemetry")}>
-                <span>Telemetry</span>
-                <strong>{telemetrySummary?.retrieval.eventCount ?? telemetryEvents.length}</strong>
-                <em>retrieval events</em>
-              </button>
-              <button className="summary-link" type="button" onClick={() => navigatePage("approvals")}>
-                <span>Approvals</span>
-                <strong>{agentActions.length}</strong>
-                <em>action requests</em>
-              </button>
-              <button className="summary-link" type="button" onClick={() => navigatePage("distribute")}>
-                <span>Distribute</span>
-                <strong>{exportPackage?.assetCount ?? exportEligibleAssets}</strong>
-                <em>package builder</em>
-              </button>
-            </div>
+        <section className="grid gap-4" aria-labelledby="ops-title">
+          <div className={routePanelClass(currentPage, ["operations"], "grid gap-4")}>
+            <SectionCard
+              title="Instruction control plane routes"
+              description="Each workspace keeps its own forms and load actions visible without carrying every admin panel into every route."
+              variant="tool"
+            >
+              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4" aria-label="Instruction control route summaries">
+                {([
+                  ["review", "Reviews", reviewQueue?.assets.length ?? reviewDueAssets, "needs governance"],
+                  ["access", "Access", users.length + serviceAccounts.length, "principals loaded"],
+                  ["providers", "Providers", providerConfigs.length + authProviderConfigs.length, "configs loaded"],
+                  ["policies", "Policies", managedQueryPolicy || retrievalRankingPolicy ? "loaded" : "setup", "guardrails"],
+                  ["telemetry", "Telemetry", telemetrySummary?.retrieval.eventCount ?? telemetryEvents.length, "retrieval events"],
+                  ["approvals", "Approvals", agentActions.length, "action requests"],
+                  ["distribute", "Distribute", exportPackage?.assetCount ?? exportEligibleAssets, "package builder"]
+                ] as const).map(([route, label, value, note]) => (
+                  <Button
+                    key={route}
+                    type="button"
+                    variant="default"
+                    className="h-auto min-h-[86px] flex-col items-start justify-start gap-1 whitespace-normal p-3 text-left"
+                    onClick={() => navigatePage(route)}
+                  >
+                    <span className="text-[11px] font-extrabold uppercase text-muted-foreground">{label}</span>
+                    <strong className="text-2xl leading-tight text-foreground">{value}</strong>
+                    <em className="text-xs not-italic text-muted-foreground">{note}</em>
+                  </Button>
+                ))}
+              </div>
+            </SectionCard>
           </div>
           {isOperationsLanding ? null : (
-          <div className="section-heading">
-            <h2 id="ops-title">Workspace actions</h2>
-            <div className="button-row">
+          <SectionCard title="Workspace actions" variant="tool" contentClassName="pt-0">
+            <Toolbar divided={false} className="border-0 p-0 shadow-none">
               {currentPage === "review" ? (
-                <button type="button" onClick={() => void loadReviewQueue()}>Review queue</button>
+                <Button type="button" onClick={() => void loadReviewQueue()}>Review queue</Button>
               ) : null}
               {currentPage === "telemetry" ? (
                 <>
-                  <button type="button" onClick={() => void loadTelemetrySummary()}>Summary</button>
-                  <button type="button" onClick={() => void loadTelemetryRetentionPolicy()}>Retention</button>
-                  <button type="button" onClick={() => void loadTelemetry()}>Telemetry</button>
-                  <button type="button" onClick={() => void loadAuditEvents()}>Audit</button>
-                  <button type="button" onClick={() => void loadFeedback()}>Feedback</button>
-                  <button type="button" onClick={() => void runDemoEval()}>Eval</button>
-                  <button type="button" onClick={() => void loadEvalRuns()}>Eval runs</button>
-                  <button type="button" onClick={() => void loadEvalSummary()}>Eval summary</button>
+                  <Button type="button" onClick={() => void loadTelemetrySummary()}>Summary</Button>
+                  <Button type="button" onClick={() => void loadTelemetryRetentionPolicy()}>Retention</Button>
+                  <Button type="button" onClick={() => void loadTelemetry()}>Telemetry</Button>
+                  <Button type="button" onClick={() => void loadAuditEvents()}>Audit</Button>
+                  <Button type="button" onClick={() => void loadFeedback()}>Feedback</Button>
+                  <Button type="button" onClick={() => void runDemoEval()}>Eval</Button>
+                  <Button type="button" onClick={() => void loadEvalRuns()}>Eval runs</Button>
+                  <Button type="button" onClick={() => void loadEvalSummary()}>Eval summary</Button>
                 </>
               ) : null}
               {currentPage === "policies" ? (
                 <>
-                  <button type="button" onClick={() => void loadManagedQueryPolicy()}>Query policy</button>
-                  <button type="button" onClick={() => void loadRetrievalRankingPolicy()}>Ranking policy</button>
-                  <button type="button" onClick={() => void loadManagedQueryCache()}>Cache</button>
-                  <button type="button" onClick={() => void loadManagedQueryCachePolicy()}>Cache policy</button>
-                  <button type="button" onClick={() => void loadManagedQueryRetentionPolicy()}>Query retention</button>
-                  <button
+                  <Button type="button" onClick={() => void loadManagedQueryPolicy()}>Query policy</Button>
+                  <Button type="button" onClick={() => void loadRetrievalRankingPolicy()}>Ranking policy</Button>
+                  <Button type="button" onClick={() => void loadManagedQueryCache()}>Cache</Button>
+                  <Button type="button" onClick={() => void loadManagedQueryCachePolicy()}>Cache policy</Button>
+                  <Button type="button" onClick={() => void loadManagedQueryRetentionPolicy()}>Query retention</Button>
+                  <Button
                     type="button"
                     onClick={() => {
                       void loadActionExecutionPolicy();
@@ -3723,13 +3707,13 @@ export function App() {
                     }}
                   >
                     Actions
-                  </button>
-                  <button type="button" onClick={() => void loadSecretReferencePolicy()}>Secrets</button>
-                  <button type="button" onClick={() => void loadPiiRedactionPolicy()}>PII policy</button>
+                  </Button>
+                  <Button type="button" onClick={() => void loadSecretReferencePolicy()}>Secrets</Button>
+                  <Button type="button" onClick={() => void loadPiiRedactionPolicy()}>PII policy</Button>
                 </>
               ) : null}
               {currentPage === "approvals" ? (
-                <button
+                <Button
                   type="button"
                   onClick={() => {
                     void loadActionExecutionPolicy();
@@ -3737,117 +3721,121 @@ export function App() {
                   }}
                 >
                   Actions
-                </button>
+                </Button>
               ) : null}
               {currentPage === "access" ? (
                 <>
-                  <button type="button" onClick={() => void loadUsers()}>Users</button>
-                  <button type="button" onClick={() => void loadServiceAccounts()}>Services</button>
-                  <button type="button" onClick={() => void loadServiceAccountPolicy()}>Service policy</button>
-                  <button type="button" onClick={() => void loadGroups()}>Groups</button>
-                  <button type="button" onClick={() => void loadApiKeys()}>Keys</button>
-                  <button type="button" onClick={() => void loadLoginSessions()}>Sessions</button>
-                  <button type="button" onClick={() => void loadApiKeyRotationReport()}>Key rotation</button>
+                  <Button type="button" onClick={() => void loadUsers()}>Users</Button>
+                  <Button type="button" onClick={() => void loadServiceAccounts()}>Services</Button>
+                  <Button type="button" onClick={() => void loadServiceAccountPolicy()}>Service policy</Button>
+                  <Button type="button" onClick={() => void loadGroups()}>Groups</Button>
+                  <Button type="button" onClick={() => void loadApiKeys()}>Keys</Button>
+                  <Button type="button" onClick={() => void loadLoginSessions()}>Sessions</Button>
+                  <Button type="button" onClick={() => void loadApiKeyRotationReport()}>Key rotation</Button>
                 </>
               ) : null}
               {currentPage === "providers" ? (
                 <>
-                  <button type="button" onClick={() => void loadProviderConfigs()}>Providers</button>
-                  <button type="button" onClick={() => void loadProviderHealth()}>Provider health</button>
-                  <button type="button" onClick={() => void loadAuthProviderConfigs()}>Auth</button>
+                  <Button type="button" onClick={() => void loadProviderConfigs()}>Providers</Button>
+                  <Button type="button" onClick={() => void loadProviderHealth()}>Provider health</Button>
+                  <Button type="button" onClick={() => void loadAuthProviderConfigs()}>Auth</Button>
                 </>
               ) : null}
-              {currentPage === "exports" ? (
-                <button type="button" onClick={() => void generateExport()}>Export</button>
-              ) : null}
-            </div>
-          </div>
+            </Toolbar>
+          </SectionCard>
           )}
-          <div className={routePanelClass(currentPage, ["review"])}>
-            <h3>Review queue</h3>
-            {reviewQueue ? (
-              <>
-                <p>
-                  <strong>{reviewQueue.assets.length}</strong> items as of {reviewQueue.asOf}
-                </p>
-                <div className="table-scroll compact-table">
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>Stable ID</th>
-                        <th>Status</th>
-                        <th>Lifecycle</th>
-                        <th>Review</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {reviewQueue.assets.map((asset) => (
-                        <tr key={asset.id} onClick={() => setSelectedStableId(asset.stableId)}>
-                          <td>{asset.stableId}</td>
-                          <td>{asset.status}</td>
-                          <td>{asset.lifecycleState}</td>
-                          <td>{asset.reviewDueAt}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </>
-            ) : <p className="empty">No review queue loaded.</p>}
+          <div className={routePanelClass(currentPage, ["review"], "grid gap-4")}>
+            <DataTableShell
+              title="Review queue"
+              description={reviewQueue ? `${reviewQueue.assets.length} items as of ${reviewQueue.asOf}` : "Load the review queue to inspect governed assets."}
+              isEmpty={!reviewQueue || !reviewQueue.assets.length}
+              emptyTitle={reviewQueue ? "No review items" : "No review queue loaded"}
+              emptyDescription={reviewQueue ? "There are no assets currently waiting in the review queue." : "Use the workspace action to load review items."}
+            >
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Stable ID</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Lifecycle</TableHead>
+                    <TableHead>Review</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {reviewQueue?.assets.map((asset) => (
+                    <TableRow key={asset.id} className="cursor-pointer" onClick={() => setSelectedStableId(asset.stableId)}>
+                      <TableCell>{asset.stableId}</TableCell>
+                      <TableCell><Badge variant={stateBadgeVariant(asset.status)}>{asset.status}</Badge></TableCell>
+                      <TableCell><Badge variant={stateBadgeVariant(asset.lifecycleState)}>{asset.lifecycleState}</Badge></TableCell>
+                      <TableCell>{asset.reviewDueAt}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </DataTableShell>
           </div>
-          <div className={routePanelClass(currentPage, ["telemetry"])}>
-            <h3>Telemetry summary</h3>
-            {telemetrySummary ? (
-              <>
-                <dl className="metadata-grid compact analytics-grid">
-                  <div><dt>Retrieval</dt><dd>{telemetrySummary.retrieval.eventCount}</dd></div>
-                  <div><dt>Denied</dt><dd>{telemetrySummary.retrieval.deniedCount}</dd></div>
-                  <div><dt>Latency</dt><dd>{formatMetric(telemetrySummary.retrieval.averageLatencyMs, "ms")}</dd></div>
-                  <div><dt>Redacted</dt><dd>{telemetrySummary.retrieval.redactedQueryCount}</dd></div>
-                  <div><dt>Audit</dt><dd>{telemetrySummary.audit.eventCount}</dd></div>
-                  <div><dt>Feedback</dt><dd>{telemetrySummary.feedback.recordCount}</dd></div>
-                  <div><dt>Model gen</dt><dd>{telemetrySummary.providerGeneration.eventCount}</dd></div>
-                  <div><dt>Cache hits</dt><dd>{telemetrySummary.providerGeneration.cacheHitCount}</dd></div>
-                  <div><dt>Tokens</dt><dd>{telemetrySummary.providerGeneration.totalTokens}</dd></div>
-                  <div><dt>Assets</dt><dd>{telemetrySummary.assets.sampleCount}</dd></div>
-                  <div><dt>Generated</dt><dd>{new Date(telemetrySummary.generatedAt).toLocaleTimeString()}</dd></div>
-                </dl>
-                <p><strong>Surfaces</strong> {formatCounts(telemetrySummary.retrieval.bySurface)}</p>
-                <p><strong>Query kinds</strong> {formatCounts(telemetrySummary.retrieval.byQueryKind)}</p>
-                <p><strong>Audit outcomes</strong> {formatCounts(telemetrySummary.audit.byOutcome)}</p>
-                <p><strong>Feedback</strong> {formatCounts(telemetrySummary.feedback.byOutcome)}</p>
-                <p><strong>Model statuses</strong> {formatCounts(telemetrySummary.providerGeneration.byStatus)}</p>
-                <p><strong>Cache statuses</strong> {formatCounts(telemetrySummary.providerGeneration.byCacheStatus)}</p>
-                <p><strong>Model providers</strong> {formatCounts(telemetrySummary.providerGeneration.byProvider)}</p>
-                <p><strong>Estimated model cost</strong> {formatCurrency(telemetrySummary.providerGeneration.estimatedCostUsd)}</p>
-                <p><strong>Sensitivity</strong> {formatCounts(telemetrySummary.assets.bySensitivity)}</p>
-              </>
-            ) : <p className="empty">No summary loaded.</p>}
+          <div className={routePanelClass(currentPage, ["telemetry"], "grid gap-4")}>
+            <SectionCard title="Telemetry summary" variant="tool">
+              {telemetrySummary ? (
+                <div className="grid gap-4">
+                  <DefinitionGrid
+                    compact
+                    items={[
+                      { term: "Retrieval", description: telemetrySummary.retrieval.eventCount },
+                      { term: "Denied", description: telemetrySummary.retrieval.deniedCount },
+                      { term: "Latency", description: formatMetric(telemetrySummary.retrieval.averageLatencyMs, "ms") },
+                      { term: "Redacted", description: telemetrySummary.retrieval.redactedQueryCount },
+                      { term: "Audit", description: telemetrySummary.audit.eventCount },
+                      { term: "Feedback", description: telemetrySummary.feedback.recordCount },
+                      { term: "Model gen", description: telemetrySummary.providerGeneration.eventCount },
+                      { term: "Cache hits", description: telemetrySummary.providerGeneration.cacheHitCount },
+                      { term: "Tokens", description: telemetrySummary.providerGeneration.totalTokens },
+                      { term: "Assets", description: telemetrySummary.assets.sampleCount },
+                      { term: "Generated", description: new Date(telemetrySummary.generatedAt).toLocaleTimeString() }
+                    ]}
+                  />
+                  <DefinitionGrid
+                    compact
+                    items={[
+                      { term: "Surfaces", description: formatCounts(telemetrySummary.retrieval.bySurface) },
+                      { term: "Query kinds", description: formatCounts(telemetrySummary.retrieval.byQueryKind) },
+                      { term: "Audit outcomes", description: formatCounts(telemetrySummary.audit.byOutcome) },
+                      { term: "Feedback", description: formatCounts(telemetrySummary.feedback.byOutcome) },
+                      { term: "Model statuses", description: formatCounts(telemetrySummary.providerGeneration.byStatus) },
+                      { term: "Cache statuses", description: formatCounts(telemetrySummary.providerGeneration.byCacheStatus) },
+                      { term: "Model providers", description: formatCounts(telemetrySummary.providerGeneration.byProvider) },
+                      { term: "Estimated model cost", description: formatCurrency(telemetrySummary.providerGeneration.estimatedCostUsd) },
+                      { term: "Sensitivity", description: formatCounts(telemetrySummary.assets.bySensitivity) }
+                    ]}
+                  />
+                </div>
+              ) : <EmptyState title="No summary loaded" description="Use the workspace action to load telemetry summary." />}
+            </SectionCard>
           </div>
           <div className={routePanelClass(currentPage, ["telemetry"])}>
             <h3>Telemetry retention</h3>
-            <form className="ops-form" onSubmit={(event) => void saveTelemetryRetentionPolicy(event)}>
+            <form className="grid gap-4 md:grid-cols-[repeat(auto-fit,minmax(160px,1fr))] md:items-end" onSubmit={(event) => void saveTelemetryRetentionPolicy(event)}>
               <label>
                 Retrieval days
-                <input
+                <Input
                   value={retentionRetrievalDays}
                   onChange={(event) => setRetentionRetrievalDays(event.target.value)}
                 />
               </label>
               <label>
                 Audit days
-                <input value={retentionAuditDays} onChange={(event) => setRetentionAuditDays(event.target.value)} />
+                <Input value={retentionAuditDays} onChange={(event) => setRetentionAuditDays(event.target.value)} />
               </label>
               <label>
                 Feedback days
-                <input
+                <Input
                   value={retentionFeedbackDays}
                   onChange={(event) => setRetentionFeedbackDays(event.target.value)}
                 />
               </label>
-              <button type="submit">Save retention</button>
-              <button type="button" onClick={() => void purgeTelemetryRetention(true)}>Dry run purge</button>
-              <button type="button" onClick={() => void purgeTelemetryRetention(false)}>Execute purge</button>
+              <Button type="submit">Save retention</Button>
+              <Button type="button" onClick={() => void purgeTelemetryRetention(true)}>Dry run purge</Button>
+              <Button type="button" onClick={() => void purgeTelemetryRetention(false)}>Execute purge</Button>
             </form>
             {telemetryRetentionPolicy ? (
               <p>
@@ -3870,43 +3858,43 @@ export function App() {
           </div>
           <div className={routePanelClass(currentPage, ["policies"])}>
             <h3>Managed query policy</h3>
-            <form className="ops-form" onSubmit={(event) => void saveManagedQueryPolicy(event)}>
+            <form className="grid gap-4 md:grid-cols-[repeat(auto-fit,minmax(160px,1fr))] md:items-end" onSubmit={(event) => void saveManagedQueryPolicy(event)}>
               <label>
                 Default mode
-                <select
+                <NativeSelect
                   value={queryPolicyDefaultMode}
                   onChange={(event) => setQueryPolicyDefaultMode(event.target.value as ManagedQueryMode)}
                 >
                   <option value="deterministic-retrieval">deterministic-retrieval</option>
                   <option value="provider-routed">provider-routed</option>
-                </select>
+                </NativeSelect>
               </label>
               <label>
                 Allowed modes
-                <input
+                <Input
                   value={queryPolicyAllowedModes}
                   onChange={(event) => setQueryPolicyAllowedModes(event.target.value)}
                 />
               </label>
               <label>
                 Minimum citations
-                <input
+                <Input
                   value={queryPolicyMinimumCitationCount}
                   onChange={(event) => setQueryPolicyMinimumCitationCount(event.target.value)}
                 />
               </label>
               <label>
                 Require grounded
-                <select
+                <NativeSelect
                   value={queryPolicyRequireGrounded}
                   onChange={(event) => setQueryPolicyRequireGrounded(event.target.value as "true" | "false")}
                 >
                   <option value="false">false</option>
                   <option value="true">true</option>
-                </select>
+                </NativeSelect>
               </label>
-              <button type="submit">Save query policy</button>
-              <button type="button" onClick={() => void loadManagedQueryPolicy()}>Load policy</button>
+              <Button type="submit">Save query policy</Button>
+              <Button type="button" onClick={() => void loadManagedQueryPolicy()}>Load policy</Button>
             </form>
             {managedQueryPolicy ? (
               <p>
@@ -3920,37 +3908,37 @@ export function App() {
           </div>
           <div className={routePanelClass(currentPage, ["policies"])}>
             <h3>Retrieval ranking policy</h3>
-            <form className="ops-form" onSubmit={(event) => void saveRetrievalRankingPolicy(event)}>
+            <form className="grid gap-4 md:grid-cols-[repeat(auto-fit,minmax(160px,1fr))] md:items-end" onSubmit={(event) => void saveRetrievalRankingPolicy(event)}>
               <label>
                 Agent instruction weight
-                <input
+                <Input
                   value={rankingPolicyAgentInstructionWeight}
                   onChange={(event) => setRankingPolicyAgentInstructionWeight(event.target.value)}
                 />
               </label>
               <label>
                 Asset summary weight
-                <input
+                <Input
                   value={rankingPolicyAssetSummaryWeight}
                   onChange={(event) => setRankingPolicyAssetSummaryWeight(event.target.value)}
                 />
               </label>
               <label>
                 Human document weight
-                <input
+                <Input
                   value={rankingPolicyHumanDocumentWeight}
                   onChange={(event) => setRankingPolicyHumanDocumentWeight(event.target.value)}
                 />
               </label>
               <label>
                 Exact phrase boost
-                <input
+                <Input
                   value={rankingPolicyExactPhraseBoost}
                   onChange={(event) => setRankingPolicyExactPhraseBoost(event.target.value)}
                 />
               </label>
-              <button type="submit">Save ranking policy</button>
-              <button type="button" onClick={() => void loadRetrievalRankingPolicy()}>Load policy</button>
+              <Button type="submit">Save ranking policy</Button>
+              <Button type="button" onClick={() => void loadRetrievalRankingPolicy()}>Load policy</Button>
             </form>
             {retrievalRankingPolicy ? (
               <p>
@@ -3964,27 +3952,27 @@ export function App() {
           </div>
           <div className={routePanelClass(currentPage, ["policies", "telemetry"])}>
             <h3>Eval schedule</h3>
-            <form className="ops-form" onSubmit={(event) => void saveEvalSchedulePolicy(event)}>
+            <form className="grid gap-4 md:grid-cols-[repeat(auto-fit,minmax(160px,1fr))] md:items-end" onSubmit={(event) => void saveEvalSchedulePolicy(event)}>
               <label>
                 Enabled
-                <select
+                <NativeSelect
                   value={evalScheduleEnabled}
                   onChange={(event) => setEvalScheduleEnabled(event.target.value as "true" | "false")}
                 >
                   <option value="false">false</option>
                   <option value="true">true</option>
-                </select>
+                </NativeSelect>
               </label>
               <label>
                 Interval minutes
-                <input
+                <Input
                   value={evalScheduleIntervalMinutes}
                   onChange={(event) => setEvalScheduleIntervalMinutes(event.target.value)}
                 />
               </label>
-              <button type="submit">Save demo schedule</button>
-              <button type="button" onClick={() => void loadEvalSchedulePolicy()}>Load policy</button>
-              <button type="button" onClick={() => void disableEvalSchedulePolicy()}>Disable</button>
+              <Button type="submit">Save demo schedule</Button>
+              <Button type="button" onClick={() => void loadEvalSchedulePolicy()}>Load policy</Button>
+              <Button type="button" onClick={() => void disableEvalSchedulePolicy()}>Disable</Button>
             </form>
             {evalSchedulePolicy ? (
               <p>
@@ -3998,70 +3986,70 @@ export function App() {
           </div>
           <div className={routePanelClass(currentPage, ["approvals", "policies"])}>
             <h3>Action execution</h3>
-            <form className="ops-form" onSubmit={(event) => void saveActionExecutionPolicy(event)}>
+            <form className="grid gap-4 md:grid-cols-[repeat(auto-fit,minmax(160px,1fr))] md:items-end" onSubmit={(event) => void saveActionExecutionPolicy(event)}>
               <label>
                 Enabled
-                <select
+                <NativeSelect
                   value={actionPolicyEnabled}
                   onChange={(event) => setActionPolicyEnabled(event.target.value as "true" | "false")}
                 >
                   <option value="false">false</option>
                   <option value="true">true</option>
-                </select>
+                </NativeSelect>
               </label>
               <label>
                 Allowed types
-                <input
+                <Input
                   value={actionPolicyAllowedTypes}
                   onChange={(event) => setActionPolicyAllowedTypes(event.target.value)}
                 />
               </label>
               <label>
                 Require approval
-                <select
+                <NativeSelect
                   value={actionPolicyRequireApproval}
                   onChange={(event) => setActionPolicyRequireApproval(event.target.value as "true" | "false")}
                 >
                   <option value="true">true</option>
                   <option value="false">false</option>
-                </select>
+                </NativeSelect>
               </label>
               <label>
                 Dry-run default
-                <select
+                <NativeSelect
                   value={actionPolicyDryRunDefault}
                   onChange={(event) => setActionPolicyDryRunDefault(event.target.value as "true" | "false")}
                 >
                   <option value="true">true</option>
                   <option value="false">false</option>
-                </select>
+                </NativeSelect>
               </label>
               <label>
                 Kill switch
-                <select
+                <NativeSelect
                   value={actionPolicyKillSwitch}
                   onChange={(event) => setActionPolicyKillSwitch(event.target.value as "true" | "false")}
                 >
                   <option value="false">false</option>
                   <option value="true">true</option>
-                </select>
+                </NativeSelect>
               </label>
               <label>
                 Requests / hour
-                <input
+                <Input
                   value={actionPolicyMaxRequestsPerHour}
                   onChange={(event) => setActionPolicyMaxRequestsPerHour(event.target.value)}
                 />
               </label>
               <label>
                 Approval expiry minutes
-                <input
+                <Input
                   value={actionPolicyApprovalExpiresInMinutes}
                   onChange={(event) => setActionPolicyApprovalExpiresInMinutes(event.target.value)}
                 />
               </label>
-              <button type="submit">Save action policy</button>
-              <button type="button" onClick={() => void loadActionExecutionPolicy()}>Load policy</button>
+              <Button type="submit">Save action policy</Button>
+              <Button type="button" onClick={() => void loadActionExecutionPolicy()}>Load policy</Button>
             </form>
             {actionExecutionPolicy ? (
               <p>
@@ -4075,43 +4063,43 @@ export function App() {
                 approval expiry {actionExecutionPolicy.approvalExpiresInMinutes}m
               </p>
             ) : <p className="empty">No action execution policy loaded.</p>}
-            <form className="ops-form" onSubmit={(event) => void executeAgentAction(event)}>
+            <form className="grid gap-4 md:grid-cols-[repeat(auto-fit,minmax(160px,1fr))] md:items-end" onSubmit={(event) => void executeAgentAction(event)}>
               <label>
                 Type
-                <select
+                <NativeSelect
                   value={actionType}
                   onChange={(event) => setActionType(event.target.value as AgentActionType)}
                 >
                   {actionTypes.map((candidate) => (
                     <option key={candidate} value={candidate}>{candidate}</option>
                   ))}
-                </select>
+                </NativeSelect>
               </label>
               <label>
                 Title
-                <input value={actionTitle} onChange={(event) => setActionTitle(event.target.value)} />
+                <Input value={actionTitle} onChange={(event) => setActionTitle(event.target.value)} />
               </label>
               <label>
                 Description
-                <input value={actionDescription} onChange={(event) => setActionDescription(event.target.value)} />
+                <Input value={actionDescription} onChange={(event) => setActionDescription(event.target.value)} />
               </label>
               <label>
                 Target
-                <input value={actionTarget} onChange={(event) => setActionTarget(event.target.value)} />
+                <Input value={actionTarget} onChange={(event) => setActionTarget(event.target.value)} />
               </label>
               <label>
                 Idempotency key
-                <input value={actionIdempotencyKey} onChange={(event) => setActionIdempotencyKey(event.target.value)} />
+                <Input value={actionIdempotencyKey} onChange={(event) => setActionIdempotencyKey(event.target.value)} />
               </label>
               <label>
                 Dry run
-                <select value={actionDryRun} onChange={(event) => setActionDryRun(event.target.value as "true" | "false")}>
+                <NativeSelect value={actionDryRun} onChange={(event) => setActionDryRun(event.target.value as "true" | "false")}>
                   <option value="true">true</option>
                   <option value="false">false</option>
-                </select>
+                </NativeSelect>
               </label>
-              <button type="submit" disabled={!actionTitle}>Request action</button>
-              <button type="button" onClick={() => void loadAgentActions()}>Load requests</button>
+              <Button type="submit" disabled={!actionTitle}>Request action</Button>
+              <Button type="button" onClick={() => void loadAgentActions()}>Load requests</Button>
             </form>
             {agentActions.length ? agentActions.map((action) => {
               const decisionReason = actionDecisionReasons[action.id] ?? "";
@@ -4133,7 +4121,7 @@ export function App() {
                     <div className="decision-panel">
                       <label>
                         Operator note
-                        <textarea
+                        <Textarea
                           value={decisionReason}
                           onChange={(event) => {
                             setActionDecisionReasons((current) => ({
@@ -4147,29 +4135,29 @@ export function App() {
                           placeholder="Describe why this action is safe to approve or must be denied."
                         />
                       </label>
-                      <div className="button-row">
-                        <button
+                      <div className="flex flex-wrap gap-2">
+                        <Button
                           type="button"
                           onClick={() => setPendingActionDecision({ actionId: action.id, decision: "approve" })}
                           disabled={!decisionReason.trim()}
                         >
                           Stage approve
-                        </button>
-                        <button
+                        </Button>
+                        <Button
                           type="button"
                           onClick={() => setPendingActionDecision({ actionId: action.id, decision: "deny" })}
                           disabled={!decisionReason.trim()}
                         >
                           Stage deny
-                        </button>
+                        </Button>
                         {stagedDecision ? (
-                          <button
+                          <Button
                             type="button"
                             className={stagedDecision === "deny" ? "danger" : "primary"}
                             onClick={() => void decideAgentAction(action.id, stagedDecision, decisionReason)}
                           >
                             Confirm {stagedDecision}
-                          </button>
+                          </Button>
                         ) : null}
                       </div>
                     </div>
@@ -4180,23 +4168,23 @@ export function App() {
           </div>
           <div className={routePanelClass(currentPage, ["policies", "telemetry"])}>
             <h3>Managed query cache</h3>
-            <form className="ops-form" onSubmit={(event) => void saveManagedQueryCachePolicy(event)}>
+            <form className="grid gap-4 md:grid-cols-[repeat(auto-fit,minmax(160px,1fr))] md:items-end" onSubmit={(event) => void saveManagedQueryCachePolicy(event)}>
               <label>
                 Enabled
-                <select
+                <NativeSelect
                   value={cachePolicyEnabled}
                   onChange={(event) => setCachePolicyEnabled(event.target.value as "true" | "false")}
                 >
                   <option value="true">true</option>
                   <option value="false">false</option>
-                </select>
+                </NativeSelect>
               </label>
               <label>
                 Max TTL seconds
-                <input value={cachePolicyMaxTtl} onChange={(event) => setCachePolicyMaxTtl(event.target.value)} />
+                <Input value={cachePolicyMaxTtl} onChange={(event) => setCachePolicyMaxTtl(event.target.value)} />
               </label>
-              <button type="submit">Save cache policy</button>
-              <button type="button" onClick={() => void loadManagedQueryCachePolicy()}>Load policy</button>
+              <Button type="submit">Save cache policy</Button>
+              <Button type="button" onClick={() => void loadManagedQueryCachePolicy()}>Load policy</Button>
             </form>
             {managedQueryCachePolicy ? (
               <p>
@@ -4206,10 +4194,10 @@ export function App() {
                 {formatCachePolicyTtl(managedQueryCachePolicy.maxCacheTtlSeconds)}
               </p>
             ) : <p className="empty">No cache policy loaded.</p>}
-            <div className="button-row">
-              <button type="button" onClick={() => void loadManagedQueryCache()}>Load cache</button>
-              <button type="button" onClick={() => void purgeManagedQueryCache(true)}>Dry run purge</button>
-              <button type="button" onClick={() => void purgeManagedQueryCache(false)}>Execute purge</button>
+            <div className="flex flex-wrap gap-2">
+              <Button type="button" onClick={() => void loadManagedQueryCache()}>Load cache</Button>
+              <Button type="button" onClick={() => void purgeManagedQueryCache(true)}>Dry run purge</Button>
+              <Button type="button" onClick={() => void purgeManagedQueryCache(false)}>Execute purge</Button>
             </div>
             {managedQueryCachePurgeResult ? (
               <p>
@@ -4224,44 +4212,44 @@ export function App() {
                 <strong>{entry.provider}</strong> {entry.model} hits {entry.hitCount}, expires{" "}
                 {new Date(entry.expiresAt).toLocaleString()}
                 {" "}
-                <button type="button" onClick={() => void deleteManagedQueryCacheEntry(entry.cacheKey)}>Delete</button>
+                <Button type="button" onClick={() => void deleteManagedQueryCacheEntry(entry.cacheKey)}>Delete</Button>
               </p>
             )) : <p className="empty">No cache entries loaded.</p>}
           </div>
           <div className={routePanelClass(currentPage, ["policies"])}>
             <h3>Managed query retention</h3>
-            <form className="ops-form" onSubmit={(event) => void saveManagedQueryRetentionPolicy(event)}>
+            <form className="grid gap-4 md:grid-cols-[repeat(auto-fit,minmax(160px,1fr))] md:items-end" onSubmit={(event) => void saveManagedQueryRetentionPolicy(event)}>
               <label>
                 Prompt capture
-                <select
+                <NativeSelect
                   value={queryRetentionPromptMode}
                   onChange={(event) =>
                     setQueryRetentionPromptMode(event.target.value as "disabled" | "metadata-only")}
                 >
                   <option value="disabled">disabled</option>
                   <option value="metadata-only">metadata-only</option>
-                </select>
+                </NativeSelect>
               </label>
               <label>
                 Response capture
-                <select
+                <NativeSelect
                   value={queryRetentionResponseMode}
                   onChange={(event) =>
                     setQueryRetentionResponseMode(event.target.value as "disabled" | "metadata-only")}
                 >
                   <option value="disabled">disabled</option>
                   <option value="metadata-only">metadata-only</option>
-                </select>
+                </NativeSelect>
               </label>
               <label>
                 Metadata days
-                <input
+                <Input
                   value={queryRetentionMetadataDays}
                   onChange={(event) => setQueryRetentionMetadataDays(event.target.value)}
                 />
               </label>
-              <button type="submit">Save query retention</button>
-              <button type="button" onClick={() => void loadManagedQueryRetentionPolicy()}>Load policy</button>
+              <Button type="submit">Save query retention</Button>
+              <Button type="button" onClick={() => void loadManagedQueryRetentionPolicy()}>Load policy</Button>
             </form>
             {managedQueryRetentionPolicy ? (
               <p>
@@ -4275,33 +4263,33 @@ export function App() {
           </div>
           <div className={routePanelClass(currentPage, ["policies"])}>
             <h3>Secret references</h3>
-            <form className="ops-form" onSubmit={(event) => void saveSecretReferencePolicy(event)}>
+            <form className="grid gap-4 md:grid-cols-[repeat(auto-fit,minmax(160px,1fr))] md:items-end" onSubmit={(event) => void saveSecretReferencePolicy(event)}>
               <label>
                 Allowed prefixes
-                <input
+                <Input
                   value={secretReferencePrefixes}
                   onChange={(event) => setSecretReferencePrefixes(event.target.value)}
                 />
               </label>
               <label>
                 Exact env vars
-                <input
+                <Input
                   value={secretReferenceEnvVars}
                   onChange={(event) => setSecretReferenceEnvVars(event.target.value)}
                 />
               </label>
               <label>
                 Allow unlisted
-                <select
+                <NativeSelect
                   value={secretReferenceAllowUnlisted}
                   onChange={(event) => setSecretReferenceAllowUnlisted(event.target.value as "true" | "false")}
                 >
                   <option value="false">false</option>
                   <option value="true">true</option>
-                </select>
+                </NativeSelect>
               </label>
-              <button type="submit">Save secret policy</button>
-              <button type="button" onClick={() => void loadSecretReferencePolicy()}>Load policy</button>
+              <Button type="submit">Save secret policy</Button>
+              <Button type="button" onClick={() => void loadSecretReferencePolicy()}>Load policy</Button>
             </form>
             {secretReferencePolicy ? (
               <p>
@@ -4315,26 +4303,26 @@ export function App() {
           </div>
           <div className={routePanelClass(currentPage, ["policies"])}>
             <h3>PII redaction</h3>
-            <form className="ops-form" onSubmit={(event) => void savePiiRedactionPolicy(event)}>
+            <form className="grid gap-4 md:grid-cols-[repeat(auto-fit,minmax(160px,1fr))] md:items-end" onSubmit={(event) => void savePiiRedactionPolicy(event)}>
               <label>
                 Enabled
-                <select
+                <NativeSelect
                   value={piiRedactionEnabled}
                   onChange={(event) => setPiiRedactionEnabled(event.target.value as "true" | "false")}
                 >
                   <option value="true">true</option>
                   <option value="false">false</option>
-                </select>
+                </NativeSelect>
               </label>
               <label>
                 Rule kinds
-                <input
+                <Input
                   value={piiRedactionRuleKinds}
                   onChange={(event) => setPiiRedactionRuleKinds(event.target.value)}
                 />
               </label>
-              <button type="submit">Save PII policy</button>
-              <button type="button" onClick={() => void loadPiiRedactionPolicy()}>Load policy</button>
+              <Button type="submit">Save PII policy</Button>
+              <Button type="button" onClick={() => void loadPiiRedactionPolicy()}>Load policy</Button>
             </form>
             {piiRedactionPolicy ? (
               <p>
@@ -4344,19 +4332,6 @@ export function App() {
                 {formatList(piiRedactionPolicy.enabledRuleKinds)}
               </p>
             ) : <p className="empty">No PII redaction policy loaded.</p>}
-          </div>
-          <div className={routePanelClass(currentPage, ["exports"], "export-summary")}>
-            <h3>Export package</h3>
-            {exportPackage ? (
-              <dl className="metadata-grid compact">
-                <div><dt>Name</dt><dd>{exportPackage.packageName}</dd></div>
-                <div><dt>Assets</dt><dd>{exportPackage.assetCount}</dd></div>
-                <div><dt>Denied</dt><dd>{exportPackage.deniedCount}</dd></div>
-                <div><dt>Generated</dt><dd>{new Date(exportPackage.generatedAt).toLocaleTimeString()}</dd></div>
-              </dl>
-            ) : (
-              <p className="empty">No export generated.</p>
-            )}
           </div>
           <div className={routePanelClass(currentPage, ["telemetry"])}>
             <h3>Retrieval events</h3>
@@ -4376,83 +4351,83 @@ export function App() {
           </div>
           <div className={routePanelClass(currentPage, ["access"])}>
             <h3>Users</h3>
-            <form className="ops-form" onSubmit={(event) => void createUser(event)}>
+            <form className="grid gap-4 md:grid-cols-[repeat(auto-fit,minmax(160px,1fr))] md:items-end" onSubmit={(event) => void createUser(event)}>
               <label>
                 Email
-                <input value={userEmail} onChange={(event) => setUserEmail(event.target.value)} type="email" autoComplete="username" />
+                <Input value={userEmail} onChange={(event) => setUserEmail(event.target.value)} type="email" autoComplete="username" />
               </label>
               <label>
                 Display
-                <input value={userDisplayName} onChange={(event) => setUserDisplayName(event.target.value)} />
+                <Input value={userDisplayName} onChange={(event) => setUserDisplayName(event.target.value)} />
               </label>
               <label>
                 Role
-                <select value={userRole} onChange={(event) => setUserRole(event.target.value as typeof userRole)}>
+                <NativeSelect value={userRole} onChange={(event) => setUserRole(event.target.value as typeof userRole)}>
                   <option value="reader">reader</option>
                   <option value="maintainer">maintainer</option>
                   <option value="admin">admin</option>
-                </select>
+                </NativeSelect>
               </label>
               <label>
                 Password
-                <input
+                <Input
                   value={userPassword}
                   onChange={(event) => setUserPassword(event.target.value)}
                   type="password"
                   autoComplete="new-password"
                 />
               </label>
-              <button type="submit">Create user</button>
+              <Button type="submit">Create user</Button>
             </form>
-            <form className="ops-form" onSubmit={(event) => void updateUser(event)}>
+            <form className="grid gap-4 md:grid-cols-[repeat(auto-fit,minmax(160px,1fr))] md:items-end" onSubmit={(event) => void updateUser(event)}>
               <label>
                 User ID
-                <input value={selectedUserId} onChange={(event) => setSelectedUserId(event.target.value)} />
+                <Input value={selectedUserId} onChange={(event) => setSelectedUserId(event.target.value)} />
               </label>
               <label>
                 Display
-                <input
+                <Input
                   value={userUpdateDisplayName}
                   onChange={(event) => setUserUpdateDisplayName(event.target.value)}
                 />
               </label>
               <label>
                 Role
-                <select
+                <NativeSelect
                   value={userUpdateRole}
                   onChange={(event) => setUserUpdateRole(event.target.value as typeof userUpdateRole)}
                 >
                   <option value="reader">reader</option>
                   <option value="maintainer">maintainer</option>
                   <option value="admin">admin</option>
-                </select>
+                </NativeSelect>
               </label>
               <label>
                 Status
-                <select
+                <NativeSelect
                   value={userUpdateStatus}
                   onChange={(event) => setUserUpdateStatus(event.target.value as typeof userUpdateStatus)}
                 >
                   <option value="active">active</option>
                   <option value="disabled">disabled</option>
-                </select>
+                </NativeSelect>
               </label>
-              <label className="wide-field">
+              <label className="md:col-span-2">
                 New password
-                <input
+                <Input
                   value={userUpdatePassword}
                   onChange={(event) => setUserUpdatePassword(event.target.value)}
                   type="password"
                   autoComplete="new-password"
                 />
               </label>
-              <button type="submit" disabled={!selectedUserId}>Update user</button>
+              <Button type="submit" disabled={!selectedUserId}>Update user</Button>
             </form>
             {users.length ? users.map((user) => (
               <p key={user.id}>
                 <strong>{user.email}</strong> {user.role} {user.status} {user.id}
                 {" "}
-                <button
+                <Button
                   type="button"
                   onClick={() => {
                     setSelectedUserId(user.id);
@@ -4465,35 +4440,35 @@ export function App() {
                   }}
                 >
                   Select
-                </button>
+                </Button>
               </p>
             )) : <p className="empty">No users loaded.</p>}
           </div>
           <div className={routePanelClass(currentPage, ["access"])}>
             <h3>Service policy</h3>
-            <form className="ops-form" onSubmit={(event) => void updateServiceAccountPolicy(event)}>
+            <form className="grid gap-4 md:grid-cols-[repeat(auto-fit,minmax(160px,1fr))] md:items-end" onSubmit={(event) => void updateServiceAccountPolicy(event)}>
               <label>
                 Max services
-                <input
+                <Input
                   value={servicePolicyMaxAccounts}
                   onChange={(event) => setServicePolicyMaxAccounts(event.target.value)}
                 />
               </label>
               <label>
                 Max active keys
-                <input
+                <Input
                   value={servicePolicyMaxKeys}
                   onChange={(event) => setServicePolicyMaxKeys(event.target.value)}
                 />
               </label>
               <label>
                 Default key expiry days
-                <input
+                <Input
                   value={servicePolicyDefaultExpiry}
                   onChange={(event) => setServicePolicyDefaultExpiry(event.target.value)}
                 />
               </label>
-              <button type="submit">Save policy</button>
+              <Button type="submit">Save policy</Button>
             </form>
             {serviceAccountPolicy ? (
               <p>
@@ -4503,74 +4478,74 @@ export function App() {
           </div>
           <div className={routePanelClass(currentPage, ["access"])}>
             <h3>Service accounts</h3>
-            <form className="ops-form" onSubmit={(event) => void createServiceAccount(event)}>
+            <form className="grid gap-4 md:grid-cols-[repeat(auto-fit,minmax(160px,1fr))] md:items-end" onSubmit={(event) => void createServiceAccount(event)}>
               <label>
                 Slug
-                <input value={serviceAccountSlug} onChange={(event) => setServiceAccountSlug(event.target.value)} />
+                <Input value={serviceAccountSlug} onChange={(event) => setServiceAccountSlug(event.target.value)} />
               </label>
               <label>
                 Name
-                <input value={serviceAccountName} onChange={(event) => setServiceAccountName(event.target.value)} />
+                <Input value={serviceAccountName} onChange={(event) => setServiceAccountName(event.target.value)} />
               </label>
               <label>
                 Role
-                <select
+                <NativeSelect
                   value={serviceAccountRole}
                   onChange={(event) => setServiceAccountRole(event.target.value as typeof serviceAccountRole)}
                 >
                   <option value="reader">reader</option>
                   <option value="maintainer">maintainer</option>
                   <option value="admin">admin</option>
-                </select>
+                </NativeSelect>
               </label>
               <label>
                 Status
-                <select
+                <NativeSelect
                   value={serviceAccountStatus}
                   onChange={(event) => setServiceAccountStatus(event.target.value as typeof serviceAccountStatus)}
                 >
                   <option value="active">active</option>
                   <option value="disabled">disabled</option>
-                </select>
+                </NativeSelect>
               </label>
-              <label className="wide-field">
+              <label className="md:col-span-2">
                 Description
-                <input
+                <Input
                   value={serviceAccountDescription}
                   onChange={(event) => setServiceAccountDescription(event.target.value)}
                 />
               </label>
-              <button type="submit">Create service</button>
+              <Button type="submit">Create service</Button>
             </form>
-            <form className="ops-form" onSubmit={(event) => void updateServiceAccount(event)}>
+            <form className="grid gap-4 md:grid-cols-[repeat(auto-fit,minmax(160px,1fr))] md:items-end" onSubmit={(event) => void updateServiceAccount(event)}>
               <label>
                 Service ID
-                <input
+                <Input
                   value={selectedServiceAccountId}
                   onChange={(event) => setSelectedServiceAccountId(event.target.value)}
                 />
               </label>
               <label>
                 Name
-                <input
+                <Input
                   value={serviceAccountUpdateName}
                   onChange={(event) => setServiceAccountUpdateName(event.target.value)}
                 />
               </label>
               <label>
                 Role
-                <select
+                <NativeSelect
                   value={serviceAccountUpdateRole}
                   onChange={(event) => setServiceAccountUpdateRole(event.target.value as typeof serviceAccountUpdateRole)}
                 >
                   <option value="reader">reader</option>
                   <option value="maintainer">maintainer</option>
                   <option value="admin">admin</option>
-                </select>
+                </NativeSelect>
               </label>
               <label>
                 Status
-                <select
+                <NativeSelect
                   value={serviceAccountUpdateStatus}
                   onChange={(event) =>
                     setServiceAccountUpdateStatus(event.target.value as typeof serviceAccountUpdateStatus)
@@ -4578,22 +4553,22 @@ export function App() {
                 >
                   <option value="active">active</option>
                   <option value="disabled">disabled</option>
-                </select>
+                </NativeSelect>
               </label>
-              <label className="wide-field">
+              <label className="md:col-span-2">
                 Description
-                <input
+                <Input
                   value={serviceAccountUpdateDescription}
                   onChange={(event) => setServiceAccountUpdateDescription(event.target.value)}
                 />
               </label>
-              <button type="submit" disabled={!selectedServiceAccountId}>Update service</button>
+              <Button type="submit" disabled={!selectedServiceAccountId}>Update service</Button>
             </form>
             {serviceAccounts.length ? serviceAccounts.map((serviceAccount) => (
               <p key={serviceAccount.id}>
                 <strong>{serviceAccount.slug}</strong> {serviceAccount.role} {serviceAccount.status} {serviceAccount.id}
                 {" "}
-                <button
+                <Button
                   type="button"
                   onClick={() => {
                     setSelectedServiceAccountId(serviceAccount.id);
@@ -4606,55 +4581,55 @@ export function App() {
                   }}
                 >
                   Select
-                </button>
+                </Button>
               </p>
             )) : <p className="empty">No service accounts loaded.</p>}
           </div>
           <div className={routePanelClass(currentPage, ["access"])}>
             <h3>Groups</h3>
-            <form className="ops-form" onSubmit={(event) => void createGroup(event)}>
+            <form className="grid gap-4 md:grid-cols-[repeat(auto-fit,minmax(160px,1fr))] md:items-end" onSubmit={(event) => void createGroup(event)}>
               <label>
                 Slug
-                <input value={groupSlug} onChange={(event) => setGroupSlug(event.target.value)} />
+                <Input value={groupSlug} onChange={(event) => setGroupSlug(event.target.value)} />
               </label>
               <label>
                 Name
-                <input value={groupName} onChange={(event) => setGroupName(event.target.value)} />
+                <Input value={groupName} onChange={(event) => setGroupName(event.target.value)} />
               </label>
-              <label className="wide-field">
+              <label className="md:col-span-2">
                 Description
-                <input value={groupDescription} onChange={(event) => setGroupDescription(event.target.value)} />
+                <Input value={groupDescription} onChange={(event) => setGroupDescription(event.target.value)} />
               </label>
-              <button type="submit">Create</button>
+              <Button type="submit">Create</Button>
             </form>
-            <form className="ops-form" onSubmit={(event) => void addGroupMember(event)}>
+            <form className="grid gap-4 md:grid-cols-[repeat(auto-fit,minmax(160px,1fr))] md:items-end" onSubmit={(event) => void addGroupMember(event)}>
               <label>
                 Group ID
-                <input value={memberGroupId} onChange={(event) => setMemberGroupId(event.target.value)} />
+                <Input value={memberGroupId} onChange={(event) => setMemberGroupId(event.target.value)} />
               </label>
               <label>
                 User ID
-                <input value={memberUserId} onChange={(event) => setMemberUserId(event.target.value)} />
+                <Input value={memberUserId} onChange={(event) => setMemberUserId(event.target.value)} />
               </label>
-              <button type="submit" disabled={!memberGroupId || !memberUserId}>Add member</button>
-              <button type="button" onClick={() => void removeGroupMember()} disabled={!memberGroupId || !memberUserId}>
+              <Button type="submit" disabled={!memberGroupId || !memberUserId}>Add member</Button>
+              <Button type="button" onClick={() => void removeGroupMember()} disabled={!memberGroupId || !memberUserId}>
                 Remove member
-              </button>
-              <button type="button" onClick={() => void loadGroupMembers()} disabled={!memberGroupId}>Members</button>
-              <button type="button" onClick={() => void deleteGroup()} disabled={!memberGroupId}>Delete group</button>
+              </Button>
+              <Button type="button" onClick={() => void loadGroupMembers()} disabled={!memberGroupId}>Members</Button>
+              <Button type="button" onClick={() => void deleteGroup()} disabled={!memberGroupId}>Delete group</Button>
             </form>
             {groups.length ? groups.map((group) => (
               <p key={group.id}>
                 <strong>{group.slug}</strong> {group.name} {group.description ?? ""}
                 {" "}
-                <button type="button" onClick={() => setMemberGroupId(group.id)}>Select</button>
+                <Button type="button" onClick={() => setMemberGroupId(group.id)}>Select</Button>
               </p>
             )) : <p className="empty">No groups loaded.</p>}
             {groupMembers.length ? groupMembers.map((member) => (
               <p key={`${member.groupId}:${member.userId}`}>
                 <strong>{member.userEmail}</strong> {member.userRole} in {member.groupId}
                 {" "}
-                <button
+                <Button
                   type="button"
                   onClick={() => {
                     setMemberGroupId(member.groupId);
@@ -4662,16 +4637,16 @@ export function App() {
                   }}
                 >
                   Select
-                </button>
+                </Button>
               </p>
             )) : <p className="empty">No members loaded.</p>}
           </div>
           <div className={routePanelClass(currentPage, ["access"])}>
             <h3>API keys</h3>
-            <form className="ops-form" onSubmit={(event) => void createApiKey(event)}>
+            <form className="grid gap-4 md:grid-cols-[repeat(auto-fit,minmax(160px,1fr))] md:items-end" onSubmit={(event) => void createApiKey(event)}>
               <label>
                 User ID
-                <input
+                <Input
                   value={keyUserId}
                   onChange={(event) => {
                     setKeyUserId(event.target.value);
@@ -4683,7 +4658,7 @@ export function App() {
               </label>
               <label>
                 Service ID
-                <input
+                <Input
                   value={keyServiceAccountId}
                   onChange={(event) => {
                     setKeyServiceAccountId(event.target.value);
@@ -4695,51 +4670,51 @@ export function App() {
               </label>
               <label>
                 Name
-                <input value={keyName} onChange={(event) => setKeyName(event.target.value)} />
+                <Input value={keyName} onChange={(event) => setKeyName(event.target.value)} />
               </label>
               <label>
                 Scopes
-                <input value={keyScopes} onChange={(event) => setKeyScopes(event.target.value)} />
+                <Input value={keyScopes} onChange={(event) => setKeyScopes(event.target.value)} />
               </label>
               <label>
                 Expires
-                <input value={keyExpiresAt} onChange={(event) => setKeyExpiresAt(event.target.value)} />
+                <Input value={keyExpiresAt} onChange={(event) => setKeyExpiresAt(event.target.value)} />
               </label>
-              <button
+              <Button
                 type="submit"
                 disabled={!keyName || Number(Boolean(keyUserId)) + Number(Boolean(keyServiceAccountId)) !== 1}
               >
                 Create key
-              </button>
+              </Button>
             </form>
-            <form className="ops-form" onSubmit={(event) => event.preventDefault()}>
+            <form className="grid gap-4 md:grid-cols-[repeat(auto-fit,minmax(160px,1fr))] md:items-end" onSubmit={(event) => event.preventDefault()}>
               <label>
                 Key ID
-                <input value={selectedApiKeyId} onChange={(event) => setSelectedApiKeyId(event.target.value)} />
+                <Input value={selectedApiKeyId} onChange={(event) => setSelectedApiKeyId(event.target.value)} />
               </label>
               <label>
                 New name
-                <input value={rotateKeyName} onChange={(event) => setRotateKeyName(event.target.value)} />
+                <Input value={rotateKeyName} onChange={(event) => setRotateKeyName(event.target.value)} />
               </label>
               <label>
                 Revoke old
-                <select
+                <NativeSelect
                   value={String(revokeOldKey)}
                   onChange={(event) => setRevokeOldKey(event.target.value === "true")}
                 >
                   <option value="false">no</option>
                   <option value="true">yes</option>
-                </select>
+                </NativeSelect>
               </label>
-              <button type="button" onClick={() => void rotateApiKey()} disabled={!selectedApiKeyId}>Rotate</button>
-              <button type="button" onClick={() => void revokeApiKey()} disabled={!selectedApiKeyId}>Revoke</button>
+              <Button type="button" onClick={() => void rotateApiKey()} disabled={!selectedApiKeyId}>Rotate</Button>
+              <Button type="button" onClick={() => void revokeApiKey()} disabled={!selectedApiKeyId}>Revoke</Button>
             </form>
-            <form className="ops-form" onSubmit={(event) => event.preventDefault()}>
+            <form className="grid gap-4 md:grid-cols-[repeat(auto-fit,minmax(160px,1fr))] md:items-end" onSubmit={(event) => event.preventDefault()}>
               <label>
                 Due days
-                <input value={apiKeyRotationDueDays} onChange={(event) => setApiKeyRotationDueDays(event.target.value)} />
+                <Input value={apiKeyRotationDueDays} onChange={(event) => setApiKeyRotationDueDays(event.target.value)} />
               </label>
-              <button type="button" onClick={() => void loadApiKeyRotationReport()}>Load rotation due</button>
+              <Button type="button" onClick={() => void loadApiKeyRotationReport()}>Load rotation due</Button>
             </form>
             {apiKeyRotationReport ? (
               <div>
@@ -4756,7 +4731,7 @@ export function App() {
             {oneTimeSecret ? (
               <label>
                 One-time secret
-                <input value={oneTimeSecret} readOnly type="password" autoComplete="off" />
+                <Input value={oneTimeSecret} readOnly type="password" autoComplete="off" />
               </label>
             ) : null}
             {apiKeyRecords.length ? apiKeyRecords.map((record) => (
@@ -4767,61 +4742,61 @@ export function App() {
           </div>
           <div className={routePanelClass(currentPage, ["access"])}>
             <h3>Login sessions</h3>
-            <form className="ops-form" onSubmit={(event) => event.preventDefault()}>
+            <form className="grid gap-4 md:grid-cols-[repeat(auto-fit,minmax(160px,1fr))] md:items-end" onSubmit={(event) => event.preventDefault()}>
               <label>
                 Session ID
-                <input
+                <Input
                   value={selectedLoginSessionId}
                   onChange={(event) => setSelectedLoginSessionId(event.target.value)}
                 />
               </label>
-              <button type="button" onClick={() => void loadLoginSessions()}>Load sessions</button>
-              <button type="button" onClick={() => void revokeLoginSession()} disabled={!selectedLoginSessionId}>
+              <Button type="button" onClick={() => void loadLoginSessions()}>Load sessions</Button>
+              <Button type="button" onClick={() => void revokeLoginSession()} disabled={!selectedLoginSessionId}>
                 Revoke session
-              </button>
+              </Button>
             </form>
             {loginSessions.length ? loginSessions.map((session) => (
               <p key={session.id}>
                 <strong>{session.deviceLabel ?? session.source}</strong> {session.revokedAt ? "revoked" : "active"} user {session.userId} key {session.apiKeyId} expires {new Date(session.expiresAt).toLocaleString()} {session.clientUserAgent ? `client ${session.clientUserAgent}` : ""} {session.id}
                 {" "}
-                <button type="button" onClick={() => setSelectedLoginSessionId(session.id)}>Select</button>
+                <Button type="button" onClick={() => setSelectedLoginSessionId(session.id)}>Select</Button>
               </p>
             )) : <p className="empty">No login sessions loaded.</p>}
           </div>
           <div className={routePanelClass(currentPage, ["telemetry"])}>
             <h3>Managed query feedback</h3>
-            <form className="ops-form" onSubmit={(event) => void submitFeedback(event)}>
+            <form className="grid gap-4 md:grid-cols-[repeat(auto-fit,minmax(160px,1fr))] md:items-end" onSubmit={(event) => void submitFeedback(event)}>
               <label>
                 Event ID
-                <input
+                <Input
                   value={feedbackTelemetryEventId}
                   onChange={(event) => setFeedbackTelemetryEventId(event.target.value)}
                 />
               </label>
               <label>
                 Query
-                <input value={feedbackQuery} onChange={(event) => setFeedbackQuery(event.target.value)} />
+                <Input value={feedbackQuery} onChange={(event) => setFeedbackQuery(event.target.value)} />
               </label>
               <label>
                 Outcome
-                <select
+                <NativeSelect
                   value={feedbackOutcome}
                   onChange={(event) => setFeedbackOutcome(event.target.value as typeof feedbackOutcome)}
                 >
                   <option value="accepted">accepted</option>
                   <option value="needs-review">needs-review</option>
                   <option value="rejected">rejected</option>
-                </select>
+                </NativeSelect>
               </label>
               <label>
                 Citation score
-                <input
+                <Input
                   value={feedbackCitationAccuracy}
                   onChange={(event) => setFeedbackCitationAccuracy(event.target.value)}
                   inputMode="numeric"
                 />
               </label>
-              <button type="submit">Submit</button>
+              <Button type="submit">Submit</Button>
             </form>
             {feedbackRecords.length ? feedbackRecords.map((record) => (
               <p key={record.id}>
@@ -4833,12 +4808,15 @@ export function App() {
             <h3>Demo eval report</h3>
             {evalReport ? (
               <>
-	                <dl className="metadata-grid compact">
-	                  <div><dt>Status</dt><dd>{evalReport.ok ? "passing" : "failing"}</dd></div>
-	                  <div><dt>Cases</dt><dd>{evalReport.passedCount}/{evalReport.caseCount}</dd></div>
-	                  <div><dt>Pass rate</dt><dd>{formatPercent(evalReport.passRate)}</dd></div>
-	                  <div><dt>Threshold</dt><dd>{formatPercent(evalReport.minimumPassRate)}</dd></div>
-	                </dl>
+                <DefinitionGrid
+                  compact
+                  items={[
+                    { term: "Status", description: evalReport.ok ? "passing" : "failing" },
+                    { term: "Cases", description: `${evalReport.passedCount}/${evalReport.caseCount}` },
+                    { term: "Pass rate", description: formatPercent(evalReport.passRate) },
+                    { term: "Threshold", description: formatPercent(evalReport.minimumPassRate) }
+                  ]}
+                />
 	                {evalReport.tagThresholdResults.map((threshold) => (
 	                  <p key={threshold.tag ?? threshold.scope}>
 	                    <strong>{threshold.passed ? "pass" : "fail"}</strong> {threshold.tag ?? threshold.scope} {formatPercent(threshold.passRate)} / {formatPercent(threshold.minimumPassRate)}
@@ -4857,14 +4835,17 @@ export function App() {
             {evalSummary ? (
               <>
                 <h4>Summary</h4>
-                <dl className="metadata-grid compact">
-                  <div><dt>Runs</dt><dd>{evalSummary.runCount}</dd></div>
-                  <div><dt>Latest</dt><dd>{evalSummary.latestPassRate === null ? "n/a" : formatPercent(evalSummary.latestPassRate)}</dd></div>
-                  <div><dt>Average</dt><dd>{evalSummary.averagePassRate === null ? "n/a" : formatPercent(evalSummary.averagePassRate)}</dd></div>
-                  <div><dt>Cases</dt><dd>{evalSummary.totalPassedCount}/{evalSummary.totalCaseCount}</dd></div>
-                  <div><dt>Thresholds</dt><dd>{evalSummary.thresholdPassedCount}/{evalSummary.runCount}</dd></div>
-                  <div><dt>Generated</dt><dd>{new Date(evalSummary.generatedAt).toLocaleTimeString()}</dd></div>
-                </dl>
+                <DefinitionGrid
+                  compact
+                  items={[
+                    { term: "Runs", description: evalSummary.runCount },
+                    { term: "Latest", description: evalSummary.latestPassRate === null ? "n/a" : formatPercent(evalSummary.latestPassRate) },
+                    { term: "Average", description: evalSummary.averagePassRate === null ? "n/a" : formatPercent(evalSummary.averagePassRate) },
+                    { term: "Cases", description: `${evalSummary.totalPassedCount}/${evalSummary.totalCaseCount}` },
+                    { term: "Thresholds", description: `${evalSummary.thresholdPassedCount}/${evalSummary.runCount}` },
+                    { term: "Generated", description: new Date(evalSummary.generatedAt).toLocaleTimeString() }
+                  ]}
+                />
                 <p><strong>Modes</strong> {formatCounts(evalSummary.byMode)}</p>
                 {evalSummary.byTag.length ? (
                   <p><strong>Tags</strong> {evalSummary.byTag.map((tag) =>
@@ -4888,10 +4869,10 @@ export function App() {
           </div>
           <div className={routePanelClass(currentPage, ["providers"])}>
             <h3>Provider config</h3>
-            <form className="provider-form" onSubmit={(event) => void saveProviderConfig(event)}>
+            <form className="grid gap-4 md:grid-cols-[repeat(auto-fit,minmax(180px,1fr))] md:items-end" onSubmit={(event) => void saveProviderConfig(event)}>
               <label>
                 Provider
-                <select
+                <NativeSelect
                   value={providerForm.provider}
                   onChange={(event) => setProviderForm((current) => ({
                     ...current,
@@ -4901,11 +4882,11 @@ export function App() {
                   <option value="openai">openai</option>
                   <option value="anthropic">anthropic</option>
                   <option value="openrouter">openrouter</option>
-                </select>
+                </NativeSelect>
               </label>
               <label>
                 Enabled
-                <select
+                <NativeSelect
                   value={String(providerForm.enabled)}
                   onChange={(event) => setProviderForm((current) => ({
                     ...current,
@@ -4914,11 +4895,11 @@ export function App() {
                 >
                   <option value="true">enabled</option>
                   <option value="false">disabled</option>
-                </select>
+                </NativeSelect>
               </label>
               <label>
                 Env var
-                <input
+                <Input
                   value={providerForm.apiKeyEnvVar}
                   onChange={(event) => setProviderForm((current) => ({
                     ...current,
@@ -4928,7 +4909,7 @@ export function App() {
               </label>
               <label>
                 Display
-                <input
+                <Input
                   value={providerForm.displayName}
                   onChange={(event) => setProviderForm((current) => ({
                     ...current,
@@ -4938,7 +4919,7 @@ export function App() {
               </label>
               <label>
                 Base URL
-                <input
+                <Input
                   value={providerForm.baseUrl}
                   onChange={(event) => setProviderForm((current) => ({
                     ...current,
@@ -4948,7 +4929,7 @@ export function App() {
               </label>
               <label>
                 Default model
-                <input
+                <Input
                   value={providerForm.defaultModel}
                   onChange={(event) => setProviderForm((current) => ({
                     ...current,
@@ -4958,7 +4939,7 @@ export function App() {
               </label>
               <label>
                 Models
-                <input
+                <Input
                   value={providerForm.models}
                   onChange={(event) => setProviderForm((current) => ({
                     ...current,
@@ -4968,7 +4949,7 @@ export function App() {
               </label>
               <label>
                 Priority
-                <input
+                <Input
                   value={providerForm.priority}
                   onChange={(event) => setProviderForm((current) => ({
                     ...current,
@@ -4979,7 +4960,7 @@ export function App() {
               </label>
               <label>
                 Max output
-                <input
+                <Input
                   value={providerForm.maxOutputTokens}
                   onChange={(event) => setProviderForm((current) => ({
                     ...current,
@@ -4990,7 +4971,7 @@ export function App() {
               </label>
               <label>
                 Temperature
-                <input
+                <Input
                   value={providerForm.temperature}
                   onChange={(event) => setProviderForm((current) => ({
                     ...current,
@@ -5001,7 +4982,7 @@ export function App() {
               </label>
               <label>
                 Timeout ms
-                <input
+                <Input
                   value={providerForm.timeoutMs}
                   onChange={(event) => setProviderForm((current) => ({
                     ...current,
@@ -5012,7 +4993,7 @@ export function App() {
               </label>
               <label>
                 Max retries
-                <input
+                <Input
                   value={providerForm.maxRetries}
                   onChange={(event) => setProviderForm((current) => ({
                     ...current,
@@ -5023,7 +5004,7 @@ export function App() {
               </label>
               <label>
                 Retry backoff ms
-                <input
+                <Input
                   value={providerForm.retryBackoffMs}
                   onChange={(event) => setProviderForm((current) => ({
                     ...current,
@@ -5034,7 +5015,7 @@ export function App() {
               </label>
               <label>
                 Input cost / 1M
-                <input
+                <Input
                   value={providerForm.inputCostPerMillionTokens}
                   onChange={(event) => setProviderForm((current) => ({
                     ...current,
@@ -5045,7 +5026,7 @@ export function App() {
               </label>
               <label>
                 Output cost / 1M
-                <input
+                <Input
                   value={providerForm.outputCostPerMillionTokens}
                   onChange={(event) => setProviderForm((current) => ({
                     ...current,
@@ -5056,7 +5037,7 @@ export function App() {
               </label>
               <label>
                 Max input tokens
-                <input
+                <Input
                   value={providerForm.maxEstimatedInputTokensPerQuery}
                   onChange={(event) => setProviderForm((current) => ({
                     ...current,
@@ -5067,7 +5048,7 @@ export function App() {
               </label>
               <label>
                 Max total tokens
-                <input
+                <Input
                   value={providerForm.maxEstimatedTotalTokensPerQuery}
                   onChange={(event) => setProviderForm((current) => ({
                     ...current,
@@ -5078,7 +5059,7 @@ export function App() {
               </label>
               <label>
                 Max cost
-                <input
+                <Input
                   value={providerForm.maxEstimatedCostUsdPerQuery}
                   onChange={(event) => setProviderForm((current) => ({
                     ...current,
@@ -5087,7 +5068,7 @@ export function App() {
                   inputMode="decimal"
                 />
               </label>
-              <button type="submit">Save</button>
+              <Button type="submit">Save</Button>
             </form>
             {providerConfigs.length ? providerConfigs.map((provider) => (
               <p key={provider.id}>
@@ -5107,10 +5088,10 @@ export function App() {
           </div>
           <div className={routePanelClass(currentPage, ["providers"])}>
             <h3>Auth provider config</h3>
-            <form className="provider-form" onSubmit={(event) => void saveAuthProviderConfig(event)}>
+            <form className="grid gap-4 md:grid-cols-[repeat(auto-fit,minmax(180px,1fr))] md:items-end" onSubmit={(event) => void saveAuthProviderConfig(event)}>
               <label>
                 Provider
-                <select
+                <NativeSelect
                   value={authProviderForm.provider}
                   onChange={(event) => setAuthProviderForm((current) => ({
                     ...current,
@@ -5119,11 +5100,11 @@ export function App() {
                 >
                   <option value="microsoft-entra">microsoft-entra</option>
                   <option value="oidc">oidc</option>
-                </select>
+                </NativeSelect>
               </label>
               <label>
                 Enabled
-                <select
+                <NativeSelect
                   value={String(authProviderForm.enabled)}
                   onChange={(event) => setAuthProviderForm((current) => ({
                     ...current,
@@ -5132,11 +5113,11 @@ export function App() {
                 >
                   <option value="true">enabled</option>
                   <option value="false">disabled</option>
-                </select>
+                </NativeSelect>
               </label>
               <label>
                 Issuer URL
-                <input
+                <Input
                   value={authProviderForm.issuerUrl}
                   onChange={(event) => setAuthProviderForm((current) => ({
                     ...current,
@@ -5146,7 +5127,7 @@ export function App() {
               </label>
               <label>
                 Client ID
-                <input
+                <Input
                   value={authProviderForm.clientId}
                   onChange={(event) => setAuthProviderForm((current) => ({
                     ...current,
@@ -5156,7 +5137,7 @@ export function App() {
               </label>
               <label>
                 Secret env var
-                <input
+                <Input
                   value={authProviderForm.clientSecretEnvVar}
                   onChange={(event) => setAuthProviderForm((current) => ({
                     ...current,
@@ -5166,7 +5147,7 @@ export function App() {
               </label>
               <label>
                 Redirect URI
-                <input
+                <Input
                   value={authProviderForm.redirectUri}
                   onChange={(event) => setAuthProviderForm((current) => ({
                     ...current,
@@ -5176,7 +5157,7 @@ export function App() {
               </label>
               <label>
                 Display
-                <input
+                <Input
                   value={authProviderForm.displayName}
                   onChange={(event) => setAuthProviderForm((current) => ({
                     ...current,
@@ -5186,7 +5167,7 @@ export function App() {
               </label>
               <label>
                 Scopes
-                <input
+                <Input
                   value={authProviderForm.scopes}
                   onChange={(event) => setAuthProviderForm((current) => ({
                     ...current,
@@ -5196,7 +5177,7 @@ export function App() {
               </label>
               <label>
                 Group claim
-                <input
+                <Input
                   value={authProviderForm.groupClaim}
                   onChange={(event) => setAuthProviderForm((current) => ({
                     ...current,
@@ -5206,7 +5187,7 @@ export function App() {
               </label>
               <label>
                 Allowed domains
-                <input
+                <Input
                   value={authProviderForm.allowedDomains}
                   onChange={(event) => setAuthProviderForm((current) => ({
                     ...current,
@@ -5216,7 +5197,7 @@ export function App() {
               </label>
               <label>
                 Default role
-                <select
+                <NativeSelect
                   value={authProviderForm.defaultRole}
                   onChange={(event) => setAuthProviderForm((current) => ({
                     ...current,
@@ -5226,11 +5207,11 @@ export function App() {
                   <option value="reader">reader</option>
                   <option value="maintainer">maintainer</option>
                   <option value="admin">admin</option>
-                </select>
+                </NativeSelect>
               </label>
               <label>
                 Priority
-                <input
+                <Input
                   value={authProviderForm.priority}
                   onChange={(event) => setAuthProviderForm((current) => ({
                     ...current,
@@ -5241,7 +5222,7 @@ export function App() {
               </label>
               <label>
                 Auto provision
-                <select
+                <NativeSelect
                   value={String(authProviderForm.autoProvisionUsers)}
                   onChange={(event) => setAuthProviderForm((current) => ({
                     ...current,
@@ -5250,11 +5231,11 @@ export function App() {
                 >
                   <option value="false">disabled</option>
                   <option value="true">enabled</option>
-                </select>
+                </NativeSelect>
 	              </label>
 	              <label>
 	                Account linking
-	                <select
+	                <NativeSelect
 	                  value={authProviderForm.accountLinkingMode}
 	                  onChange={(event) => setAuthProviderForm((current) => ({
 	                    ...current,
@@ -5264,11 +5245,11 @@ export function App() {
 	                  <option value="verified-email">verified email</option>
 	                  <option value="disabled">disabled</option>
 	                  <option value="email">email match</option>
-	                </select>
+	                </NativeSelect>
 	              </label>
 	              <label>
 	                Group sync
-	                <select
+	                <NativeSelect
                   value={String(authProviderForm.groupSyncEnabled)}
                   onChange={(event) => setAuthProviderForm((current) => ({
                     ...current,
@@ -5277,9 +5258,9 @@ export function App() {
                 >
                   <option value="false">disabled</option>
                   <option value="true">enabled</option>
-                </select>
+                </NativeSelect>
               </label>
-              <button type="submit">Save auth provider</button>
+              <Button type="submit">Save auth provider</Button>
             </form>
 	            {authProviderConfigs.length ? authProviderConfigs.map((provider) => (
 	              <p key={provider.id}>

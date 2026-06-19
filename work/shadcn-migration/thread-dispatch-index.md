@@ -22,6 +22,7 @@ Migrate ForgetBase web UI to a shadcn/ui-based interface while preserving only t
 | Authenticated shell/nav/command | manager after closing `019edf8c-83f1-7cf0-8b13-0a53f9d115bf` | Complete | Authenticated topbar, nav, command dialog, connection panel, global shell alerts |
 | Distribute route migration | manager-integrated patch from `019edfa0-0804-7dc2-b4bb-057f8344c8c2` | Complete | `#distribute` / `#exports` package builder, package result, consumer examples |
 | Read/Search route migration | manager after closing `019edfa7-8461-7601-8346-836625256ea8` | Complete | `#library`, `#asset-read`, `#versions`, `#search` route cluster |
+| Operate routes and dense forms | manager | Complete | `#operations`, `#review`, `#access`, `#providers`, `#policies`, `#telemetry`, `#approvals` shared surfaces and forms |
 
 ## Replaced / Closed Threads
 
@@ -55,6 +56,8 @@ Migrate ForgetBase web UI to a shadcn/ui-based interface while preserving only t
 - 2026-06-19: Distribute route migrated to shadcn-style route composition with `MetricCard`, `SectionCard`, `FormField`, `Select`, `Input`, `DefinitionGrid`, `StatusAlert`, `EmptyState`, and `Textarea`. Verification passed: web typecheck, web test, web build, `git diff --check`, and owned-section grep found no raw `<input>`, `<select>`, raw `<button>`, `.metric`, `.workflow-panel`, `.export-summary`, or `.command-examples` in the Distribute block.
 - Build note: the web production bundle crossed Vite's default 500 kB chunk warning after the shadcn/command migration; this is tracked as an optimization follow-up, not a functional gate failure.
 - 2026-06-19: Read/Search route cluster migrated to shadcn-style composition with `MetricCard`, `DataTableShell`, `Toolbar`, `FormField`, `Input`, `Select`, `Checkbox`, `Table`, `Tabs`, `SectionCard`, `DefinitionGrid`, `TrustStateSummary`, `StatusAlert`, and `EmptyState`. Verification passed: web typecheck, web test including `asset-ui.test.ts`, web build, `git diff --check`, and owned-section grep found no raw form controls, raw table markup, `.metric`, `.asset-table`, `.table-scroll`, `.detail-pane`, `.workflow-panel`, `.content-block`, `.tab-bar`, `.metadata-grid`, `.state-pill`, or `.stable-id-chip` in the Read/Search block.
+- 2026-06-19: Operate landing/actions, review queue, telemetry summary, and dense admin forms migrated off raw App-level controls and old route-layout selectors. Verification passed: web typecheck, web test, web build, `git diff --check`, no raw `<button>`, `<input>`, `<select>`, `<textarea>`, or `<table>` tags in `App.tsx`, and no old route selectors (`.metric`, `.workflow-panel`, `.content-block`, `.ops-pane`, `.detail-pane`, `.tab-bar`, `.library-filter-bar`, `.metadata-grid`, `.table-scroll`, `.asset-table`, `.export-summary`, `.operations-overview`, `.summary-link`, `.state-pill`, `.stable-id-chip`, `.ops-form`, `.provider-form`, `.button-row`, `.wide-field`) in `App.tsx` or `styles.css`.
+- Implementation note: dense admin native select handlers use `components/ui/native-select.tsx`, a shadcn-token-styled compatibility wrapper, to avoid changing API-facing form semantics in the same migration.
 
 ## Manager-Owned Decisions
 
