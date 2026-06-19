@@ -21,6 +21,7 @@ Migrate ForgetBase web UI to a shadcn/ui-based interface while preserving only t
 | Wave 3 worker goals | manager | Prepared | `work/shadcn-migration/worker-goals-wave3.md` |
 | Authenticated shell/nav/command | manager after closing `019edf8c-83f1-7cf0-8b13-0a53f9d115bf` | Complete | Authenticated topbar, nav, command dialog, connection panel, global shell alerts |
 | Distribute route migration | manager-integrated patch from `019edfa0-0804-7dc2-b4bb-057f8344c8c2` | Complete | `#distribute` / `#exports` package builder, package result, consumer examples |
+| Read/Search route migration | manager after closing `019edfa7-8461-7601-8346-836625256ea8` | Complete | `#library`, `#asset-read`, `#versions`, `#search` route cluster |
 
 ## Replaced / Closed Threads
 
@@ -29,6 +30,7 @@ Migrate ForgetBase web UI to a shadcn/ui-based interface while preserving only t
 | `019edf6a-8590-7721-a7b6-7d095540b22b` | Failed immediately because the Claude UI/UX role expected `PERPLEXITY_API_KEY`; replaced with local-doc-only design/spec worker `019edf6b-366a-7393-ae85-5d5ce7872ae6`. |
 | `019edf8c-83f1-7cf0-8b13-0a53f9d115bf` | Did not return a status checkpoint or patch after interruption; manager closed it and completed the shell slice locally. |
 | `019edfa0-0804-7dc2-b4bb-057f8344c8c2` | Produced a scoped Distribute patch but did not return a final handoff; manager verified and integrated the patch. |
+| `019edfa7-8461-7601-8346-836625256ea8` | Did not return a status checkpoint or patch in the shared worktree; manager closed it and completed the Read/Search slice locally. |
 
 ## Dependency Order
 
@@ -52,6 +54,7 @@ Migrate ForgetBase web UI to a shadcn/ui-based interface while preserving only t
 - Screenshot artifacts: `work/shadcn-migration/shell-desktop.png`, `work/shadcn-migration/shell-mobile.png`.
 - 2026-06-19: Distribute route migrated to shadcn-style route composition with `MetricCard`, `SectionCard`, `FormField`, `Select`, `Input`, `DefinitionGrid`, `StatusAlert`, `EmptyState`, and `Textarea`. Verification passed: web typecheck, web test, web build, `git diff --check`, and owned-section grep found no raw `<input>`, `<select>`, raw `<button>`, `.metric`, `.workflow-panel`, `.export-summary`, or `.command-examples` in the Distribute block.
 - Build note: the web production bundle crossed Vite's default 500 kB chunk warning after the shadcn/command migration; this is tracked as an optimization follow-up, not a functional gate failure.
+- 2026-06-19: Read/Search route cluster migrated to shadcn-style composition with `MetricCard`, `DataTableShell`, `Toolbar`, `FormField`, `Input`, `Select`, `Checkbox`, `Table`, `Tabs`, `SectionCard`, `DefinitionGrid`, `TrustStateSummary`, `StatusAlert`, and `EmptyState`. Verification passed: web typecheck, web test including `asset-ui.test.ts`, web build, `git diff --check`, and owned-section grep found no raw form controls, raw table markup, `.metric`, `.asset-table`, `.table-scroll`, `.detail-pane`, `.workflow-panel`, `.content-block`, `.tab-bar`, `.metadata-grid`, `.state-pill`, or `.stable-id-chip` in the Read/Search block.
 
 ## Manager-Owned Decisions
 

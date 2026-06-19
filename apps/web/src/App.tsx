@@ -58,13 +58,16 @@ import { Badge, type BadgeVariant } from "./components/ui/badge.js";
 import { Button } from "./components/ui/button.js";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "./components/ui/card.js";
 import {
+  DataTableShell,
   DefinitionGrid,
   EmptyState,
   FormField,
   MetricCard,
   SectionCard,
-  StatusAlert
+  StatusAlert,
+  Toolbar
 } from "./components/app/index.js";
+import { TrustStateSummary } from "./components/domain/index.js";
 import {
   Command,
   CommandDialog,
@@ -83,6 +86,7 @@ import {
   DialogHeader,
   DialogTitle
 } from "./components/ui/dialog.js";
+import { Checkbox } from "./components/ui/checkbox.js";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -104,6 +108,15 @@ import {
   SelectTrigger,
   SelectValue
 } from "./components/ui/select.js";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow
+} from "./components/ui/table.js";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "./components/ui/tabs.js";
 import { Textarea } from "./components/ui/textarea.js";
 import {
   formatCachePolicyTtl,
@@ -2853,524 +2866,549 @@ export function App() {
           </Alert>
         ) : null}
 
-      <section className={`page ${["library", "asset-read", "versions"].includes(currentPage) ? "active" : ""}`} data-page="library">
-        <div className="page-header">
-          <div>
-            <p className="eyebrow">{currentPage === "versions" ? "Governance work" : "Reader library"}</p>
-            <h1>
-              {currentPage === "asset-read"
-                ? assetDetail?.asset.title ?? "Asset read"
-                : currentPage === "versions"
-                  ? "Version Compare"
-                  : "Governed Asset Library"}
-            </h1>
-            <p className="lede">
-              {currentPage === "versions"
-                ? "Inspect current and selected asset versions before restoring, publishing, or closing review work."
-                : "Browse governed policies, guardrails, skills, templates, SOPs, playbooks, and human documents with trust metadata visible at a glance."}
-            </p>
-          </div>
-          <div className="actions">
-            <Button type="button" onClick={() => void refresh()}><RefreshCw aria-hidden="true" />Refresh</Button>
-            <Button variant="primary" type="button" onClick={() => void generateExport()}>
-              <Download aria-hidden="true" />Export
-            </Button>
-          </div>
-        </div>
-        <div className="grid four">
-          <div className="metric"><div className="metric-value">{assets.length}</div><div className="metric-label">Visible assets</div><div className="metric-note">Server-filtered for the current principal.</div></div>
-          <div className="metric"><div className="metric-value">{approvedAssets}</div><div className="metric-label">Approved current</div><div className="metric-note">Approved assets loaded in the browser.</div></div>
-          <div className="metric"><div className="metric-value">{reviewDueAssets}</div><div className="metric-label">Need governance</div><div className="metric-note">Draft, stale, reviewing, overdue, or non-active.</div></div>
-          <div className="metric"><div className="metric-value">{publicReaderAssets}</div><div className="metric-label">Public reader</div><div className="metric-note">public-demo plus active and approved.</div></div>
-        </div>
-        <section className="workspace">
-        <section className="asset-table" aria-labelledby="assets-title">
-          <div className="section-heading">
-            <div>
-              <h2 id="assets-title">Assets</h2>
-              <p className="section-note">{filteredLibraryAssets.length} of {assets.length} visible in this view</p>
-            </div>
-            <Button size="sm" type="button" onClick={() => void generateExport()}>
-              <Download aria-hidden="true" />Export
-            </Button>
-          </div>
-          <div className="library-filter-bar" aria-label="Asset filters">
-            <label>
-              Find
-              <input
-                value={libraryQuery}
-                onChange={(event) => setLibraryQuery(event.target.value)}
-                placeholder="Title, stable ID, owner, source"
-              />
-            </label>
-            <label>
-              View
-              <select
-                value={libraryViewFilter}
-                onChange={(event) => setLibraryViewFilter(event.target.value as LibraryViewFilter)}
-              >
-                <option value="all">All permitted</option>
-                <option value="public-reader">Public reader</option>
-                <option value="needs-governance">Needs governance</option>
-                <option value="approved-active">Approved active</option>
-              </select>
-            </label>
-            <label>
-              Sensitivity
-              <select
-                value={librarySensitivityFilter}
-                onChange={(event) => setLibrarySensitivityFilter(event.target.value)}
-              >
-                <option value="all">All bands</option>
-                {sensitivityFilterValues.map((sensitivity) => (
-                  <option key={sensitivity} value={sensitivity}>{sensitivity}</option>
-                ))}
-              </select>
-            </label>
-            <Button
-              type="button"
-              size="sm"
-              variant="ghost"
-              disabled={!libraryFilterActive}
-              onClick={() => {
-                setLibraryQuery("");
-                setLibraryViewFilter("all");
-                setLibrarySensitivityFilter("all");
-              }}
-            >
-              Clear
-            </Button>
-          </div>
-          <div className="table-scroll">
-            <table>
-              <thead>
-                <tr>
-                  <th>Asset</th>
-                  <th>Type</th>
-                  <th>State</th>
-                  <th>Sensitivity</th>
-                  <th>Review</th>
-                  <th>Public</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredLibraryAssets.length ? filteredLibraryAssets.map((asset) => (
-                  <tr
-                    key={asset.id}
-                    className={asset.stableId === selectedAsset?.stableId ? "selected" : ""}
-                    onClick={() => setSelectedStableId(asset.stableId)}
-                    onKeyDown={(event) => selectAssetFromRow(event, () => setSelectedStableId(asset.stableId))}
-                    tabIndex={0}
-                    aria-selected={asset.stableId === selectedAsset?.stableId}
-                  >
-                    <td>
-                      <span className="asset-title-cell">
-                        <strong>{asset.title}</strong>
-                        <span>{asset.stableId}</span>
-                        {asset.summary ? <small>{asset.summary}</small> : null}
-                      </span>
-                    </td>
-                    <td>{asset.type}</td>
-                    <td>
-                      <span className="badge-stack">
-                        <Badge variant={stateBadgeVariant(asset.lifecycleState)}>{asset.lifecycleState}</Badge>
-                        <Badge variant={stateBadgeVariant(asset.status)}>{asset.status}</Badge>
-                      </span>
-                    </td>
-                    <td><Badge variant={sensitivityBadgeVariant(asset.sensitivity)}>{asset.sensitivity}</Badge></td>
-                    <td><span className={isAssetGovernanceDue(asset) ? "review-due warn" : "review-due"}>{formatReviewDue(asset.reviewDueAt)}</span></td>
-                    <td>
-                      <Badge variant={isPublicReaderEligible(asset) ? "success" : "neutral"}>
-                        {isPublicReaderEligible(asset) ? "eligible" : "gated"}
-                      </Badge>
-                    </td>
-                  </tr>
-                )) : (
-                  <tr className="empty-row">
-                    <td colSpan={6}>No assets match this view.</td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </section>
-
-        <section className="detail-pane" aria-labelledby="detail-title">
-          <div className="detail-pane-header">
-            <div>
-              <p className="eyebrow">Governed reading room</p>
-              <h2 id="detail-title">{assetDetail?.asset.title ?? "Asset detail"}</h2>
-            </div>
-            {assetDetail ? (
-              <Badge variant={isPublicReaderEligible(assetDetail.asset) ? "success" : "neutral"}>
-                {isPublicReaderEligible(assetDetail.asset) ? "public reader eligible" : "authenticated access"}
-              </Badge>
-            ) : null}
-          </div>
-          {assetDetail ? (
-            <>
-              <div className="trust-banner" aria-label="Selected asset trust metadata">
-                <span className="stable-id-chip">{assetDetail.asset.stableId}</span>
-                <Badge variant={stateBadgeVariant(assetDetail.asset.lifecycleState)}>{assetDetail.asset.lifecycleState}</Badge>
-                <Badge variant={stateBadgeVariant(assetDetail.asset.status)}>{assetDetail.asset.status}</Badge>
-                <Badge variant={sensitivityBadgeVariant(assetDetail.asset.sensitivity)}>{assetDetail.asset.sensitivity}</Badge>
-                <Badge variant={isAssetGovernanceDue(assetDetail.asset) ? "warning" : "success"}>
-                  {formatReviewDue(assetDetail.asset.reviewDueAt)}
-                </Badge>
-                {currentVersion ? <Badge variant="neutral">v{currentVersion.versionNumber}</Badge> : null}
+          <section className={`page ${["library", "asset-read", "versions"].includes(currentPage) ? "active" : ""}`} data-page="library">
+            <div className="page-header">
+              <div>
+                <p className="eyebrow">{currentPage === "versions" ? "Governance work" : "Reader library"}</p>
+                <h1>
+                  {currentPage === "asset-read"
+                    ? assetDetail?.asset.title ?? "Asset read"
+                    : currentPage === "versions"
+                      ? "Version Compare"
+                      : "Governed Asset Library"}
+                </h1>
+                <p className="lede">
+                  {currentPage === "versions"
+                    ? "Inspect current and selected asset versions before restoring, publishing, or closing review work."
+                    : "Browse governed policies, guardrails, skills, templates, SOPs, playbooks, and human documents with trust metadata visible at a glance."}
+                </p>
               </div>
-              <dl className="metadata-grid">
-                <div><dt>Stable ID</dt><dd>{assetDetail.asset.stableId}</dd></div>
-                <div><dt>Lifecycle</dt><dd><Badge variant={stateBadgeVariant(assetDetail.asset.lifecycleState)}>{assetDetail.asset.lifecycleState}</Badge></dd></div>
-                <div><dt>Status</dt><dd><Badge variant={stateBadgeVariant(assetDetail.asset.status)}>{assetDetail.asset.status}</Badge></dd></div>
-                <div><dt>Sensitivity</dt><dd><Badge variant={sensitivityBadgeVariant(assetDetail.asset.sensitivity)}>{assetDetail.asset.sensitivity}</Badge></dd></div>
-                <div><dt>Audience</dt><dd>{assetDetail.asset.audience.join(", ")}</dd></div>
-                <div><dt>Review</dt><dd>{assetDetail.asset.reviewDueAt}</dd></div>
-                <div><dt>Current version</dt><dd>{currentVersion ? `v${currentVersion.versionNumber}` : "none"}</dd></div>
-                <div><dt>Exports</dt><dd>{assetDetail.asset.allowedExports.join(", ") || "none"}</dd></div>
-              </dl>
-              <div className="workflow-panel">
-                <div className="section-heading">
-                  <h3>Release control</h3>
-                  <div className="button-row">
-                    <Button size="sm" type="button" onClick={() => void completeAssetReview()}>Review</Button>
-                    <Button size="sm" type="button" onClick={() => void publishAsset()}>Publish</Button>
+              <div className="actions">
+                <Button type="button" onClick={() => void refresh()}><RefreshCw aria-hidden="true" />Refresh</Button>
+                <Button variant="primary" type="button" onClick={() => void generateExport()}>
+                  <Download aria-hidden="true" />Export
+                </Button>
+              </div>
+            </div>
+            <div className="grid four">
+              <MetricCard label="Visible assets" value={assets.length} note="Server-filtered for the current principal." />
+              <MetricCard label="Approved current" value={approvedAssets} note="Approved assets loaded in the browser." />
+              <MetricCard label="Need governance" value={reviewDueAssets} note="Draft, stale, reviewing, overdue, or non-active." />
+              <MetricCard label="Public reader" value={publicReaderAssets} note="public-demo plus active and approved." />
+            </div>
+            <section className="workspace">
+              <DataTableShell
+                title="Assets"
+                description={`${filteredLibraryAssets.length} of ${assets.length} visible in this view`}
+                actions={(
+                  <Button size="sm" type="button" onClick={() => void generateExport()}>
+                    <Download aria-hidden="true" />Export
+                  </Button>
+                )}
+                isEmpty={!filteredLibraryAssets.length}
+                emptyTitle="No assets match this view"
+                emptyDescription="Adjust filters or refresh the library."
+              >
+                <Toolbar
+                  aria-label="Asset filters"
+                  className="rounded-none border-x-0 border-t-0"
+                  filters={(
+                    <>
+                      <FormField label="Find" htmlFor="library-query" className="min-w-[220px] flex-1">
+                        <Input
+                          id="library-query"
+                          value={libraryQuery}
+                          onChange={(event) => setLibraryQuery(event.target.value)}
+                          placeholder="Title, stable ID, owner, source"
+                        />
+                      </FormField>
+                      <FormField label="View" htmlFor="library-view-filter" className="min-w-[180px]">
+                        <Select value={libraryViewFilter} onValueChange={(value) => setLibraryViewFilter(value as LibraryViewFilter)}>
+                          <SelectTrigger id="library-view-filter">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="all">All permitted</SelectItem>
+                            <SelectItem value="public-reader">Public reader</SelectItem>
+                            <SelectItem value="needs-governance">Needs governance</SelectItem>
+                            <SelectItem value="approved-active">Approved active</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </FormField>
+                      <FormField label="Sensitivity" htmlFor="library-sensitivity-filter" className="min-w-[170px]">
+                        <Select value={librarySensitivityFilter} onValueChange={setLibrarySensitivityFilter}>
+                          <SelectTrigger id="library-sensitivity-filter">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="all">All bands</SelectItem>
+                            {sensitivityFilterValues.map((sensitivity) => (
+                              <SelectItem key={sensitivity} value={sensitivity}>{sensitivity}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </FormField>
+                    </>
+                  )}
+                  actions={(
                     <Button
-                      size="sm"
                       type="button"
-                      onClick={() => void restoreVersion()}
-                      disabled={!versionSnapshot || selectedVersionIsCurrent}
-                    >
-                      Restore
-                    </Button>
-                  </div>
-                </div>
-                <div className="workflow-grid">
-                  <label>
-                    Review date
-                    <input value={publishReviewDueAt} onChange={(event) => setPublishReviewDueAt(event.target.value)} />
-                  </label>
-                  <label>
-                    Version
-                    <select
-                      value={selectedVersionNumber}
-                      onChange={(event) => {
-                        setSelectedVersionNumber(event.target.value);
-                        setVersionSnapshot(null);
+                      size="sm"
+                      variant="ghost"
+                      disabled={!libraryFilterActive}
+                      onClick={() => {
+                        setLibraryQuery("");
+                        setLibraryViewFilter("all");
+                        setLibrarySensitivityFilter("all");
                       }}
                     >
-                      {assetDetail.versions.map((version) => (
-                        <option key={version.id} value={version.versionNumber}>
-                          v{version.versionNumber}{version.id === assetDetail.asset.currentVersionId ? " current" : ""}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className="wide-field">
-                    Change note
-                    <input value={workflowNote} onChange={(event) => setWorkflowNote(event.target.value)} />
-                  </label>
-                  <Button type="button" onClick={() => void loadVersionSnapshot()}>Inspect</Button>
-                </div>
-              </div>
-              <div className="tab-bar" role="tablist" aria-label="Asset detail views">
-                {([
-                  ["human", "Human document"],
-                  ["instruction", "Agent instruction"],
-                  ["version", "Version compare"],
-                  ["raw", "Raw metadata"]
-                ] as const).map(([view, label]) => (
-                  <button
-                    key={view}
-                    type="button"
-                    className={activeAssetContentView === view ? "active" : ""}
-                    role="tab"
-                    aria-selected={activeAssetContentView === view}
-                    onClick={() => setAssetContentView(view)}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
-              {activeAssetContentView === "human" ? (
-                <div className="reader-layout asset-content-view" role="tabpanel">
-                  <article className="content-block reader-card">
-                    <div className="section-heading">
-                      <div>
-                        <h3>Human document</h3>
-                        <p className="section-note">{assetDetail.asset.summary ?? "No summary recorded."}</p>
-                      </div>
-                      <span className="state-pill">{assetDetail.humanDocuments.length} document{assetDetail.humanDocuments.length === 1 ? "" : "s"}</span>
-                    </div>
-                    <div className="reading-body">
-                      {currentHumanBody ? <pre className="reader-text">{currentHumanBody}</pre> : <p className="empty">No human document</p>}
-                    </div>
-                  </article>
-                  <aside className="reader-rail" aria-label="Human document context">
-                    <h3>Context rail</h3>
-                    <dl className="meta-list">
-                      <div><dt>Format</dt><dd>{currentHumanDocument?.format ?? "none"}</dd></div>
-                      <div><dt>Source</dt><dd>{assetDetail.asset.sourceKind ?? "unknown"}{assetDetail.asset.sourceRef ? ` / ${assetDetail.asset.sourceRef}` : ""}</dd></div>
-                      <div><dt>Surfaces</dt><dd>{formatList(assetDetail.asset.allowedSurfaces)}</dd></div>
-                      <div><dt>Exports</dt><dd>{formatList(assetDetail.asset.allowedExports)}</dd></div>
-                      <div><dt>Updated</dt><dd>{new Date(assetDetail.asset.updatedAt).toLocaleString()}</dd></div>
-                    </dl>
-                  </aside>
-                </div>
-              ) : null}
-              {activeAssetContentView === "instruction" ? (
-                <div className="reader-layout asset-content-view" role="tabpanel">
-                  <article className="content-block reader-card instruction-reader">
-                    <div className="section-heading">
-                      <div>
-                        <h3>Agent instruction</h3>
-                        <p className="section-note">{currentInstructionObject?.instructionKind ?? "No instruction kind recorded."}</p>
-                      </div>
-                      <span className="state-pill">{assetDetail.instructionObjects.length} object{assetDetail.instructionObjects.length === 1 ? "" : "s"}</span>
-                    </div>
-                    <div className="instruction-well">
-                      {currentInstructionBody ? <pre>{currentInstructionBody}</pre> : <p className="empty">No instruction object</p>}
-                    </div>
-                    <div className="instruction-support-grid">
-                      <div>
-                        <h4>Constraints</h4>
-                        {currentInstructionObject?.constraints.length ? (
-                          <ul>
-                            {currentInstructionObject.constraints.map((constraint) => <li key={constraint}>{constraint}</li>)}
-                          </ul>
-                        ) : <p className="empty">None recorded.</p>}
-                      </div>
-                      <div>
-                        <h4>Failure modes</h4>
-                        {currentInstructionObject?.failureModes.length ? (
-                          <ul>
-                            {currentInstructionObject.failureModes.map((failureMode) => <li key={failureMode}>{failureMode}</li>)}
-                          </ul>
-                        ) : <p className="empty">None recorded.</p>}
-                      </div>
-                    </div>
-                  </article>
-                  <aside className="reader-rail" aria-label="Agent instruction context">
-                    <h3>Agent contract</h3>
-                    <dl className="meta-list">
-                      <div><dt>Kind</dt><dd>{currentInstructionObject?.instructionKind ?? "none"}</dd></div>
-                      <div><dt>Targets</dt><dd>{formatList(currentInstructionObject?.targetAgents ?? [])}</dd></div>
-                      <div><dt>Escalation</dt><dd>{currentInstructionObject?.escalation ?? "none"}</dd></div>
-                      <div><dt>Allowed actions</dt><dd>{formatList(assetDetail.asset.allowedActions)}</dd></div>
-                      <div><dt>Surfaces</dt><dd>{formatList(assetDetail.asset.allowedSurfaces)}</dd></div>
-                    </dl>
-                  </aside>
-                </div>
-              ) : null}
-              {activeAssetContentView === "version" ? (
-                <div className="compare-grid" role="tabpanel">
-                  <div className="content-block compare-block">
-                    <h3>Current instruction</h3>
-                    <pre>{currentInstructionBody || "No instruction object"}</pre>
-                  </div>
-                  <div className="content-block compare-block">
-                    <h3>{versionSnapshot ? `Selected v${versionSnapshot.version.versionNumber}` : "Selected version"}</h3>
-                    <pre>{versionSnapshot ? selectedInstructionBody || "No instruction object" : "No version inspected"}</pre>
-                  </div>
-                  <div className="content-block compare-block">
-                    <h3>Current human document</h3>
-                    <pre>{currentHumanBody || "No human document"}</pre>
-                  </div>
-                  <div className="content-block compare-block">
-                    <h3>{versionSnapshot ? `Selected v${versionSnapshot.version.versionNumber}` : "Selected version"}</h3>
-                    <pre>{versionSnapshot ? selectedHumanBody || "No human document" : "No version inspected"}</pre>
-                  </div>
-                </div>
-              ) : null}
-              {activeAssetContentView === "raw" ? (
-                <div className="content-block asset-content-view" role="tabpanel">
-                  <h3>Raw metadata</h3>
-                  <pre>{JSON.stringify({
-                    asset: assetDetail.asset,
-                    currentVersion,
-                    selectedVersion: versionSnapshot?.version ?? null,
-                    instructionObjectCount: assetDetail.instructionObjects.length,
-                    humanDocumentCount: assetDetail.humanDocuments.length
-                  }, null, 2)}</pre>
-                </div>
-              ) : null}
-            </>
-          ) : (
-            <p className="empty">No asset selected.</p>
-          )}
-        </section>
-      </section>
-
-      </section>
-
-      <section className={`page ${currentPage === "search" ? "active" : ""}`} data-page="search">
-        <div className="page-header">
-          <div>
-            <p className="eyebrow">Grounded retrieval</p>
-            <h1>Search and Managed Query</h1>
-            <p className="lede">Test deterministic retrieval and provider-routed answers with citations, cache status, cost metadata, and denied-result visibility.</p>
-          </div>
-          <div className="actions">
-            <button type="button" onClick={() => void runManagedQuery()}>Run managed query</button>
-          </div>
-        </div>
-        <section className="lower-grid search-layout">
-        <section className="search-pane" aria-labelledby="search-title">
-          <div className="section-heading">
-            <h2 id="search-title">Search</h2>
-            <form onSubmit={(event) => void runSearch(event)}>
-              <input value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} />
-              <button type="submit">Run</button>
-            </form>
-          </div>
-          <div className="result-list">
-            {searchResponse?.results.map((result) => (
-              <article key={result.chunkId}>
-                <div className="result-title">
-                  <strong>{result.asset.stableId}</strong>
-                  <span>{result.citation.sourceKind}</span>
-                </div>
-                <p>{result.citation.snippet}</p>
-              </article>
-            )) ?? <p className="empty">No search run.</p>}
-          </div>
-        </section>
-
-        <section className="ops-pane" aria-labelledby="managed-query-title">
-          <div className="section-heading">
-            <h2 id="managed-query-title">Managed query</h2>
-            <form className="ops-form" onSubmit={(event) => void runManagedQuery(event)}>
-              <label>
-                Query
-                <input value={managedQueryText} onChange={(event) => setManagedQueryText(event.target.value)} />
-              </label>
-              <label>
-                Mode
-                <select
-                  value={managedQueryMode}
-                  onChange={(event) =>
-                    setManagedQueryMode(event.target.value as "deterministic-retrieval" | "provider-routed")}
-                >
-                  <option value="deterministic-retrieval">deterministic-retrieval</option>
-                  <option value="provider-routed">provider-routed</option>
-                </select>
-              </label>
-              <label>
-                Provider
-                <select
-                  value={managedQueryProvider}
-                  onChange={(event) => setManagedQueryProvider(event.target.value as ModelProvider)}
-                  disabled={managedQueryMode !== "provider-routed"}
-                >
-                  <option value="openai">openai</option>
-                  <option value="anthropic">anthropic</option>
-                  <option value="openrouter">openrouter</option>
-                </select>
-              </label>
-              <label>
-                Model
-                <input
-                  value={managedQueryModel}
-                  onChange={(event) => setManagedQueryModel(event.target.value)}
-                  disabled={managedQueryMode !== "provider-routed"}
+                      Clear
+                    </Button>
+                  )}
                 />
-              </label>
-              <label>
-                <span>Cache</span>
-                <input
-                  type="checkbox"
-                  checked={managedQueryCacheEnabled}
-                  onChange={(event) => setManagedQueryCacheEnabled(event.target.checked)}
-                  disabled={managedQueryMode !== "provider-routed"}
-                />
-              </label>
-              <button type="submit" disabled={!managedQueryText}>Run managed query</button>
-            </form>
-          </div>
-          <div className="tab-bar" role="tablist" aria-label="Managed query result views">
-            {([
-              ["answer", "Answer"],
-              ["evidence", "Evidence"],
-              ["diagnostics", "Diagnostics"]
-            ] as const).map(([view, label]) => (
-              <button
-                key={view}
-                type="button"
-                className={managedQueryView === view ? "active" : ""}
-                role="tab"
-                aria-selected={managedQueryView === view}
-                onClick={() => setManagedQueryView(view)}
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Asset</TableHead>
+                      <TableHead>Type</TableHead>
+                      <TableHead>State</TableHead>
+                      <TableHead>Sensitivity</TableHead>
+                      <TableHead>Review</TableHead>
+                      <TableHead>Public</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {filteredLibraryAssets.map((asset) => (
+                      <TableRow
+                        key={asset.id}
+                        data-state={asset.stableId === selectedAsset?.stableId ? "selected" : undefined}
+                        className="cursor-pointer"
+                        onClick={() => setSelectedStableId(asset.stableId)}
+                        onKeyDown={(event) => selectAssetFromRow(event, () => setSelectedStableId(asset.stableId))}
+                        tabIndex={0}
+                        aria-selected={asset.stableId === selectedAsset?.stableId}
+                      >
+                        <TableCell className="min-w-[260px] whitespace-normal">
+                          <span className="grid min-w-[240px] gap-0.5">
+                            <strong className="text-[13px] leading-tight text-foreground">{asset.title}</strong>
+                            <span className="font-mono text-[11px] leading-snug text-muted-foreground">{asset.stableId}</span>
+                            {asset.summary ? (
+                              <small className="overflow-hidden text-[11px] leading-snug text-muted-foreground [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:2]">
+                                {asset.summary}
+                              </small>
+                            ) : null}
+                          </span>
+                        </TableCell>
+                        <TableCell>{asset.type}</TableCell>
+                        <TableCell>
+                          <span className="flex flex-wrap gap-1.5">
+                            <Badge variant={stateBadgeVariant(asset.lifecycleState)}>{asset.lifecycleState}</Badge>
+                            <Badge variant={stateBadgeVariant(asset.status)}>{asset.status}</Badge>
+                          </span>
+                        </TableCell>
+                        <TableCell><Badge variant={sensitivityBadgeVariant(asset.sensitivity)}>{asset.sensitivity}</Badge></TableCell>
+                        <TableCell>
+                          <Badge variant={isAssetGovernanceDue(asset) ? "warning" : "success"}>{formatReviewDue(asset.reviewDueAt)}</Badge>
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant={isPublicReaderEligible(asset) ? "success" : "neutral"}>
+                            {isPublicReaderEligible(asset) ? "eligible" : "gated"}
+                          </Badge>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </DataTableShell>
+
+              <SectionCard
+                title={assetDetail?.asset.title ?? "Asset detail"}
+                description="Governed reading room"
+                variant="tool"
+                className="min-w-0"
+                actions={assetDetail ? (
+                  <Badge variant={isPublicReaderEligible(assetDetail.asset) ? "success" : "neutral"}>
+                    {isPublicReaderEligible(assetDetail.asset) ? "public reader eligible" : "authenticated access"}
+                  </Badge>
+                ) : null}
+                contentClassName="grid gap-4"
               >
-                {label}
-              </button>
-            ))}
-          </div>
-          <div className="result-list">
-            {managedQueryResponse ? (
-              <>
-                <dl className="metadata-grid compact query-summary">
-                  <div><dt>Generation</dt><dd>{managedQueryResponse.generation.status}</dd></div>
-                  <div><dt>Citations</dt><dd>{managedQueryResponse.citations.length}</dd></div>
-                  <div><dt>Denied</dt><dd>{managedQueryResponse.checks.deniedCount}</dd></div>
-                  <div><dt>Cost</dt><dd>{formatCurrency(managedQueryResponse.generation.usage.estimatedCostUsd)}</dd></div>
-                </dl>
-                {managedQueryView === "answer" ? (
-                  <div className="content-block answer-card" role="tabpanel">
-                    <div className="section-heading">
-                      <h3>Grounded answer</h3>
-                      <span className={`state-pill ${managedQueryResponse.checks.deniedCount ? "warn" : "ok"}`}>
-                        {managedQueryResponse.checks.deniedCount ? `${managedQueryResponse.checks.deniedCount} denied` : "all visible"}
-                      </span>
-                    </div>
-                    <p>{managedQueryResponse.answer}</p>
-                  </div>
-                ) : null}
-                {managedQueryView === "evidence" ? (
-                  <div className="evidence-list" role="tabpanel">
-                    {managedQueryResponse.citations.length ? managedQueryResponse.citations.map((citation) => (
-                      <article key={`${citation.assetId}:${citation.chunkId}`}>
-                        <div className="result-title">
-                          <strong>{citation.stableId}</strong>
-                          <span>{citation.sourceKind}</span>
+                {assetDetail ? (
+                  <>
+                    <TrustStateSummary
+                      state={isAssetGovernanceDue(assetDetail.asset) ? "needs-review" : isPublicReaderEligible(assetDetail.asset) ? "trusted" : "restricted"}
+                      title={assetDetail.asset.stableId}
+                      description={isPublicReaderEligible(assetDetail.asset)
+                        ? "This asset is active, approved, and marked public-demo for reader-safe access."
+                        : isAssetGovernanceDue(assetDetail.asset)
+                          ? "This asset needs governance attention before it is a clean public-reader candidate."
+                          : "This asset remains behind authenticated access and permission-aware retrieval."}
+                      signals={[
+                        { label: assetDetail.asset.lifecycleState, variant: stateBadgeVariant(assetDetail.asset.lifecycleState) },
+                        { label: assetDetail.asset.status, variant: stateBadgeVariant(assetDetail.asset.status) },
+                        { label: assetDetail.asset.sensitivity, variant: sensitivityBadgeVariant(assetDetail.asset.sensitivity) },
+                        { label: formatReviewDue(assetDetail.asset.reviewDueAt), variant: isAssetGovernanceDue(assetDetail.asset) ? "warning" : "success" },
+                        ...(currentVersion ? [{ label: `v${currentVersion.versionNumber}`, variant: "neutral" as const }] : [])
+                      ]}
+                    />
+                    <DefinitionGrid
+                      items={[
+                        { term: "Stable ID", description: assetDetail.asset.stableId },
+                        { term: "Lifecycle", description: <Badge variant={stateBadgeVariant(assetDetail.asset.lifecycleState)}>{assetDetail.asset.lifecycleState}</Badge> },
+                        { term: "Status", description: <Badge variant={stateBadgeVariant(assetDetail.asset.status)}>{assetDetail.asset.status}</Badge> },
+                        { term: "Sensitivity", description: <Badge variant={sensitivityBadgeVariant(assetDetail.asset.sensitivity)}>{assetDetail.asset.sensitivity}</Badge> },
+                        { term: "Audience", description: assetDetail.asset.audience.join(", ") },
+                        { term: "Review", description: assetDetail.asset.reviewDueAt },
+                        { term: "Current version", description: currentVersion ? `v${currentVersion.versionNumber}` : "none" },
+                        { term: "Exports", description: assetDetail.asset.allowedExports.join(", ") || "none" }
+                      ]}
+                    />
+                    <SectionCard
+                      title="Release control"
+                      variant="tool"
+                      actions={(
+                        <>
+                          <Button size="sm" type="button" onClick={() => void completeAssetReview()}>Review</Button>
+                          <Button size="sm" type="button" onClick={() => void publishAsset()}>Publish</Button>
+                          <Button
+                            size="sm"
+                            type="button"
+                            onClick={() => void restoreVersion()}
+                            disabled={!versionSnapshot || selectedVersionIsCurrent}
+                          >
+                            Restore
+                          </Button>
+                        </>
+                      )}
+                    >
+                      <div className="grid gap-4 md:grid-cols-[minmax(160px,0.5fr)_minmax(150px,0.4fr)_minmax(220px,1fr)_auto]">
+                        <FormField label="Review date" htmlFor="publish-review-due-at">
+                          <Input id="publish-review-due-at" value={publishReviewDueAt} onChange={(event) => setPublishReviewDueAt(event.target.value)} />
+                        </FormField>
+                        <FormField label="Version" htmlFor="selected-version-number">
+                          <Select
+                            value={selectedVersionNumber}
+                            onValueChange={(value) => {
+                              setSelectedVersionNumber(value);
+                              setVersionSnapshot(null);
+                            }}
+                          >
+                            <SelectTrigger id="selected-version-number">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {assetDetail.versions.map((version) => (
+                                <SelectItem key={version.id} value={String(version.versionNumber)}>
+                                  v{version.versionNumber}{version.id === assetDetail.asset.currentVersionId ? " current" : ""}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </FormField>
+                        <FormField label="Change note" htmlFor="workflow-note">
+                          <Input id="workflow-note" value={workflowNote} onChange={(event) => setWorkflowNote(event.target.value)} />
+                        </FormField>
+                        <div className="flex items-end">
+                          <Button type="button" onClick={() => void loadVersionSnapshot()}>Inspect</Button>
                         </div>
-                        <p>{citation.snippet}</p>
-                      </article>
-                    )) : <p className="empty">No citations returned.</p>}
-                  </div>
-                ) : null}
-                {managedQueryView === "diagnostics" ? (
-                  <div className="content-block diagnostics-card" role="tabpanel">
-                    <dl className="metadata-grid compact">
-                      <div><dt>Mode</dt><dd>{managedQueryResponse.mode}</dd></div>
-                      <div><dt>Provider</dt><dd>{managedQueryResponse.generation.provider ?? "n/a"}</dd></div>
-                      <div><dt>Model</dt><dd>{managedQueryResponse.generation.model ?? "n/a"}</dd></div>
-                      <div><dt>Tokens</dt><dd>{formatMetric(managedQueryResponse.generation.usage.totalTokens)}</dd></div>
-                      <div><dt>Cache</dt><dd>{managedQueryResponse.cache.status}</dd></div>
-                      <div><dt>Telemetry</dt><dd>{managedQueryResponse.telemetryEventId ?? "n/a"}</dd></div>
-                    </dl>
-                    {managedQueryResponse.generation.attempts.length ? (
-                      <p>
-                        <strong>Attempts</strong>{" "}
-                        {managedQueryResponse.generation.attempts
-                          .map((attempt) => `${attempt.provider}:${attempt.status}${attempt.reason ? `(${attempt.reason})` : ""}`)
-                          .join(" -> ")}
-                      </p>
-                    ) : null}
-                    {managedQueryResponse.cache.reason ? (
-                      <p><strong>Cache</strong> {managedQueryResponse.cache.reason}</p>
-                    ) : null}
-                    {managedQueryResponse.warnings.length ? (
-                      <p><strong>Warnings</strong> {managedQueryResponse.warnings.join("\n")}</p>
-                    ) : null}
-                  </div>
-                ) : null}
-              </>
-            ) : <p className="empty">No managed query run.</p>}
-          </div>
-        </section>
-
-        </section>
+                      </div>
+                    </SectionCard>
+                    <Tabs
+                      value={activeAssetContentView}
+                      onValueChange={(value) => setAssetContentView(value as AssetContentView)}
+                      className="min-w-0"
+                    >
+                      <TabsList className="h-auto w-full flex-wrap justify-start">
+                        <TabsTrigger value="human">Human document</TabsTrigger>
+                        <TabsTrigger value="instruction">Agent instruction</TabsTrigger>
+                        <TabsTrigger value="version">Version compare</TabsTrigger>
+                        <TabsTrigger value="raw">Raw metadata</TabsTrigger>
+                      </TabsList>
+                      <TabsContent value="human">
+                        <div className="grid items-start gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(180px,0.42fr)]">
+                          <SectionCard
+                            title="Human document"
+                            description={assetDetail.asset.summary ?? "No summary recorded."}
+                            variant="tool"
+                            actions={<Badge variant="neutral">{assetDetail.humanDocuments.length} document{assetDetail.humanDocuments.length === 1 ? "" : "s"}</Badge>}
+                          >
+                            <div className="grid gap-3">
+                              {currentHumanBody ? <pre className="whitespace-pre-wrap py-0.5 font-sans text-sm leading-7 text-foreground">{currentHumanBody}</pre> : <EmptyState title="No human document" />}
+                            </div>
+                          </SectionCard>
+                          <SectionCard title="Context rail" variant="tool">
+                            <DefinitionGrid
+                              compact
+                              items={[
+                                { term: "Format", description: currentHumanDocument?.format ?? "none" },
+                                { term: "Source", description: `${assetDetail.asset.sourceKind ?? "unknown"}${assetDetail.asset.sourceRef ? ` / ${assetDetail.asset.sourceRef}` : ""}` },
+                                { term: "Surfaces", description: formatList(assetDetail.asset.allowedSurfaces) },
+                                { term: "Exports", description: formatList(assetDetail.asset.allowedExports) },
+                                { term: "Updated", description: new Date(assetDetail.asset.updatedAt).toLocaleString() }
+                              ]}
+                            />
+                          </SectionCard>
+                        </div>
+                      </TabsContent>
+                      <TabsContent value="instruction">
+                        <div className="grid items-start gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(180px,0.42fr)]">
+                          <SectionCard
+                            title="Agent instruction"
+                            description={currentInstructionObject?.instructionKind ?? "No instruction kind recorded."}
+                            variant="tool"
+                            actions={<Badge variant="neutral">{assetDetail.instructionObjects.length} object{assetDetail.instructionObjects.length === 1 ? "" : "s"}</Badge>}
+                          >
+                            <div className="mb-3 rounded-md border border-border bg-muted/40 p-3">
+                              {currentInstructionBody ? <pre>{currentInstructionBody}</pre> : <EmptyState title="No instruction object" />}
+                            </div>
+                            <div className="grid gap-3 md:grid-cols-2">
+                              <SectionCard title="Constraints" variant="compact">
+                                {currentInstructionObject?.constraints.length ? (
+                                  <ul>
+                                    {currentInstructionObject.constraints.map((constraint) => <li key={constraint}>{constraint}</li>)}
+                                  </ul>
+                                ) : <EmptyState title="None recorded" />}
+                              </SectionCard>
+                              <SectionCard title="Failure modes" variant="compact">
+                                {currentInstructionObject?.failureModes.length ? (
+                                  <ul>
+                                    {currentInstructionObject.failureModes.map((failureMode) => <li key={failureMode}>{failureMode}</li>)}
+                                  </ul>
+                                ) : <EmptyState title="None recorded" />}
+                              </SectionCard>
+                            </div>
+                          </SectionCard>
+                          <SectionCard title="Agent contract" variant="tool">
+                            <DefinitionGrid
+                              compact
+                              items={[
+                                { term: "Kind", description: currentInstructionObject?.instructionKind ?? "none" },
+                                { term: "Targets", description: formatList(currentInstructionObject?.targetAgents ?? []) },
+                                { term: "Escalation", description: currentInstructionObject?.escalation ?? "none" },
+                                { term: "Allowed actions", description: formatList(assetDetail.asset.allowedActions) },
+                                { term: "Surfaces", description: formatList(assetDetail.asset.allowedSurfaces) }
+                              ]}
+                            />
+                          </SectionCard>
+                        </div>
+                      </TabsContent>
+                      <TabsContent value="version">
+                        <div className="grid gap-3 md:grid-cols-2">
+                          <SectionCard title="Current instruction" variant="tool"><pre>{currentInstructionBody || "No instruction object"}</pre></SectionCard>
+                          <SectionCard title={versionSnapshot ? `Selected v${versionSnapshot.version.versionNumber}` : "Selected version"} variant="tool">
+                            <pre>{versionSnapshot ? selectedInstructionBody || "No instruction object" : "No version inspected"}</pre>
+                          </SectionCard>
+                          <SectionCard title="Current human document" variant="tool"><pre>{currentHumanBody || "No human document"}</pre></SectionCard>
+                          <SectionCard title={versionSnapshot ? `Selected v${versionSnapshot.version.versionNumber}` : "Selected version"} variant="tool">
+                            <pre>{versionSnapshot ? selectedHumanBody || "No human document" : "No version inspected"}</pre>
+                          </SectionCard>
+                        </div>
+                      </TabsContent>
+                      <TabsContent value="raw">
+                        <SectionCard title="Raw metadata" variant="tool">
+                          <pre>{JSON.stringify({
+                            asset: assetDetail.asset,
+                            currentVersion,
+                            selectedVersion: versionSnapshot?.version ?? null,
+                            instructionObjectCount: assetDetail.instructionObjects.length,
+                            humanDocumentCount: assetDetail.humanDocuments.length
+                          }, null, 2)}</pre>
+                        </SectionCard>
+                      </TabsContent>
+                    </Tabs>
+                  </>
+                ) : (
+                  <EmptyState title="No asset selected" description="Select an asset from the library table." />
+                )}
+              </SectionCard>
       </section>
+
+      </section>
+
+          <section className={`page ${currentPage === "search" ? "active" : ""}`} data-page="search">
+            <div className="page-header">
+              <div>
+                <p className="eyebrow">Grounded retrieval</p>
+                <h1>Search and Managed Query</h1>
+                <p className="lede">Test deterministic retrieval and provider-routed answers with citations, cache status, cost metadata, and denied-result visibility.</p>
+              </div>
+              <div className="actions">
+                <Button type="button" onClick={() => void runManagedQuery()}>Run managed query</Button>
+              </div>
+            </div>
+            <section className="grid gap-4 xl:grid-cols-[minmax(320px,0.75fr)_minmax(440px,1.25fr)]">
+              <SectionCard title="Search" variant="tool" className="min-w-0 self-start" contentClassName="grid gap-4">
+                <form className="flex min-w-0 flex-col gap-2 sm:flex-row" onSubmit={(event) => void runSearch(event)}>
+                  <Input
+                    value={searchQuery}
+                    onChange={(event) => setSearchQuery(event.target.value)}
+                    placeholder="Search permitted instruction context"
+                    aria-label="Search query"
+                  />
+                  <Button type="submit">Run</Button>
+                </form>
+                <div className="grid gap-3">
+                  {searchResponse?.results.length ? searchResponse.results.map((result) => (
+                    <SectionCard
+                      key={result.chunkId}
+                      title={result.asset.stableId}
+                      description={result.citation.sourceKind}
+                      variant="compact"
+                    >
+                      <p className="m-0 text-sm leading-6 text-muted-foreground">{result.citation.snippet}</p>
+                    </SectionCard>
+                  )) : (
+                    <EmptyState
+                      title={searchResponse ? "No search results" : "No search run"}
+                      description={searchResponse ? "The current query did not return permitted citations." : "Run search to inspect retrieval snippets."}
+                    />
+                  )}
+                </div>
+              </SectionCard>
+
+              <SectionCard title="Managed query" variant="tool" className="min-w-0" contentClassName="grid gap-4">
+                <form className="grid gap-4" onSubmit={(event) => void runManagedQuery(event)}>
+                  <FormField label="Query" htmlFor="managed-query-text">
+                    <Input id="managed-query-text" value={managedQueryText} onChange={(event) => setManagedQueryText(event.target.value)} />
+                  </FormField>
+                  <div className="grid gap-4 md:grid-cols-3">
+                    <FormField label="Mode" htmlFor="managed-query-mode">
+                      <Select
+                        value={managedQueryMode}
+                        onValueChange={(value) => setManagedQueryMode(value as "deterministic-retrieval" | "provider-routed")}
+                      >
+                        <SelectTrigger id="managed-query-mode">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="deterministic-retrieval">deterministic-retrieval</SelectItem>
+                          <SelectItem value="provider-routed">provider-routed</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </FormField>
+                    <FormField label="Provider" htmlFor="managed-query-provider">
+                      <Select
+                        value={managedQueryProvider}
+                        onValueChange={(value) => setManagedQueryProvider(value as ModelProvider)}
+                        disabled={managedQueryMode !== "provider-routed"}
+                      >
+                        <SelectTrigger id="managed-query-provider">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="openai">openai</SelectItem>
+                          <SelectItem value="anthropic">anthropic</SelectItem>
+                          <SelectItem value="openrouter">openrouter</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </FormField>
+                    <FormField label="Model" htmlFor="managed-query-model">
+                      <Input
+                        id="managed-query-model"
+                        value={managedQueryModel}
+                        onChange={(event) => setManagedQueryModel(event.target.value)}
+                        disabled={managedQueryMode !== "provider-routed"}
+                      />
+                    </FormField>
+                  </div>
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <FormField label="Cache" htmlFor="managed-query-cache-enabled" className="flex-row items-center gap-3">
+                      <Checkbox
+                        id="managed-query-cache-enabled"
+                        checked={managedQueryCacheEnabled}
+                        onCheckedChange={(checked) => setManagedQueryCacheEnabled(checked === true)}
+                        disabled={managedQueryMode !== "provider-routed"}
+                      />
+                    </FormField>
+                    <Button type="submit" disabled={!managedQueryText}>Run managed query</Button>
+                  </div>
+                </form>
+                <Tabs
+                  value={managedQueryView}
+                  onValueChange={(value) => setManagedQueryView(value as ManagedQueryView)}
+                  className="min-w-0"
+                >
+                  <TabsList className="h-auto w-full flex-wrap justify-start">
+                    <TabsTrigger value="answer">Answer</TabsTrigger>
+                    <TabsTrigger value="evidence">Evidence</TabsTrigger>
+                    <TabsTrigger value="diagnostics">Diagnostics</TabsTrigger>
+                  </TabsList>
+                  {managedQueryResponse ? (
+                    <>
+                      <DefinitionGrid
+                        compact
+                        className="mt-2"
+                        items={[
+                          { term: "Generation", description: managedQueryResponse.generation.status },
+                          { term: "Citations", description: managedQueryResponse.citations.length },
+                          { term: "Denied", description: managedQueryResponse.checks.deniedCount },
+                          { term: "Cost", description: formatCurrency(managedQueryResponse.generation.usage.estimatedCostUsd) }
+                        ]}
+                      />
+                      <TabsContent value="answer">
+                        <SectionCard
+                          title="Grounded answer"
+                          variant="tool"
+                          actions={(
+                            <Badge variant={managedQueryResponse.checks.deniedCount ? "warning" : "success"}>
+                              {managedQueryResponse.checks.deniedCount ? `${managedQueryResponse.checks.deniedCount} denied` : "all visible"}
+                            </Badge>
+                          )}
+                        >
+                          <p>{managedQueryResponse.answer}</p>
+                        </SectionCard>
+                      </TabsContent>
+                      <TabsContent value="evidence">
+                        <div className="grid gap-3">
+                          {managedQueryResponse.citations.length ? managedQueryResponse.citations.map((citation) => (
+                            <SectionCard
+                              key={`${citation.assetId}:${citation.chunkId}`}
+                              title={citation.stableId}
+                              description={citation.sourceKind}
+                              variant="compact"
+                            >
+                              <p className="m-0 text-sm leading-6 text-muted-foreground">{citation.snippet}</p>
+                            </SectionCard>
+                          )) : <EmptyState title="No citations returned" />}
+                        </div>
+                      </TabsContent>
+                      <TabsContent value="diagnostics">
+                        <SectionCard title="Diagnostics" variant="tool">
+                          <DefinitionGrid
+                            compact
+                            items={[
+                              { term: "Mode", description: managedQueryResponse.mode },
+                              { term: "Provider", description: managedQueryResponse.generation.provider ?? "n/a" },
+                              { term: "Model", description: managedQueryResponse.generation.model ?? "n/a" },
+                              { term: "Tokens", description: formatMetric(managedQueryResponse.generation.usage.totalTokens) },
+                              { term: "Cache", description: managedQueryResponse.cache.status },
+                              { term: "Telemetry", description: managedQueryResponse.telemetryEventId ?? "n/a" }
+                            ]}
+                          />
+                          {managedQueryResponse.generation.attempts.length ? (
+                            <p>
+                              <strong>Attempts</strong>{" "}
+                              {managedQueryResponse.generation.attempts
+                                .map((attempt) => `${attempt.provider}:${attempt.status}${attempt.reason ? `(${attempt.reason})` : ""}`)
+                                .join(" -> ")}
+                            </p>
+                          ) : null}
+                          {managedQueryResponse.cache.reason ? (
+                            <StatusAlert status="info" title="Cache" description={managedQueryResponse.cache.reason} />
+                          ) : null}
+                          {managedQueryResponse.warnings.length ? (
+                            <StatusAlert status="warning" title="Warnings" description={managedQueryResponse.warnings.join("\n")} />
+                          ) : null}
+                        </SectionCard>
+                      </TabsContent>
+                    </>
+                  ) : (
+                    <EmptyState title="No managed query run" description="Run a managed query to inspect answer, evidence, and diagnostics." />
+                  )}
+                </Tabs>
+              </SectionCard>
+            </section>
+          </section>
 
       <section className={`page ${visibleDistributePage ? "active" : ""}`} data-page="distribute">
         <div className="page-header">
