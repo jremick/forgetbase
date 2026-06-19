@@ -19,13 +19,14 @@ Migrate ForgetBase web UI to a shadcn/ui-based interface while preserving only t
 | App/domain composition components | `019edf76-ba84-7361-b191-7e76a63c38f2` | Complete | New files under `apps/web/src/components/app/**` and `apps/web/src/components/domain/**` |
 | Route migration inventory | manager | Complete | `work/shadcn-migration/route-migration-inventory.md` |
 | Wave 3 worker goals | manager | Prepared | `work/shadcn-migration/worker-goals-wave3.md` |
-| Authenticated shell/nav/command | `019edf8c-83f1-7cf0-8b13-0a53f9d115bf` | Running | Authenticated topbar, nav, command dialog, connection panel, global shell alerts |
+| Authenticated shell/nav/command | manager after closing `019edf8c-83f1-7cf0-8b13-0a53f9d115bf` | Complete | Authenticated topbar, nav, command dialog, connection panel, global shell alerts |
 
 ## Replaced / Closed Threads
 
 | Agent | Reason |
 |---|---|
 | `019edf6a-8590-7721-a7b6-7d095540b22b` | Failed immediately because the Claude UI/UX role expected `PERPLEXITY_API_KEY`; replaced with local-doc-only design/spec worker `019edf6b-366a-7393-ae85-5d5ce7872ae6`. |
+| `019edf8c-83f1-7cf0-8b13-0a53f9d115bf` | Did not return a status checkpoint or patch after interruption; manager closed it and completed the shell slice locally. |
 
 ## Dependency Order
 
@@ -45,6 +46,8 @@ Migrate ForgetBase web UI to a shadcn/ui-based interface while preserving only t
 - Screenshot artifacts: `work/shadcn-migration/public-login-desktop.png`, `work/shadcn-migration/public-login-mobile.png`.
 - 2026-06-19: `Button` and `Badge` primitives migrated off the legacy `.ui-*` CSS classes and now expose shadcn-style `data-slot` markers plus Tailwind/CVA variants. Verification passed: web typecheck, web tests, web build, and desktop/mobile browser assertions for public login blank values, removed auth controls, zero console warnings/errors, and no horizontal overflow.
 - 2026-06-19: Added route/shell primitives for upcoming authenticated migration: `Command`, `AlertDialog`, `ToggleGroup`, `Collapsible`, and updated `Table`. Verification passed: web typecheck and web build.
+- 2026-06-19: Authenticated shell/nav/command integration completed locally. Verification passed: web typecheck, web test, web build, `git diff --check`, real local login on `http://127.0.0.1:5175/`, command palette `Meta+K` navigation to `#distribute` and `#library`, identity dropdown render, desktop and 390px mobile no horizontal overflow, and zero fresh browser warnings/errors after command focus fix.
+- Screenshot artifacts: `work/shadcn-migration/shell-desktop.png`, `work/shadcn-migration/shell-mobile.png`.
 
 ## Manager-Owned Decisions
 

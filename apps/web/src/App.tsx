@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type CSSProperties, type FormEvent, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import type {
   AccountLinkingMode,
   AgentActionExecutionPolicy,
@@ -54,9 +54,19 @@ import type {
 } from "@agentic-cms/schema";
 import { Copy, Download, LogOut, RefreshCw, Search, SlidersHorizontal } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "./components/ui/alert.js";
-import { Badge } from "./components/ui/badge.js";
+import { Badge, type BadgeVariant } from "./components/ui/badge.js";
 import { Button } from "./components/ui/button.js";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "./components/ui/card.js";
+import {
+  Command,
+  CommandDialog,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+  CommandShortcut
+} from "./components/ui/command.js";
 import {
   Dialog,
   DialogContent,
@@ -65,8 +75,19 @@ import {
   DialogHeader,
   DialogTitle
 } from "./components/ui/dialog.js";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuShortcut,
+  DropdownMenuTrigger
+} from "./components/ui/dropdown-menu.js";
 import { Input } from "./components/ui/input.js";
 import { Label } from "./components/ui/label.js";
+import { ScrollArea } from "./components/ui/scroll-area.js";
 import { Separator } from "./components/ui/separator.js";
 import {
   formatCachePolicyTtl,
@@ -257,6 +278,22 @@ function readStoredNavWidth(): number {
 
   const stored = Number.parseInt(localStorage.getItem(navWidthStorageKey) ?? "", 10);
   return Number.isFinite(stored) ? Math.min(420, Math.max(240, stored)) : 292;
+}
+
+function navBadgeVariant(tone?: NavBadgeTone): BadgeVariant {
+  if (tone === "bad") {
+    return "destructive";
+  }
+
+  if (tone === "ok") {
+    return "success";
+  }
+
+  if (tone === "warn") {
+    return "warning";
+  }
+
+  return "neutral";
 }
 
 function readCookie(name: string): string {
@@ -486,6 +523,8 @@ export function App() {
   );
   const [navWidth, setNavWidth] = useState(readStoredNavWidth);
   const [isResizingNav, setIsResizingNav] = useState(false);
+  const [isCommandOpen, setIsCommandOpen] = useState(false);
+  const commandTriggerRef = useRef<HTMLButtonElement | null>(null);
 
   const selectedAsset = useMemo(
     () => assets.find((asset) => asset.stableId === selectedStableId) ?? assets[0],
@@ -624,6 +663,22 @@ export function App() {
   useEffect(() => {
     localStorage.setItem(densityStorageKey, density);
   }, [density]);
+
+  useEffect(() => {
+    if (!isAuthenticated) {
+      return undefined;
+    }
+
+    const openCommandShortcut = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        setIsCommandOpen(true);
+      }
+    };
+
+    window.addEventListener("keydown", openCommandShortcut);
+    return () => window.removeEventListener("keydown", openCommandShortcut);
+  }, [isAuthenticated]);
 
   useEffect(() => {
     if (!isResizingNav) {
@@ -2450,6 +2505,14 @@ export function App() {
     window.location.hash = nextRoute;
   }
 
+  function handleCommandOpenChange(open: boolean) {
+    setIsCommandOpen(open);
+  }
+
+  function toggleDensity() {
+    setDensity((current) => current === "comfortable" ? "compact" : "comfortable");
+  }
+
   function handleNavResizeKey(event: ReactKeyboardEvent<HTMLDivElement>) {
     const step = event.shiftKey ? 32 : 16;
 
@@ -2533,6 +2596,28 @@ export function App() {
       ]
     }
   ];
+  const commandSections = navSections.map((section) => {
+    const routes = new Map<string, { route: string; label: string; badge?: string | number }>();
+
+    routes.set(section.folderRoute, {
+      route: section.folderRoute,
+      label: section.folderLabel,
+      badge: section.count
+    });
+
+    section.leaves.forEach((leaf) => {
+      routes.set(leaf.route, {
+        route: leaf.route,
+        label: leaf.label,
+        badge: leaf.badge?.label ?? leaf.count
+      });
+    });
+
+    return {
+      label: section.label,
+      routes: Array.from(routes.values())
+    };
+  });
 
   return (
     <div
@@ -2550,7 +2635,12 @@ export function App() {
         </div>
         {isAuthenticated ? (
           <div className="topbar-main">
-            <Button variant="command" type="button" onClick={() => navigatePage("search")}>
+            <Button
+              ref={commandTriggerRef}
+              variant="command"
+              type="button"
+              onClick={() => handleCommandOpenChange(true)}
+            >
               <Search aria-hidden="true" />
               <span>Search assets, pages, commands</span>
               <span className="kbd">Cmd K</span>
@@ -2560,57 +2650,131 @@ export function App() {
               variant="ghost"
               size="sm"
               type="button"
-              onClick={() => setDensity((current) => current === "comfortable" ? "compact" : "comfortable")}
+              onClick={toggleDensity}
             >
               <SlidersHorizontal aria-hidden="true" />
               {density === "comfortable" ? "Comfortable" : "Compact"}
             </Button>
-            <div className="identity"><span className="avatar">{displayInitials}</span><span>{displayIdentity}</span></div>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="sm" type="button" className="identity-trigger">
+                  <span className="avatar">{displayInitials}</span>
+                  <span className="identity-name">{displayIdentity}</span>
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="identity-menu">
+                <DropdownMenuLabel>
+                  <span className="identity-menu-label">Signed in</span>
+                  <span className="identity-menu-value">{displayIdentity}</span>
+                </DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                <DropdownMenuGroup>
+                  <DropdownMenuItem onSelect={() => navigatePage("access")}>
+                    Access
+                    <DropdownMenuShortcut>#access</DropdownMenuShortcut>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onSelect={toggleDensity}>
+                    {density === "comfortable" ? "Compact density" : "Comfortable density"}
+                    <DropdownMenuShortcut>view</DropdownMenuShortcut>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onSelect={() => void refresh()}>
+                    Refresh
+                    <DropdownMenuShortcut>sync</DropdownMenuShortcut>
+                  </DropdownMenuItem>
+                </DropdownMenuGroup>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem variant="destructive" onSelect={() => void logout()}>
+                  Sign out
+                  <DropdownMenuShortcut>auth</DropdownMenuShortcut>
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         ) : null}
       </header>
 
       {isAuthenticated ? (
         <>
-      <nav className="side-nav tree-nav" aria-label="Main pages" id="page-nav">
-        {navSections.map((section) => (
-          <div className="nav-group" key={section.label}>
-            <p className="nav-label">{section.label}</p>
-            <div className="nav-tree">
-              <button
-                className={`nav-folder is-open ${section.activeRoutes.includes(currentPage) ? "is-active-ancestor" : ""}`}
-                type="button"
-                aria-expanded="true"
-                onClick={() => navigatePage(section.folderRoute)}
-              >
-                <span className="twisty">v</span>
-                <span className="folder-glyph">{section.folderIcon}</span>
-                <span className="nav-text">{section.folderLabel}</span>
-                {section.count === undefined ? null : <span className="nav-count">{section.count}</span>}
-              </button>
-              <div className="nav-branch">
-                {section.leaves.map((leaf) => {
-                  const hasIcon = Boolean(leaf.showIcon && leaf.icon);
+          <CommandDialog
+            open={isCommandOpen}
+            onOpenChange={handleCommandOpenChange}
+            title="ForgetBase command palette"
+            description="Navigate between governed instruction workspaces."
+            className="command-dialog"
+            onCloseAutoFocus={(event) => {
+              event.preventDefault();
+              window.setTimeout(() => commandTriggerRef.current?.focus(), 100);
+            }}
+          >
+            <Command>
+              <CommandInput placeholder="Search pages and routes..." />
+              <CommandList>
+                <CommandEmpty>No route found.</CommandEmpty>
+                {commandSections.map((section) => (
+                  <CommandGroup key={section.label} heading={section.label}>
+                    {section.routes.map((route) => (
+                      <CommandItem
+                        key={route.route}
+                        value={`${section.label} ${route.label} ${route.route}`}
+                        onSelect={() => {
+                          navigatePage(route.route);
+                          handleCommandOpenChange(false);
+                        }}
+                      >
+                        <span>{route.label}</span>
+                        {route.badge === undefined ? null : <Badge variant="neutral" className="command-route-badge">{route.badge}</Badge>}
+                        <CommandShortcut>#{route.route}</CommandShortcut>
+                      </CommandItem>
+                    ))}
+                  </CommandGroup>
+                ))}
+              </CommandList>
+            </Command>
+          </CommandDialog>
 
-                  return (
-                    <button
-                      key={leaf.route}
-                      className={`nav-link nav-leaf ${hasIcon ? "has-icon" : "is-iconless"} ${currentPage === leaf.route ? "active" : ""}`}
-                      type="button"
-                      aria-current={currentPage === leaf.route ? "page" : undefined}
-                      onClick={() => navigatePage(leaf.route)}
-                    >
-                      {hasIcon ? <span className="nav-icon">{leaf.icon}</span> : null}
-                      <span className="nav-text">{leaf.label}</span>
-                      {leaf.count === undefined ? null : <span className="nav-count">{leaf.count}</span>}
-                      {leaf.badge ? <span className={`nav-badge ${leaf.badge.tone ?? ""}`}>{leaf.badge.label}</span> : null}
-                    </button>
-                  );
-                })}
+          <nav className="side-nav tree-nav" aria-label="Main pages" id="page-nav">
+        <ScrollArea className="side-nav-scroll">
+          {navSections.map((section) => (
+            <div className="nav-group" key={section.label}>
+              <p className="nav-label">{section.label}</p>
+              <div className="nav-tree">
+                <Button
+                  className={`nav-folder is-open ${section.activeRoutes.includes(currentPage) ? "is-active-ancestor" : ""}`}
+                  type="button"
+                  variant="ghost"
+                  aria-expanded="true"
+                  onClick={() => navigatePage(section.folderRoute)}
+                >
+                  <span className="twisty">v</span>
+                  <span className="folder-glyph">{section.folderIcon}</span>
+                  <span className="nav-text">{section.folderLabel}</span>
+                  {section.count === undefined ? null : <Badge variant="neutral" className="nav-count">{section.count}</Badge>}
+                </Button>
+                <div className="nav-branch">
+                  {section.leaves.map((leaf) => {
+                    const hasIcon = Boolean(leaf.showIcon && leaf.icon);
+
+                    return (
+                      <Button
+                        key={leaf.route}
+                        className={`nav-link nav-leaf ${hasIcon ? "has-icon" : "is-iconless"} ${currentPage === leaf.route ? "active" : ""}`}
+                        type="button"
+                        variant="ghost"
+                        aria-current={currentPage === leaf.route ? "page" : undefined}
+                        onClick={() => navigatePage(leaf.route)}
+                      >
+                        {hasIcon ? <span className="nav-icon">{leaf.icon}</span> : null}
+                        <span className="nav-text">{leaf.label}</span>
+                        {leaf.count === undefined ? null : <Badge variant="neutral" className="nav-count">{leaf.count}</Badge>}
+                        {leaf.badge ? <Badge variant={navBadgeVariant(leaf.badge.tone)} className="nav-badge">{leaf.badge.label}</Badge> : null}
+                      </Button>
+                    );
+                  })}
+                </div>
               </div>
             </div>
-          </div>
-        ))}
+          ))}
+        </ScrollArea>
         <div
           className="nav-resizer"
           role="separator"
@@ -2631,23 +2795,47 @@ export function App() {
       </nav>
 
       <main className="main" id="main">
-        <section className="control-bar" aria-label="Connection">
-        <form className="connection-grid" onSubmit={(event) => event.preventDefault()}>
-          <label>
-            API URL
-            <input value={apiUrl} onChange={(event) => setApiUrl(event.target.value)} autoComplete="url" />
-          </label>
-          <label>
-            API key
-            <input value={apiKey} onChange={(event) => setApiKey(event.target.value)} type="password" autoComplete="off" />
-          </label>
-          <Button type="button" onClick={() => void refresh()}><RefreshCw aria-hidden="true" />Refresh</Button>
-          <Button type="button" onClick={() => void logout()}><LogOut aria-hidden="true" />Sign out</Button>
-        </form>
-        </section>
+        <Card className="control-bar" aria-label="Connection">
+          <CardContent>
+            <form className="connection-grid" onSubmit={(event) => event.preventDefault()}>
+              <div className="connection-field">
+                <Label htmlFor="shell-api-url">API URL</Label>
+                <Input
+                  id="shell-api-url"
+                  value={apiUrl}
+                  onChange={(event) => setApiUrl(event.target.value)}
+                  autoComplete="url"
+                />
+              </div>
+              <div className="connection-field">
+                <Label htmlFor="shell-api-key">API key</Label>
+                <Input
+                  id="shell-api-key"
+                  value={apiKey}
+                  onChange={(event) => setApiKey(event.target.value)}
+                  type="password"
+                  autoComplete="off"
+                />
+              </div>
+              <div className="connection-actions">
+                <Button type="button" onClick={() => void refresh()}><RefreshCw aria-hidden="true" />Refresh</Button>
+                <Button type="button" onClick={() => void logout()}><LogOut aria-hidden="true" />Sign out</Button>
+              </div>
+            </form>
+          </CardContent>
+        </Card>
 
-        {message ? <p className="message">{message}</p> : null}
-        {error ? <p className="error">{error}</p> : null}
+        {message ? (
+          <Alert variant="success" className="shell-alert">
+            <AlertDescription>{message}</AlertDescription>
+          </Alert>
+        ) : null}
+        {error ? (
+          <Alert variant="destructive" className="shell-alert">
+            <AlertTitle>Request failed</AlertTitle>
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        ) : null}
 
       <section className={`page ${["library", "asset-read", "versions"].includes(currentPage) ? "active" : ""}`} data-page="library">
         <div className="page-header">
