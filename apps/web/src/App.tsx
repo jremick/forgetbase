@@ -52,9 +52,22 @@ import type {
   TelemetryRetentionPolicy,
   TelemetryRetentionPurgeResult
 } from "@agentic-cms/schema";
-import { Copy, Download, LogOut, RefreshCw, Search, SlidersHorizontal, X } from "lucide-react";
+import { Copy, Download, LogOut, RefreshCw, Search, SlidersHorizontal } from "lucide-react";
+import { Alert, AlertDescription, AlertTitle } from "./components/ui/alert.js";
 import { Badge } from "./components/ui/badge.js";
 import { Button } from "./components/ui/button.js";
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "./components/ui/card.js";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle
+} from "./components/ui/dialog.js";
+import { Input } from "./components/ui/input.js";
+import { Label } from "./components/ui/label.js";
+import { Separator } from "./components/ui/separator.js";
 import {
   formatCachePolicyTtl,
   formatCounts,
@@ -4984,10 +4997,10 @@ export function App() {
                 </Button>
               </div>
               <div className="public-trust-strip" aria-label="Beta proof points">
-                <span>Apache 2.0 core</span>
-                <span>Docker Compose quickstart</span>
-                <span>API, CLI, MCP, JSON, and OKF</span>
-                <span>Synthetic demo corpus</span>
+                <Badge variant="neutral">Apache 2.0 core</Badge>
+                <Badge variant="neutral">Docker Compose quickstart</Badge>
+                <Badge variant="info">API, CLI, MCP, JSON, and OKF</Badge>
+                <Badge variant="neutral">Synthetic demo corpus</Badge>
               </div>
             </div>
 
@@ -5000,36 +5013,52 @@ export function App() {
                   <strong>#distribute</strong>
                 </div>
                 <div className="proof-product-grid">
-                  <section className="proof-panel proof-panel-primary">
-                    <p className="proof-label">Approved instruction</p>
-                    <h2>PII redaction guardrail</h2>
-                    <dl>
-                      <div><dt>Stable ID</dt><dd>guardrail.pii-redaction</dd></div>
-                      <div><dt>State</dt><dd>active / approved</dd></div>
-                      <div><dt>Sensitivity</dt><dd>public-demo</dd></div>
-                      <div><dt>Allowed surfaces</dt><dd>web, api, cli, mcp, export</dd></div>
-                    </dl>
-                  </section>
-                  <section className="proof-panel">
-                    <p className="proof-label">Agent package</p>
-                    <h3>demo-agent-pack</h3>
-                    <div className="proof-package-state">
-                      <span>JSON ready</span>
-                      <span>OKF 0.1 ready</span>
-                      <span>projection hash</span>
-                    </div>
-                  </section>
-                  <section className="proof-panel proof-terminal">
-                    <p className="proof-label">Consumer fetch</p>
-                    <pre>{`GET /exports/ai-package
+                  <Card className="proof-panel proof-panel-primary">
+                    <CardHeader className="proof-panel-header">
+                      <CardDescription className="proof-label">Approved instruction</CardDescription>
+                      <CardTitle><h2>PII redaction guardrail</h2></CardTitle>
+                    </CardHeader>
+                    <CardContent className="proof-panel-content">
+                      <dl>
+                        <div><dt>Stable ID</dt><dd>guardrail.pii-redaction</dd></div>
+                        <div><dt>State</dt><dd>active / approved</dd></div>
+                        <div><dt>Sensitivity</dt><dd>public-demo</dd></div>
+                        <div><dt>Allowed surfaces</dt><dd>web, api, cli, mcp, export</dd></div>
+                      </dl>
+                    </CardContent>
+                  </Card>
+                  <Card className="proof-panel">
+                    <CardHeader className="proof-panel-header">
+                      <CardDescription className="proof-label">Agent package</CardDescription>
+                      <CardTitle><h3>demo-agent-pack</h3></CardTitle>
+                    </CardHeader>
+                    <CardContent className="proof-panel-content">
+                      <div className="proof-package-state">
+                        <Badge variant="success">JSON ready</Badge>
+                        <Badge variant="success">OKF 0.1 ready</Badge>
+                        <Badge variant="neutral">projection hash</Badge>
+                      </div>
+                    </CardContent>
+                  </Card>
+                  <Card className="proof-panel proof-terminal">
+                    <CardHeader className="proof-panel-header">
+                      <CardDescription className="proof-label">Consumer fetch</CardDescription>
+                    </CardHeader>
+                    <CardContent className="proof-panel-content">
+                      <pre>{`GET /exports/ai-package
 format=okf
 rootIndexPath=index.md`}</pre>
-                  </section>
-                  <section className="proof-panel proof-safety">
-                    <p className="proof-label">Boundary proof</p>
-                    <strong>restricted asset omitted</strong>
-                    <span>Denied items are counted, not previewed.</span>
-                  </section>
+                    </CardContent>
+                  </Card>
+                  <Card className="proof-panel proof-safety">
+                    <CardHeader className="proof-panel-header">
+                      <CardDescription className="proof-label">Boundary proof</CardDescription>
+                    </CardHeader>
+                    <CardContent className="proof-panel-content">
+                      <Badge variant="warning">restricted asset omitted</Badge>
+                      <span>Denied items are counted, not previewed.</span>
+                    </CardContent>
+                  </Card>
                 </div>
               </div>
             </div>
@@ -5045,95 +5074,115 @@ rootIndexPath=index.md`}</pre>
               </p>
             </div>
             <div className="public-step-list" aria-label="Beta path steps">
-              <span>Create or import synthetic governed assets.</span>
-              <span>Review, publish, and inspect trust metadata.</span>
-              <span>Package approved context for API, CLI, MCP, JSON, and OKF.</span>
-              <span>Verify restricted context stays out of broad-reader exports.</span>
+              <Card className="public-step-card"><CardContent>Create or import synthetic governed assets.</CardContent></Card>
+              <Card className="public-step-card"><CardContent>Review, publish, and inspect trust metadata.</CardContent></Card>
+              <Card className="public-step-card"><CardContent>Package approved context for API, CLI, MCP, JSON, and OKF.</CardContent></Card>
+              <Card className="public-step-card"><CardContent>Verify restricted context stays out of broad-reader exports.</CardContent></Card>
             </div>
           </section>
 
           <section className="auth-entry-grid auth-entry-grid--boundary" aria-label="Private beta boundary">
-            <aside className="beta-boundary-panel" aria-labelledby="beta-boundary-title">
-              <p className="eyebrow">Clear beta boundary</p>
-              <h2 id="beta-boundary-title">Built in public boundaries, not inflated claims.</h2>
-              <p>
-                Evaluate ForgetBase as a self-hostable core for governed agent instructions and context packages.
-                It is not claiming hosted-service maturity, enterprise SSO/SCIM completion, full managed-agent
-                orchestration, broad enterprise search parity, or certification-level compliance.
-              </p>
-            </aside>
-            <aside className="beta-access-panel" aria-labelledby="beta-access-title">
-              <p className="eyebrow">Private beta</p>
-              <h2 id="beta-access-title">Access by invitation.</h2>
-              <p>
-                Beta users can log in with their invitation credentials. The self-hostable demo path remains visible
-                before sign-in for reviewing scope and beta boundaries.
-              </p>
-              <Button variant="primary" type="button" onClick={openLoginPanel}>Log in</Button>
-              {authState === "checking" ? <p className="message">Checking session</p> : null}
-            </aside>
-          </section>
-          {showLoginPanel ? (
-            <div className="login-dialog-backdrop" role="presentation">
-              <section
-                className="login-dialog"
-                id="login-dialog"
-                role="dialog"
-                aria-modal="true"
-                aria-labelledby="login-title"
-              >
-                <div className="login-dialog-header">
-                  <span className="mark login-mark" aria-hidden="true">
-                    <img className="mark-image" src="/favicon.svg" alt="" />
-                  </span>
-                  <div>
-                    <h1 id="login-title">Log in to ForgetBase</h1>
-                    <p className="lede">Private beta. Access by invitation.</p>
-                  </div>
-                  <button
-                    className="dialog-close-button"
-                    type="button"
-                    aria-label="Close login"
-                    onClick={() => setShowLoginPanel(false)}
-                  >
-                    <X aria-hidden="true" />
-                  </button>
-                </div>
-                {currentPage === "distribute" || currentPage === "exports" ? (
-                  <p className="queued-route">Demo path queued: <code>#{currentPage}</code></p>
+            <Alert className="beta-boundary-panel" aria-labelledby="beta-boundary-title">
+              <AlertTitle>
+                <span className="eyebrow">Clear beta boundary</span>
+                <h2 id="beta-boundary-title">Built in public boundaries, not inflated claims.</h2>
+              </AlertTitle>
+              <AlertDescription>
+                <p>
+                  Evaluate ForgetBase as a self-hostable core for governed agent instructions and context packages.
+                  It is not claiming hosted-service maturity, enterprise SSO/SCIM completion, full managed-agent
+                  orchestration, broad enterprise search parity, or certification-level compliance.
+                </p>
+              </AlertDescription>
+            </Alert>
+            <Card className="beta-access-panel" aria-labelledby="beta-access-title">
+              <CardHeader>
+                <CardDescription className="eyebrow">Private beta</CardDescription>
+                <CardTitle><h2 id="beta-access-title">Access by invitation.</h2></CardTitle>
+                <CardDescription>
+                  Beta users can log in with their invitation credentials. The self-hostable demo path remains visible
+                  before sign-in for reviewing scope and beta boundaries.
+                </CardDescription>
+              </CardHeader>
+              <CardFooter>
+                <Button variant="primary" type="button" onClick={openLoginPanel}>Log in</Button>
+                {authState === "checking" ? (
+                  <Alert variant="info" className="public-session-alert">
+                    <AlertDescription>Checking session</AlertDescription>
+                  </Alert>
                 ) : null}
-                <form className="classic-login-form public-login-form" onSubmit={(event) => void login(event)}>
-                  <label htmlFor="login-email">
-                    Username / email
-                    <input
-                      id="login-email"
-                      value={loginEmail}
-                      onChange={(event) => setLoginEmail(event.target.value)}
-                      type="text"
-                      autoComplete="username"
-                      required
-                    />
-                  </label>
-                  <label htmlFor="login-password">
-                    Password
-                    <input
-                      id="login-password"
-                      value={loginPassword}
-                      onChange={(event) => setLoginPassword(event.target.value)}
-                      type="password"
-                      autoComplete="current-password"
-                      required
-                    />
-                  </label>
-                  <button type="submit" disabled={authState === "checking" || !loginEmail.trim() || !loginPassword}>
+              </CardFooter>
+            </Card>
+          </section>
+          <Dialog open={showLoginPanel} onOpenChange={setShowLoginPanel}>
+            <DialogContent
+              className="login-dialog"
+              id="login-dialog"
+              aria-describedby="login-description"
+            >
+              <DialogHeader className="login-dialog-header">
+                <span className="mark login-mark" aria-hidden="true">
+                  <img className="mark-image" src="/favicon.svg" alt="" />
+                </span>
+                <div>
+                  <DialogTitle id="login-title">Log in to ForgetBase</DialogTitle>
+                  <DialogDescription id="login-description" className="lede">
+                    Private beta. Access by invitation.
+                  </DialogDescription>
+                </div>
+              </DialogHeader>
+              {(currentPage === "distribute" || currentPage === "exports") ? (
+                <Alert variant="info" className="queued-route">
+                  <AlertDescription>Demo path queued: <code>#{currentPage}</code></AlertDescription>
+                </Alert>
+              ) : null}
+              <Separator />
+              <form className="public-login-form" onSubmit={(event) => void login(event)}>
+                <div className="public-login-field">
+                  <Label htmlFor="login-email">Username / email</Label>
+                  <Input
+                    id="login-email"
+                    value={loginEmail}
+                    onChange={(event) => setLoginEmail(event.target.value)}
+                    type="text"
+                    autoComplete="username"
+                    required
+                  />
+                </div>
+                <div className="public-login-field">
+                  <Label htmlFor="login-password">Password</Label>
+                  <Input
+                    id="login-password"
+                    value={loginPassword}
+                    onChange={(event) => setLoginPassword(event.target.value)}
+                    type="password"
+                    autoComplete="current-password"
+                    required
+                  />
+                </div>
+                <DialogFooter className="public-login-actions">
+                  <Button
+                    type="submit"
+                    variant="primary"
+                    disabled={authState === "checking" || !loginEmail.trim() || !loginPassword}
+                  >
                     Log in
-                  </button>
-                </form>
-                {message ? <p className="message">{message}</p> : null}
-                {error ? <p className="error">{error}</p> : null}
-              </section>
-            </div>
-          ) : null}
+                  </Button>
+                </DialogFooter>
+              </form>
+              {message ? (
+                <Alert variant="success" className="public-login-alert">
+                  <AlertDescription>{message}</AlertDescription>
+                </Alert>
+              ) : null}
+              {error ? (
+                <Alert variant="destructive" className="public-login-alert">
+                  <AlertTitle>Login failed</AlertTitle>
+                  <AlertDescription>{error}</AlertDescription>
+                </Alert>
+              ) : null}
+            </DialogContent>
+          </Dialog>
         </main>
       )}
     </div>
