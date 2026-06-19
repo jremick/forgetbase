@@ -1,6 +1,6 @@
 # Shadcn Migration Thread Dispatch Index
 
-Status: local QA passed; push/deploy in progress
+Status: live private deployment updated
 Date: 2026-06-19
 Manager branch: `codex/shadcn-ui-migration`
 
@@ -60,6 +60,7 @@ Migrate ForgetBase web UI to a shadcn/ui-based interface while preserving only t
 - Implementation note: dense admin native select handlers use `components/ui/native-select.tsx`, a shadcn-token-styled compatibility wrapper, to avoid changing API-facing form semantics in the same migration.
 - 2026-06-19: Final local rendered QA passed against `http://127.0.0.1:5175/`: desktop 1346x900 and mobile 390x844 route checks covered `#library`, `#search`, `#asset-read`, `#review`, `#versions`, `#distribute`, `#exports`, `#operations`, `#access`, `#providers`, `#policies`, `#telemetry`, and `#approvals` with zero page-level horizontal overflow and zero browser warnings/errors. The unauthenticated home page has no inline login form, and the login dialog opens with only blank username/email and password inputs.
 - 2026-06-19: Production CSP hardening removed shell inline nav styles, switched the Dialog wrapper to non-modal by default to avoid Radix body pointer-lock inline styles, and made the unused Progress primitive use data-value buckets instead of inline transforms. Verification passed against a local `dist` server with the Railway CSP header: public login dialog opened with blank username/email and password inputs, no body style attribute, zero page-level horizontal overflow, and zero browser warnings/errors.
+- 2026-06-19: Live private Railway deployment updated from branch commit `84b8faf`: `web` deployment `733aee95-373a-4590-a644-ed56f365825c` and `proxy` deployment `b56a6e3a-91bf-45cf-913a-661f2e4614c2` both `SUCCESS`. `https://askbase.dev/?v=84b8faf` served `/assets/index-BSMXCkM-.js` and `/assets/index-CQgCtpNR.css`; only `proxy` has public domains; `api` and `web` domains are empty; `/api/health` returned `200`; unauthenticated `/api/assets` and `/api/search?q=PII` returned `401`; `/api/auth/bootstrap` returned `404`; allowed-origin preflight returned `204`; unapproved-origin preflight returned `403`; desktop and 390px mobile public login checks had zero page-level horizontal overflow and zero browser warnings/errors.
 
 ## Manager-Owned Decisions
 
