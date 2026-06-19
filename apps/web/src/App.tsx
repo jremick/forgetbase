@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type CSSProperties, type FormEvent, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import type {
   AccountLinkingMode,
   AgentActionExecutionPolicy,
@@ -52,9 +52,74 @@ import type {
   TelemetryRetentionPolicy,
   TelemetryRetentionPurgeResult
 } from "@forgetbase/schema";
-import { Copy, Download, LogOut, RefreshCw, Search, SlidersHorizontal, X } from "lucide-react";
-import { Badge } from "./components/ui/badge.js";
+import { BookOpen, ClipboardCheck, Copy, Download, LogOut, PackageOpen, RefreshCw, Search, Settings2 } from "lucide-react";
+import { Alert, AlertDescription, AlertTitle } from "./components/ui/alert.js";
+import { Badge, type BadgeVariant } from "./components/ui/badge.js";
 import { Button } from "./components/ui/button.js";
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "./components/ui/card.js";
+import {
+  DataTableShell,
+  DefinitionGrid,
+  EmptyState,
+  FormField,
+  MetricCard,
+  RouteHeader,
+  SectionCard,
+  StatusAlert,
+  Toolbar
+} from "./components/app/index.js";
+import { TrustStateSummary } from "./components/domain/index.js";
+import {
+  Command,
+  CommandDialog,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+  CommandShortcut
+} from "./components/ui/command.js";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle
+} from "./components/ui/dialog.js";
+import { Checkbox } from "./components/ui/checkbox.js";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuShortcut,
+  DropdownMenuTrigger
+} from "./components/ui/dropdown-menu.js";
+import { Input } from "./components/ui/input.js";
+import { Label } from "./components/ui/label.js";
+import { NativeSelect } from "./components/ui/native-select.js";
+import { ScrollArea } from "./components/ui/scroll-area.js";
+import { Separator } from "./components/ui/separator.js";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue
+} from "./components/ui/select.js";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow
+} from "./components/ui/table.js";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "./components/ui/tabs.js";
+import { Textarea } from "./components/ui/textarea.js";
 import {
   formatCachePolicyTtl,
   formatCounts,
@@ -149,7 +214,7 @@ type NavLeafConfig = {
 type NavSectionConfig = {
   label: string;
   folderLabel: string;
-  folderIcon: string;
+  folderIcon: ReactNode;
   folderRoute: string;
   activeRoutes: string[];
   count?: number | string;
@@ -158,37 +223,170 @@ type NavSectionConfig = {
 type AssetContentView = "human" | "instruction" | "version" | "raw";
 type ManagedQueryView = "answer" | "evidence" | "diagnostics";
 type GeneratedPackage = AiExportPackage | OkfExportPackage;
+const assetTypeLabels: Record<string, string> = {
+  "agent-instruction": "Agent Instruction",
+  "eval-case": "Eval Case",
+  "guardrail": "Guardrail",
+  "guideline": "Guideline",
+  "human-document": "Human Document",
+  "playbook": "Playbook",
+  "policy": "Policy",
+  "reference": "Reference",
+  "skill": "Skill",
+  "sop": "SOP",
+  "telemetry-policy": "Telemetry Policy",
+  "template": "Template",
+  "tool-instruction": "Tool Instruction"
+};
+
+function formatAssetTypeLabel(type: string): string {
+  if (assetTypeLabels[type]) {
+    return assetTypeLabels[type];
+  }
+
+  return type
+    .split("-")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function normalizeHeadingText(value: string): string {
+  return value.trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+function renderMarkdownDocument(body: string, title: string): ReactNode[] {
+  const output: ReactNode[] = [];
+  const lines = body.split(/\r?\n/);
+  const firstContentIndex = lines.findIndex((line) => line.trim());
+
+  if (firstContentIndex >= 0) {
+    const firstHeading = lines[firstContentIndex]?.match(/^#\s+(.+)$/);
+
+    if (firstHeading && normalizeHeadingText(firstHeading[1] ?? "") === normalizeHeadingText(title)) {
+      lines.splice(firstContentIndex, 1);
+    }
+  }
+
+  let paragraphLines: string[] = [];
+  let list: { ordered: boolean; items: string[] } | null = null;
+
+  function flushParagraph() {
+    if (!paragraphLines.length) {
+      return;
+    }
+
+    output.push(<p key={`p-${output.length}`}>{paragraphLines.join(" ")}</p>);
+    paragraphLines = [];
+  }
+
+  function flushList() {
+    if (!list) {
+      return;
+    }
+
+    const ListTag = list.ordered ? "ol" : "ul";
+    output.push(
+      <ListTag key={`list-${output.length}`}>
+        {list.items.map((item, index) => <li key={`${index}-${item}`}>{item}</li>)}
+      </ListTag>
+    );
+    list = null;
+  }
+
+  lines.forEach((rawLine) => {
+    const line = rawLine.trim();
+
+    if (!line) {
+      flushParagraph();
+      flushList();
+      return;
+    }
+
+    const heading = line.match(/^(#{1,3})\s+(.+)$/);
+    if (heading) {
+      flushParagraph();
+      flushList();
+      const level = heading[1]?.length ?? 1;
+      const text = heading[2] ?? "";
+
+      if (level === 1) {
+        output.push(<h1 key={`h1-${output.length}`}>{text}</h1>);
+      } else if (level === 2) {
+        output.push(<h2 key={`h2-${output.length}`}>{text}</h2>);
+      } else {
+        output.push(<h3 key={`h3-${output.length}`}>{text}</h3>);
+      }
+      return;
+    }
+
+    const orderedItem = line.match(/^\d+\.\s+(.+)$/);
+    const unorderedItem = line.match(/^[-*]\s+(.+)$/);
+    if (orderedItem || unorderedItem) {
+      flushParagraph();
+      const ordered = Boolean(orderedItem);
+      const item = (orderedItem?.[1] ?? unorderedItem?.[1] ?? "").trim();
+
+      if (!list || list.ordered !== ordered) {
+        flushList();
+        list = { ordered, items: [] };
+      }
+
+      list.items.push(item);
+      return;
+    }
+
+    flushList();
+    paragraphLines.push(line);
+  });
+
+  flushParagraph();
+  flushList();
+
+  return output;
+}
+
 const pageRouteValues = [
+  "reader",
+  "account-settings",
   "library",
   "search",
   "asset-read",
   "review",
   "versions",
   "distribute",
-  "operations",
-  "access",
-  "providers",
-  "policies",
-  "telemetry",
-  "approvals",
-  "exports"
-] as const;
-const operationsRouteValues = [
-  "review",
-  "operations",
-  "access",
-  "providers",
-  "policies",
-  "telemetry",
+  "activity",
+  "health",
+  "integrations",
+  "settings",
   "approvals"
 ] as const;
+const operationsRouteValues = [
+  "activity",
+  "health",
+  "integrations",
+  "settings",
+  "approvals"
+] as const;
+const legacyPageRouteAliases: Record<string, string> = {
+  access: "settings",
+  exports: "distribute",
+  operate: "health",
+  operations: "health",
+  policies: "settings",
+  providers: "integrations",
+  telemetry: "activity"
+};
+const activityPanelRoutes = ["activity", "telemetry"];
+const activityAndHealthPanelRoutes = ["activity", "telemetry", "health"];
+const integrationsPanelRoutes = ["integrations", "providers"];
+const settingsPanelRoutes = ["settings", "access", "policies"];
 const pageRoutes = new Set<string>(pageRouteValues);
 const operationsRoutes = new Set<string>(operationsRouteValues);
 const sensitivityFilterValues = ["public-demo", "internal", "restricted", "confidential", "secret"] as const;
 const defaultOperationsPageCopy = {
   eyebrow: "Instruction control plane",
-  title: "Operations Dashboard",
-  lede: "Route into reviews, access, providers, policies, telemetry, approvals, and distribution from a single control surface."
+  title: "Health Workspace",
+  lede: "Check API status, provider readiness, recent telemetry, action governance, and maintenance posture."
 };
 const operationsPageCopy: Record<string, { eyebrow: string; title: string; lede: string }> = {
   review: {
@@ -196,54 +394,63 @@ const operationsPageCopy: Record<string, { eyebrow: string; title: string; lede:
     title: "Review Queue",
     lede: "Triage assets that need approval, lifecycle review, or release attention."
   },
-  operations: defaultOperationsPageCopy,
-  access: {
-    eyebrow: "Identity and access",
-    title: "Access Workspace",
-    lede: "Manage local users, service accounts, groups, keys, sessions, and service-account guardrails."
+  activity: {
+    eyebrow: "Activity and observability",
+    title: "Activity Workspace",
+    lede: "Inspect retrieval, audit, feedback, model generation, retention, cache, and eval signals."
   },
-  providers: {
-    eyebrow: "Provider operations",
-    title: "Provider Workspace",
+  health: {
+    eyebrow: "Operational health",
+    title: "Health Workspace",
+    lede: "Check API status, provider readiness, recent telemetry, action governance, and maintenance posture."
+  },
+  integrations: {
+    eyebrow: "Integrations",
+    title: "Integrations Workspace",
     lede: "Configure model providers, readiness checks, and external authentication providers."
   },
-  policies: {
-    eyebrow: "Policy controls",
-    title: "Policy Workspace",
-    lede: "Tune managed query, ranking, retention, eval, action, secret, and PII controls."
-  },
-  telemetry: {
-    eyebrow: "Observability",
-    title: "Telemetry Workspace",
-    lede: "Inspect retrieval, audit, feedback, model generation, retention, cache, and eval signals."
+  settings: {
+    eyebrow: "Admin settings",
+    title: "Settings Workspace",
+    lede: "Manage access, service accounts, groups, keys, sessions, policies, retention, secrets, and PII controls."
   },
   approvals: {
     eyebrow: "Action governance",
     title: "Approvals Workspace",
     lede: "Review dry-run defaults, approval requirements, action requests, and kill-switch posture."
-  },
-  exports: {
-    eyebrow: "Agent export",
-    title: "Exports Workspace",
-    lede: "Legacy route. The active export workflow now lives in Distribute."
   }
 };
 
-function routePanelClass(currentPage: string, routes: string[], baseClass = "event-list"): string {
+function routePanelClass(currentPage: string, routes: string[], baseClass = "grid gap-4"): string {
   return `${baseClass} ${routes.includes(currentPage) ? "" : "is-hidden"}`;
 }
 
 function normalizePageRoute(route: string): string {
-  return pageRoutes.has(route) ? route : "library";
+  const aliasedRoute = legacyPageRouteAliases[route] ?? route;
+
+  return pageRoutes.has(aliasedRoute) ? aliasedRoute : "library";
 }
 
-function readStoredNavWidth(): number {
-  if (typeof window === "undefined") {
-    return 292;
+function isPublishedReaderAsset(asset: AssetRecord): boolean {
+  return asset.lifecycleState === "active" &&
+    asset.status === "approved" &&
+    asset.allowedSurfaces.includes("web");
+}
+
+function navBadgeVariant(tone?: NavBadgeTone): BadgeVariant {
+  if (tone === "bad") {
+    return "destructive";
   }
 
-  const stored = Number.parseInt(localStorage.getItem(navWidthStorageKey) ?? "", 10);
-  return Number.isFinite(stored) ? Math.min(420, Math.max(240, stored)) : 292;
+  if (tone === "ok") {
+    return "success";
+  }
+
+  if (tone === "warn") {
+    return "warning";
+  }
+
+  return "neutral";
 }
 
 function readCookie(name: string): string {
@@ -468,15 +675,31 @@ export function App() {
   const [currentPage, setCurrentPage] = useState(() =>
     normalizePageRoute(typeof window === "undefined" ? "" : window.location.hash.replace("#", ""))
   );
+  const [currentHashRoute, setCurrentHashRoute] = useState(() =>
+    typeof window === "undefined" ? "" : window.location.hash.replace("#", "")
+  );
   const [density, setDensity] = useState(() =>
     typeof window === "undefined" ? "comfortable" : localStorage.getItem(densityStorageKey) || "comfortable"
   );
-  const [navWidth, setNavWidth] = useState(readStoredNavWidth);
-  const [isResizingNav, setIsResizingNav] = useState(false);
+  const [isCommandOpen, setIsCommandOpen] = useState(false);
+  const [loadingWorkspaceRoute, setLoadingWorkspaceRoute] = useState("");
+  const commandTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const loadedWorkspaceRoutesRef = useRef<Set<string>>(new Set());
 
+  const readerRouteRequested = currentPage === "reader";
+  const accountSettingsRouteRequested = currentPage === "account-settings";
+  const shouldUseReaderAssetScope = currentPrincipal?.role === "reader" || readerRouteRequested;
+  const readerPublishedAssets = useMemo(
+    () => assets.filter(isPublishedReaderAsset),
+    [assets]
+  );
   const selectedAsset = useMemo(
-    () => assets.find((asset) => asset.stableId === selectedStableId) ?? assets[0],
-    [assets, selectedStableId]
+    () => {
+      const scopedAssets = shouldUseReaderAssetScope ? readerPublishedAssets : assets;
+
+      return scopedAssets.find((asset) => asset.stableId === selectedStableId) ?? scopedAssets[0];
+    },
+    [assets, readerPublishedAssets, selectedStableId, shouldUseReaderAssetScope]
   );
   const currentVersion = useMemo(
     () => assetDetail?.versions.find((version) => version.id === assetDetail.asset.currentVersionId) ?? assetDetail?.versions[0],
@@ -502,11 +725,35 @@ export function App() {
     ),
     [assets, libraryQuery, librarySensitivityFilter, libraryViewFilter]
   );
+  const filteredReaderAssets = useMemo(
+    () => readerPublishedAssets.filter((asset) => libraryAssetMatches(asset, libraryQuery)),
+    [libraryQuery, readerPublishedAssets]
+  );
+  const readerAssetGroups = useMemo(() => {
+    const groups = new Map<string, AssetRecord[]>();
+
+    filteredReaderAssets.forEach((asset) => {
+      const group = groups.get(asset.type) ?? [];
+      group.push(asset);
+      groups.set(asset.type, group);
+    });
+
+    return Array.from(groups.entries())
+      .map(([type, groupAssets]) => ({
+        type,
+        assets: groupAssets.sort((left, right) => left.title.localeCompare(right.title))
+      }))
+      .sort((left, right) => left.type.localeCompare(right.type));
+  }, [filteredReaderAssets]);
   const libraryFilterActive = Boolean(
     libraryQuery.trim() || libraryViewFilter !== "all" || librarySensitivityFilter !== "all"
   );
-  const visibleOperationsPage = operationsRoutes.has(currentPage);
-  const visibleDistributePage = currentPage === "distribute" || currentPage === "exports";
+  const readerFilterActive = Boolean(libraryQuery.trim());
+  const visibleOperationsPage = operationsRoutes.has(currentPage) || currentPage === "review";
+  const visibleDistributePage = currentPage === "distribute";
+  const isLegacyExportsAlias = currentHashRoute === "exports";
+  const legacyRouteTarget = legacyPageRouteAliases[currentHashRoute] ?? "";
+  const isLegacyRouteAlias = Boolean(legacyRouteTarget && legacyRouteTarget === currentPage);
   const normalizedApiUrl = apiUrl.replace(/\/$/, "");
   const exportQueryParams = new URLSearchParams({
     package: packageNameInput,
@@ -553,6 +800,19 @@ export function App() {
   const isAuthenticated = authState === "authenticated";
   const displayIdentity = currentPrincipal?.displayName || currentPrincipal?.email || "Guest";
   const displayInitials = isAuthenticated ? initialsFor(displayIdentity) : "GU";
+  const readerSurfaceActive = isAuthenticated && (shouldUseReaderAssetScope || accountSettingsRouteRequested);
+  const readerLibrarySurfaceActive = readerSurfaceActive && !accountSettingsRouteRequested;
+  const canUseAdministration = Boolean(
+    currentPrincipal &&
+    (currentPrincipal.role === "admin" ||
+      currentPrincipal.role === "maintainer" ||
+      currentPrincipal.scopes.includes("admin") ||
+      currentPrincipal.scopes.includes("asset:write") ||
+      currentPrincipal.scopes.includes("permission:write"))
+  );
+  const readerSelectedAsset = readerPublishedAssets.find((asset) => asset.stableId === selectedStableId) ??
+    filteredReaderAssets[0] ??
+    readerPublishedAssets[0];
 
   function openLoginPanel() {
     setShowLoginPanel(true);
@@ -596,7 +856,9 @@ export function App() {
 
   useEffect(() => {
     const syncPageFromHash = () => {
-      setCurrentPage(normalizePageRoute(window.location.hash.replace("#", "")));
+      const routeFromHash = window.location.hash.replace("#", "");
+      setCurrentHashRoute(routeFromHash);
+      setCurrentPage(normalizePageRoute(routeFromHash));
     };
 
     syncPageFromHash();
@@ -605,34 +867,24 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    localStorage.setItem(navWidthStorageKey, String(navWidth));
-  }, [navWidth]);
-
-  useEffect(() => {
     localStorage.setItem(densityStorageKey, density);
   }, [density]);
 
   useEffect(() => {
-    if (!isResizingNav) {
+    if (!isAuthenticated || readerSurfaceActive) {
       return undefined;
     }
 
-    const handlePointerMove = (event: PointerEvent) => {
-      const nav = document.querySelector(".side-nav");
-      const navLeft = nav?.getBoundingClientRect().left ?? 0;
-      setNavWidth(Math.min(420, Math.max(240, Math.round(event.clientX - navLeft))));
+    const openCommandShortcut = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        setIsCommandOpen(true);
+      }
     };
-    const stopResize = () => setIsResizingNav(false);
 
-    window.addEventListener("pointermove", handlePointerMove);
-    window.addEventListener("pointerup", stopResize);
-    window.addEventListener("pointercancel", stopResize);
-    return () => {
-      window.removeEventListener("pointermove", handlePointerMove);
-      window.removeEventListener("pointerup", stopResize);
-      window.removeEventListener("pointercancel", stopResize);
-    };
-  }, [isResizingNav]);
+    window.addEventListener("keydown", openCommandShortcut);
+    return () => window.removeEventListener("keydown", openCommandShortcut);
+  }, [isAuthenticated, readerSurfaceActive]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -670,10 +922,59 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    if (isAuthenticated && selectedAsset) {
+    if (currentPrincipal?.role === "reader" && currentPage !== "reader" && currentPage !== "account-settings") {
+      setCurrentPage("reader");
+      setCurrentHashRoute("reader");
+      window.history.replaceState({}, document.title, `${window.location.pathname}${window.location.search}#reader`);
+    }
+  }, [currentPage, currentPrincipal?.role]);
+
+  useEffect(() => {
+    if (!readerLibrarySurfaceActive) {
+      return;
+    }
+
+    if (!readerPublishedAssets.length) {
+      setSelectedStableId("");
+      setAssetDetail(null);
+      return;
+    }
+
+    const fallbackAsset = readerPublishedAssets[0]!;
+    const nextStableId = readerPublishedAssets.some((asset) => asset.stableId === selectedStableId)
+      ? selectedStableId
+      : fallbackAsset.stableId;
+
+    if (nextStableId !== selectedStableId) {
+      setSelectedStableId(nextStableId);
+      setAssetContentView("human");
+    }
+  }, [readerPublishedAssets, readerLibrarySurfaceActive, selectedStableId]);
+
+  useEffect(() => {
+    if (isAuthenticated && selectedAsset && !accountSettingsRouteRequested) {
       void loadAsset(selectedAsset.stableId);
     }
-  }, [isAuthenticated, selectedAsset?.stableId]);
+  }, [accountSettingsRouteRequested, isAuthenticated, selectedAsset?.stableId]);
+
+  useEffect(() => {
+    if (!isAuthenticated || readerSurfaceActive) {
+      loadedWorkspaceRoutesRef.current.clear();
+      setLoadingWorkspaceRoute("");
+      return;
+    }
+
+    if (!visibleOperationsPage) {
+      return;
+    }
+
+    if (loadedWorkspaceRoutesRef.current.has(currentPage)) {
+      return;
+    }
+
+    loadedWorkspaceRoutesRef.current.add(currentPage);
+    void loadWorkspaceRoute(currentPage);
+  }, [isAuthenticated, readerSurfaceActive, visibleOperationsPage, currentPage]);
 
   useEffect(() => {
     if (!assetDetail) {
@@ -2437,48 +2738,158 @@ export function App() {
     window.location.hash = nextRoute;
   }
 
-  function handleNavResizeKey(event: ReactKeyboardEvent<HTMLDivElement>) {
-    const step = event.shiftKey ? 32 : 16;
+  function openAssetRead(stableId: string) {
+    setSelectedStableId(stableId);
+    navigatePage("asset-read");
+  }
 
-    if (event.key === "ArrowLeft") {
-      event.preventDefault();
-      setNavWidth((current) => Math.max(240, current - step));
-    } else if (event.key === "ArrowRight") {
-      event.preventDefault();
-      setNavWidth((current) => Math.min(420, current + step));
-    } else if (event.key === "Home") {
-      event.preventDefault();
-      setNavWidth(240);
-    } else if (event.key === "End") {
-      event.preventDefault();
-      setNavWidth(420);
+  function routeBreadcrumbs(route: string) {
+    const normalizedRoute = normalizePageRoute(route);
+
+    if (normalizedRoute === "search") {
+      return [
+        { label: "Read", onClick: () => navigatePage("library") },
+        { label: "Search", current: true }
+      ];
+    }
+
+    if (normalizedRoute === "asset-read") {
+      return [
+        { label: "Read", onClick: () => navigatePage("library") },
+        { label: "Reading room", current: true }
+      ];
+    }
+
+    if (normalizedRoute === "versions") {
+      return [
+        { label: "Work", onClick: () => navigatePage("review") },
+        { label: "Version compare", current: true }
+      ];
+    }
+
+    if (normalizedRoute === "review") {
+      return [
+        { label: "Work", onClick: () => navigatePage("review") },
+        { label: "Review queue", current: true }
+      ];
+    }
+
+    if (normalizedRoute === "distribute") {
+      return [
+        { label: "Distribute", current: true }
+      ];
+    }
+
+    if (operationsRoutes.has(normalizedRoute)) {
+      return [
+        { label: "Operate", onClick: () => navigatePage("health") },
+        { label: operationsPageCopy[normalizedRoute]?.title ?? "Operations", current: true }
+      ];
+    }
+
+    return [
+      { label: "Read", current: true }
+    ];
+  }
+
+  function workspaceLoadersForRoute(route: string): Array<() => Promise<void>> {
+    switch (normalizePageRoute(route)) {
+      case "review":
+        return [loadReviewQueue];
+      case "activity":
+        return [
+          loadTelemetrySummary,
+          loadTelemetry,
+          loadAuditEvents,
+          loadFeedback,
+          loadEvalRuns,
+          loadEvalSummary
+        ];
+      case "health":
+        return [
+          () => refreshHealth(),
+          loadTelemetrySummary,
+          loadProviderHealth,
+          loadActionExecutionPolicy,
+          loadAgentActions,
+          loadEvalRuns,
+          loadEvalSummary,
+          loadManagedQueryCachePolicy
+        ];
+      case "integrations":
+        return [loadProviderConfigs, loadProviderHealth, loadAuthProviderConfigs];
+      case "settings":
+        return [
+          loadUsers,
+          loadServiceAccounts,
+          loadServiceAccountPolicy,
+          loadGroups,
+          loadApiKeys,
+          loadLoginSessions,
+          loadApiKeyRotationReport,
+          loadManagedQueryPolicy,
+          loadRetrievalRankingPolicy,
+          loadEvalSchedulePolicy,
+          loadActionExecutionPolicy,
+          loadManagedQueryCachePolicy,
+          loadManagedQueryCache,
+          loadManagedQueryRetentionPolicy,
+          loadSecretReferencePolicy,
+          loadPiiRedactionPolicy
+        ];
+      case "approvals":
+        return [loadActionExecutionPolicy, loadAgentActions];
+      default:
+        return [];
     }
   }
 
-  const appShellStyle = {
-    "--nav": `${navWidth}px`
-  } as CSSProperties;
+  async function loadWorkspaceRoute(route: string) {
+    const normalizedRoute = normalizePageRoute(route);
+    const loaders = workspaceLoadersForRoute(normalizedRoute);
+
+    if (!loaders.length) {
+      return;
+    }
+
+    setLoadingWorkspaceRoute(normalizedRoute);
+
+    try {
+      await Promise.all(loaders.map((loader) => loader()));
+    } finally {
+      setLoadingWorkspaceRoute((current) => current === normalizedRoute ? "" : current);
+    }
+  }
+
+  function handleCommandOpenChange(open: boolean) {
+    setIsCommandOpen(open);
+  }
+
+  function toggleDensity() {
+    setDensity((current) => current === "comfortable" ? "compact" : "comfortable");
+  }
+
   const operationsPage = operationsPageCopy[currentPage] ?? defaultOperationsPageCopy;
-  const isOperationsLanding = currentPage === "operations";
   const activeAssetContentView = currentPage === "versions" ? "version" : assetContentView;
   const navSections: NavSectionConfig[] = [
     {
       label: "Read",
       folderLabel: "Library",
-      folderIcon: "RD",
+      folderIcon: <BookOpen aria-hidden="true" />,
       folderRoute: "library",
-      activeRoutes: ["library", "search", "asset-read"],
+      activeRoutes: ["reader", "library", "search", "asset-read"],
       count: assets.length,
       leaves: [
-        { route: "library", label: "Overview", count: approvedAssets },
+        { route: "reader", label: "Reader interface", count: readerPublishedAssets.length },
+        { route: "library", label: "Asset library", count: approvedAssets },
         { route: "search", label: "Search / query" },
-        { route: "asset-read", label: "Asset read", badge: assetDetail ? { label: "live", tone: "warn" } : undefined }
+        { route: "asset-read", label: "Reading room", badge: assetDetail ? { label: "live", tone: "warn" } : undefined }
       ]
     },
     {
       label: "Work",
       folderLabel: "Governance Work",
-      folderIcon: "WK",
+      folderIcon: <ClipboardCheck aria-hidden="true" />,
       folderRoute: "review",
       activeRoutes: ["review", "versions"],
       count: reviewDueAssets,
@@ -2490,42 +2901,61 @@ export function App() {
     {
       label: "Distribute",
       folderLabel: "Agent Distribution",
-      folderIcon: "DS",
+      folderIcon: <PackageOpen aria-hidden="true" />,
       folderRoute: "distribute",
-      activeRoutes: ["distribute", "exports"],
+      activeRoutes: ["distribute"],
       count: exportPackage?.assetCount ?? exportEligibleAssets,
       leaves: [
         {
           route: "distribute",
           label: "Package builder",
           badge: exportPackage ? { label: "format" in exportPackage ? exportPackage.format : "json", tone: "ok" } : undefined
-        },
-        { route: "exports", label: "Legacy exports", badge: { label: "alias", tone: "warn" } }
+        }
       ]
     },
     {
       label: "Operate",
       folderLabel: "Instruction Control",
-      folderIcon: "OP",
-      folderRoute: "operations",
+      folderIcon: <Settings2 aria-hidden="true" />,
+      folderRoute: "health",
       activeRoutes: [...operationsRouteValues],
-      count: 6,
+      count: 5,
       leaves: [
-        { route: "operations", label: "Operations" },
-        { route: "access", label: "Access" },
-        { route: "providers", label: "Providers" },
-        { route: "policies", label: "Policies" },
-        { route: "telemetry", label: "Telemetry" },
-        { route: "approvals", label: "Approvals" }
+        { route: "activity", label: "Activity" },
+        { route: "health", label: "Health", badge: health === "ok" ? { label: "ok", tone: "ok" } : { label: health, tone: "bad" } },
+        { route: "integrations", label: "Integrations", count: providerConfigs.length + authProviderConfigs.length },
+        { route: "settings", label: "Settings" },
+        { route: "approvals", label: "Approvals", badge: agentActions.length ? { label: agentActions.length, tone: "warn" } : undefined }
       ]
     }
   ];
+  const commandSections = navSections.map((section) => {
+    const routes = new Map<string, { route: string; label: string; badge?: string | number }>();
+
+    routes.set(section.folderRoute, {
+      route: section.folderRoute,
+      label: section.folderLabel,
+      badge: section.count
+    });
+
+    section.leaves.forEach((leaf) => {
+      routes.set(leaf.route, {
+        route: leaf.route,
+        label: leaf.label,
+        badge: leaf.badge?.label ?? leaf.count
+      });
+    });
+
+    return {
+      label: section.label,
+      routes: Array.from(routes.values())
+    };
+  });
 
   return (
     <div
-      className={`app-shell ${isAuthenticated ? "" : "auth-shell"} ${isResizingNav ? "is-resizing-nav" : ""}`}
+      className={`app-shell ${isAuthenticated ? readerSurfaceActive ? "reader-shell" : "" : "auth-shell"}`}
       data-density={density}
-      style={appShellStyle}
     >
       <a className="skip-link" href="#main">Skip to content</a>
       <header className="topbar">
@@ -2533,985 +2963,1359 @@ export function App() {
           <span className="mark" aria-hidden="true">
             <img className="mark-image" src="/favicon.svg" alt="" />
           </span>
-          <span>ForgetBase</span>
+          <span className="brand-name">ForgetBase</span>
+          {isAuthenticated && !readerSurfaceActive ? (
+            <div className="health brand-health">
+              <span className={`health-dot ${health === "ok" ? "ok" : "bad"}`}></span>
+              <span>API {health}</span>
+            </div>
+          ) : null}
         </div>
-        {isAuthenticated ? (
-          <div className="topbar-main">
-            <Button variant="command" type="button" onClick={() => navigatePage("search")}>
+        {isAuthenticated ? readerSurfaceActive ? (
+          <div className="topbar-main reader-topbar-main">
+            <form
+              className="reader-topbar-search"
+              onSubmit={(event) => {
+                setLibraryQuery(searchQuery);
+                void runSearch(event);
+              }}
+            >
               <Search aria-hidden="true" />
-              <span>Search assets, pages, commands</span>
+              <Input
+                value={searchQuery}
+                onChange={(event) => {
+                  setSearchQuery(event.target.value);
+                  setLibraryQuery(event.target.value);
+                }}
+                placeholder="Search published material"
+                aria-label="Search published material"
+              />
+            </form>
+            <div className="topbar-actions">
+              <Button
+                variant="ghost"
+                size="sm"
+                type="button"
+                onClick={() => void refresh()}
+              >
+                <RefreshCw aria-hidden="true" />
+                Refresh
+              </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" size="sm" type="button" className="identity-trigger">
+                    <span className="avatar">{displayInitials}</span>
+                    <span className="identity-name">{displayIdentity}</span>
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="identity-menu">
+                  <DropdownMenuLabel>
+                    <span className="identity-menu-label">Signed in</span>
+                    <span className="identity-menu-value">{displayIdentity}</span>
+                  </DropdownMenuLabel>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuGroup>
+                    <DropdownMenuItem onSelect={() => navigatePage("account-settings")}>
+                      Settings
+                      <DropdownMenuShortcut>#account</DropdownMenuShortcut>
+                    </DropdownMenuItem>
+                    {canUseAdministration ? (
+                      <DropdownMenuItem onSelect={() => navigatePage("library")}>
+                        Administration
+                        <DropdownMenuShortcut>#admin</DropdownMenuShortcut>
+                      </DropdownMenuItem>
+                    ) : null}
+                    <DropdownMenuItem onSelect={() => void refresh()}>
+                      Refresh library
+                      <DropdownMenuShortcut>sync</DropdownMenuShortcut>
+                    </DropdownMenuItem>
+                  </DropdownMenuGroup>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem variant="destructive" onSelect={() => void logout()}>
+                    Sign out
+                    <DropdownMenuShortcut>auth</DropdownMenuShortcut>
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          </div>
+        ) : (
+          <div className="topbar-main">
+            <Button
+              ref={commandTriggerRef}
+              variant="command"
+              className="command"
+              type="button"
+              onClick={() => handleCommandOpenChange(true)}
+            >
+              <Search aria-hidden="true" />
+              <span>Go to page or route</span>
               <span className="kbd">Cmd K</span>
             </Button>
-            <div className="health"><span className={`health-dot ${health === "ok" ? "ok" : "bad"}`}></span><span>API {health}</span></div>
-            <Button
-              variant="ghost"
-              size="sm"
-              type="button"
-              onClick={() => setDensity((current) => current === "comfortable" ? "compact" : "comfortable")}
-            >
-              <SlidersHorizontal aria-hidden="true" />
-              {density === "comfortable" ? "Comfortable" : "Compact"}
-            </Button>
-            <div className="identity"><span className="avatar">{displayInitials}</span><span>{displayIdentity}</span></div>
+            <div className="topbar-actions">
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" size="sm" type="button" className="identity-trigger">
+                    <span className="avatar">{displayInitials}</span>
+                    <span className="identity-name">{displayIdentity}</span>
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="identity-menu">
+                  <DropdownMenuLabel>
+                    <span className="identity-menu-label">Signed in</span>
+                    <span className="identity-menu-value">{displayIdentity}</span>
+                  </DropdownMenuLabel>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuGroup>
+                    <DropdownMenuItem onSelect={() => navigatePage("account-settings")}>
+                      Settings
+                      <DropdownMenuShortcut>#account</DropdownMenuShortcut>
+                    </DropdownMenuItem>
+                    {canUseAdministration ? (
+                      <DropdownMenuItem onSelect={() => navigatePage("library")}>
+                        Administration
+                        <DropdownMenuShortcut>#admin</DropdownMenuShortcut>
+                      </DropdownMenuItem>
+                    ) : null}
+                    <DropdownMenuItem onSelect={toggleDensity}>
+                      {density === "comfortable" ? "Compact density" : "Comfortable density"}
+                      <DropdownMenuShortcut>view</DropdownMenuShortcut>
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onSelect={() => void refresh()}>
+                      Refresh
+                      <DropdownMenuShortcut>sync</DropdownMenuShortcut>
+                    </DropdownMenuItem>
+                  </DropdownMenuGroup>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem variant="destructive" onSelect={() => void logout()}>
+                    Sign out
+                    <DropdownMenuShortcut>auth</DropdownMenuShortcut>
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
           </div>
         ) : null}
       </header>
 
-      {isAuthenticated ? (
-        <>
-      <nav className="side-nav tree-nav" aria-label="Main pages" id="page-nav">
-        {navSections.map((section) => (
-          <div className="nav-group" key={section.label}>
-            <p className="nav-label">{section.label}</p>
-            <div className="nav-tree">
-              <button
-                className={`nav-folder is-open ${section.activeRoutes.includes(currentPage) ? "is-active-ancestor" : ""}`}
-                type="button"
-                aria-expanded="true"
-                onClick={() => navigatePage(section.folderRoute)}
-              >
-                <span className="twisty">v</span>
-                <span className="folder-glyph">{section.folderIcon}</span>
-                <span className="nav-text">{section.folderLabel}</span>
-                {section.count === undefined ? null : <span className="nav-count">{section.count}</span>}
-              </button>
-              <div className="nav-branch">
-                {section.leaves.map((leaf) => {
-                  const hasIcon = Boolean(leaf.showIcon && leaf.icon);
+      {isAuthenticated ? readerSurfaceActive ? (
+        <main className={`reader-main ${accountSettingsRouteRequested ? "reader-main--account" : ""}`} id="main">
+          {accountSettingsRouteRequested ? (
+            <section className="account-settings-page" aria-labelledby="account-settings-title">
+              <header className="account-settings-header">
+                <p className="eyebrow">Account</p>
+                <h1 id="account-settings-title">Settings</h1>
+                <p>Review the signed-in identity, role, groups, and access scopes used for this session.</p>
+              </header>
+              <dl className="account-settings-grid">
+                <div>
+                  <dt>Name</dt>
+                  <dd>{displayIdentity}</dd>
+                </div>
+                <div>
+                  <dt>Email</dt>
+                  <dd>{currentPrincipal?.email ?? "not available"}</dd>
+                </div>
+                <div>
+                  <dt>Role</dt>
+                  <dd>{currentPrincipal?.role ?? "unknown"}</dd>
+                </div>
+                <div>
+                  <dt>Principal</dt>
+                  <dd>{currentPrincipal?.principalType ?? "unknown"}</dd>
+                </div>
+                <div>
+                  <dt>Groups</dt>
+                  <dd>{formatList(currentPrincipal?.groupIds ?? [])}</dd>
+                </div>
+                <div>
+                  <dt>Scopes</dt>
+                  <dd>{formatList(currentPrincipal?.scopes ?? [])}</dd>
+                </div>
+              </dl>
+              <div className="account-settings-actions">
+                {canUseAdministration ? (
+                  <Button type="button" onClick={() => navigatePage("library")}>Administration</Button>
+                ) : null}
+                <Button type="button" variant="ghost" onClick={() => void logout()}>Sign out</Button>
+              </div>
+            </section>
+          ) : (
+            <>
+          {error ? (
+            <Alert variant="destructive" className="reader-alert">
+              <AlertTitle>Request failed</AlertTitle>
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
+          ) : null}
 
-                  return (
-                    <button
-                      key={leaf.route}
-                      className={`nav-link nav-leaf ${hasIcon ? "has-icon" : "is-iconless"} ${currentPage === leaf.route ? "active" : ""}`}
-                      type="button"
-                      aria-current={currentPage === leaf.route ? "page" : undefined}
-                      onClick={() => navigatePage(leaf.route)}
-                    >
-                      {hasIcon ? <span className="nav-icon">{leaf.icon}</span> : null}
-                      <span className="nav-text">{leaf.label}</span>
-                      {leaf.count === undefined ? null : <span className="nav-count">{leaf.count}</span>}
-                      {leaf.badge ? <span className={`nav-badge ${leaf.badge.tone ?? ""}`}>{leaf.badge.label}</span> : null}
-                    </button>
-                  );
-                })}
+          <section className="reader-layout" aria-label="Published library">
+            <aside className="reader-library" aria-label="Published material list">
+              <ScrollArea className="reader-library-scroll">
+                <div className="nav-group reader-nav-group">
+                  <div className="reader-library-heading">
+                    <p className="nav-label">Published Library</p>
+                    {readerFilterActive ? (
+                      <Button type="button" size="sm" variant="ghost" onClick={() => {
+                        setLibraryQuery("");
+                        setSearchQuery("");
+                      }}>
+                        Clear
+                      </Button>
+                    ) : null}
+                  </div>
+                  <div className="nav-tree">
+                    {readerAssetGroups.length ? readerAssetGroups.map((group) => (
+                      <div className="reader-tree-group" key={group.type}>
+                        <Button
+                          className={`nav-folder ${group.assets.some((asset) => asset.stableId === readerSelectedAsset?.stableId) ? "is-active-ancestor" : ""}`}
+                          type="button"
+                          variant="ghost"
+                          onClick={() => {
+                            setSelectedStableId(group.assets[0]?.stableId ?? "");
+                            setAssetContentView("human");
+                          }}
+                        >
+                          <span className="folder-glyph" aria-hidden="true">{group.type.slice(0, 2).toUpperCase()}</span>
+                          <span className="nav-text">{formatAssetTypeLabel(group.type)}</span>
+                          <Badge variant="neutral" className="nav-count">{group.assets.length}</Badge>
+                        </Button>
+                        <div className="nav-branch">
+                          {group.assets.map((asset) => (
+                            <Button
+                              type="button"
+                              key={asset.id}
+                              className={`nav-link nav-leaf is-iconless ${asset.stableId === readerSelectedAsset?.stableId ? "active" : ""}`}
+                              variant="ghost"
+                              aria-current={asset.stableId === readerSelectedAsset?.stableId ? "page" : undefined}
+                              onClick={() => {
+                                setSelectedStableId(asset.stableId);
+                                setAssetContentView("human");
+                              }}
+                            >
+                              <span className="nav-text">{asset.title}</span>
+                            </Button>
+                          ))}
+                        </div>
+                      </div>
+                    )) : (
+                      <div className="reader-empty-state">
+                        <h3>No published material found</h3>
+                        <p>{readerFilterActive ? "Clear search to see all published material." : "No active, approved web material is available to this reader account yet."}</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </ScrollArea>
+            </aside>
+
+            <article className="reader-article">
+              {assetDetail && readerSelectedAsset ? (
+                <>
+                  <header className="reader-article-header">
+                    <div>
+                      <p className="eyebrow">{assetDetail.asset.type}</p>
+                      <h2>{assetDetail.asset.title}</h2>
+                      {assetDetail.asset.summary ? <p>{assetDetail.asset.summary}</p> : null}
+                    </div>
+                    <div className="reader-status">
+                      <Badge variant={stateBadgeVariant(assetDetail.asset.lifecycleState)}>{assetDetail.asset.lifecycleState}</Badge>
+                      <Badge variant={stateBadgeVariant(assetDetail.asset.status)}>{assetDetail.asset.status}</Badge>
+                    </div>
+                  </header>
+
+                  <div className="reader-document">
+                    {currentHumanBody ? (
+                      <div className="reader-document-body">
+                        {renderMarkdownDocument(currentHumanBody, assetDetail.asset.title)}
+                      </div>
+                    ) : (
+                      <div className="reader-empty-state">
+                        <h3>No human-readable page</h3>
+                        <p>This published asset does not have a human document body yet.</p>
+                      </div>
+                    )}
+                  </div>
+
+                  <footer className="reader-source-panel" aria-label="Publication details">
+                    <dl>
+                      <div>
+                        <dt>Stable ID</dt>
+                        <dd>{assetDetail.asset.stableId}</dd>
+                      </div>
+                      <div>
+                        <dt>Version</dt>
+                        <dd>{currentVersion ? `v${currentVersion.versionNumber}` : "none"}</dd>
+                      </div>
+                      <div>
+                        <dt>Updated</dt>
+                        <dd>{new Date(assetDetail.asset.updatedAt).toLocaleString()}</dd>
+                      </div>
+                      <div>
+                        <dt>Access</dt>
+                        <dd>{isPublicReaderEligible(assetDetail.asset) ? "public reader" : "authenticated reader"}</dd>
+                      </div>
+                    </dl>
+                  </footer>
+                </>
+              ) : (
+                <div className="reader-empty-state reader-empty-state--large">
+                  <h2>No published material selected</h2>
+                  <p>Select an item from the published library after it loads.</p>
+                </div>
+              )}
+            </article>
+          </section>
+            </>
+          )}
+        </main>
+      ) : (
+        <>
+          <CommandDialog
+            open={isCommandOpen}
+            onOpenChange={handleCommandOpenChange}
+            title="ForgetBase command palette"
+            description="Navigate between governed instruction workspaces."
+            className="command-dialog"
+            onCloseAutoFocus={(event) => {
+              event.preventDefault();
+              window.setTimeout(() => commandTriggerRef.current?.focus(), 100);
+            }}
+          >
+            <Command>
+              <CommandInput placeholder="Go to page or route..." />
+              <CommandList>
+                <CommandEmpty>No route found.</CommandEmpty>
+                {commandSections.map((section) => (
+                  <CommandGroup key={section.label} heading={section.label}>
+                    {section.routes.map((route) => (
+                      <CommandItem
+                        key={route.route}
+                        value={`${section.label} ${route.label} ${route.route}`}
+                        onSelect={() => {
+                          navigatePage(route.route);
+                          handleCommandOpenChange(false);
+                        }}
+                      >
+                        <span>{route.label}</span>
+                        {route.badge === undefined ? null : <Badge variant="neutral" className="command-route-badge">{route.badge}</Badge>}
+                        <CommandShortcut>#{route.route}</CommandShortcut>
+                      </CommandItem>
+                    ))}
+                  </CommandGroup>
+                ))}
+              </CommandList>
+            </Command>
+          </CommandDialog>
+
+          <nav className="side-nav tree-nav" aria-label="Main pages" id="page-nav">
+        <ScrollArea className="side-nav-scroll">
+          {navSections.map((section) => (
+            <div className="nav-group" key={section.label}>
+              <p className="nav-label">{section.label}</p>
+              <div className="nav-tree">
+                <Button
+                  className={`nav-folder ${section.activeRoutes.includes(currentPage) ? "is-active-ancestor" : ""}`}
+                  type="button"
+                  variant="ghost"
+                  onClick={() => navigatePage(section.folderRoute)}
+                >
+                  <span className="folder-glyph" aria-hidden="true">{section.folderIcon}</span>
+                  <span className="nav-text">{section.folderLabel}</span>
+                  {section.count === undefined ? null : <Badge variant="neutral" className="nav-count">{section.count}</Badge>}
+                </Button>
+                <div className="nav-branch">
+                  {section.leaves.map((leaf) => {
+                    const hasIcon = Boolean(leaf.showIcon && leaf.icon);
+
+                    return (
+                      <Button
+                        key={leaf.route}
+                        className={`nav-link nav-leaf ${hasIcon ? "has-icon" : "is-iconless"} ${currentPage === leaf.route ? "active" : ""}`}
+                        type="button"
+                        variant="ghost"
+                        aria-current={currentPage === leaf.route ? "page" : undefined}
+                        onClick={() => navigatePage(leaf.route)}
+                      >
+                        {hasIcon ? <span className="nav-icon">{leaf.icon}</span> : null}
+                        <span className="nav-text">{leaf.label}</span>
+                        {leaf.count === undefined ? null : <Badge variant="neutral" className="nav-count">{leaf.count}</Badge>}
+                        {leaf.badge ? <Badge variant={navBadgeVariant(leaf.badge.tone)} className="nav-badge">{leaf.badge.label}</Badge> : null}
+                      </Button>
+                    );
+                  })}
+                </div>
               </div>
             </div>
-          </div>
-        ))}
-        <div
-          className="nav-resizer"
-          role="separator"
-          aria-label="Resize page navigation"
-          aria-orientation="vertical"
-          aria-controls="page-nav main"
-          aria-valuemin={240}
-          aria-valuemax={420}
-          aria-valuenow={navWidth}
-          tabIndex={0}
-          onKeyDown={handleNavResizeKey}
-          onPointerDown={(event) => {
-            event.preventDefault();
-            event.currentTarget.setPointerCapture(event.pointerId);
-            setIsResizingNav(true);
-          }}
-        ></div>
+          ))}
+        </ScrollArea>
       </nav>
 
       <main className="main" id="main">
-        <section className="control-bar" aria-label="Connection">
-        <form className="connection-grid" onSubmit={(event) => event.preventDefault()}>
-          <label>
-            API URL
-            <input value={apiUrl} onChange={(event) => setApiUrl(event.target.value)} autoComplete="url" />
-          </label>
-          <label>
-            API key
-            <input value={apiKey} onChange={(event) => setApiKey(event.target.value)} type="password" autoComplete="off" />
-          </label>
-          <Button type="button" onClick={() => void refresh()}><RefreshCw aria-hidden="true" />Refresh</Button>
-          <Button type="button" onClick={() => void logout()}><LogOut aria-hidden="true" />Sign out</Button>
-        </form>
-        </section>
+        {sessionCookieActive ? null : (
+          <details className="developer-connection">
+            <summary>Developer connection</summary>
+            <Card className="control-bar" aria-label="Developer connection">
+              <CardContent>
+                <form className="connection-grid" onSubmit={(event) => event.preventDefault()}>
+                  <div className="connection-field">
+                    <Label htmlFor="shell-api-url">API URL</Label>
+                    <Input
+                      id="shell-api-url"
+                      value={apiUrl}
+                      onChange={(event) => setApiUrl(event.target.value)}
+                      autoComplete="url"
+                    />
+                  </div>
+                  <div className="connection-field">
+                    <Label htmlFor="shell-api-key">API key</Label>
+                    <Input
+                      id="shell-api-key"
+                      value={apiKey}
+                      onChange={(event) => setApiKey(event.target.value)}
+                      type="password"
+                      autoComplete="off"
+                    />
+                  </div>
+                  <div className="connection-actions">
+                    <Button type="button" onClick={() => void refresh()}><RefreshCw aria-hidden="true" />Refresh</Button>
+                    <Button type="button" onClick={() => void logout()}><LogOut aria-hidden="true" />Sign out</Button>
+                  </div>
+                </form>
+              </CardContent>
+            </Card>
+          </details>
+        )}
 
-        {message ? <p className="message">{message}</p> : null}
-        {error ? <p className="error">{error}</p> : null}
+        {message ? (
+          <Alert variant="success" className="shell-alert">
+            <AlertDescription>{message}</AlertDescription>
+          </Alert>
+        ) : null}
+        {error ? (
+          <Alert variant="destructive" className="shell-alert">
+            <AlertTitle>Request failed</AlertTitle>
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        ) : null}
 
-      <section className={`page ${["library", "asset-read", "versions"].includes(currentPage) ? "active" : ""}`} data-page="library">
-        <div className="page-header">
-          <div>
-            <p className="eyebrow">{currentPage === "versions" ? "Governance work" : "Reader library"}</p>
-            <h1>
-              {currentPage === "asset-read"
-                ? assetDetail?.asset.title ?? "Asset read"
+          <section className={`page ${["library", "asset-read", "versions"].includes(currentPage) ? "active" : ""}`} data-page="library">
+            <RouteHeader
+              className="page-route-header"
+              breadcrumbs={routeBreadcrumbs(currentPage)}
+              eyebrow={currentPage === "versions" ? "Governance work" : "Reader library"}
+              title={currentPage === "asset-read"
+                ? assetDetail?.asset.title ?? "Reading room"
                 : currentPage === "versions"
                   ? "Version Compare"
                   : "Governed Asset Library"}
-            </h1>
-            <p className="lede">
-              {currentPage === "versions"
+              lede={currentPage === "versions"
                 ? "Inspect current and selected asset versions before restoring, publishing, or closing review work."
-                : "Browse governed policies, guardrails, skills, templates, SOPs, playbooks, and human documents with trust metadata visible at a glance."}
-            </p>
-          </div>
-          <div className="actions">
-            <Button type="button" onClick={() => void refresh()}><RefreshCw aria-hidden="true" />Refresh</Button>
-            <Button variant="primary" type="button" onClick={() => void generateExport()}>
-              <Download aria-hidden="true" />Export
-            </Button>
-          </div>
-        </div>
-        <div className="grid four">
-          <div className="metric"><div className="metric-value">{assets.length}</div><div className="metric-label">Visible assets</div><div className="metric-note">Server-filtered for the current principal.</div></div>
-          <div className="metric"><div className="metric-value">{approvedAssets}</div><div className="metric-label">Approved current</div><div className="metric-note">Approved assets loaded in the browser.</div></div>
-          <div className="metric"><div className="metric-value">{reviewDueAssets}</div><div className="metric-label">Need governance</div><div className="metric-note">Draft, stale, reviewing, overdue, or non-active.</div></div>
-          <div className="metric"><div className="metric-value">{publicReaderAssets}</div><div className="metric-label">Public reader</div><div className="metric-note">public-demo plus active and approved.</div></div>
-        </div>
-        <section className="workspace">
-        <section className="asset-table" aria-labelledby="assets-title">
-          <div className="section-heading">
-            <div>
-              <h2 id="assets-title">Assets</h2>
-              <p className="section-note">{filteredLibraryAssets.length} of {assets.length} visible in this view</p>
-            </div>
-            <Button size="sm" type="button" onClick={() => void generateExport()}>
-              <Download aria-hidden="true" />Export
-            </Button>
-          </div>
-          <div className="library-filter-bar" aria-label="Asset filters">
-            <label>
-              Find
-              <input
-                value={libraryQuery}
-                onChange={(event) => setLibraryQuery(event.target.value)}
-                placeholder="Title, stable ID, owner, source"
-              />
-            </label>
-            <label>
-              View
-              <select
-                value={libraryViewFilter}
-                onChange={(event) => setLibraryViewFilter(event.target.value as LibraryViewFilter)}
-              >
-                <option value="all">All permitted</option>
-                <option value="public-reader">Public reader</option>
-                <option value="needs-governance">Needs governance</option>
-                <option value="approved-active">Approved active</option>
-              </select>
-            </label>
-            <label>
-              Sensitivity
-              <select
-                value={librarySensitivityFilter}
-                onChange={(event) => setLibrarySensitivityFilter(event.target.value)}
-              >
-                <option value="all">All bands</option>
-                {sensitivityFilterValues.map((sensitivity) => (
-                  <option key={sensitivity} value={sensitivity}>{sensitivity}</option>
-                ))}
-              </select>
-            </label>
-            <Button
-              type="button"
-              size="sm"
-              variant="ghost"
-              disabled={!libraryFilterActive}
-              onClick={() => {
-                setLibraryQuery("");
-                setLibraryViewFilter("all");
-                setLibrarySensitivityFilter("all");
-              }}
-            >
-              Clear
-            </Button>
-          </div>
-          <div className="table-scroll">
-            <table>
-              <thead>
-                <tr>
-                  <th>Asset</th>
-                  <th>Type</th>
-                  <th>State</th>
-                  <th>Sensitivity</th>
-                  <th>Review</th>
-                  <th>Public</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredLibraryAssets.length ? filteredLibraryAssets.map((asset) => (
-                  <tr
-                    key={asset.id}
-                    className={asset.stableId === selectedAsset?.stableId ? "selected" : ""}
-                    onClick={() => setSelectedStableId(asset.stableId)}
-                    onKeyDown={(event) => selectAssetFromRow(event, () => setSelectedStableId(asset.stableId))}
-                    tabIndex={0}
-                    aria-selected={asset.stableId === selectedAsset?.stableId}
-                  >
-                    <td>
-                      <span className="asset-title-cell">
-                        <strong>{asset.title}</strong>
-                        <span>{asset.stableId}</span>
-                        {asset.summary ? <small>{asset.summary}</small> : null}
-                      </span>
-                    </td>
-                    <td>{asset.type}</td>
-                    <td>
-                      <span className="badge-stack">
-                        <Badge variant={stateBadgeVariant(asset.lifecycleState)}>{asset.lifecycleState}</Badge>
-                        <Badge variant={stateBadgeVariant(asset.status)}>{asset.status}</Badge>
-                      </span>
-                    </td>
-                    <td><Badge variant={sensitivityBadgeVariant(asset.sensitivity)}>{asset.sensitivity}</Badge></td>
-                    <td><span className={isAssetGovernanceDue(asset) ? "review-due warn" : "review-due"}>{formatReviewDue(asset.reviewDueAt)}</span></td>
-                    <td>
-                      <Badge variant={isPublicReaderEligible(asset) ? "success" : "neutral"}>
-                        {isPublicReaderEligible(asset) ? "eligible" : "gated"}
-                      </Badge>
-                    </td>
-                  </tr>
-                )) : (
-                  <tr className="empty-row">
-                    <td colSpan={6}>No assets match this view.</td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </section>
-
-        <section className="detail-pane" aria-labelledby="detail-title">
-          <div className="detail-pane-header">
-            <div>
-              <p className="eyebrow">Governed reading room</p>
-              <h2 id="detail-title">{assetDetail?.asset.title ?? "Asset detail"}</h2>
-            </div>
-            {assetDetail ? (
-              <Badge variant={isPublicReaderEligible(assetDetail.asset) ? "success" : "neutral"}>
-                {isPublicReaderEligible(assetDetail.asset) ? "public reader eligible" : "authenticated access"}
-              </Badge>
-            ) : null}
-          </div>
-          {assetDetail ? (
-            <>
-              <div className="trust-banner" aria-label="Selected asset trust metadata">
-                <span className="stable-id-chip">{assetDetail.asset.stableId}</span>
-                <Badge variant={stateBadgeVariant(assetDetail.asset.lifecycleState)}>{assetDetail.asset.lifecycleState}</Badge>
-                <Badge variant={stateBadgeVariant(assetDetail.asset.status)}>{assetDetail.asset.status}</Badge>
-                <Badge variant={sensitivityBadgeVariant(assetDetail.asset.sensitivity)}>{assetDetail.asset.sensitivity}</Badge>
-                <Badge variant={isAssetGovernanceDue(assetDetail.asset) ? "warning" : "success"}>
-                  {formatReviewDue(assetDetail.asset.reviewDueAt)}
-                </Badge>
-                {currentVersion ? <Badge variant="neutral">v{currentVersion.versionNumber}</Badge> : null}
+                : currentPage === "asset-read"
+                  ? "Read the selected governed asset with trust state, permitted surfaces, and current agent contract in view."
+                  : "Browse governed policies, guardrails, skills, templates, SOPs, playbooks, and human documents with trust metadata visible at a glance."}
+              actions={<Button type="button" onClick={() => void refresh()}><RefreshCw aria-hidden="true" />Refresh</Button>}
+            />
+            {currentPage === "library" ? (
+              <div className="grid four">
+                <MetricCard label="Visible assets" value={assets.length} note="Server-filtered for the current principal." />
+                <MetricCard label="Approved current" value={approvedAssets} note="Approved assets loaded in the browser." />
+                <MetricCard label="Need governance" value={reviewDueAssets} note="Draft, stale, reviewing, overdue, or non-active." />
+                <MetricCard label="Public reader" value={publicReaderAssets} note="public-demo plus active and approved." />
               </div>
-              <dl className="metadata-grid">
-                <div><dt>Stable ID</dt><dd>{assetDetail.asset.stableId}</dd></div>
-                <div><dt>Lifecycle</dt><dd><Badge variant={stateBadgeVariant(assetDetail.asset.lifecycleState)}>{assetDetail.asset.lifecycleState}</Badge></dd></div>
-                <div><dt>Status</dt><dd><Badge variant={stateBadgeVariant(assetDetail.asset.status)}>{assetDetail.asset.status}</Badge></dd></div>
-                <div><dt>Sensitivity</dt><dd><Badge variant={sensitivityBadgeVariant(assetDetail.asset.sensitivity)}>{assetDetail.asset.sensitivity}</Badge></dd></div>
-                <div><dt>Audience</dt><dd>{assetDetail.asset.audience.join(", ")}</dd></div>
-                <div><dt>Review</dt><dd>{assetDetail.asset.reviewDueAt}</dd></div>
-                <div><dt>Current version</dt><dd>{currentVersion ? `v${currentVersion.versionNumber}` : "none"}</dd></div>
-                <div><dt>Exports</dt><dd>{assetDetail.asset.allowedExports.join(", ") || "none"}</dd></div>
-              </dl>
-              <div className="workflow-panel">
-                <div className="section-heading">
-                  <h3>Release control</h3>
-                  <div className="button-row">
-                    <Button size="sm" type="button" onClick={() => void completeAssetReview()}>Review</Button>
-                    <Button size="sm" type="button" onClick={() => void publishAsset()}>Publish</Button>
+            ) : null}
+            <section className={`workspace ${currentPage === "library" ? "" : "workspace--focused"}`}>
+              {currentPage === "library" ? (
+                <DataTableShell
+                  title="Assets"
+                  description={`${filteredLibraryAssets.length} of ${assets.length} visible in this view`}
+                  isEmpty={!filteredLibraryAssets.length}
+                  emptyTitle="No assets match this view"
+                  emptyDescription="Adjust filters or refresh the library."
+                >
+                <Toolbar
+                  aria-label="Asset filters"
+                  className="rounded-none border-x-0 border-t-0"
+                  filters={(
+                    <>
+                      <FormField label="Find" htmlFor="library-query" className="min-w-[220px] flex-1">
+                        <Input
+                          id="library-query"
+                          value={libraryQuery}
+                          onChange={(event) => setLibraryQuery(event.target.value)}
+                          placeholder="Title, stable ID, owner, source"
+                        />
+                      </FormField>
+                      <FormField label="View" htmlFor="library-view-filter" className="min-w-[180px]">
+                        <Select value={libraryViewFilter} onValueChange={(value) => setLibraryViewFilter(value as LibraryViewFilter)}>
+                          <SelectTrigger id="library-view-filter">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="all">All permitted</SelectItem>
+                            <SelectItem value="public-reader">Public reader</SelectItem>
+                            <SelectItem value="needs-governance">Needs governance</SelectItem>
+                            <SelectItem value="approved-active">Approved active</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </FormField>
+                      <FormField label="Sensitivity" htmlFor="library-sensitivity-filter" className="min-w-[170px]">
+                        <Select value={librarySensitivityFilter} onValueChange={setLibrarySensitivityFilter}>
+                          <SelectTrigger id="library-sensitivity-filter">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="all">All bands</SelectItem>
+                            {sensitivityFilterValues.map((sensitivity) => (
+                              <SelectItem key={sensitivity} value={sensitivity}>{sensitivity}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </FormField>
+                    </>
+                  )}
+                  actions={(
                     <Button
-                      size="sm"
                       type="button"
-                      onClick={() => void restoreVersion()}
-                      disabled={!versionSnapshot || selectedVersionIsCurrent}
-                    >
-                      Restore
-                    </Button>
-                  </div>
-                </div>
-                <div className="workflow-grid">
-                  <label>
-                    Review date
-                    <input value={publishReviewDueAt} onChange={(event) => setPublishReviewDueAt(event.target.value)} />
-                  </label>
-                  <label>
-                    Version
-                    <select
-                      value={selectedVersionNumber}
-                      onChange={(event) => {
-                        setSelectedVersionNumber(event.target.value);
-                        setVersionSnapshot(null);
+                      size="sm"
+                      variant="ghost"
+                      disabled={!libraryFilterActive}
+                      onClick={() => {
+                        setLibraryQuery("");
+                        setLibraryViewFilter("all");
+                        setLibrarySensitivityFilter("all");
                       }}
                     >
-                      {assetDetail.versions.map((version) => (
-                        <option key={version.id} value={version.versionNumber}>
-                          v{version.versionNumber}{version.id === assetDetail.asset.currentVersionId ? " current" : ""}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className="wide-field">
-                    Change note
-                    <input value={workflowNote} onChange={(event) => setWorkflowNote(event.target.value)} />
-                  </label>
-                  <Button type="button" onClick={() => void loadVersionSnapshot()}>Inspect</Button>
-                </div>
-              </div>
-              <div className="tab-bar" role="tablist" aria-label="Asset detail views">
-                {([
-                  ["human", "Human document"],
-                  ["instruction", "Agent instruction"],
-                  ["version", "Version compare"],
-                  ["raw", "Raw metadata"]
-                ] as const).map(([view, label]) => (
-                  <button
-                    key={view}
-                    type="button"
-                    className={activeAssetContentView === view ? "active" : ""}
-                    role="tab"
-                    aria-selected={activeAssetContentView === view}
-                    onClick={() => setAssetContentView(view)}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
-              {activeAssetContentView === "human" ? (
-                <div className="reader-layout asset-content-view" role="tabpanel">
-                  <article className="content-block reader-card">
-                    <div className="section-heading">
-                      <div>
-                        <h3>Human document</h3>
-                        <p className="section-note">{assetDetail.asset.summary ?? "No summary recorded."}</p>
-                      </div>
-                      <span className="state-pill">{assetDetail.humanDocuments.length} document{assetDetail.humanDocuments.length === 1 ? "" : "s"}</span>
-                    </div>
-                    <div className="reading-body">
-                      {currentHumanBody ? <pre className="reader-text">{currentHumanBody}</pre> : <p className="empty">No human document</p>}
-                    </div>
-                  </article>
-                  <aside className="reader-rail" aria-label="Human document context">
-                    <h3>Context rail</h3>
-                    <dl className="meta-list">
-                      <div><dt>Format</dt><dd>{currentHumanDocument?.format ?? "none"}</dd></div>
-                      <div><dt>Source</dt><dd>{assetDetail.asset.sourceKind ?? "unknown"}{assetDetail.asset.sourceRef ? ` / ${assetDetail.asset.sourceRef}` : ""}</dd></div>
-                      <div><dt>Surfaces</dt><dd>{formatList(assetDetail.asset.allowedSurfaces)}</dd></div>
-                      <div><dt>Exports</dt><dd>{formatList(assetDetail.asset.allowedExports)}</dd></div>
-                      <div><dt>Updated</dt><dd>{new Date(assetDetail.asset.updatedAt).toLocaleString()}</dd></div>
-                    </dl>
-                  </aside>
-                </div>
-              ) : null}
-              {activeAssetContentView === "instruction" ? (
-                <div className="reader-layout asset-content-view" role="tabpanel">
-                  <article className="content-block reader-card instruction-reader">
-                    <div className="section-heading">
-                      <div>
-                        <h3>Agent instruction</h3>
-                        <p className="section-note">{currentInstructionObject?.instructionKind ?? "No instruction kind recorded."}</p>
-                      </div>
-                      <span className="state-pill">{assetDetail.instructionObjects.length} object{assetDetail.instructionObjects.length === 1 ? "" : "s"}</span>
-                    </div>
-                    <div className="instruction-well">
-                      {currentInstructionBody ? <pre>{currentInstructionBody}</pre> : <p className="empty">No instruction object</p>}
-                    </div>
-                    <div className="instruction-support-grid">
-                      <div>
-                        <h4>Constraints</h4>
-                        {currentInstructionObject?.constraints.length ? (
-                          <ul>
-                            {currentInstructionObject.constraints.map((constraint) => <li key={constraint}>{constraint}</li>)}
-                          </ul>
-                        ) : <p className="empty">None recorded.</p>}
-                      </div>
-                      <div>
-                        <h4>Failure modes</h4>
-                        {currentInstructionObject?.failureModes.length ? (
-                          <ul>
-                            {currentInstructionObject.failureModes.map((failureMode) => <li key={failureMode}>{failureMode}</li>)}
-                          </ul>
-                        ) : <p className="empty">None recorded.</p>}
-                      </div>
-                    </div>
-                  </article>
-                  <aside className="reader-rail" aria-label="Agent instruction context">
-                    <h3>Agent contract</h3>
-                    <dl className="meta-list">
-                      <div><dt>Kind</dt><dd>{currentInstructionObject?.instructionKind ?? "none"}</dd></div>
-                      <div><dt>Targets</dt><dd>{formatList(currentInstructionObject?.targetAgents ?? [])}</dd></div>
-                      <div><dt>Escalation</dt><dd>{currentInstructionObject?.escalation ?? "none"}</dd></div>
-                      <div><dt>Allowed actions</dt><dd>{formatList(assetDetail.asset.allowedActions)}</dd></div>
-                      <div><dt>Surfaces</dt><dd>{formatList(assetDetail.asset.allowedSurfaces)}</dd></div>
-                    </dl>
-                  </aside>
-                </div>
-              ) : null}
-              {activeAssetContentView === "version" ? (
-                <div className="compare-grid" role="tabpanel">
-                  <div className="content-block compare-block">
-                    <h3>Current instruction</h3>
-                    <pre>{currentInstructionBody || "No instruction object"}</pre>
-                  </div>
-                  <div className="content-block compare-block">
-                    <h3>{versionSnapshot ? `Selected v${versionSnapshot.version.versionNumber}` : "Selected version"}</h3>
-                    <pre>{versionSnapshot ? selectedInstructionBody || "No instruction object" : "No version inspected"}</pre>
-                  </div>
-                  <div className="content-block compare-block">
-                    <h3>Current human document</h3>
-                    <pre>{currentHumanBody || "No human document"}</pre>
-                  </div>
-                  <div className="content-block compare-block">
-                    <h3>{versionSnapshot ? `Selected v${versionSnapshot.version.versionNumber}` : "Selected version"}</h3>
-                    <pre>{versionSnapshot ? selectedHumanBody || "No human document" : "No version inspected"}</pre>
-                  </div>
-                </div>
-              ) : null}
-              {activeAssetContentView === "raw" ? (
-                <div className="content-block asset-content-view" role="tabpanel">
-                  <h3>Raw metadata</h3>
-                  <pre>{JSON.stringify({
-                    asset: assetDetail.asset,
-                    currentVersion,
-                    selectedVersion: versionSnapshot?.version ?? null,
-                    instructionObjectCount: assetDetail.instructionObjects.length,
-                    humanDocumentCount: assetDetail.humanDocuments.length
-                  }, null, 2)}</pre>
-                </div>
-              ) : null}
-            </>
-          ) : (
-            <p className="empty">No asset selected.</p>
-          )}
-        </section>
-      </section>
-
-      </section>
-
-      <section className={`page ${currentPage === "search" ? "active" : ""}`} data-page="search">
-        <div className="page-header">
-          <div>
-            <p className="eyebrow">Grounded retrieval</p>
-            <h1>Search and Managed Query</h1>
-            <p className="lede">Test deterministic retrieval and provider-routed answers with citations, cache status, cost metadata, and denied-result visibility.</p>
-          </div>
-          <div className="actions">
-            <button type="button" onClick={() => void runManagedQuery()}>Run managed query</button>
-          </div>
-        </div>
-        <section className="lower-grid search-layout">
-        <section className="search-pane" aria-labelledby="search-title">
-          <div className="section-heading">
-            <h2 id="search-title">Search</h2>
-            <form onSubmit={(event) => void runSearch(event)}>
-              <input value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} />
-              <button type="submit">Run</button>
-            </form>
-          </div>
-          <div className="result-list">
-            {searchResponse?.results.map((result) => (
-              <article key={result.chunkId}>
-                <div className="result-title">
-                  <strong>{result.asset.stableId}</strong>
-                  <span>{result.citation.sourceKind}</span>
-                </div>
-                <p>{result.citation.snippet}</p>
-              </article>
-            )) ?? <p className="empty">No search run.</p>}
-          </div>
-        </section>
-
-        <section className="ops-pane" aria-labelledby="managed-query-title">
-          <div className="section-heading">
-            <h2 id="managed-query-title">Managed query</h2>
-            <form className="ops-form" onSubmit={(event) => void runManagedQuery(event)}>
-              <label>
-                Query
-                <input value={managedQueryText} onChange={(event) => setManagedQueryText(event.target.value)} />
-              </label>
-              <label>
-                Mode
-                <select
-                  value={managedQueryMode}
-                  onChange={(event) =>
-                    setManagedQueryMode(event.target.value as "deterministic-retrieval" | "provider-routed")}
-                >
-                  <option value="deterministic-retrieval">deterministic-retrieval</option>
-                  <option value="provider-routed">provider-routed</option>
-                </select>
-              </label>
-              <label>
-                Provider
-                <select
-                  value={managedQueryProvider}
-                  onChange={(event) => setManagedQueryProvider(event.target.value as ModelProvider)}
-                  disabled={managedQueryMode !== "provider-routed"}
-                >
-                  <option value="openai">openai</option>
-                  <option value="anthropic">anthropic</option>
-                  <option value="openrouter">openrouter</option>
-                </select>
-              </label>
-              <label>
-                Model
-                <input
-                  value={managedQueryModel}
-                  onChange={(event) => setManagedQueryModel(event.target.value)}
-                  disabled={managedQueryMode !== "provider-routed"}
+                      Clear
+                    </Button>
+                  )}
                 />
-              </label>
-              <label>
-                <span>Cache</span>
-                <input
-                  type="checkbox"
-                  checked={managedQueryCacheEnabled}
-                  onChange={(event) => setManagedQueryCacheEnabled(event.target.checked)}
-                  disabled={managedQueryMode !== "provider-routed"}
-                />
-              </label>
-              <button type="submit" disabled={!managedQueryText}>Run managed query</button>
-            </form>
-          </div>
-          <div className="tab-bar" role="tablist" aria-label="Managed query result views">
-            {([
-              ["answer", "Answer"],
-              ["evidence", "Evidence"],
-              ["diagnostics", "Diagnostics"]
-            ] as const).map(([view, label]) => (
-              <button
-                key={view}
-                type="button"
-                className={managedQueryView === view ? "active" : ""}
-                role="tab"
-                aria-selected={managedQueryView === view}
-                onClick={() => setManagedQueryView(view)}
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Asset</TableHead>
+                      <TableHead>Type</TableHead>
+                      <TableHead>State</TableHead>
+                      <TableHead>Sensitivity</TableHead>
+                      <TableHead>Review</TableHead>
+                      <TableHead>Public</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {filteredLibraryAssets.map((asset) => (
+                      <TableRow
+                        key={asset.id}
+                        data-state={asset.stableId === selectedAsset?.stableId ? "selected" : undefined}
+                        className="cursor-pointer"
+                        onClick={() => openAssetRead(asset.stableId)}
+                        onKeyDown={(event) => selectAssetFromRow(event, () => openAssetRead(asset.stableId))}
+                        tabIndex={0}
+                        aria-selected={asset.stableId === selectedAsset?.stableId}
+                      >
+                        <TableCell className="min-w-[260px] whitespace-normal">
+                          <span className="grid min-w-[240px] gap-0.5">
+                            <strong className="text-[13px] leading-tight text-foreground">{asset.title}</strong>
+                            <span className="font-mono text-[11px] leading-snug text-muted-foreground">{asset.stableId}</span>
+                            {asset.summary ? (
+                              <small className="overflow-hidden text-[11px] leading-snug text-muted-foreground [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:2]">
+                                {asset.summary}
+                              </small>
+                            ) : null}
+                          </span>
+                        </TableCell>
+                        <TableCell>{asset.type}</TableCell>
+                        <TableCell>
+                          <span className="flex flex-wrap gap-1.5">
+                            <Badge variant={stateBadgeVariant(asset.lifecycleState)}>{asset.lifecycleState}</Badge>
+                            <Badge variant={stateBadgeVariant(asset.status)}>{asset.status}</Badge>
+                          </span>
+                        </TableCell>
+                        <TableCell><Badge variant={sensitivityBadgeVariant(asset.sensitivity)}>{asset.sensitivity}</Badge></TableCell>
+                        <TableCell>
+                          <Badge variant={isAssetGovernanceDue(asset) ? "warning" : "success"}>{formatReviewDue(asset.reviewDueAt)}</Badge>
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant={isPublicReaderEligible(asset) ? "success" : "neutral"}>
+                            {isPublicReaderEligible(asset) ? "eligible" : "gated"}
+                          </Badge>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+                </DataTableShell>
+              ) : null}
+
+              <SectionCard
+                title={assetDetail?.asset.title ?? "Asset detail"}
+                description="Governed reading room"
+                variant="tool"
+                className="min-w-0"
+                actions={assetDetail ? (
+                  <Badge variant={isPublicReaderEligible(assetDetail.asset) ? "success" : "neutral"}>
+                    {isPublicReaderEligible(assetDetail.asset) ? "public reader eligible" : "authenticated access"}
+                  </Badge>
+                ) : null}
+                contentClassName="grid gap-4"
               >
-                {label}
-              </button>
-            ))}
-          </div>
-          <div className="result-list">
-            {managedQueryResponse ? (
-              <>
-                <dl className="metadata-grid compact query-summary">
-                  <div><dt>Generation</dt><dd>{managedQueryResponse.generation.status}</dd></div>
-                  <div><dt>Citations</dt><dd>{managedQueryResponse.citations.length}</dd></div>
-                  <div><dt>Denied</dt><dd>{managedQueryResponse.checks.deniedCount}</dd></div>
-                  <div><dt>Cost</dt><dd>{formatCurrency(managedQueryResponse.generation.usage.estimatedCostUsd)}</dd></div>
-                </dl>
-                {managedQueryView === "answer" ? (
-                  <div className="content-block answer-card" role="tabpanel">
-                    <div className="section-heading">
-                      <h3>Grounded answer</h3>
-                      <span className={`state-pill ${managedQueryResponse.checks.deniedCount ? "warn" : "ok"}`}>
-                        {managedQueryResponse.checks.deniedCount ? `${managedQueryResponse.checks.deniedCount} denied` : "all visible"}
-                      </span>
-                    </div>
-                    <p>{managedQueryResponse.answer}</p>
-                  </div>
-                ) : null}
-                {managedQueryView === "evidence" ? (
-                  <div className="evidence-list" role="tabpanel">
-                    {managedQueryResponse.citations.length ? managedQueryResponse.citations.map((citation) => (
-                      <article key={`${citation.assetId}:${citation.chunkId}`}>
-                        <div className="result-title">
-                          <strong>{citation.stableId}</strong>
-                          <span>{citation.sourceKind}</span>
+                {assetDetail ? (
+                  <>
+                    <TrustStateSummary
+                      state={isAssetGovernanceDue(assetDetail.asset) ? "needs-review" : isPublicReaderEligible(assetDetail.asset) ? "trusted" : "restricted"}
+                      title={assetDetail.asset.stableId}
+                      description={isPublicReaderEligible(assetDetail.asset)
+                        ? "This asset is active, approved, and marked public-demo for reader-safe access."
+                        : isAssetGovernanceDue(assetDetail.asset)
+                          ? "This asset needs governance attention before it is a clean public-reader candidate."
+                          : "This asset remains behind authenticated access and permission-aware retrieval."}
+                      signals={[
+                        { label: assetDetail.asset.lifecycleState, variant: stateBadgeVariant(assetDetail.asset.lifecycleState) },
+                        { label: assetDetail.asset.status, variant: stateBadgeVariant(assetDetail.asset.status) },
+                        { label: assetDetail.asset.sensitivity, variant: sensitivityBadgeVariant(assetDetail.asset.sensitivity) },
+                        { label: formatReviewDue(assetDetail.asset.reviewDueAt), variant: isAssetGovernanceDue(assetDetail.asset) ? "warning" : "success" },
+                        ...(currentVersion ? [{ label: `v${currentVersion.versionNumber}`, variant: "neutral" as const }] : [])
+                      ]}
+                    />
+                    <DefinitionGrid
+                      items={[
+                        { term: "Stable ID", description: assetDetail.asset.stableId },
+                        { term: "Lifecycle", description: <Badge variant={stateBadgeVariant(assetDetail.asset.lifecycleState)}>{assetDetail.asset.lifecycleState}</Badge> },
+                        { term: "Status", description: <Badge variant={stateBadgeVariant(assetDetail.asset.status)}>{assetDetail.asset.status}</Badge> },
+                        { term: "Sensitivity", description: <Badge variant={sensitivityBadgeVariant(assetDetail.asset.sensitivity)}>{assetDetail.asset.sensitivity}</Badge> },
+                        { term: "Audience", description: assetDetail.asset.audience.join(", ") },
+                        { term: "Review", description: assetDetail.asset.reviewDueAt },
+                        { term: "Current version", description: currentVersion ? `v${currentVersion.versionNumber}` : "none" },
+                        { term: "Exports", description: assetDetail.asset.allowedExports.join(", ") || "none" }
+                      ]}
+                    />
+                    <SectionCard
+                      title="Release control"
+                      variant="tool"
+                      actions={(
+                        <>
+                          <Button size="sm" type="button" onClick={() => void completeAssetReview()}>Review</Button>
+                          <Button size="sm" type="button" onClick={() => void publishAsset()}>Publish</Button>
+                          <Button
+                            size="sm"
+                            type="button"
+                            onClick={() => void restoreVersion()}
+                            disabled={!versionSnapshot || selectedVersionIsCurrent}
+                          >
+                            Restore
+                          </Button>
+                        </>
+                      )}
+                    >
+                      <div className="grid gap-4 sm:grid-cols-2">
+                        <FormField label="Review date" htmlFor="publish-review-due-at">
+                          <Input id="publish-review-due-at" value={publishReviewDueAt} onChange={(event) => setPublishReviewDueAt(event.target.value)} />
+                        </FormField>
+                        <FormField label="Version" htmlFor="selected-version-number">
+                          <Select
+                            value={selectedVersionNumber}
+                            onValueChange={(value) => {
+                              setSelectedVersionNumber(value);
+                              setVersionSnapshot(null);
+                            }}
+                          >
+                            <SelectTrigger id="selected-version-number">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {assetDetail.versions.map((version) => (
+                                <SelectItem key={version.id} value={String(version.versionNumber)}>
+                                  v{version.versionNumber}{version.id === assetDetail.asset.currentVersionId ? " current" : ""}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </FormField>
+                        <FormField label="Change note" htmlFor="workflow-note">
+                          <Input id="workflow-note" value={workflowNote} onChange={(event) => setWorkflowNote(event.target.value)} />
+                        </FormField>
+                        <div className="flex items-end sm:col-span-2">
+                          <Button type="button" onClick={() => void loadVersionSnapshot()}>Inspect</Button>
                         </div>
-                        <p>{citation.snippet}</p>
-                      </article>
-                    )) : <p className="empty">No citations returned.</p>}
-                  </div>
-                ) : null}
-                {managedQueryView === "diagnostics" ? (
-                  <div className="content-block diagnostics-card" role="tabpanel">
-                    <dl className="metadata-grid compact">
-                      <div><dt>Mode</dt><dd>{managedQueryResponse.mode}</dd></div>
-                      <div><dt>Provider</dt><dd>{managedQueryResponse.generation.provider ?? "n/a"}</dd></div>
-                      <div><dt>Model</dt><dd>{managedQueryResponse.generation.model ?? "n/a"}</dd></div>
-                      <div><dt>Tokens</dt><dd>{formatMetric(managedQueryResponse.generation.usage.totalTokens)}</dd></div>
-                      <div><dt>Cache</dt><dd>{managedQueryResponse.cache.status}</dd></div>
-                      <div><dt>Telemetry</dt><dd>{managedQueryResponse.telemetryEventId ?? "n/a"}</dd></div>
-                    </dl>
-                    {managedQueryResponse.generation.attempts.length ? (
-                      <p>
-                        <strong>Attempts</strong>{" "}
-                        {managedQueryResponse.generation.attempts
-                          .map((attempt) => `${attempt.provider}:${attempt.status}${attempt.reason ? `(${attempt.reason})` : ""}`)
-                          .join(" -> ")}
-                      </p>
-                    ) : null}
-                    {managedQueryResponse.cache.reason ? (
-                      <p><strong>Cache</strong> {managedQueryResponse.cache.reason}</p>
-                    ) : null}
-                    {managedQueryResponse.warnings.length ? (
-                      <p><strong>Warnings</strong> {managedQueryResponse.warnings.join("\n")}</p>
-                    ) : null}
-                  </div>
-                ) : null}
-              </>
-            ) : <p className="empty">No managed query run.</p>}
-          </div>
-        </section>
+                      </div>
+                    </SectionCard>
+                    <Tabs
+                      value={activeAssetContentView}
+                      onValueChange={(value) => setAssetContentView(value as AssetContentView)}
+                      className="min-w-0"
+                    >
+                      <TabsList className="h-auto w-full flex-wrap justify-start">
+                        <TabsTrigger value="human">Human document</TabsTrigger>
+                        <TabsTrigger value="instruction">Agent instruction</TabsTrigger>
+                        <TabsTrigger value="version">Version compare</TabsTrigger>
+                        <TabsTrigger value="raw">Raw metadata</TabsTrigger>
+                      </TabsList>
+                      <TabsContent value="human">
+                        <div className="grid items-start gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(180px,0.42fr)]">
+                          <SectionCard
+                            title="Human document"
+                            description={assetDetail.asset.summary ?? "No summary recorded."}
+                            variant="tool"
+                            actions={<Badge variant="neutral">{assetDetail.humanDocuments.length} document{assetDetail.humanDocuments.length === 1 ? "" : "s"}</Badge>}
+                          >
+                            <div className="grid gap-3">
+                              {currentHumanBody ? <pre className="whitespace-pre-wrap py-0.5 font-sans text-sm leading-7 text-foreground">{currentHumanBody}</pre> : <EmptyState title="No human document" />}
+                            </div>
+                          </SectionCard>
+                          <SectionCard title="Context rail" variant="tool">
+                            <DefinitionGrid
+                              compact
+                              items={[
+                                { term: "Format", description: currentHumanDocument?.format ?? "none" },
+                                { term: "Source", description: `${assetDetail.asset.sourceKind ?? "unknown"}${assetDetail.asset.sourceRef ? ` / ${assetDetail.asset.sourceRef}` : ""}` },
+                                { term: "Surfaces", description: formatList(assetDetail.asset.allowedSurfaces) },
+                                { term: "Exports", description: formatList(assetDetail.asset.allowedExports) },
+                                { term: "Updated", description: new Date(assetDetail.asset.updatedAt).toLocaleString() }
+                              ]}
+                            />
+                          </SectionCard>
+                        </div>
+                      </TabsContent>
+                      <TabsContent value="instruction">
+                        <div className="grid items-start gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(180px,0.42fr)]">
+                          <SectionCard
+                            title="Agent instruction"
+                            description={currentInstructionObject?.instructionKind ?? "No instruction kind recorded."}
+                            variant="tool"
+                            actions={<Badge variant="neutral">{assetDetail.instructionObjects.length} object{assetDetail.instructionObjects.length === 1 ? "" : "s"}</Badge>}
+                          >
+                            <div className="mb-3 rounded-md border border-border bg-muted/40 p-3">
+                              {currentInstructionBody ? <pre>{currentInstructionBody}</pre> : <EmptyState title="No instruction object" />}
+                            </div>
+                            <div className="grid gap-3 md:grid-cols-2">
+                              <SectionCard title="Constraints" variant="compact">
+                                {currentInstructionObject?.constraints.length ? (
+                                  <ul>
+                                    {currentInstructionObject.constraints.map((constraint) => <li key={constraint}>{constraint}</li>)}
+                                  </ul>
+                                ) : <EmptyState title="None recorded" />}
+                              </SectionCard>
+                              <SectionCard title="Failure modes" variant="compact">
+                                {currentInstructionObject?.failureModes.length ? (
+                                  <ul>
+                                    {currentInstructionObject.failureModes.map((failureMode) => <li key={failureMode}>{failureMode}</li>)}
+                                  </ul>
+                                ) : <EmptyState title="None recorded" />}
+                              </SectionCard>
+                            </div>
+                          </SectionCard>
+                          <SectionCard title="Agent contract" variant="tool">
+                            <DefinitionGrid
+                              compact
+                              items={[
+                                { term: "Kind", description: currentInstructionObject?.instructionKind ?? "none" },
+                                { term: "Targets", description: formatList(currentInstructionObject?.targetAgents ?? []) },
+                                { term: "Escalation", description: currentInstructionObject?.escalation ?? "none" },
+                                { term: "Allowed actions", description: formatList(assetDetail.asset.allowedActions) },
+                                { term: "Surfaces", description: formatList(assetDetail.asset.allowedSurfaces) }
+                              ]}
+                            />
+                          </SectionCard>
+                        </div>
+                      </TabsContent>
+                      <TabsContent value="version">
+                        <div className="grid gap-3 md:grid-cols-2">
+                          <SectionCard title="Current instruction" variant="tool"><pre>{currentInstructionBody || "No instruction object"}</pre></SectionCard>
+                          <SectionCard title={versionSnapshot ? `Selected v${versionSnapshot.version.versionNumber}` : "Selected version"} variant="tool">
+                            <pre>{versionSnapshot ? selectedInstructionBody || "No instruction object" : "No version inspected"}</pre>
+                          </SectionCard>
+                          <SectionCard title="Current human document" variant="tool"><pre>{currentHumanBody || "No human document"}</pre></SectionCard>
+                          <SectionCard title={versionSnapshot ? `Selected v${versionSnapshot.version.versionNumber}` : "Selected version"} variant="tool">
+                            <pre>{versionSnapshot ? selectedHumanBody || "No human document" : "No version inspected"}</pre>
+                          </SectionCard>
+                        </div>
+                      </TabsContent>
+                      <TabsContent value="raw">
+                        <SectionCard title="Raw metadata" variant="tool">
+                          <pre>{JSON.stringify({
+                            asset: assetDetail.asset,
+                            currentVersion,
+                            selectedVersion: versionSnapshot?.version ?? null,
+                            instructionObjectCount: assetDetail.instructionObjects.length,
+                            humanDocumentCount: assetDetail.humanDocuments.length
+                          }, null, 2)}</pre>
+                        </SectionCard>
+                      </TabsContent>
+                    </Tabs>
+                  </>
+                ) : (
+                  <EmptyState title="No asset selected" description="Select an asset from the library table." />
+                )}
+              </SectionCard>
+      </section>
 
-        </section>
+          </section>
+
+          <section className={`page ${currentPage === "search" ? "active" : ""}`} data-page="search">
+            <RouteHeader
+              className="page-route-header"
+              breadcrumbs={routeBreadcrumbs("search")}
+              eyebrow="Grounded retrieval"
+              title="Search and Managed Query"
+              lede="Test deterministic retrieval and provider-routed answers with citations, cache status, cost metadata, and denied-result visibility."
+              actions={<Button type="button" onClick={() => void runManagedQuery()}>Run managed query</Button>}
+            />
+            <section className="grid gap-4 xl:grid-cols-[minmax(320px,0.75fr)_minmax(440px,1.25fr)]">
+              <SectionCard title="Search" variant="tool" className="min-w-0 self-start" contentClassName="grid gap-4">
+                <form className="flex min-w-0 flex-col gap-2 sm:flex-row" onSubmit={(event) => void runSearch(event)}>
+                  <Input
+                    value={searchQuery}
+                    onChange={(event) => setSearchQuery(event.target.value)}
+                    placeholder="Search permitted instruction context"
+                    aria-label="Search query"
+                  />
+                  <Button type="submit">Run</Button>
+                </form>
+                <div className="grid gap-3">
+                  {searchResponse?.results.length ? searchResponse.results.map((result) => (
+                    <SectionCard
+                      key={result.chunkId}
+                      title={result.asset.stableId}
+                      description={result.citation.sourceKind}
+                      variant="compact"
+                    >
+                      <p className="m-0 text-sm leading-6 text-muted-foreground">{result.citation.snippet}</p>
+                    </SectionCard>
+                  )) : (
+                    <EmptyState
+                      title={searchResponse ? "No search results" : "No search run"}
+                      description={searchResponse ? "The current query did not return permitted citations." : "Run search to inspect retrieval snippets."}
+                    />
+                  )}
+                </div>
+              </SectionCard>
+
+              <SectionCard title="Managed query" variant="tool" className="min-w-0" contentClassName="grid gap-4">
+                <form className="grid gap-4" onSubmit={(event) => void runManagedQuery(event)}>
+                  <FormField label="Query" htmlFor="managed-query-text">
+                    <Input id="managed-query-text" value={managedQueryText} onChange={(event) => setManagedQueryText(event.target.value)} />
+                  </FormField>
+                  <div className="grid gap-4 md:grid-cols-3">
+                    <FormField label="Mode" htmlFor="managed-query-mode">
+                      <Select
+                        value={managedQueryMode}
+                        onValueChange={(value) => setManagedQueryMode(value as "deterministic-retrieval" | "provider-routed")}
+                      >
+                        <SelectTrigger id="managed-query-mode">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="deterministic-retrieval">deterministic-retrieval</SelectItem>
+                          <SelectItem value="provider-routed">provider-routed</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </FormField>
+                    <FormField label="Provider" htmlFor="managed-query-provider">
+                      <Select
+                        value={managedQueryProvider}
+                        onValueChange={(value) => setManagedQueryProvider(value as ModelProvider)}
+                        disabled={managedQueryMode !== "provider-routed"}
+                      >
+                        <SelectTrigger id="managed-query-provider">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="openai">openai</SelectItem>
+                          <SelectItem value="anthropic">anthropic</SelectItem>
+                          <SelectItem value="openrouter">openrouter</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </FormField>
+                    <FormField label="Model" htmlFor="managed-query-model">
+                      <Input
+                        id="managed-query-model"
+                        value={managedQueryModel}
+                        onChange={(event) => setManagedQueryModel(event.target.value)}
+                        disabled={managedQueryMode !== "provider-routed"}
+                      />
+                    </FormField>
+                  </div>
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <FormField label="Cache" htmlFor="managed-query-cache-enabled" className="flex-row items-center gap-3">
+                      <Checkbox
+                        id="managed-query-cache-enabled"
+                        checked={managedQueryCacheEnabled}
+                        onCheckedChange={(checked) => setManagedQueryCacheEnabled(checked === true)}
+                        disabled={managedQueryMode !== "provider-routed"}
+                      />
+                    </FormField>
+                    <Button type="submit" disabled={!managedQueryText}>Run managed query</Button>
+                  </div>
+                </form>
+                <Tabs
+                  value={managedQueryView}
+                  onValueChange={(value) => setManagedQueryView(value as ManagedQueryView)}
+                  className="min-w-0"
+                >
+                  <TabsList className="h-auto w-full flex-wrap justify-start">
+                    <TabsTrigger value="answer">Answer</TabsTrigger>
+                    <TabsTrigger value="evidence">Evidence</TabsTrigger>
+                    <TabsTrigger value="diagnostics">Diagnostics</TabsTrigger>
+                  </TabsList>
+                  {managedQueryResponse ? (
+                    <>
+                      <DefinitionGrid
+                        compact
+                        className="mt-2"
+                        items={[
+                          { term: "Generation", description: managedQueryResponse.generation.status },
+                          { term: "Citations", description: managedQueryResponse.citations.length },
+                          { term: "Denied", description: managedQueryResponse.checks.deniedCount },
+                          { term: "Cost", description: formatCurrency(managedQueryResponse.generation.usage.estimatedCostUsd) }
+                        ]}
+                      />
+                      <TabsContent value="answer">
+                        <SectionCard
+                          title="Grounded answer"
+                          variant="tool"
+                          actions={(
+                            <Badge variant={managedQueryResponse.checks.deniedCount ? "warning" : "success"}>
+                              {managedQueryResponse.checks.deniedCount ? `${managedQueryResponse.checks.deniedCount} denied` : "all visible"}
+                            </Badge>
+                          )}
+                        >
+                          <p>{managedQueryResponse.answer}</p>
+                        </SectionCard>
+                      </TabsContent>
+                      <TabsContent value="evidence">
+                        <div className="grid gap-3">
+                          {managedQueryResponse.citations.length ? managedQueryResponse.citations.map((citation) => (
+                            <SectionCard
+                              key={`${citation.assetId}:${citation.chunkId}`}
+                              title={citation.stableId}
+                              description={citation.sourceKind}
+                              variant="compact"
+                            >
+                              <p className="m-0 text-sm leading-6 text-muted-foreground">{citation.snippet}</p>
+                            </SectionCard>
+                          )) : <EmptyState title="No citations returned" />}
+                        </div>
+                      </TabsContent>
+                      <TabsContent value="diagnostics">
+                        <SectionCard title="Diagnostics" variant="tool">
+                          <DefinitionGrid
+                            compact
+                            items={[
+                              { term: "Mode", description: managedQueryResponse.mode },
+                              { term: "Provider", description: managedQueryResponse.generation.provider ?? "n/a" },
+                              { term: "Model", description: managedQueryResponse.generation.model ?? "n/a" },
+                              { term: "Tokens", description: formatMetric(managedQueryResponse.generation.usage.totalTokens) },
+                              { term: "Cache", description: managedQueryResponse.cache.status },
+                              { term: "Telemetry", description: managedQueryResponse.telemetryEventId ?? "n/a" }
+                            ]}
+                          />
+                          {managedQueryResponse.generation.attempts.length ? (
+                            <p>
+                              <strong>Attempts</strong>{" "}
+                              {managedQueryResponse.generation.attempts
+                                .map((attempt) => `${attempt.provider}:${attempt.status}${attempt.reason ? `(${attempt.reason})` : ""}`)
+                                .join(" -> ")}
+                            </p>
+                          ) : null}
+                          {managedQueryResponse.cache.reason ? (
+                            <StatusAlert status="info" title="Cache" description={managedQueryResponse.cache.reason} />
+                          ) : null}
+                          {managedQueryResponse.warnings.length ? (
+                            <StatusAlert status="warning" title="Warnings" description={managedQueryResponse.warnings.join("\n")} />
+                          ) : null}
+                        </SectionCard>
+                      </TabsContent>
+                    </>
+                  ) : (
+                    <EmptyState title="No managed query run" description="Run a managed query to inspect answer, evidence, and diagnostics." />
+                  )}
+                </Tabs>
+              </SectionCard>
+            </section>
       </section>
 
       <section className={`page ${visibleDistributePage ? "active" : ""}`} data-page="distribute">
-        <div className="page-header">
-          <div>
-            <p className="eyebrow">Agent distribution</p>
-            <h1>Distribute</h1>
-            <p className="lede">
-              Build a session-local package from approved, permission-filtered assets for API, CLI, MCP, JSON, and OKF consumers.
-            </p>
-          </div>
-          <div className="actions">
+        <RouteHeader
+          className="page-route-header"
+          breadcrumbs={routeBreadcrumbs("distribute")}
+          eyebrow="Agent distribution"
+          title="Distribute"
+          lede="Build a session-local package from approved, permission-filtered assets for API, CLI, MCP, JSON, and OKF consumers."
+          actions={(
             <Button variant="primary" type="button" onClick={() => void generateExport()} disabled={isGeneratingExport}>
               <Download aria-hidden="true" />{isGeneratingExport ? "Generating" : "Generate"}
             </Button>
-          </div>
-        </div>
+          )}
+        />
 
-        {currentPage === "exports" ? (
-          <p className="message">
-            Legacy <code>#exports</code> opens the Distribute package builder. Use <code>#distribute</code> for the first-class route.
-          </p>
+        {isLegacyExportsAlias ? (
+          <StatusAlert
+            status="info"
+            title="Legacy alias"
+            description={<>Legacy <code>#exports</code> opens the Distribute package builder. Use <code>#distribute</code> for the first-class route.</>}
+            className="mb-4"
+          />
         ) : null}
 
         <div className="grid four">
-          <div className="metric"><div className="metric-value">{packageNameInput}</div><div className="metric-label">Package</div><div className="metric-note">Generated on demand from current API state.</div></div>
-          <div className="metric"><div className="metric-value">{exportFormat.toUpperCase()}</div><div className="metric-label">Format</div><div className="metric-note">{exportFormat === "okf" ? `OKF ${okfVersion} projection` : "JSON connector package"}</div></div>
-          <div className="metric"><div className="metric-value">{exportPackage?.assetCount ?? exportEligibleAssets}</div><div className="metric-label">Assets</div><div className="metric-note">{exportPackage ? "Last generated package count." : "Loaded assets with matching export eligibility."}</div></div>
-          <div className="metric"><div className="metric-value">{exportPackage?.deniedCount ?? 0}</div><div className="metric-label">Denied</div><div className="metric-note">Restricted omissions are counted, not previewed.</div></div>
+          <MetricCard
+            label="Package"
+            value={<span className="block break-words text-base leading-6">{packageNameInput}</span>}
+            note="Generated on demand from current API state."
+          />
+          <MetricCard
+            label="Format"
+            value={exportFormat.toUpperCase()}
+            note={exportFormat === "okf" ? `OKF ${okfVersion} projection` : "JSON connector package"}
+          />
+          <MetricCard
+            label="Assets"
+            value={exportPackage?.assetCount ?? exportEligibleAssets}
+            note={exportPackage ? "Last generated package count." : "Loaded assets with matching export eligibility."}
+          />
+          <MetricCard
+            label="Denied"
+            value={exportPackage?.deniedCount ?? 0}
+            note="Restricted omissions are counted, not previewed."
+          />
         </div>
 
-        <section className="distribute-grid">
-          <div className="workflow-panel package-builder" aria-labelledby="package-builder-title">
-            <div className="section-heading">
-              <div>
-                <h2 id="package-builder-title">Package builder</h2>
-                <p className="section-note">No package history is saved by this UI; generated state stays local to this browser session.</p>
-              </div>
-            </div>
-            <form className="ops-form" onSubmit={(event) => {
+        <section className="mt-4 grid gap-4 xl:grid-cols-[minmax(360px,0.8fr)_minmax(460px,1.2fr)]">
+          <SectionCard
+            title="Package builder"
+            description="No package history is saved by this UI; generated state stays local to this browser session."
+            variant="tool"
+            className="min-w-0 self-start"
+            contentClassName="grid gap-4"
+          >
+            <form className="grid gap-4" onSubmit={(event) => {
               event.preventDefault();
               void generateExport();
             }}>
-              <label>
-                Package name
-                <input value={packageName} onChange={(event) => setPackageName(event.target.value)} placeholder="demo-agent-pack" />
-              </label>
-              <label>
-                Format
-                <select value={exportFormat} onChange={(event) => setExportFormat(event.target.value as AiExportFormat)}>
-                  <option value="json">json</option>
-                  <option value="okf">okf</option>
-                </select>
-              </label>
-              <label>
-                OKF version
-                <select
-                  value={okfVersion}
-                  onChange={(event) => setOkfVersion(event.target.value as OkfVersion)}
-                  disabled={exportFormat !== "okf"}
+              <FormField
+                label="Package name"
+                htmlFor="package-name-input"
+                helpText="Defaults to demo-agent-pack when left blank."
+              >
+                <Input
+                  id="package-name-input"
+                  value={packageName}
+                  onChange={(event) => setPackageName(event.target.value)}
+                  placeholder="demo-agent-pack"
+                />
+              </FormField>
+
+              <div className="grid gap-4 sm:grid-cols-2">
+                <FormField label="Format" htmlFor="export-format-select">
+                  <Select value={exportFormat} onValueChange={(value) => setExportFormat(value as AiExportFormat)}>
+                    <SelectTrigger id="export-format-select">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="json">json</SelectItem>
+                      <SelectItem value="okf">okf</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </FormField>
+
+                <FormField
+                  label="OKF version"
+                  htmlFor="okf-version-select"
+                  helpText={exportFormat === "okf" ? "Pinned versioned projection." : "Used only when OKF is selected."}
                 >
-                  <option value="0.1">0.1</option>
-                </select>
-              </label>
-              <div className="wide-field button-row">
+                  <Select
+                    value={okfVersion}
+                    onValueChange={(value) => setOkfVersion(value as OkfVersion)}
+                    disabled={exportFormat !== "okf"}
+                  >
+                    <SelectTrigger id="okf-version-select">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="0.1">0.1</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </FormField>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
                 <Button variant="primary" type="submit" disabled={isGeneratingExport}>
                   <Download aria-hidden="true" />{isGeneratingExport ? "Generating package" : "Generate package"}
                 </Button>
-                <Button type="button" onClick={() => setExportPackage(null)}>Clear local result</Button>
+                <Button type="button" onClick={() => setExportPackage(null)} disabled={!exportPackage}>Clear local result</Button>
               </div>
             </form>
-          </div>
+          </SectionCard>
 
-          <div className="export-summary package-result" aria-labelledby="package-result-title">
-            <div className="section-heading">
-              <div>
-                <h2 id="package-result-title">Package result</h2>
-                <p className="section-note">Safe metadata only. Restricted content and package bodies are not previewed here.</p>
-              </div>
-            </div>
+          <SectionCard
+            title="Package result"
+            description="Safe metadata only. Restricted content and package bodies are not previewed here."
+            variant="tool"
+            className="min-w-0 self-start"
+            contentClassName="grid gap-4"
+          >
             {exportPackage ? (
               <>
-                <dl className="metadata-grid compact">
-                  <div><dt>Name</dt><dd>{exportPackage.packageName}</dd></div>
-                  <div><dt>Format</dt><dd>{"format" in exportPackage ? exportPackage.format : "json"}</dd></div>
-                  <div><dt>Assets</dt><dd>{exportPackage.assetCount}</dd></div>
-                  <div><dt>Denied</dt><dd>{exportPackage.deniedCount}</dd></div>
-                  <div><dt>Generated</dt><dd>{new Date(exportPackage.generatedAt).toLocaleString()}</dd></div>
-                  <div><dt>Tenant</dt><dd>{exportPackage.tenantId}</dd></div>
-                  {"okfVersion" in exportPackage ? <div><dt>OKF version</dt><dd>{exportPackage.okfVersion}</dd></div> : null}
-                  {"sourcePackageHash" in exportPackage ? <div><dt>Source hash</dt><dd>{exportPackage.sourcePackageHash}</dd></div> : null}
-                  {"projectionHash" in exportPackage ? <div><dt>Projection hash</dt><dd>{exportPackage.projectionHash}</dd></div> : null}
-                  {"rootIndexPath" in exportPackage ? <div><dt>Root index</dt><dd>{exportPackage.rootIndexPath}</dd></div> : null}
-                </dl>
+                <DefinitionGrid
+                  compact
+                  items={[
+                    { term: "Name", description: exportPackage.packageName },
+                    { term: "Format", description: "format" in exportPackage ? exportPackage.format : "json" },
+                    { term: "Assets", description: exportPackage.assetCount },
+                    { term: "Denied", description: exportPackage.deniedCount },
+                    { term: "Generated", description: new Date(exportPackage.generatedAt).toLocaleString() },
+                    { term: "Tenant", description: exportPackage.tenantId },
+                    ...("okfVersion" in exportPackage ? [{ term: "OKF version", description: exportPackage.okfVersion }] : []),
+                    ...("sourcePackageHash" in exportPackage ? [{ term: "Source hash", description: exportPackage.sourcePackageHash }] : []),
+                    ...("projectionHash" in exportPackage ? [{ term: "Projection hash", description: exportPackage.projectionHash }] : []),
+                    ...("rootIndexPath" in exportPackage ? [{ term: "Root index", description: exportPackage.rootIndexPath }] : [])
+                  ]}
+                />
+                {exportPackage.deniedCount > 0 ? (
+                  <StatusAlert
+                    status="warning"
+                    title="Restricted items omitted"
+                    description={`${exportPackage.deniedCount} restricted or unauthorized item${exportPackage.deniedCount === 1 ? "" : "s"} counted by the API and not previewed.`}
+                  />
+                ) : null}
                 {"assets" in exportPackage && exportPackage.assets.length ? (
-                  <div className="safe-asset-list">
-                    <h3>Included stable IDs</h3>
-                    <ul>
+                  <div className="grid gap-2">
+                    <div className="flex min-w-0 items-center justify-between gap-2">
+                      <h3 className="m-0 text-sm font-semibold text-foreground">Included stable IDs</h3>
+                      <Badge variant="neutral">{exportPackage.assets.length}</Badge>
+                    </div>
+                    <ul className="grid gap-2">
                       {exportPackage.assets.map((asset) => (
-                        <li key={asset.stableId}>
+                        <li
+                          key={asset.stableId}
+                          className="grid min-w-0 gap-1 rounded-md border border-border bg-muted/40 p-3 text-sm"
+                        >
                           <strong>{asset.stableId}</strong>
-                          <span>{asset.type} · {asset.status} · {asset.sensitivity}</span>
+                          <span className="min-w-0 break-words text-muted-foreground">{asset.type} · {asset.status} · {asset.sensitivity}</span>
                         </li>
                       ))}
                     </ul>
                   </div>
-                ) : null}
+                ) : (
+                  <StatusAlert
+                    status="info"
+                    title="No package body preview"
+                    description="This browser view shows generated package metadata only. Use the API, CLI, or MCP consumer to retrieve the package payload."
+                  />
+                )}
               </>
             ) : (
-              <p className="empty">No package generated in this browser session.</p>
+              <EmptyState
+                title="No package generated"
+                description="Generate a package to inspect safe metadata for this browser session."
+                actions={(
+                  <Button type="button" onClick={() => void generateExport()} disabled={isGeneratingExport}>
+                    <Download aria-hidden="true" />Generate package
+                  </Button>
+                )}
+              />
             )}
-          </div>
+          </SectionCard>
         </section>
 
-        <section className="workflow-panel command-examples" aria-labelledby="consumer-examples-title">
-          <div className="section-heading">
-            <div>
-              <h2 id="consumer-examples-title">Consumer examples</h2>
-              <p className="section-note">Copy these after setting a scoped API key in your shell or MCP runtime. The commands call the same export endpoint as the builder.</p>
-            </div>
-          </div>
-          {commandExamples.map(([label, command]) => (
-            <div className="command-example" key={label}>
-              <div className="command-example-header">
-                <h3>{label}</h3>
-                <Button size="sm" type="button" onClick={() => void copyText(command, `${label} example`)}>
-                  <Copy aria-hidden="true" />Copy
-                </Button>
+        <SectionCard
+          title="Consumer examples"
+          description="Copy these after setting a scoped API key in your shell or MCP runtime. The commands call the same export endpoint as the builder."
+          variant="tool"
+          className="mt-4 min-w-0"
+          contentClassName="grid gap-3"
+        >
+          <div className="grid gap-3 lg:grid-cols-2">
+            {commandExamples.map(([label, command]) => (
+              <div className="grid min-w-0 gap-2 rounded-md border border-border bg-card p-3" key={label}>
+                <div className="flex min-w-0 items-center justify-between gap-2">
+                  <h3 className="m-0 text-sm font-semibold text-foreground">{label}</h3>
+                  <Button size="sm" type="button" onClick={() => void copyText(command, `${label} example`)}>
+                    <Copy aria-hidden="true" />Copy
+                  </Button>
+                </div>
+                <Textarea
+                  readOnly
+                  value={command}
+                  aria-label={`${label} export example`}
+                  className="min-h-28 resize-y font-mono text-xs leading-5"
+                />
               </div>
-              <pre>{command}</pre>
-            </div>
-          ))}
-        </section>
+            ))}
+          </div>
+        </SectionCard>
       </section>
 
       <section className={`page ${visibleOperationsPage ? "active" : ""}`} data-page="operations">
-        <div className="page-header">
-          <div>
-            <p className="eyebrow">{operationsPage.eyebrow}</p>
-            <h1>{operationsPage.title}</h1>
-            <p className="lede">{operationsPage.lede}</p>
-          </div>
-          <div className="actions">
-            {currentPage === "exports" ? (
-              <button type="button" onClick={() => void generateExport()}>Generate export</button>
-            ) : null}
-            {currentPage === "review" ? (
-              <button type="button" onClick={() => void loadReviewQueue()}>Review queue</button>
-            ) : null}
-            {currentPage === "telemetry" ? (
-              <button type="button" onClick={() => void loadTelemetrySummary()}>Load summary</button>
-            ) : null}
-          </div>
-        </div>
-        <section className="operations-grid">
-        <section className="ops-pane operations-shell" aria-labelledby="ops-title">
-          <div className={routePanelClass(currentPage, ["operations"], "operations-overview")}>
-            <div className="overview-copy">
-              <p className="eyebrow">Operational surface</p>
-              <h2 id={isOperationsLanding ? "ops-title" : undefined}>Instruction control plane routes</h2>
-              <p>Each workspace keeps its own forms and load actions visible without carrying every admin panel into every route.</p>
-            </div>
-            <div className="summary-strip" aria-label="Instruction control route summaries">
-              <button className="summary-link" type="button" onClick={() => navigatePage("review")}>
-                <span>Reviews</span>
-                <strong>{reviewQueue?.assets.length ?? reviewDueAssets}</strong>
-                <em>needs governance</em>
-              </button>
-              <button className="summary-link" type="button" onClick={() => navigatePage("access")}>
-                <span>Access</span>
-                <strong>{users.length + serviceAccounts.length}</strong>
-                <em>principals loaded</em>
-              </button>
-              <button className="summary-link" type="button" onClick={() => navigatePage("providers")}>
-                <span>Providers</span>
-                <strong>{providerConfigs.length + authProviderConfigs.length}</strong>
-                <em>configs loaded</em>
-              </button>
-              <button className="summary-link" type="button" onClick={() => navigatePage("policies")}>
-                <span>Policies</span>
-                <strong>{managedQueryPolicy || retrievalRankingPolicy ? "loaded" : "setup"}</strong>
-                <em>guardrails</em>
-              </button>
-              <button className="summary-link" type="button" onClick={() => navigatePage("telemetry")}>
-                <span>Telemetry</span>
-                <strong>{telemetrySummary?.retrieval.eventCount ?? telemetryEvents.length}</strong>
-                <em>retrieval events</em>
-              </button>
-              <button className="summary-link" type="button" onClick={() => navigatePage("approvals")}>
-                <span>Approvals</span>
-                <strong>{agentActions.length}</strong>
-                <em>action requests</em>
-              </button>
-              <button className="summary-link" type="button" onClick={() => navigatePage("distribute")}>
-                <span>Distribute</span>
-                <strong>{exportPackage?.assetCount ?? exportEligibleAssets}</strong>
-                <em>package builder</em>
-              </button>
-            </div>
-          </div>
-          {isOperationsLanding ? null : (
-          <div className="section-heading">
-            <h2 id="ops-title">Workspace actions</h2>
-            <div className="button-row">
-              {currentPage === "review" ? (
-                <button type="button" onClick={() => void loadReviewQueue()}>Review queue</button>
-              ) : null}
-              {currentPage === "telemetry" ? (
-                <>
-                  <button type="button" onClick={() => void loadTelemetrySummary()}>Summary</button>
-                  <button type="button" onClick={() => void loadTelemetryRetentionPolicy()}>Retention</button>
-                  <button type="button" onClick={() => void loadTelemetry()}>Telemetry</button>
-                  <button type="button" onClick={() => void loadAuditEvents()}>Audit</button>
-                  <button type="button" onClick={() => void loadFeedback()}>Feedback</button>
-                  <button type="button" onClick={() => void runDemoEval()}>Eval</button>
-                  <button type="button" onClick={() => void loadEvalRuns()}>Eval runs</button>
-                  <button type="button" onClick={() => void loadEvalSummary()}>Eval summary</button>
-                </>
-              ) : null}
-              {currentPage === "policies" ? (
-                <>
-                  <button type="button" onClick={() => void loadManagedQueryPolicy()}>Query policy</button>
-                  <button type="button" onClick={() => void loadRetrievalRankingPolicy()}>Ranking policy</button>
-                  <button type="button" onClick={() => void loadManagedQueryCache()}>Cache</button>
-                  <button type="button" onClick={() => void loadManagedQueryCachePolicy()}>Cache policy</button>
-                  <button type="button" onClick={() => void loadManagedQueryRetentionPolicy()}>Query retention</button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      void loadActionExecutionPolicy();
-                      void loadAgentActions();
-                    }}
-                  >
-                    Actions
-                  </button>
-                  <button type="button" onClick={() => void loadSecretReferencePolicy()}>Secrets</button>
-                  <button type="button" onClick={() => void loadPiiRedactionPolicy()}>PII policy</button>
-                </>
-              ) : null}
-              {currentPage === "approvals" ? (
-                <button
-                  type="button"
-                  onClick={() => {
-                    void loadActionExecutionPolicy();
-                    void loadAgentActions();
-                  }}
-                >
-                  Actions
-                </button>
-              ) : null}
-              {currentPage === "access" ? (
-                <>
-                  <button type="button" onClick={() => void loadUsers()}>Users</button>
-                  <button type="button" onClick={() => void loadServiceAccounts()}>Services</button>
-                  <button type="button" onClick={() => void loadServiceAccountPolicy()}>Service policy</button>
-                  <button type="button" onClick={() => void loadGroups()}>Groups</button>
-                  <button type="button" onClick={() => void loadApiKeys()}>Keys</button>
-                  <button type="button" onClick={() => void loadLoginSessions()}>Sessions</button>
-                  <button type="button" onClick={() => void loadApiKeyRotationReport()}>Key rotation</button>
-                </>
-              ) : null}
-              {currentPage === "providers" ? (
-                <>
-                  <button type="button" onClick={() => void loadProviderConfigs()}>Providers</button>
-                  <button type="button" onClick={() => void loadProviderHealth()}>Provider health</button>
-                  <button type="button" onClick={() => void loadAuthProviderConfigs()}>Auth</button>
-                </>
-              ) : null}
-              {currentPage === "exports" ? (
-                <button type="button" onClick={() => void generateExport()}>Export</button>
-              ) : null}
-            </div>
-          </div>
+        <RouteHeader
+          className="page-route-header"
+          breadcrumbs={routeBreadcrumbs(currentPage)}
+          eyebrow={operationsPage.eyebrow}
+          title={operationsPage.title}
+          lede={operationsPage.lede}
+          actions={(
+            <Button
+              type="button"
+              onClick={() => void loadWorkspaceRoute(currentPage)}
+              disabled={loadingWorkspaceRoute === currentPage}
+            >
+              <RefreshCw aria-hidden="true" />
+              {loadingWorkspaceRoute === currentPage ? "Loading" : "Refresh workspace"}
+            </Button>
           )}
-          <div className={routePanelClass(currentPage, ["review"])}>
-            <h3>Review queue</h3>
-            {reviewQueue ? (
-              <>
-                <p>
-                  <strong>{reviewQueue.assets.length}</strong> items as of {reviewQueue.asOf}
-                </p>
-                <div className="table-scroll compact-table">
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>Stable ID</th>
-                        <th>Status</th>
-                        <th>Lifecycle</th>
-                        <th>Review</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {reviewQueue.assets.map((asset) => (
-                        <tr key={asset.id} onClick={() => setSelectedStableId(asset.stableId)}>
-                          <td>{asset.stableId}</td>
-                          <td>{asset.status}</td>
-                          <td>{asset.lifecycleState}</td>
-                          <td>{asset.reviewDueAt}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+        />
+        {isLegacyRouteAlias ? (
+          <StatusAlert
+            title={`Legacy #${currentHashRoute} route`}
+            description={`This route now opens #${currentPage} to match the updated information architecture.`}
+          />
+        ) : null}
+        <section className="operations-grid">
+        <section className="grid gap-4" aria-labelledby="ops-title">
+          <h2 id="ops-title" className="sr-only">{operationsPage.title}</h2>
+          <div className={routePanelClass(currentPage, ["health"], "grid gap-4")}>
+            <SectionCard
+              title="System health"
+              description="A compact operational readout for the API, provider readiness, recent activity, and action governance."
+              variant="tool"
+            >
+              <DefinitionGrid
+                compact
+                items={[
+                  { term: "API", description: <Badge variant={health === "ok" ? "success" : "destructive"}>{health}</Badge> },
+                  { term: "Providers checked", description: providerHealth.length },
+                  { term: "Ready providers", description: providerHealth.filter((provider) => provider.status === "ready").length },
+                  { term: "Retrieval sample", description: telemetrySummary?.retrieval.eventCount ?? telemetryEvents.length },
+                  { term: "Action policy", description: actionExecutionPolicy ? actionExecutionPolicy.enabled ? "enabled" : "disabled" : "not loaded" },
+                  { term: "Pending actions", description: agentActions.length },
+                  {
+                    term: "Eval latest",
+                    description: evalSummary ? evalSummary.latestPassRate === null ? "n/a" : formatPercent(evalSummary.latestPassRate) : "not loaded"
+                  },
+                  {
+                    term: "Cache policy",
+                    description: managedQueryCachePolicy ? managedQueryCachePolicy.cacheEnabled ? "enabled" : "disabled" : "not loaded"
+                  }
+                ]}
+              />
+              {providerHealth.length ? (
+                <div className="grid gap-2">
+                  {providerHealth.map((provider) => (
+                    <p key={provider.provider}>
+                      <strong>{provider.provider}</strong>{" "}
+                      <Badge variant={provider.status === "ready" ? "success" : "warning"}>{provider.status}</Badge>{" "}
+                      {provider.apiKeyConfigured ? "key configured" : "no key"}
+                      {provider.reasons.length ? ` (${provider.reasons.join(", ")})` : ""}
+                    </p>
+                  ))}
                 </div>
-              </>
-            ) : <p className="empty">No review queue loaded.</p>}
+              ) : (
+                <EmptyState title="No provider health loaded" description="Use Refresh workspace to check provider readiness." />
+              )}
+            </SectionCard>
           </div>
-          <div className={routePanelClass(currentPage, ["telemetry"])}>
-            <h3>Telemetry summary</h3>
-            {telemetrySummary ? (
-              <>
-                <dl className="metadata-grid compact analytics-grid">
-                  <div><dt>Retrieval</dt><dd>{telemetrySummary.retrieval.eventCount}</dd></div>
-                  <div><dt>Denied</dt><dd>{telemetrySummary.retrieval.deniedCount}</dd></div>
-                  <div><dt>Latency</dt><dd>{formatMetric(telemetrySummary.retrieval.averageLatencyMs, "ms")}</dd></div>
-                  <div><dt>Redacted</dt><dd>{telemetrySummary.retrieval.redactedQueryCount}</dd></div>
-                  <div><dt>Audit</dt><dd>{telemetrySummary.audit.eventCount}</dd></div>
-                  <div><dt>Feedback</dt><dd>{telemetrySummary.feedback.recordCount}</dd></div>
-                  <div><dt>Model gen</dt><dd>{telemetrySummary.providerGeneration.eventCount}</dd></div>
-                  <div><dt>Cache hits</dt><dd>{telemetrySummary.providerGeneration.cacheHitCount}</dd></div>
-                  <div><dt>Tokens</dt><dd>{telemetrySummary.providerGeneration.totalTokens}</dd></div>
-                  <div><dt>Assets</dt><dd>{telemetrySummary.assets.sampleCount}</dd></div>
-                  <div><dt>Generated</dt><dd>{new Date(telemetrySummary.generatedAt).toLocaleTimeString()}</dd></div>
-                </dl>
-                <p><strong>Surfaces</strong> {formatCounts(telemetrySummary.retrieval.bySurface)}</p>
-                <p><strong>Query kinds</strong> {formatCounts(telemetrySummary.retrieval.byQueryKind)}</p>
-                <p><strong>Audit outcomes</strong> {formatCounts(telemetrySummary.audit.byOutcome)}</p>
-                <p><strong>Feedback</strong> {formatCounts(telemetrySummary.feedback.byOutcome)}</p>
-                <p><strong>Model statuses</strong> {formatCounts(telemetrySummary.providerGeneration.byStatus)}</p>
-                <p><strong>Cache statuses</strong> {formatCounts(telemetrySummary.providerGeneration.byCacheStatus)}</p>
-                <p><strong>Model providers</strong> {formatCounts(telemetrySummary.providerGeneration.byProvider)}</p>
-                <p><strong>Estimated model cost</strong> {formatCurrency(telemetrySummary.providerGeneration.estimatedCostUsd)}</p>
-                <p><strong>Sensitivity</strong> {formatCounts(telemetrySummary.assets.bySensitivity)}</p>
-              </>
-            ) : <p className="empty">No summary loaded.</p>}
+          <div className={routePanelClass(currentPage, ["review"], "grid gap-4")}>
+            <DataTableShell
+              title="Review queue"
+              description={reviewQueue ? `${reviewQueue.assets.length} items as of ${reviewQueue.asOf}` : "Review items load automatically when this route opens."}
+              isEmpty={!reviewQueue || !reviewQueue.assets.length}
+              emptyTitle={reviewQueue ? "No review items" : loadingWorkspaceRoute === "review" ? "Loading review queue" : "Review queue not loaded"}
+              emptyDescription={reviewQueue ? "There are no assets currently waiting in the review queue." : "Use Refresh workspace if the route did not load automatically."}
+            >
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Stable ID</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Lifecycle</TableHead>
+                    <TableHead>Review</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {reviewQueue?.assets.map((asset) => (
+                    <TableRow
+                      key={asset.id}
+                      className="cursor-pointer"
+                      onClick={() => openAssetRead(asset.stableId)}
+                      onKeyDown={(event) => selectAssetFromRow(event, () => openAssetRead(asset.stableId))}
+                      tabIndex={0}
+                    >
+                      <TableCell>{asset.stableId}</TableCell>
+                      <TableCell><Badge variant={stateBadgeVariant(asset.status)}>{asset.status}</Badge></TableCell>
+                      <TableCell><Badge variant={stateBadgeVariant(asset.lifecycleState)}>{asset.lifecycleState}</Badge></TableCell>
+                      <TableCell>{asset.reviewDueAt}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </DataTableShell>
           </div>
-          <div className={routePanelClass(currentPage, ["telemetry"])}>
+          <div className={routePanelClass(currentPage, activityAndHealthPanelRoutes, "grid gap-4")}>
+            <SectionCard title="Telemetry summary" variant="tool">
+              {telemetrySummary ? (
+                <div className="grid gap-4">
+                  <DefinitionGrid
+                    compact
+                    items={[
+                      { term: "Retrieval", description: telemetrySummary.retrieval.eventCount },
+                      { term: "Denied", description: telemetrySummary.retrieval.deniedCount },
+                      { term: "Latency", description: formatMetric(telemetrySummary.retrieval.averageLatencyMs, "ms") },
+                      { term: "Redacted", description: telemetrySummary.retrieval.redactedQueryCount },
+                      { term: "Audit", description: telemetrySummary.audit.eventCount },
+                      { term: "Feedback", description: telemetrySummary.feedback.recordCount },
+                      { term: "Model gen", description: telemetrySummary.providerGeneration.eventCount },
+                      { term: "Cache hits", description: telemetrySummary.providerGeneration.cacheHitCount },
+                      { term: "Tokens", description: telemetrySummary.providerGeneration.totalTokens },
+                      { term: "Assets", description: telemetrySummary.assets.sampleCount },
+                      { term: "Generated", description: new Date(telemetrySummary.generatedAt).toLocaleTimeString() }
+                    ]}
+                  />
+                  <DefinitionGrid
+                    compact
+                    items={[
+                      { term: "Surfaces", description: formatCounts(telemetrySummary.retrieval.bySurface) },
+                      { term: "Query kinds", description: formatCounts(telemetrySummary.retrieval.byQueryKind) },
+                      { term: "Audit outcomes", description: formatCounts(telemetrySummary.audit.byOutcome) },
+                      { term: "Feedback", description: formatCounts(telemetrySummary.feedback.byOutcome) },
+                      { term: "Model statuses", description: formatCounts(telemetrySummary.providerGeneration.byStatus) },
+                      { term: "Cache statuses", description: formatCounts(telemetrySummary.providerGeneration.byCacheStatus) },
+                      { term: "Model providers", description: formatCounts(telemetrySummary.providerGeneration.byProvider) },
+                      { term: "Estimated model cost", description: formatCurrency(telemetrySummary.providerGeneration.estimatedCostUsd) },
+                      { term: "Sensitivity", description: formatCounts(telemetrySummary.assets.bySensitivity) }
+                    ]}
+                  />
+                </div>
+              ) : (
+                <EmptyState
+                  title={activityAndHealthPanelRoutes.includes(loadingWorkspaceRoute) ? "Loading telemetry summary" : "No telemetry summary"}
+                  description="This route loads telemetry automatically. Use Refresh workspace to retry."
+                />
+              )}
+            </SectionCard>
+          </div>
+          <div className={routePanelClass(currentPage, settingsPanelRoutes)}>
             <h3>Telemetry retention</h3>
-            <form className="ops-form" onSubmit={(event) => void saveTelemetryRetentionPolicy(event)}>
+            <form className="grid gap-4 md:grid-cols-[repeat(auto-fit,minmax(160px,1fr))] md:items-end" onSubmit={(event) => void saveTelemetryRetentionPolicy(event)}>
               <label>
                 Retrieval days
-                <input
+                <Input
                   value={retentionRetrievalDays}
                   onChange={(event) => setRetentionRetrievalDays(event.target.value)}
                 />
               </label>
               <label>
                 Audit days
-                <input value={retentionAuditDays} onChange={(event) => setRetentionAuditDays(event.target.value)} />
+                <Input value={retentionAuditDays} onChange={(event) => setRetentionAuditDays(event.target.value)} />
               </label>
               <label>
                 Feedback days
-                <input
+                <Input
                   value={retentionFeedbackDays}
                   onChange={(event) => setRetentionFeedbackDays(event.target.value)}
                 />
               </label>
-              <button type="submit">Save retention</button>
-              <button type="button" onClick={() => void purgeTelemetryRetention(true)}>Dry run purge</button>
-              <button type="button" onClick={() => void purgeTelemetryRetention(false)}>Execute purge</button>
+              <Button type="submit">Save retention</Button>
+              <Button type="button" onClick={() => void purgeTelemetryRetention(true)}>Dry run purge</Button>
+              <Button type="button" onClick={() => void purgeTelemetryRetention(false)}>Execute purge</Button>
             </form>
             {telemetryRetentionPolicy ? (
               <p>
@@ -3532,45 +4336,45 @@ export function App() {
               </p>
             ) : null}
           </div>
-          <div className={routePanelClass(currentPage, ["policies"])}>
+          <div className={routePanelClass(currentPage, settingsPanelRoutes)}>
             <h3>Managed query policy</h3>
-            <form className="ops-form" onSubmit={(event) => void saveManagedQueryPolicy(event)}>
+            <form className="grid gap-4 md:grid-cols-[repeat(auto-fit,minmax(160px,1fr))] md:items-end" onSubmit={(event) => void saveManagedQueryPolicy(event)}>
               <label>
                 Default mode
-                <select
+                <NativeSelect
                   value={queryPolicyDefaultMode}
                   onChange={(event) => setQueryPolicyDefaultMode(event.target.value as ManagedQueryMode)}
                 >
                   <option value="deterministic-retrieval">deterministic-retrieval</option>
                   <option value="provider-routed">provider-routed</option>
-                </select>
+                </NativeSelect>
               </label>
               <label>
                 Allowed modes
-                <input
+                <Input
                   value={queryPolicyAllowedModes}
                   onChange={(event) => setQueryPolicyAllowedModes(event.target.value)}
                 />
               </label>
               <label>
                 Minimum citations
-                <input
+                <Input
                   value={queryPolicyMinimumCitationCount}
                   onChange={(event) => setQueryPolicyMinimumCitationCount(event.target.value)}
                 />
               </label>
               <label>
                 Require grounded
-                <select
+                <NativeSelect
                   value={queryPolicyRequireGrounded}
                   onChange={(event) => setQueryPolicyRequireGrounded(event.target.value as "true" | "false")}
                 >
                   <option value="false">false</option>
                   <option value="true">true</option>
-                </select>
+                </NativeSelect>
               </label>
-              <button type="submit">Save query policy</button>
-              <button type="button" onClick={() => void loadManagedQueryPolicy()}>Load policy</button>
+              <Button type="submit">Save query policy</Button>
+              <Button type="button" onClick={() => void loadManagedQueryPolicy()}>Load policy</Button>
             </form>
             {managedQueryPolicy ? (
               <p>
@@ -3582,39 +4386,39 @@ export function App() {
               </p>
             ) : <p className="empty">No managed query policy loaded.</p>}
           </div>
-          <div className={routePanelClass(currentPage, ["policies"])}>
+          <div className={routePanelClass(currentPage, settingsPanelRoutes)}>
             <h3>Retrieval ranking policy</h3>
-            <form className="ops-form" onSubmit={(event) => void saveRetrievalRankingPolicy(event)}>
+            <form className="grid gap-4 md:grid-cols-[repeat(auto-fit,minmax(160px,1fr))] md:items-end" onSubmit={(event) => void saveRetrievalRankingPolicy(event)}>
               <label>
                 Agent instruction weight
-                <input
+                <Input
                   value={rankingPolicyAgentInstructionWeight}
                   onChange={(event) => setRankingPolicyAgentInstructionWeight(event.target.value)}
                 />
               </label>
               <label>
                 Asset summary weight
-                <input
+                <Input
                   value={rankingPolicyAssetSummaryWeight}
                   onChange={(event) => setRankingPolicyAssetSummaryWeight(event.target.value)}
                 />
               </label>
               <label>
                 Human document weight
-                <input
+                <Input
                   value={rankingPolicyHumanDocumentWeight}
                   onChange={(event) => setRankingPolicyHumanDocumentWeight(event.target.value)}
                 />
               </label>
               <label>
                 Exact phrase boost
-                <input
+                <Input
                   value={rankingPolicyExactPhraseBoost}
                   onChange={(event) => setRankingPolicyExactPhraseBoost(event.target.value)}
                 />
               </label>
-              <button type="submit">Save ranking policy</button>
-              <button type="button" onClick={() => void loadRetrievalRankingPolicy()}>Load policy</button>
+              <Button type="submit">Save ranking policy</Button>
+              <Button type="button" onClick={() => void loadRetrievalRankingPolicy()}>Load policy</Button>
             </form>
             {retrievalRankingPolicy ? (
               <p>
@@ -3626,29 +4430,29 @@ export function App() {
               </p>
             ) : <p className="empty">No retrieval ranking policy loaded.</p>}
           </div>
-          <div className={routePanelClass(currentPage, ["policies", "telemetry"])}>
+          <div className={routePanelClass(currentPage, settingsPanelRoutes)}>
             <h3>Eval schedule</h3>
-            <form className="ops-form" onSubmit={(event) => void saveEvalSchedulePolicy(event)}>
+            <form className="grid gap-4 md:grid-cols-[repeat(auto-fit,minmax(160px,1fr))] md:items-end" onSubmit={(event) => void saveEvalSchedulePolicy(event)}>
               <label>
                 Enabled
-                <select
+                <NativeSelect
                   value={evalScheduleEnabled}
                   onChange={(event) => setEvalScheduleEnabled(event.target.value as "true" | "false")}
                 >
                   <option value="false">false</option>
                   <option value="true">true</option>
-                </select>
+                </NativeSelect>
               </label>
               <label>
                 Interval minutes
-                <input
+                <Input
                   value={evalScheduleIntervalMinutes}
                   onChange={(event) => setEvalScheduleIntervalMinutes(event.target.value)}
                 />
               </label>
-              <button type="submit">Save demo schedule</button>
-              <button type="button" onClick={() => void loadEvalSchedulePolicy()}>Load policy</button>
-              <button type="button" onClick={() => void disableEvalSchedulePolicy()}>Disable</button>
+              <Button type="submit">Save demo schedule</Button>
+              <Button type="button" onClick={() => void loadEvalSchedulePolicy()}>Load policy</Button>
+              <Button type="button" onClick={() => void disableEvalSchedulePolicy()}>Disable</Button>
             </form>
             {evalSchedulePolicy ? (
               <p>
@@ -3660,72 +4464,72 @@ export function App() {
               </p>
             ) : <p className="empty">No eval schedule policy loaded.</p>}
           </div>
-          <div className={routePanelClass(currentPage, ["approvals", "policies"])}>
+          <div className={routePanelClass(currentPage, ["approvals", ...settingsPanelRoutes])}>
             <h3>Action execution</h3>
-            <form className="ops-form" onSubmit={(event) => void saveActionExecutionPolicy(event)}>
+            <form className="grid gap-4 md:grid-cols-[repeat(auto-fit,minmax(160px,1fr))] md:items-end" onSubmit={(event) => void saveActionExecutionPolicy(event)}>
               <label>
                 Enabled
-                <select
+                <NativeSelect
                   value={actionPolicyEnabled}
                   onChange={(event) => setActionPolicyEnabled(event.target.value as "true" | "false")}
                 >
                   <option value="false">false</option>
                   <option value="true">true</option>
-                </select>
+                </NativeSelect>
               </label>
               <label>
                 Allowed types
-                <input
+                <Input
                   value={actionPolicyAllowedTypes}
                   onChange={(event) => setActionPolicyAllowedTypes(event.target.value)}
                 />
               </label>
               <label>
                 Require approval
-                <select
+                <NativeSelect
                   value={actionPolicyRequireApproval}
                   onChange={(event) => setActionPolicyRequireApproval(event.target.value as "true" | "false")}
                 >
                   <option value="true">true</option>
                   <option value="false">false</option>
-                </select>
+                </NativeSelect>
               </label>
               <label>
                 Dry-run default
-                <select
+                <NativeSelect
                   value={actionPolicyDryRunDefault}
                   onChange={(event) => setActionPolicyDryRunDefault(event.target.value as "true" | "false")}
                 >
                   <option value="true">true</option>
                   <option value="false">false</option>
-                </select>
+                </NativeSelect>
               </label>
               <label>
                 Kill switch
-                <select
+                <NativeSelect
                   value={actionPolicyKillSwitch}
                   onChange={(event) => setActionPolicyKillSwitch(event.target.value as "true" | "false")}
                 >
                   <option value="false">false</option>
                   <option value="true">true</option>
-                </select>
+                </NativeSelect>
               </label>
               <label>
                 Requests / hour
-                <input
+                <Input
                   value={actionPolicyMaxRequestsPerHour}
                   onChange={(event) => setActionPolicyMaxRequestsPerHour(event.target.value)}
                 />
               </label>
               <label>
                 Approval expiry minutes
-                <input
+                <Input
                   value={actionPolicyApprovalExpiresInMinutes}
                   onChange={(event) => setActionPolicyApprovalExpiresInMinutes(event.target.value)}
                 />
               </label>
-              <button type="submit">Save action policy</button>
-              <button type="button" onClick={() => void loadActionExecutionPolicy()}>Load policy</button>
+              <Button type="submit">Save action policy</Button>
+              <Button type="button" onClick={() => void loadActionExecutionPolicy()}>Load policy</Button>
             </form>
             {actionExecutionPolicy ? (
               <p>
@@ -3739,43 +4543,43 @@ export function App() {
                 approval expiry {actionExecutionPolicy.approvalExpiresInMinutes}m
               </p>
             ) : <p className="empty">No action execution policy loaded.</p>}
-            <form className="ops-form" onSubmit={(event) => void executeAgentAction(event)}>
+            <form className="grid gap-4 md:grid-cols-[repeat(auto-fit,minmax(160px,1fr))] md:items-end" onSubmit={(event) => void executeAgentAction(event)}>
               <label>
                 Type
-                <select
+                <NativeSelect
                   value={actionType}
                   onChange={(event) => setActionType(event.target.value as AgentActionType)}
                 >
                   {actionTypes.map((candidate) => (
                     <option key={candidate} value={candidate}>{candidate}</option>
                   ))}
-                </select>
+                </NativeSelect>
               </label>
               <label>
                 Title
-                <input value={actionTitle} onChange={(event) => setActionTitle(event.target.value)} />
+                <Input value={actionTitle} onChange={(event) => setActionTitle(event.target.value)} />
               </label>
               <label>
                 Description
-                <input value={actionDescription} onChange={(event) => setActionDescription(event.target.value)} />
+                <Input value={actionDescription} onChange={(event) => setActionDescription(event.target.value)} />
               </label>
               <label>
                 Target
-                <input value={actionTarget} onChange={(event) => setActionTarget(event.target.value)} />
+                <Input value={actionTarget} onChange={(event) => setActionTarget(event.target.value)} />
               </label>
               <label>
                 Idempotency key
-                <input value={actionIdempotencyKey} onChange={(event) => setActionIdempotencyKey(event.target.value)} />
+                <Input value={actionIdempotencyKey} onChange={(event) => setActionIdempotencyKey(event.target.value)} />
               </label>
               <label>
                 Dry run
-                <select value={actionDryRun} onChange={(event) => setActionDryRun(event.target.value as "true" | "false")}>
+                <NativeSelect value={actionDryRun} onChange={(event) => setActionDryRun(event.target.value as "true" | "false")}>
                   <option value="true">true</option>
                   <option value="false">false</option>
-                </select>
+                </NativeSelect>
               </label>
-              <button type="submit" disabled={!actionTitle}>Request action</button>
-              <button type="button" onClick={() => void loadAgentActions()}>Load requests</button>
+              <Button type="submit" disabled={!actionTitle}>Request action</Button>
+              <Button type="button" onClick={() => void loadAgentActions()}>Load requests</Button>
             </form>
             {agentActions.length ? agentActions.map((action) => {
               const decisionReason = actionDecisionReasons[action.id] ?? "";
@@ -3797,7 +4601,7 @@ export function App() {
                     <div className="decision-panel">
                       <label>
                         Operator note
-                        <textarea
+                        <Textarea
                           value={decisionReason}
                           onChange={(event) => {
                             setActionDecisionReasons((current) => ({
@@ -3811,29 +4615,29 @@ export function App() {
                           placeholder="Describe why this action is safe to approve or must be denied."
                         />
                       </label>
-                      <div className="button-row">
-                        <button
+                      <div className="flex flex-wrap gap-2">
+                        <Button
                           type="button"
                           onClick={() => setPendingActionDecision({ actionId: action.id, decision: "approve" })}
                           disabled={!decisionReason.trim()}
                         >
                           Stage approve
-                        </button>
-                        <button
+                        </Button>
+                        <Button
                           type="button"
                           onClick={() => setPendingActionDecision({ actionId: action.id, decision: "deny" })}
                           disabled={!decisionReason.trim()}
                         >
                           Stage deny
-                        </button>
+                        </Button>
                         {stagedDecision ? (
-                          <button
+                          <Button
                             type="button"
                             className={stagedDecision === "deny" ? "danger" : "primary"}
                             onClick={() => void decideAgentAction(action.id, stagedDecision, decisionReason)}
                           >
                             Confirm {stagedDecision}
-                          </button>
+                          </Button>
                         ) : null}
                       </div>
                     </div>
@@ -3842,25 +4646,25 @@ export function App() {
               );
             }) : <p className="empty">No action requests loaded.</p>}
           </div>
-          <div className={routePanelClass(currentPage, ["policies", "telemetry"])}>
+          <div className={routePanelClass(currentPage, settingsPanelRoutes)}>
             <h3>Managed query cache</h3>
-            <form className="ops-form" onSubmit={(event) => void saveManagedQueryCachePolicy(event)}>
+            <form className="grid gap-4 md:grid-cols-[repeat(auto-fit,minmax(160px,1fr))] md:items-end" onSubmit={(event) => void saveManagedQueryCachePolicy(event)}>
               <label>
                 Enabled
-                <select
+                <NativeSelect
                   value={cachePolicyEnabled}
                   onChange={(event) => setCachePolicyEnabled(event.target.value as "true" | "false")}
                 >
                   <option value="true">true</option>
                   <option value="false">false</option>
-                </select>
+                </NativeSelect>
               </label>
               <label>
                 Max TTL seconds
-                <input value={cachePolicyMaxTtl} onChange={(event) => setCachePolicyMaxTtl(event.target.value)} />
+                <Input value={cachePolicyMaxTtl} onChange={(event) => setCachePolicyMaxTtl(event.target.value)} />
               </label>
-              <button type="submit">Save cache policy</button>
-              <button type="button" onClick={() => void loadManagedQueryCachePolicy()}>Load policy</button>
+              <Button type="submit">Save cache policy</Button>
+              <Button type="button" onClick={() => void loadManagedQueryCachePolicy()}>Load policy</Button>
             </form>
             {managedQueryCachePolicy ? (
               <p>
@@ -3870,10 +4674,10 @@ export function App() {
                 {formatCachePolicyTtl(managedQueryCachePolicy.maxCacheTtlSeconds)}
               </p>
             ) : <p className="empty">No cache policy loaded.</p>}
-            <div className="button-row">
-              <button type="button" onClick={() => void loadManagedQueryCache()}>Load cache</button>
-              <button type="button" onClick={() => void purgeManagedQueryCache(true)}>Dry run purge</button>
-              <button type="button" onClick={() => void purgeManagedQueryCache(false)}>Execute purge</button>
+            <div className="flex flex-wrap gap-2">
+              <Button type="button" onClick={() => void loadManagedQueryCache()}>Load cache</Button>
+              <Button type="button" onClick={() => void purgeManagedQueryCache(true)}>Dry run purge</Button>
+              <Button type="button" onClick={() => void purgeManagedQueryCache(false)}>Execute purge</Button>
             </div>
             {managedQueryCachePurgeResult ? (
               <p>
@@ -3888,44 +4692,44 @@ export function App() {
                 <strong>{entry.provider}</strong> {entry.model} hits {entry.hitCount}, expires{" "}
                 {new Date(entry.expiresAt).toLocaleString()}
                 {" "}
-                <button type="button" onClick={() => void deleteManagedQueryCacheEntry(entry.cacheKey)}>Delete</button>
+                <Button type="button" onClick={() => void deleteManagedQueryCacheEntry(entry.cacheKey)}>Delete</Button>
               </p>
             )) : <p className="empty">No cache entries loaded.</p>}
           </div>
-          <div className={routePanelClass(currentPage, ["policies"])}>
+          <div className={routePanelClass(currentPage, settingsPanelRoutes)}>
             <h3>Managed query retention</h3>
-            <form className="ops-form" onSubmit={(event) => void saveManagedQueryRetentionPolicy(event)}>
+            <form className="grid gap-4 md:grid-cols-[repeat(auto-fit,minmax(160px,1fr))] md:items-end" onSubmit={(event) => void saveManagedQueryRetentionPolicy(event)}>
               <label>
                 Prompt capture
-                <select
+                <NativeSelect
                   value={queryRetentionPromptMode}
                   onChange={(event) =>
                     setQueryRetentionPromptMode(event.target.value as "disabled" | "metadata-only")}
                 >
                   <option value="disabled">disabled</option>
                   <option value="metadata-only">metadata-only</option>
-                </select>
+                </NativeSelect>
               </label>
               <label>
                 Response capture
-                <select
+                <NativeSelect
                   value={queryRetentionResponseMode}
                   onChange={(event) =>
                     setQueryRetentionResponseMode(event.target.value as "disabled" | "metadata-only")}
                 >
                   <option value="disabled">disabled</option>
                   <option value="metadata-only">metadata-only</option>
-                </select>
+                </NativeSelect>
               </label>
               <label>
                 Metadata days
-                <input
+                <Input
                   value={queryRetentionMetadataDays}
                   onChange={(event) => setQueryRetentionMetadataDays(event.target.value)}
                 />
               </label>
-              <button type="submit">Save query retention</button>
-              <button type="button" onClick={() => void loadManagedQueryRetentionPolicy()}>Load policy</button>
+              <Button type="submit">Save query retention</Button>
+              <Button type="button" onClick={() => void loadManagedQueryRetentionPolicy()}>Load policy</Button>
             </form>
             {managedQueryRetentionPolicy ? (
               <p>
@@ -3937,35 +4741,35 @@ export function App() {
               </p>
             ) : <p className="empty">No managed query retention policy loaded.</p>}
           </div>
-          <div className={routePanelClass(currentPage, ["policies"])}>
+          <div className={routePanelClass(currentPage, settingsPanelRoutes)}>
             <h3>Secret references</h3>
-            <form className="ops-form" onSubmit={(event) => void saveSecretReferencePolicy(event)}>
+            <form className="grid gap-4 md:grid-cols-[repeat(auto-fit,minmax(160px,1fr))] md:items-end" onSubmit={(event) => void saveSecretReferencePolicy(event)}>
               <label>
                 Allowed prefixes
-                <input
+                <Input
                   value={secretReferencePrefixes}
                   onChange={(event) => setSecretReferencePrefixes(event.target.value)}
                 />
               </label>
               <label>
                 Exact env vars
-                <input
+                <Input
                   value={secretReferenceEnvVars}
                   onChange={(event) => setSecretReferenceEnvVars(event.target.value)}
                 />
               </label>
               <label>
                 Allow unlisted
-                <select
+                <NativeSelect
                   value={secretReferenceAllowUnlisted}
                   onChange={(event) => setSecretReferenceAllowUnlisted(event.target.value as "true" | "false")}
                 >
                   <option value="false">false</option>
                   <option value="true">true</option>
-                </select>
+                </NativeSelect>
               </label>
-              <button type="submit">Save secret policy</button>
-              <button type="button" onClick={() => void loadSecretReferencePolicy()}>Load policy</button>
+              <Button type="submit">Save secret policy</Button>
+              <Button type="button" onClick={() => void loadSecretReferencePolicy()}>Load policy</Button>
             </form>
             {secretReferencePolicy ? (
               <p>
@@ -3977,28 +4781,28 @@ export function App() {
               </p>
             ) : <p className="empty">No secret reference policy loaded.</p>}
           </div>
-          <div className={routePanelClass(currentPage, ["policies"])}>
+          <div className={routePanelClass(currentPage, settingsPanelRoutes)}>
             <h3>PII redaction</h3>
-            <form className="ops-form" onSubmit={(event) => void savePiiRedactionPolicy(event)}>
+            <form className="grid gap-4 md:grid-cols-[repeat(auto-fit,minmax(160px,1fr))] md:items-end" onSubmit={(event) => void savePiiRedactionPolicy(event)}>
               <label>
                 Enabled
-                <select
+                <NativeSelect
                   value={piiRedactionEnabled}
                   onChange={(event) => setPiiRedactionEnabled(event.target.value as "true" | "false")}
                 >
                   <option value="true">true</option>
                   <option value="false">false</option>
-                </select>
+                </NativeSelect>
               </label>
               <label>
                 Rule kinds
-                <input
+                <Input
                   value={piiRedactionRuleKinds}
                   onChange={(event) => setPiiRedactionRuleKinds(event.target.value)}
                 />
               </label>
-              <button type="submit">Save PII policy</button>
-              <button type="button" onClick={() => void loadPiiRedactionPolicy()}>Load policy</button>
+              <Button type="submit">Save PII policy</Button>
+              <Button type="button" onClick={() => void loadPiiRedactionPolicy()}>Load policy</Button>
             </form>
             {piiRedactionPolicy ? (
               <p>
@@ -4009,20 +4813,7 @@ export function App() {
               </p>
             ) : <p className="empty">No PII redaction policy loaded.</p>}
           </div>
-          <div className={routePanelClass(currentPage, ["exports"], "export-summary")}>
-            <h3>Export package</h3>
-            {exportPackage ? (
-              <dl className="metadata-grid compact">
-                <div><dt>Name</dt><dd>{exportPackage.packageName}</dd></div>
-                <div><dt>Assets</dt><dd>{exportPackage.assetCount}</dd></div>
-                <div><dt>Denied</dt><dd>{exportPackage.deniedCount}</dd></div>
-                <div><dt>Generated</dt><dd>{new Date(exportPackage.generatedAt).toLocaleTimeString()}</dd></div>
-              </dl>
-            ) : (
-              <p className="empty">No export generated.</p>
-            )}
-          </div>
-          <div className={routePanelClass(currentPage, ["telemetry"])}>
+          <div className={routePanelClass(currentPage, activityPanelRoutes)}>
             <h3>Retrieval events</h3>
             {telemetryEvents.length ? telemetryEvents.map((event) => (
               <p key={event.id}>
@@ -4030,7 +4821,7 @@ export function App() {
               </p>
             )) : <p className="empty">No telemetry loaded.</p>}
           </div>
-          <div className={routePanelClass(currentPage, ["telemetry"])}>
+          <div className={routePanelClass(currentPage, activityPanelRoutes)}>
             <h3>Audit events</h3>
             {auditEvents.length ? auditEvents.map((event) => (
               <p key={event.id}>
@@ -4038,85 +4829,85 @@ export function App() {
               </p>
             )) : <p className="empty">No audit events loaded.</p>}
           </div>
-          <div className={routePanelClass(currentPage, ["access"])}>
+          <div className={routePanelClass(currentPage, settingsPanelRoutes)}>
             <h3>Users</h3>
-            <form className="ops-form" onSubmit={(event) => void createUser(event)}>
+            <form className="grid gap-4 md:grid-cols-[repeat(auto-fit,minmax(160px,1fr))] md:items-end" onSubmit={(event) => void createUser(event)}>
               <label>
                 Email
-                <input value={userEmail} onChange={(event) => setUserEmail(event.target.value)} type="email" autoComplete="username" />
+                <Input value={userEmail} onChange={(event) => setUserEmail(event.target.value)} type="email" autoComplete="username" />
               </label>
               <label>
                 Display
-                <input value={userDisplayName} onChange={(event) => setUserDisplayName(event.target.value)} />
+                <Input value={userDisplayName} onChange={(event) => setUserDisplayName(event.target.value)} />
               </label>
               <label>
                 Role
-                <select value={userRole} onChange={(event) => setUserRole(event.target.value as typeof userRole)}>
+                <NativeSelect value={userRole} onChange={(event) => setUserRole(event.target.value as typeof userRole)}>
                   <option value="reader">reader</option>
                   <option value="maintainer">maintainer</option>
                   <option value="admin">admin</option>
-                </select>
+                </NativeSelect>
               </label>
               <label>
                 Password
-                <input
+                <Input
                   value={userPassword}
                   onChange={(event) => setUserPassword(event.target.value)}
                   type="password"
                   autoComplete="new-password"
                 />
               </label>
-              <button type="submit">Create user</button>
+              <Button type="submit">Create user</Button>
             </form>
-            <form className="ops-form" onSubmit={(event) => void updateUser(event)}>
+            <form className="grid gap-4 md:grid-cols-[repeat(auto-fit,minmax(160px,1fr))] md:items-end" onSubmit={(event) => void updateUser(event)}>
               <label>
                 User ID
-                <input value={selectedUserId} onChange={(event) => setSelectedUserId(event.target.value)} />
+                <Input value={selectedUserId} onChange={(event) => setSelectedUserId(event.target.value)} />
               </label>
               <label>
                 Display
-                <input
+                <Input
                   value={userUpdateDisplayName}
                   onChange={(event) => setUserUpdateDisplayName(event.target.value)}
                 />
               </label>
               <label>
                 Role
-                <select
+                <NativeSelect
                   value={userUpdateRole}
                   onChange={(event) => setUserUpdateRole(event.target.value as typeof userUpdateRole)}
                 >
                   <option value="reader">reader</option>
                   <option value="maintainer">maintainer</option>
                   <option value="admin">admin</option>
-                </select>
+                </NativeSelect>
               </label>
               <label>
                 Status
-                <select
+                <NativeSelect
                   value={userUpdateStatus}
                   onChange={(event) => setUserUpdateStatus(event.target.value as typeof userUpdateStatus)}
                 >
                   <option value="active">active</option>
                   <option value="disabled">disabled</option>
-                </select>
+                </NativeSelect>
               </label>
-              <label className="wide-field">
+              <label className="md:col-span-2">
                 New password
-                <input
+                <Input
                   value={userUpdatePassword}
                   onChange={(event) => setUserUpdatePassword(event.target.value)}
                   type="password"
                   autoComplete="new-password"
                 />
               </label>
-              <button type="submit" disabled={!selectedUserId}>Update user</button>
+              <Button type="submit" disabled={!selectedUserId}>Update user</Button>
             </form>
             {users.length ? users.map((user) => (
               <p key={user.id}>
                 <strong>{user.email}</strong> {user.role} {user.status} {user.id}
                 {" "}
-                <button
+                <Button
                   type="button"
                   onClick={() => {
                     setSelectedUserId(user.id);
@@ -4129,35 +4920,35 @@ export function App() {
                   }}
                 >
                   Select
-                </button>
+                </Button>
               </p>
             )) : <p className="empty">No users loaded.</p>}
           </div>
-          <div className={routePanelClass(currentPage, ["access"])}>
+          <div className={routePanelClass(currentPage, settingsPanelRoutes)}>
             <h3>Service policy</h3>
-            <form className="ops-form" onSubmit={(event) => void updateServiceAccountPolicy(event)}>
+            <form className="grid gap-4 md:grid-cols-[repeat(auto-fit,minmax(160px,1fr))] md:items-end" onSubmit={(event) => void updateServiceAccountPolicy(event)}>
               <label>
                 Max services
-                <input
+                <Input
                   value={servicePolicyMaxAccounts}
                   onChange={(event) => setServicePolicyMaxAccounts(event.target.value)}
                 />
               </label>
               <label>
                 Max active keys
-                <input
+                <Input
                   value={servicePolicyMaxKeys}
                   onChange={(event) => setServicePolicyMaxKeys(event.target.value)}
                 />
               </label>
               <label>
                 Default key expiry days
-                <input
+                <Input
                   value={servicePolicyDefaultExpiry}
                   onChange={(event) => setServicePolicyDefaultExpiry(event.target.value)}
                 />
               </label>
-              <button type="submit">Save policy</button>
+              <Button type="submit">Save policy</Button>
             </form>
             {serviceAccountPolicy ? (
               <p>
@@ -4165,76 +4956,76 @@ export function App() {
               </p>
             ) : <p className="empty">No service policy loaded.</p>}
           </div>
-          <div className={routePanelClass(currentPage, ["access"])}>
+          <div className={routePanelClass(currentPage, settingsPanelRoutes)}>
             <h3>Service accounts</h3>
-            <form className="ops-form" onSubmit={(event) => void createServiceAccount(event)}>
+            <form className="grid gap-4 md:grid-cols-[repeat(auto-fit,minmax(160px,1fr))] md:items-end" onSubmit={(event) => void createServiceAccount(event)}>
               <label>
                 Slug
-                <input value={serviceAccountSlug} onChange={(event) => setServiceAccountSlug(event.target.value)} />
+                <Input value={serviceAccountSlug} onChange={(event) => setServiceAccountSlug(event.target.value)} />
               </label>
               <label>
                 Name
-                <input value={serviceAccountName} onChange={(event) => setServiceAccountName(event.target.value)} />
+                <Input value={serviceAccountName} onChange={(event) => setServiceAccountName(event.target.value)} />
               </label>
               <label>
                 Role
-                <select
+                <NativeSelect
                   value={serviceAccountRole}
                   onChange={(event) => setServiceAccountRole(event.target.value as typeof serviceAccountRole)}
                 >
                   <option value="reader">reader</option>
                   <option value="maintainer">maintainer</option>
                   <option value="admin">admin</option>
-                </select>
+                </NativeSelect>
               </label>
               <label>
                 Status
-                <select
+                <NativeSelect
                   value={serviceAccountStatus}
                   onChange={(event) => setServiceAccountStatus(event.target.value as typeof serviceAccountStatus)}
                 >
                   <option value="active">active</option>
                   <option value="disabled">disabled</option>
-                </select>
+                </NativeSelect>
               </label>
-              <label className="wide-field">
+              <label className="md:col-span-2">
                 Description
-                <input
+                <Input
                   value={serviceAccountDescription}
                   onChange={(event) => setServiceAccountDescription(event.target.value)}
                 />
               </label>
-              <button type="submit">Create service</button>
+              <Button type="submit">Create service</Button>
             </form>
-            <form className="ops-form" onSubmit={(event) => void updateServiceAccount(event)}>
+            <form className="grid gap-4 md:grid-cols-[repeat(auto-fit,minmax(160px,1fr))] md:items-end" onSubmit={(event) => void updateServiceAccount(event)}>
               <label>
                 Service ID
-                <input
+                <Input
                   value={selectedServiceAccountId}
                   onChange={(event) => setSelectedServiceAccountId(event.target.value)}
                 />
               </label>
               <label>
                 Name
-                <input
+                <Input
                   value={serviceAccountUpdateName}
                   onChange={(event) => setServiceAccountUpdateName(event.target.value)}
                 />
               </label>
               <label>
                 Role
-                <select
+                <NativeSelect
                   value={serviceAccountUpdateRole}
                   onChange={(event) => setServiceAccountUpdateRole(event.target.value as typeof serviceAccountUpdateRole)}
                 >
                   <option value="reader">reader</option>
                   <option value="maintainer">maintainer</option>
                   <option value="admin">admin</option>
-                </select>
+                </NativeSelect>
               </label>
               <label>
                 Status
-                <select
+                <NativeSelect
                   value={serviceAccountUpdateStatus}
                   onChange={(event) =>
                     setServiceAccountUpdateStatus(event.target.value as typeof serviceAccountUpdateStatus)
@@ -4242,22 +5033,22 @@ export function App() {
                 >
                   <option value="active">active</option>
                   <option value="disabled">disabled</option>
-                </select>
+                </NativeSelect>
               </label>
-              <label className="wide-field">
+              <label className="md:col-span-2">
                 Description
-                <input
+                <Input
                   value={serviceAccountUpdateDescription}
                   onChange={(event) => setServiceAccountUpdateDescription(event.target.value)}
                 />
               </label>
-              <button type="submit" disabled={!selectedServiceAccountId}>Update service</button>
+              <Button type="submit" disabled={!selectedServiceAccountId}>Update service</Button>
             </form>
             {serviceAccounts.length ? serviceAccounts.map((serviceAccount) => (
               <p key={serviceAccount.id}>
                 <strong>{serviceAccount.slug}</strong> {serviceAccount.role} {serviceAccount.status} {serviceAccount.id}
                 {" "}
-                <button
+                <Button
                   type="button"
                   onClick={() => {
                     setSelectedServiceAccountId(serviceAccount.id);
@@ -4270,55 +5061,55 @@ export function App() {
                   }}
                 >
                   Select
-                </button>
+                </Button>
               </p>
             )) : <p className="empty">No service accounts loaded.</p>}
           </div>
-          <div className={routePanelClass(currentPage, ["access"])}>
+          <div className={routePanelClass(currentPage, settingsPanelRoutes)}>
             <h3>Groups</h3>
-            <form className="ops-form" onSubmit={(event) => void createGroup(event)}>
+            <form className="grid gap-4 md:grid-cols-[repeat(auto-fit,minmax(160px,1fr))] md:items-end" onSubmit={(event) => void createGroup(event)}>
               <label>
                 Slug
-                <input value={groupSlug} onChange={(event) => setGroupSlug(event.target.value)} />
+                <Input value={groupSlug} onChange={(event) => setGroupSlug(event.target.value)} />
               </label>
               <label>
                 Name
-                <input value={groupName} onChange={(event) => setGroupName(event.target.value)} />
+                <Input value={groupName} onChange={(event) => setGroupName(event.target.value)} />
               </label>
-              <label className="wide-field">
+              <label className="md:col-span-2">
                 Description
-                <input value={groupDescription} onChange={(event) => setGroupDescription(event.target.value)} />
+                <Input value={groupDescription} onChange={(event) => setGroupDescription(event.target.value)} />
               </label>
-              <button type="submit">Create</button>
+              <Button type="submit">Create</Button>
             </form>
-            <form className="ops-form" onSubmit={(event) => void addGroupMember(event)}>
+            <form className="grid gap-4 md:grid-cols-[repeat(auto-fit,minmax(160px,1fr))] md:items-end" onSubmit={(event) => void addGroupMember(event)}>
               <label>
                 Group ID
-                <input value={memberGroupId} onChange={(event) => setMemberGroupId(event.target.value)} />
+                <Input value={memberGroupId} onChange={(event) => setMemberGroupId(event.target.value)} />
               </label>
               <label>
                 User ID
-                <input value={memberUserId} onChange={(event) => setMemberUserId(event.target.value)} />
+                <Input value={memberUserId} onChange={(event) => setMemberUserId(event.target.value)} />
               </label>
-              <button type="submit" disabled={!memberGroupId || !memberUserId}>Add member</button>
-              <button type="button" onClick={() => void removeGroupMember()} disabled={!memberGroupId || !memberUserId}>
+              <Button type="submit" disabled={!memberGroupId || !memberUserId}>Add member</Button>
+              <Button type="button" onClick={() => void removeGroupMember()} disabled={!memberGroupId || !memberUserId}>
                 Remove member
-              </button>
-              <button type="button" onClick={() => void loadGroupMembers()} disabled={!memberGroupId}>Members</button>
-              <button type="button" onClick={() => void deleteGroup()} disabled={!memberGroupId}>Delete group</button>
+              </Button>
+              <Button type="button" onClick={() => void loadGroupMembers()} disabled={!memberGroupId}>Members</Button>
+              <Button type="button" onClick={() => void deleteGroup()} disabled={!memberGroupId}>Delete group</Button>
             </form>
             {groups.length ? groups.map((group) => (
               <p key={group.id}>
                 <strong>{group.slug}</strong> {group.name} {group.description ?? ""}
                 {" "}
-                <button type="button" onClick={() => setMemberGroupId(group.id)}>Select</button>
+                <Button type="button" onClick={() => setMemberGroupId(group.id)}>Select</Button>
               </p>
             )) : <p className="empty">No groups loaded.</p>}
             {groupMembers.length ? groupMembers.map((member) => (
               <p key={`${member.groupId}:${member.userId}`}>
                 <strong>{member.userEmail}</strong> {member.userRole} in {member.groupId}
                 {" "}
-                <button
+                <Button
                   type="button"
                   onClick={() => {
                     setMemberGroupId(member.groupId);
@@ -4326,16 +5117,16 @@ export function App() {
                   }}
                 >
                   Select
-                </button>
+                </Button>
               </p>
             )) : <p className="empty">No members loaded.</p>}
           </div>
-          <div className={routePanelClass(currentPage, ["access"])}>
+          <div className={routePanelClass(currentPage, settingsPanelRoutes)}>
             <h3>API keys</h3>
-            <form className="ops-form" onSubmit={(event) => void createApiKey(event)}>
+            <form className="grid gap-4 md:grid-cols-[repeat(auto-fit,minmax(160px,1fr))] md:items-end" onSubmit={(event) => void createApiKey(event)}>
               <label>
                 User ID
-                <input
+                <Input
                   value={keyUserId}
                   onChange={(event) => {
                     setKeyUserId(event.target.value);
@@ -4347,7 +5138,7 @@ export function App() {
               </label>
               <label>
                 Service ID
-                <input
+                <Input
                   value={keyServiceAccountId}
                   onChange={(event) => {
                     setKeyServiceAccountId(event.target.value);
@@ -4359,51 +5150,51 @@ export function App() {
               </label>
               <label>
                 Name
-                <input value={keyName} onChange={(event) => setKeyName(event.target.value)} />
+                <Input value={keyName} onChange={(event) => setKeyName(event.target.value)} />
               </label>
               <label>
                 Scopes
-                <input value={keyScopes} onChange={(event) => setKeyScopes(event.target.value)} />
+                <Input value={keyScopes} onChange={(event) => setKeyScopes(event.target.value)} />
               </label>
               <label>
                 Expires
-                <input value={keyExpiresAt} onChange={(event) => setKeyExpiresAt(event.target.value)} />
+                <Input value={keyExpiresAt} onChange={(event) => setKeyExpiresAt(event.target.value)} />
               </label>
-              <button
+              <Button
                 type="submit"
                 disabled={!keyName || Number(Boolean(keyUserId)) + Number(Boolean(keyServiceAccountId)) !== 1}
               >
                 Create key
-              </button>
+              </Button>
             </form>
-            <form className="ops-form" onSubmit={(event) => event.preventDefault()}>
+            <form className="grid gap-4 md:grid-cols-[repeat(auto-fit,minmax(160px,1fr))] md:items-end" onSubmit={(event) => event.preventDefault()}>
               <label>
                 Key ID
-                <input value={selectedApiKeyId} onChange={(event) => setSelectedApiKeyId(event.target.value)} />
+                <Input value={selectedApiKeyId} onChange={(event) => setSelectedApiKeyId(event.target.value)} />
               </label>
               <label>
                 New name
-                <input value={rotateKeyName} onChange={(event) => setRotateKeyName(event.target.value)} />
+                <Input value={rotateKeyName} onChange={(event) => setRotateKeyName(event.target.value)} />
               </label>
               <label>
                 Revoke old
-                <select
+                <NativeSelect
                   value={String(revokeOldKey)}
                   onChange={(event) => setRevokeOldKey(event.target.value === "true")}
                 >
                   <option value="false">no</option>
                   <option value="true">yes</option>
-                </select>
+                </NativeSelect>
               </label>
-              <button type="button" onClick={() => void rotateApiKey()} disabled={!selectedApiKeyId}>Rotate</button>
-              <button type="button" onClick={() => void revokeApiKey()} disabled={!selectedApiKeyId}>Revoke</button>
+              <Button type="button" onClick={() => void rotateApiKey()} disabled={!selectedApiKeyId}>Rotate</Button>
+              <Button type="button" onClick={() => void revokeApiKey()} disabled={!selectedApiKeyId}>Revoke</Button>
             </form>
-            <form className="ops-form" onSubmit={(event) => event.preventDefault()}>
+            <form className="grid gap-4 md:grid-cols-[repeat(auto-fit,minmax(160px,1fr))] md:items-end" onSubmit={(event) => event.preventDefault()}>
               <label>
                 Due days
-                <input value={apiKeyRotationDueDays} onChange={(event) => setApiKeyRotationDueDays(event.target.value)} />
+                <Input value={apiKeyRotationDueDays} onChange={(event) => setApiKeyRotationDueDays(event.target.value)} />
               </label>
-              <button type="button" onClick={() => void loadApiKeyRotationReport()}>Load rotation due</button>
+              <Button type="button" onClick={() => void loadApiKeyRotationReport()}>Load rotation due</Button>
             </form>
             {apiKeyRotationReport ? (
               <div>
@@ -4420,7 +5211,7 @@ export function App() {
             {oneTimeSecret ? (
               <label>
                 One-time secret
-                <input value={oneTimeSecret} readOnly type="password" autoComplete="off" />
+                <Input value={oneTimeSecret} readOnly type="password" autoComplete="off" />
               </label>
             ) : null}
             {apiKeyRecords.length ? apiKeyRecords.map((record) => (
@@ -4429,63 +5220,63 @@ export function App() {
               </p>
             )) : <p className="empty">No API keys loaded.</p>}
           </div>
-          <div className={routePanelClass(currentPage, ["access"])}>
+          <div className={routePanelClass(currentPage, settingsPanelRoutes)}>
             <h3>Login sessions</h3>
-            <form className="ops-form" onSubmit={(event) => event.preventDefault()}>
+            <form className="grid gap-4 md:grid-cols-[repeat(auto-fit,minmax(160px,1fr))] md:items-end" onSubmit={(event) => event.preventDefault()}>
               <label>
                 Session ID
-                <input
+                <Input
                   value={selectedLoginSessionId}
                   onChange={(event) => setSelectedLoginSessionId(event.target.value)}
                 />
               </label>
-              <button type="button" onClick={() => void loadLoginSessions()}>Load sessions</button>
-              <button type="button" onClick={() => void revokeLoginSession()} disabled={!selectedLoginSessionId}>
+              <Button type="button" onClick={() => void loadLoginSessions()}>Load sessions</Button>
+              <Button type="button" onClick={() => void revokeLoginSession()} disabled={!selectedLoginSessionId}>
                 Revoke session
-              </button>
+              </Button>
             </form>
             {loginSessions.length ? loginSessions.map((session) => (
               <p key={session.id}>
                 <strong>{session.deviceLabel ?? session.source}</strong> {session.revokedAt ? "revoked" : "active"} user {session.userId} key {session.apiKeyId} expires {new Date(session.expiresAt).toLocaleString()} {session.clientUserAgent ? `client ${session.clientUserAgent}` : ""} {session.id}
                 {" "}
-                <button type="button" onClick={() => setSelectedLoginSessionId(session.id)}>Select</button>
+                <Button type="button" onClick={() => setSelectedLoginSessionId(session.id)}>Select</Button>
               </p>
             )) : <p className="empty">No login sessions loaded.</p>}
           </div>
-          <div className={routePanelClass(currentPage, ["telemetry"])}>
+          <div className={routePanelClass(currentPage, activityPanelRoutes)}>
             <h3>Managed query feedback</h3>
-            <form className="ops-form" onSubmit={(event) => void submitFeedback(event)}>
+            <form className="grid gap-4 md:grid-cols-[repeat(auto-fit,minmax(160px,1fr))] md:items-end" onSubmit={(event) => void submitFeedback(event)}>
               <label>
                 Event ID
-                <input
+                <Input
                   value={feedbackTelemetryEventId}
                   onChange={(event) => setFeedbackTelemetryEventId(event.target.value)}
                 />
               </label>
               <label>
                 Query
-                <input value={feedbackQuery} onChange={(event) => setFeedbackQuery(event.target.value)} />
+                <Input value={feedbackQuery} onChange={(event) => setFeedbackQuery(event.target.value)} />
               </label>
               <label>
                 Outcome
-                <select
+                <NativeSelect
                   value={feedbackOutcome}
                   onChange={(event) => setFeedbackOutcome(event.target.value as typeof feedbackOutcome)}
                 >
                   <option value="accepted">accepted</option>
                   <option value="needs-review">needs-review</option>
                   <option value="rejected">rejected</option>
-                </select>
+                </NativeSelect>
               </label>
               <label>
                 Citation score
-                <input
+                <Input
                   value={feedbackCitationAccuracy}
                   onChange={(event) => setFeedbackCitationAccuracy(event.target.value)}
                   inputMode="numeric"
                 />
               </label>
-              <button type="submit">Submit</button>
+              <Button type="submit">Submit</Button>
             </form>
             {feedbackRecords.length ? feedbackRecords.map((record) => (
               <p key={record.id}>
@@ -4493,16 +5284,19 @@ export function App() {
               </p>
             )) : <p className="empty">No feedback loaded.</p>}
           </div>
-          <div className={routePanelClass(currentPage, ["telemetry"])}>
+          <div className={routePanelClass(currentPage, activityAndHealthPanelRoutes)}>
             <h3>Demo eval report</h3>
             {evalReport ? (
               <>
-	                <dl className="metadata-grid compact">
-	                  <div><dt>Status</dt><dd>{evalReport.ok ? "passing" : "failing"}</dd></div>
-	                  <div><dt>Cases</dt><dd>{evalReport.passedCount}/{evalReport.caseCount}</dd></div>
-	                  <div><dt>Pass rate</dt><dd>{formatPercent(evalReport.passRate)}</dd></div>
-	                  <div><dt>Threshold</dt><dd>{formatPercent(evalReport.minimumPassRate)}</dd></div>
-	                </dl>
+                <DefinitionGrid
+                  compact
+                  items={[
+                    { term: "Status", description: evalReport.ok ? "passing" : "failing" },
+                    { term: "Cases", description: `${evalReport.passedCount}/${evalReport.caseCount}` },
+                    { term: "Pass rate", description: formatPercent(evalReport.passRate) },
+                    { term: "Threshold", description: formatPercent(evalReport.minimumPassRate) }
+                  ]}
+                />
 	                {evalReport.tagThresholdResults.map((threshold) => (
 	                  <p key={threshold.tag ?? threshold.scope}>
 	                    <strong>{threshold.passed ? "pass" : "fail"}</strong> {threshold.tag ?? threshold.scope} {formatPercent(threshold.passRate)} / {formatPercent(threshold.minimumPassRate)}
@@ -4521,14 +5315,17 @@ export function App() {
             {evalSummary ? (
               <>
                 <h4>Summary</h4>
-                <dl className="metadata-grid compact">
-                  <div><dt>Runs</dt><dd>{evalSummary.runCount}</dd></div>
-                  <div><dt>Latest</dt><dd>{evalSummary.latestPassRate === null ? "n/a" : formatPercent(evalSummary.latestPassRate)}</dd></div>
-                  <div><dt>Average</dt><dd>{evalSummary.averagePassRate === null ? "n/a" : formatPercent(evalSummary.averagePassRate)}</dd></div>
-                  <div><dt>Cases</dt><dd>{evalSummary.totalPassedCount}/{evalSummary.totalCaseCount}</dd></div>
-                  <div><dt>Thresholds</dt><dd>{evalSummary.thresholdPassedCount}/{evalSummary.runCount}</dd></div>
-                  <div><dt>Generated</dt><dd>{new Date(evalSummary.generatedAt).toLocaleTimeString()}</dd></div>
-                </dl>
+                <DefinitionGrid
+                  compact
+                  items={[
+                    { term: "Runs", description: evalSummary.runCount },
+                    { term: "Latest", description: evalSummary.latestPassRate === null ? "n/a" : formatPercent(evalSummary.latestPassRate) },
+                    { term: "Average", description: evalSummary.averagePassRate === null ? "n/a" : formatPercent(evalSummary.averagePassRate) },
+                    { term: "Cases", description: `${evalSummary.totalPassedCount}/${evalSummary.totalCaseCount}` },
+                    { term: "Thresholds", description: `${evalSummary.thresholdPassedCount}/${evalSummary.runCount}` },
+                    { term: "Generated", description: new Date(evalSummary.generatedAt).toLocaleTimeString() }
+                  ]}
+                />
                 <p><strong>Modes</strong> {formatCounts(evalSummary.byMode)}</p>
                 {evalSummary.byTag.length ? (
                   <p><strong>Tags</strong> {evalSummary.byTag.map((tag) =>
@@ -4550,12 +5347,12 @@ export function App() {
               <p className="empty">No eval history loaded.</p>
             )}
           </div>
-          <div className={routePanelClass(currentPage, ["providers"])}>
+          <div className={routePanelClass(currentPage, integrationsPanelRoutes)}>
             <h3>Provider config</h3>
-            <form className="provider-form" onSubmit={(event) => void saveProviderConfig(event)}>
+            <form className="grid gap-4 md:grid-cols-[repeat(auto-fit,minmax(180px,1fr))] md:items-end" onSubmit={(event) => void saveProviderConfig(event)}>
               <label>
                 Provider
-                <select
+                <NativeSelect
                   value={providerForm.provider}
                   onChange={(event) => setProviderForm((current) => ({
                     ...current,
@@ -4565,11 +5362,11 @@ export function App() {
                   <option value="openai">openai</option>
                   <option value="anthropic">anthropic</option>
                   <option value="openrouter">openrouter</option>
-                </select>
+                </NativeSelect>
               </label>
               <label>
                 Enabled
-                <select
+                <NativeSelect
                   value={String(providerForm.enabled)}
                   onChange={(event) => setProviderForm((current) => ({
                     ...current,
@@ -4578,11 +5375,11 @@ export function App() {
                 >
                   <option value="true">enabled</option>
                   <option value="false">disabled</option>
-                </select>
+                </NativeSelect>
               </label>
               <label>
                 Env var
-                <input
+                <Input
                   value={providerForm.apiKeyEnvVar}
                   onChange={(event) => setProviderForm((current) => ({
                     ...current,
@@ -4592,7 +5389,7 @@ export function App() {
               </label>
               <label>
                 Display
-                <input
+                <Input
                   value={providerForm.displayName}
                   onChange={(event) => setProviderForm((current) => ({
                     ...current,
@@ -4602,7 +5399,7 @@ export function App() {
               </label>
               <label>
                 Base URL
-                <input
+                <Input
                   value={providerForm.baseUrl}
                   onChange={(event) => setProviderForm((current) => ({
                     ...current,
@@ -4612,7 +5409,7 @@ export function App() {
               </label>
               <label>
                 Default model
-                <input
+                <Input
                   value={providerForm.defaultModel}
                   onChange={(event) => setProviderForm((current) => ({
                     ...current,
@@ -4622,7 +5419,7 @@ export function App() {
               </label>
               <label>
                 Models
-                <input
+                <Input
                   value={providerForm.models}
                   onChange={(event) => setProviderForm((current) => ({
                     ...current,
@@ -4632,7 +5429,7 @@ export function App() {
               </label>
               <label>
                 Priority
-                <input
+                <Input
                   value={providerForm.priority}
                   onChange={(event) => setProviderForm((current) => ({
                     ...current,
@@ -4643,7 +5440,7 @@ export function App() {
               </label>
               <label>
                 Max output
-                <input
+                <Input
                   value={providerForm.maxOutputTokens}
                   onChange={(event) => setProviderForm((current) => ({
                     ...current,
@@ -4654,7 +5451,7 @@ export function App() {
               </label>
               <label>
                 Temperature
-                <input
+                <Input
                   value={providerForm.temperature}
                   onChange={(event) => setProviderForm((current) => ({
                     ...current,
@@ -4665,7 +5462,7 @@ export function App() {
               </label>
               <label>
                 Timeout ms
-                <input
+                <Input
                   value={providerForm.timeoutMs}
                   onChange={(event) => setProviderForm((current) => ({
                     ...current,
@@ -4676,7 +5473,7 @@ export function App() {
               </label>
               <label>
                 Max retries
-                <input
+                <Input
                   value={providerForm.maxRetries}
                   onChange={(event) => setProviderForm((current) => ({
                     ...current,
@@ -4687,7 +5484,7 @@ export function App() {
               </label>
               <label>
                 Retry backoff ms
-                <input
+                <Input
                   value={providerForm.retryBackoffMs}
                   onChange={(event) => setProviderForm((current) => ({
                     ...current,
@@ -4698,7 +5495,7 @@ export function App() {
               </label>
               <label>
                 Input cost / 1M
-                <input
+                <Input
                   value={providerForm.inputCostPerMillionTokens}
                   onChange={(event) => setProviderForm((current) => ({
                     ...current,
@@ -4709,7 +5506,7 @@ export function App() {
               </label>
               <label>
                 Output cost / 1M
-                <input
+                <Input
                   value={providerForm.outputCostPerMillionTokens}
                   onChange={(event) => setProviderForm((current) => ({
                     ...current,
@@ -4720,7 +5517,7 @@ export function App() {
               </label>
               <label>
                 Max input tokens
-                <input
+                <Input
                   value={providerForm.maxEstimatedInputTokensPerQuery}
                   onChange={(event) => setProviderForm((current) => ({
                     ...current,
@@ -4731,7 +5528,7 @@ export function App() {
               </label>
               <label>
                 Max total tokens
-                <input
+                <Input
                   value={providerForm.maxEstimatedTotalTokensPerQuery}
                   onChange={(event) => setProviderForm((current) => ({
                     ...current,
@@ -4742,7 +5539,7 @@ export function App() {
               </label>
               <label>
                 Max cost
-                <input
+                <Input
                   value={providerForm.maxEstimatedCostUsdPerQuery}
                   onChange={(event) => setProviderForm((current) => ({
                     ...current,
@@ -4751,7 +5548,7 @@ export function App() {
                   inputMode="decimal"
                 />
               </label>
-              <button type="submit">Save</button>
+              <Button type="submit">Save</Button>
             </form>
             {providerConfigs.length ? providerConfigs.map((provider) => (
               <p key={provider.id}>
@@ -4769,12 +5566,12 @@ export function App() {
               </>
             ) : null}
           </div>
-          <div className={routePanelClass(currentPage, ["providers"])}>
+          <div className={routePanelClass(currentPage, integrationsPanelRoutes)}>
             <h3>Auth provider config</h3>
-            <form className="provider-form" onSubmit={(event) => void saveAuthProviderConfig(event)}>
+            <form className="grid gap-4 md:grid-cols-[repeat(auto-fit,minmax(180px,1fr))] md:items-end" onSubmit={(event) => void saveAuthProviderConfig(event)}>
               <label>
                 Provider
-                <select
+                <NativeSelect
                   value={authProviderForm.provider}
                   onChange={(event) => setAuthProviderForm((current) => ({
                     ...current,
@@ -4783,11 +5580,11 @@ export function App() {
                 >
                   <option value="microsoft-entra">microsoft-entra</option>
                   <option value="oidc">oidc</option>
-                </select>
+                </NativeSelect>
               </label>
               <label>
                 Enabled
-                <select
+                <NativeSelect
                   value={String(authProviderForm.enabled)}
                   onChange={(event) => setAuthProviderForm((current) => ({
                     ...current,
@@ -4796,11 +5593,11 @@ export function App() {
                 >
                   <option value="true">enabled</option>
                   <option value="false">disabled</option>
-                </select>
+                </NativeSelect>
               </label>
               <label>
                 Issuer URL
-                <input
+                <Input
                   value={authProviderForm.issuerUrl}
                   onChange={(event) => setAuthProviderForm((current) => ({
                     ...current,
@@ -4810,7 +5607,7 @@ export function App() {
               </label>
               <label>
                 Client ID
-                <input
+                <Input
                   value={authProviderForm.clientId}
                   onChange={(event) => setAuthProviderForm((current) => ({
                     ...current,
@@ -4820,7 +5617,7 @@ export function App() {
               </label>
               <label>
                 Secret env var
-                <input
+                <Input
                   value={authProviderForm.clientSecretEnvVar}
                   onChange={(event) => setAuthProviderForm((current) => ({
                     ...current,
@@ -4830,7 +5627,7 @@ export function App() {
               </label>
               <label>
                 Redirect URI
-                <input
+                <Input
                   value={authProviderForm.redirectUri}
                   onChange={(event) => setAuthProviderForm((current) => ({
                     ...current,
@@ -4840,7 +5637,7 @@ export function App() {
               </label>
               <label>
                 Display
-                <input
+                <Input
                   value={authProviderForm.displayName}
                   onChange={(event) => setAuthProviderForm((current) => ({
                     ...current,
@@ -4850,7 +5647,7 @@ export function App() {
               </label>
               <label>
                 Scopes
-                <input
+                <Input
                   value={authProviderForm.scopes}
                   onChange={(event) => setAuthProviderForm((current) => ({
                     ...current,
@@ -4860,7 +5657,7 @@ export function App() {
               </label>
               <label>
                 Group claim
-                <input
+                <Input
                   value={authProviderForm.groupClaim}
                   onChange={(event) => setAuthProviderForm((current) => ({
                     ...current,
@@ -4870,7 +5667,7 @@ export function App() {
               </label>
               <label>
                 Allowed domains
-                <input
+                <Input
                   value={authProviderForm.allowedDomains}
                   onChange={(event) => setAuthProviderForm((current) => ({
                     ...current,
@@ -4880,7 +5677,7 @@ export function App() {
               </label>
               <label>
                 Default role
-                <select
+                <NativeSelect
                   value={authProviderForm.defaultRole}
                   onChange={(event) => setAuthProviderForm((current) => ({
                     ...current,
@@ -4890,11 +5687,11 @@ export function App() {
                   <option value="reader">reader</option>
                   <option value="maintainer">maintainer</option>
                   <option value="admin">admin</option>
-                </select>
+                </NativeSelect>
               </label>
               <label>
                 Priority
-                <input
+                <Input
                   value={authProviderForm.priority}
                   onChange={(event) => setAuthProviderForm((current) => ({
                     ...current,
@@ -4905,7 +5702,7 @@ export function App() {
               </label>
               <label>
                 Auto provision
-                <select
+                <NativeSelect
                   value={String(authProviderForm.autoProvisionUsers)}
                   onChange={(event) => setAuthProviderForm((current) => ({
                     ...current,
@@ -4914,11 +5711,11 @@ export function App() {
                 >
                   <option value="false">disabled</option>
                   <option value="true">enabled</option>
-                </select>
+                </NativeSelect>
 	              </label>
 	              <label>
 	                Account linking
-	                <select
+	                <NativeSelect
 	                  value={authProviderForm.accountLinkingMode}
 	                  onChange={(event) => setAuthProviderForm((current) => ({
 	                    ...current,
@@ -4928,11 +5725,11 @@ export function App() {
 	                  <option value="verified-email">verified email</option>
 	                  <option value="disabled">disabled</option>
 	                  <option value="email">email match</option>
-	                </select>
+	                </NativeSelect>
 	              </label>
 	              <label>
 	                Group sync
-	                <select
+	                <NativeSelect
                   value={String(authProviderForm.groupSyncEnabled)}
                   onChange={(event) => setAuthProviderForm((current) => ({
                     ...current,
@@ -4941,9 +5738,9 @@ export function App() {
                 >
                   <option value="false">disabled</option>
                   <option value="true">enabled</option>
-                </select>
+                </NativeSelect>
               </label>
-              <button type="submit">Save auth provider</button>
+              <Button type="submit">Save auth provider</Button>
             </form>
 	            {authProviderConfigs.length ? authProviderConfigs.map((provider) => (
 	              <p key={provider.id}>
@@ -4984,10 +5781,10 @@ export function App() {
                 </Button>
               </div>
               <div className="public-trust-strip" aria-label="Beta proof points">
-                <span>Apache 2.0 core</span>
-                <span>Docker Compose quickstart</span>
-                <span>API, CLI, MCP, JSON, and OKF</span>
-                <span>Synthetic demo corpus</span>
+                <Badge variant="neutral">Apache 2.0 core</Badge>
+                <Badge variant="neutral">Docker Compose quickstart</Badge>
+                <Badge variant="info">API, CLI, MCP, JSON, and OKF</Badge>
+                <Badge variant="neutral">Synthetic demo corpus</Badge>
               </div>
             </div>
 
@@ -5000,36 +5797,52 @@ export function App() {
                   <strong>#distribute</strong>
                 </div>
                 <div className="proof-product-grid">
-                  <section className="proof-panel proof-panel-primary">
-                    <p className="proof-label">Approved instruction</p>
-                    <h2>PII redaction guardrail</h2>
-                    <dl>
-                      <div><dt>Stable ID</dt><dd>guardrail.pii-redaction</dd></div>
-                      <div><dt>State</dt><dd>active / approved</dd></div>
-                      <div><dt>Sensitivity</dt><dd>public-demo</dd></div>
-                      <div><dt>Allowed surfaces</dt><dd>web, api, cli, mcp, export</dd></div>
-                    </dl>
-                  </section>
-                  <section className="proof-panel">
-                    <p className="proof-label">Agent package</p>
-                    <h3>demo-agent-pack</h3>
-                    <div className="proof-package-state">
-                      <span>JSON ready</span>
-                      <span>OKF 0.1 ready</span>
-                      <span>projection hash</span>
-                    </div>
-                  </section>
-                  <section className="proof-panel proof-terminal">
-                    <p className="proof-label">Consumer fetch</p>
-                    <pre>{`GET /exports/ai-package
+                  <Card className="proof-panel proof-panel-primary">
+                    <CardHeader className="proof-panel-header">
+                      <CardDescription className="proof-label">Approved instruction</CardDescription>
+                      <CardTitle><h2>PII redaction guardrail</h2></CardTitle>
+                    </CardHeader>
+                    <CardContent className="proof-panel-content">
+                      <dl>
+                        <div><dt>Stable ID</dt><dd>guardrail.pii-redaction</dd></div>
+                        <div><dt>State</dt><dd>active / approved</dd></div>
+                        <div><dt>Sensitivity</dt><dd>public-demo</dd></div>
+                        <div><dt>Allowed surfaces</dt><dd>web, api, cli, mcp, export</dd></div>
+                      </dl>
+                    </CardContent>
+                  </Card>
+                  <Card className="proof-panel">
+                    <CardHeader className="proof-panel-header">
+                      <CardDescription className="proof-label">Agent package</CardDescription>
+                      <CardTitle><h3>demo-agent-pack</h3></CardTitle>
+                    </CardHeader>
+                    <CardContent className="proof-panel-content">
+                      <div className="proof-package-state">
+                        <Badge variant="success">JSON ready</Badge>
+                        <Badge variant="success">OKF 0.1 ready</Badge>
+                        <Badge variant="neutral">projection hash</Badge>
+                      </div>
+                    </CardContent>
+                  </Card>
+                  <Card className="proof-panel proof-terminal">
+                    <CardHeader className="proof-panel-header">
+                      <CardDescription className="proof-label">Consumer fetch</CardDescription>
+                    </CardHeader>
+                    <CardContent className="proof-panel-content">
+                      <pre>{`GET /exports/ai-package
 format=okf
 rootIndexPath=index.md`}</pre>
-                  </section>
-                  <section className="proof-panel proof-safety">
-                    <p className="proof-label">Boundary proof</p>
-                    <strong>restricted asset omitted</strong>
-                    <span>Denied items are counted, not previewed.</span>
-                  </section>
+                    </CardContent>
+                  </Card>
+                  <Card className="proof-panel proof-safety">
+                    <CardHeader className="proof-panel-header">
+                      <CardDescription className="proof-label">Boundary proof</CardDescription>
+                    </CardHeader>
+                    <CardContent className="proof-panel-content">
+                      <Badge variant="warning">restricted asset omitted</Badge>
+                      <span>Denied items are counted, not previewed.</span>
+                    </CardContent>
+                  </Card>
                 </div>
               </div>
             </div>
@@ -5045,95 +5858,115 @@ rootIndexPath=index.md`}</pre>
               </p>
             </div>
             <div className="public-step-list" aria-label="Beta path steps">
-              <span>Create or import synthetic governed assets.</span>
-              <span>Review, publish, and inspect trust metadata.</span>
-              <span>Package approved context for API, CLI, MCP, JSON, and OKF.</span>
-              <span>Verify restricted context stays out of broad-reader exports.</span>
+              <Card className="public-step-card"><CardContent>Create or import synthetic governed assets.</CardContent></Card>
+              <Card className="public-step-card"><CardContent>Review, publish, and inspect trust metadata.</CardContent></Card>
+              <Card className="public-step-card"><CardContent>Package approved context for API, CLI, MCP, JSON, and OKF.</CardContent></Card>
+              <Card className="public-step-card"><CardContent>Verify restricted context stays out of broad-reader exports.</CardContent></Card>
             </div>
           </section>
 
           <section className="auth-entry-grid auth-entry-grid--boundary" aria-label="Private beta boundary">
-            <aside className="beta-boundary-panel" aria-labelledby="beta-boundary-title">
-              <p className="eyebrow">Clear beta boundary</p>
-              <h2 id="beta-boundary-title">Built in public boundaries, not inflated claims.</h2>
-              <p>
-                Evaluate ForgetBase as a self-hostable core for governed agent instructions and context packages.
-                It is not claiming hosted-service maturity, enterprise SSO/SCIM completion, full managed-agent
-                orchestration, broad enterprise search parity, or certification-level compliance.
-              </p>
-            </aside>
-            <aside className="beta-access-panel" aria-labelledby="beta-access-title">
-              <p className="eyebrow">Private beta</p>
-              <h2 id="beta-access-title">Access by invitation.</h2>
-              <p>
-                Beta users can log in with their invitation credentials. The self-hostable demo path remains visible
-                before sign-in for reviewing scope and beta boundaries.
-              </p>
-              <Button variant="primary" type="button" onClick={openLoginPanel}>Log in</Button>
-              {authState === "checking" ? <p className="message">Checking session</p> : null}
-            </aside>
-          </section>
-          {showLoginPanel ? (
-            <div className="login-dialog-backdrop" role="presentation">
-              <section
-                className="login-dialog"
-                id="login-dialog"
-                role="dialog"
-                aria-modal="true"
-                aria-labelledby="login-title"
-              >
-                <div className="login-dialog-header">
-                  <span className="mark login-mark" aria-hidden="true">
-                    <img className="mark-image" src="/favicon.svg" alt="" />
-                  </span>
-                  <div>
-                    <h1 id="login-title">Log in to ForgetBase</h1>
-                    <p className="lede">Private beta. Access by invitation.</p>
-                  </div>
-                  <button
-                    className="dialog-close-button"
-                    type="button"
-                    aria-label="Close login"
-                    onClick={() => setShowLoginPanel(false)}
-                  >
-                    <X aria-hidden="true" />
-                  </button>
-                </div>
-                {currentPage === "distribute" || currentPage === "exports" ? (
-                  <p className="queued-route">Demo path queued: <code>#{currentPage}</code></p>
+            <Alert className="beta-boundary-panel" aria-labelledby="beta-boundary-title">
+              <AlertTitle>
+                <span className="eyebrow">Clear beta boundary</span>
+                <h2 id="beta-boundary-title">Built in public boundaries, not inflated claims.</h2>
+              </AlertTitle>
+              <AlertDescription>
+                <p>
+                  Evaluate ForgetBase as a self-hostable core for governed agent instructions and context packages.
+                  It is not claiming hosted-service maturity, enterprise SSO/SCIM completion, full managed-agent
+                  orchestration, broad enterprise search parity, or certification-level compliance.
+                </p>
+              </AlertDescription>
+            </Alert>
+            <Card className="beta-access-panel" aria-labelledby="beta-access-title">
+              <CardHeader>
+                <CardDescription className="eyebrow">Private beta</CardDescription>
+                <CardTitle><h2 id="beta-access-title">Access by invitation.</h2></CardTitle>
+                <CardDescription>
+                  Beta users can log in with their invitation credentials. The self-hostable demo path remains visible
+                  before sign-in for reviewing scope and beta boundaries.
+                </CardDescription>
+              </CardHeader>
+              <CardFooter>
+                <Button variant="primary" type="button" onClick={openLoginPanel}>Log in</Button>
+                {authState === "checking" ? (
+                  <Alert variant="info" className="public-session-alert">
+                    <AlertDescription>Checking session</AlertDescription>
+                  </Alert>
                 ) : null}
-                <form className="classic-login-form public-login-form" onSubmit={(event) => void login(event)}>
-                  <label htmlFor="login-email">
-                    Username / email
-                    <input
-                      id="login-email"
-                      value={loginEmail}
-                      onChange={(event) => setLoginEmail(event.target.value)}
-                      type="text"
-                      autoComplete="username"
-                      required
-                    />
-                  </label>
-                  <label htmlFor="login-password">
-                    Password
-                    <input
-                      id="login-password"
-                      value={loginPassword}
-                      onChange={(event) => setLoginPassword(event.target.value)}
-                      type="password"
-                      autoComplete="current-password"
-                      required
-                    />
-                  </label>
-                  <button type="submit" disabled={authState === "checking" || !loginEmail.trim() || !loginPassword}>
+              </CardFooter>
+            </Card>
+          </section>
+          <Dialog open={showLoginPanel} onOpenChange={setShowLoginPanel}>
+            <DialogContent
+              className="login-dialog"
+              id="login-dialog"
+              aria-describedby="login-description"
+            >
+              <DialogHeader className="login-dialog-header">
+                <span className="mark login-mark" aria-hidden="true">
+                  <img className="mark-image" src="/favicon.svg" alt="" />
+                </span>
+                <div>
+                  <DialogTitle id="login-title">Log in to ForgetBase</DialogTitle>
+                  <DialogDescription id="login-description" className="lede">
+                    Private beta. Access by invitation.
+                  </DialogDescription>
+                </div>
+              </DialogHeader>
+              {currentPage === "distribute" ? (
+                <Alert variant="info" className="queued-route">
+                  <AlertDescription>Demo path queued: <code>#{currentPage}</code></AlertDescription>
+                </Alert>
+              ) : null}
+              <Separator />
+              <form className="public-login-form" onSubmit={(event) => void login(event)}>
+                <div className="public-login-field">
+                  <Label htmlFor="login-email">Username / email</Label>
+                  <Input
+                    id="login-email"
+                    value={loginEmail}
+                    onChange={(event) => setLoginEmail(event.target.value)}
+                    type="text"
+                    autoComplete="username"
+                    required
+                  />
+                </div>
+                <div className="public-login-field">
+                  <Label htmlFor="login-password">Password</Label>
+                  <Input
+                    id="login-password"
+                    value={loginPassword}
+                    onChange={(event) => setLoginPassword(event.target.value)}
+                    type="password"
+                    autoComplete="current-password"
+                    required
+                  />
+                </div>
+                <DialogFooter className="public-login-actions">
+                  <Button
+                    type="submit"
+                    variant="primary"
+                    disabled={authState === "checking" || !loginEmail.trim() || !loginPassword}
+                  >
                     Log in
-                  </button>
-                </form>
-                {message ? <p className="message">{message}</p> : null}
-                {error ? <p className="error">{error}</p> : null}
-              </section>
-            </div>
-          ) : null}
+                  </Button>
+                </DialogFooter>
+              </form>
+              {message ? (
+                <Alert variant="success" className="public-login-alert">
+                  <AlertDescription>{message}</AlertDescription>
+                </Alert>
+              ) : null}
+              {error ? (
+                <Alert variant="destructive" className="public-login-alert">
+                  <AlertTitle>Login failed</AlertTitle>
+                  <AlertDescription>{error}</AlertDescription>
+                </Alert>
+              ) : null}
+            </DialogContent>
+          </Dialog>
         </main>
       )}
     </div>
