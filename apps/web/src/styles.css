@@ -309,8 +309,8 @@ pre {
 
 .nav-group {
   display: grid;
-  gap: 8px;
-  padding: 16px 12px;
+  gap: 4px;
+  padding: 10px 8px;
 }
 
 .nav-label,
@@ -324,16 +324,20 @@ pre {
   text-transform: uppercase;
 }
 
+.nav-label {
+  padding: 0 6px;
+}
+
 .nav-tree,
 .nav-branch {
   display: grid;
-  gap: 4px;
+  gap: 2px;
   min-width: 0;
 }
 
 .nav-branch {
-  margin-left: 18px;
-  padding-left: 10px;
+  margin-left: 12px;
+  padding-left: 8px;
   border-left: 1px solid var(--fb-border);
 }
 
@@ -341,15 +345,22 @@ pre {
 .nav-link {
   display: flex;
   align-items: center;
+  justify-content: flex-start !important;
   gap: 8px;
   min-width: 0;
   width: 100%;
-  min-height: 36px;
-  padding: 6px 8px;
+  min-height: 32px;
+  padding: 5px 7px;
   border: 0;
   border-radius: 6px;
   background: transparent;
   color: var(--fb-text);
+  text-align: left;
+}
+
+.nav-folder .nav-text,
+.nav-link .nav-text {
+  flex: 1 1 auto;
   text-align: left;
 }
 
@@ -371,9 +382,9 @@ pre {
 .nav-icon {
   display: grid;
   place-items: center;
-  width: 22px;
-  height: 22px;
-  flex: 0 0 22px;
+  width: 20px;
+  height: 20px;
+  flex: 0 0 20px;
   color: currentColor;
   font-size: 11px;
   font-weight: 700;
@@ -382,6 +393,30 @@ pre {
 .nav-count,
 .nav-badge {
   margin-left: auto;
+}
+
+.nav-chevron {
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  color: var(--fb-muted);
+}
+
+.nav-chevron::before {
+  display: block;
+  width: 6px;
+  height: 6px;
+  border: solid currentColor;
+  border-width: 0 1.5px 1.5px 0;
+  content: "";
+  transform: rotate(-45deg);
+  transition: transform 120ms ease;
+}
+
+.nav-folder.is-expanded .nav-chevron::before {
+  transform: rotate(45deg);
 }
 
 .sheet-nav {

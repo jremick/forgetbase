@@ -228,6 +228,7 @@ const actionTypes: AgentActionType[] = [
 const unsafeMethods = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 const navWidthStorageKey = "forgetbase-web-nav-width";
 const densityStorageKey = "forgetbase-web-density";
+const navExpandedStorageKey = "forgetbase-web-nav-expanded";
 type AuthState = "checking" | "authenticated" | "unauthenticated";
 type NavBadgeTone = "warn" | "bad" | "ok";
 type NavLeafConfig = {
@@ -711,6 +712,22 @@ export function App() {
   const [density, setDensity] = useState(() =>
     typeof window === "undefined" ? "comfortable" : localStorage.getItem(densityStorageKey) || "comfortable"
   );
+  const [expandedNavSections, setExpandedNavSections] = useState<Record<string, boolean>>(() => {
+    if (typeof window === "undefined") {
+      return {};
+    }
+
+    try {
+      const stored = localStorage.getItem(navExpandedStorageKey);
+      const parsed = stored ? JSON.parse(stored) : {};
+
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+        ? Object.fromEntries(Object.entries(parsed).map(([key, value]) => [key, Boolean(value)]))
+        : {};
+    } catch {
+      return {};
+    }
+  });
   const [isCommandOpen, setIsCommandOpen] = useState(false);
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
   const [loadingWorkspaceRoute, setLoadingWorkspaceRoute] = useState("");
@@ -899,6 +916,10 @@ export function App() {
   useEffect(() => {
     localStorage.setItem(densityStorageKey, density);
   }, [density]);
+
+  useEffect(() => {
+    localStorage.setItem(navExpandedStorageKey, JSON.stringify(expandedNavSections));
+  }, [expandedNavSections]);
 
   useEffect(() => {
     if (!isAuthenticated || readerSurfaceActive) {
@@ -2899,6 +2920,13 @@ export function App() {
     setDensity((current) => current === "comfortable" ? "compact" : "comfortable");
   }
 
+  function toggleNavSection(sectionKey: string) {
+    setExpandedNavSections((current) => ({
+      ...current,
+      [sectionKey]: !current[sectionKey]
+    }));
+  }
+
   const operationsPage = operationsPageCopy[currentPage] ?? defaultOperationsPageCopy;
   const activeAssetContentView = currentPage === "versions" ? "version" : assetContentView;
   const navSections: NavSectionConfig[] = [
@@ -2983,50 +3011,58 @@ export function App() {
   });
   const renderNavigationSections = (onNavigate?: () => void) => (
     <ScrollArea className="side-nav-scroll">
-      {navSections.map((section) => (
-        <div className="nav-group" key={section.label}>
-          <p className="nav-label">{section.label}</p>
-          <div className="nav-tree">
-            <Button
-              className={`nav-folder ${section.activeRoutes.includes(currentPage) ? "is-active-ancestor" : ""}`}
-              type="button"
-              variant="ghost"
-              onClick={() => {
-                navigatePage(section.folderRoute);
-                onNavigate?.();
-              }}
-            >
-              <span className="folder-glyph" aria-hidden="true">{section.folderIcon}</span>
-              <span className="nav-text">{section.folderLabel}</span>
-              {section.count === undefined ? null : <Badge variant="neutral" className="nav-count">{section.count}</Badge>}
-            </Button>
-            <div className="nav-branch">
-              {section.leaves.map((leaf) => {
-                const hasIcon = Boolean(leaf.showIcon && leaf.icon);
+      {navSections.map((section) => {
+        const isExpanded = Boolean(expandedNavSections[section.folderRoute]);
+        const isActiveAncestor = section.activeRoutes.includes(currentPage);
+        const branchId = `nav-branch-${section.folderRoute}`;
 
-                return (
-                  <Button
-                    key={leaf.route}
-                    className={`nav-link nav-leaf ${hasIcon ? "has-icon" : "is-iconless"} ${currentPage === leaf.route ? "active" : ""}`}
-                    type="button"
-                    variant="ghost"
-                    aria-current={currentPage === leaf.route ? "page" : undefined}
-                    onClick={() => {
-                      navigatePage(leaf.route);
-                      onNavigate?.();
-                    }}
-                  >
-                    {hasIcon ? <span className="nav-icon">{leaf.icon}</span> : null}
-                    <span className="nav-text">{leaf.label}</span>
-                    {leaf.count === undefined ? null : <Badge variant="neutral" className="nav-count">{leaf.count}</Badge>}
-                    {leaf.badge ? <Badge variant={navBadgeVariant(leaf.badge.tone)} className="nav-badge">{leaf.badge.label}</Badge> : null}
-                  </Button>
-                );
-              })}
+        return (
+          <div className="nav-group" key={section.label}>
+            <p className="nav-label">{section.label}</p>
+            <div className="nav-tree">
+              <Button
+                className={`nav-folder ${isActiveAncestor ? "is-active-ancestor" : ""} ${isExpanded ? "is-expanded" : ""}`}
+                type="button"
+                variant="ghost"
+                aria-expanded={isExpanded}
+                aria-controls={branchId}
+                onClick={() => toggleNavSection(section.folderRoute)}
+              >
+                <span className="folder-glyph" aria-hidden="true">{section.folderIcon}</span>
+                <span className="nav-text">{section.folderLabel}</span>
+                {section.count === undefined ? null : <Badge variant="neutral" className="nav-count">{section.count}</Badge>}
+                <span className="nav-chevron" aria-hidden="true"></span>
+              </Button>
+              {isExpanded ? (
+                <div className="nav-branch" id={branchId}>
+                  {section.leaves.map((leaf) => {
+                    const hasIcon = Boolean(leaf.showIcon && leaf.icon);
+
+                    return (
+                      <Button
+                        key={leaf.route}
+                        className={`nav-link nav-leaf ${hasIcon ? "has-icon" : "is-iconless"} ${currentPage === leaf.route ? "active" : ""}`}
+                        type="button"
+                        variant="ghost"
+                        aria-current={currentPage === leaf.route ? "page" : undefined}
+                        onClick={() => {
+                          navigatePage(leaf.route);
+                          onNavigate?.();
+                        }}
+                      >
+                        {hasIcon ? <span className="nav-icon">{leaf.icon}</span> : null}
+                        <span className="nav-text">{leaf.label}</span>
+                        {leaf.count === undefined ? null : <Badge variant="neutral" className="nav-count">{leaf.count}</Badge>}
+                        {leaf.badge ? <Badge variant={navBadgeVariant(leaf.badge.tone)} className="nav-badge">{leaf.badge.label}</Badge> : null}
+                      </Button>
+                    );
+                  })}
+                </div>
+              ) : null}
             </div>
           </div>
-        </div>
-      ))}
+        );
+      })}
     </ScrollArea>
   );
 
