@@ -6,7 +6,7 @@ import { X } from "lucide-react";
 
 import { cn } from "@/lib/utils.js";
 
-function Dialog({ modal = false, ...props }: React.ComponentProps<typeof DialogPrimitive.Root>) {
+function Dialog({ modal = true, ...props }: React.ComponentProps<typeof DialogPrimitive.Root>) {
   return <DialogPrimitive.Root data-slot="dialog" modal={modal} {...props} />;
 }
 

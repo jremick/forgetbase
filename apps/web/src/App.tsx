@@ -95,7 +95,6 @@ import {
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
-  DropdownMenuShortcut,
   DropdownMenuTrigger
 } from "./components/ui/dropdown-menu.js";
 import { Input } from "./components/ui/input.js";
@@ -103,6 +102,13 @@ import { Label } from "./components/ui/label.js";
 import { NativeSelect } from "./components/ui/native-select.js";
 import { ScrollArea } from "./components/ui/scroll-area.js";
 import { Separator } from "./components/ui/separator.js";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle
+} from "./components/ui/sheet.js";
 import {
   Select,
   SelectContent,
@@ -162,6 +168,7 @@ const {
   Copy,
   DownloadSimple,
   GearSix,
+  List,
   MagnifyingGlass,
   Package,
   SignOut
@@ -172,6 +179,7 @@ const {
   Copy: React.ElementType;
   DownloadSimple: React.ElementType;
   GearSix: React.ElementType;
+  List: React.ElementType;
   MagnifyingGlass: React.ElementType;
   Package: React.ElementType;
   SignOut: React.ElementType;
@@ -704,6 +712,7 @@ export function App() {
     typeof window === "undefined" ? "comfortable" : localStorage.getItem(densityStorageKey) || "comfortable"
   );
   const [isCommandOpen, setIsCommandOpen] = useState(false);
+  const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
   const [loadingWorkspaceRoute, setLoadingWorkspaceRoute] = useState("");
   const commandTriggerRef = useRef<HTMLButtonElement | null>(null);
   const loadedWorkspaceRoutesRef = useRef<Set<string>>(new Set());
@@ -839,7 +848,6 @@ export function App() {
   function openLoginPanel() {
     setShowLoginPanel(true);
     window.requestAnimationFrame(() => {
-      document.getElementById("login-dialog")?.scrollIntoView({ block: "center" });
       const emailInput = document.getElementById("login-email");
       if (emailInput instanceof HTMLInputElement) {
         emailInput.focus();
@@ -2973,6 +2981,54 @@ export function App() {
       routes: Array.from(routes.values())
     };
   });
+  const renderNavigationSections = (onNavigate?: () => void) => (
+    <ScrollArea className="side-nav-scroll">
+      {navSections.map((section) => (
+        <div className="nav-group" key={section.label}>
+          <p className="nav-label">{section.label}</p>
+          <div className="nav-tree">
+            <Button
+              className={`nav-folder ${section.activeRoutes.includes(currentPage) ? "is-active-ancestor" : ""}`}
+              type="button"
+              variant="ghost"
+              onClick={() => {
+                navigatePage(section.folderRoute);
+                onNavigate?.();
+              }}
+            >
+              <span className="folder-glyph" aria-hidden="true">{section.folderIcon}</span>
+              <span className="nav-text">{section.folderLabel}</span>
+              {section.count === undefined ? null : <Badge variant="neutral" className="nav-count">{section.count}</Badge>}
+            </Button>
+            <div className="nav-branch">
+              {section.leaves.map((leaf) => {
+                const hasIcon = Boolean(leaf.showIcon && leaf.icon);
+
+                return (
+                  <Button
+                    key={leaf.route}
+                    className={`nav-link nav-leaf ${hasIcon ? "has-icon" : "is-iconless"} ${currentPage === leaf.route ? "active" : ""}`}
+                    type="button"
+                    variant="ghost"
+                    aria-current={currentPage === leaf.route ? "page" : undefined}
+                    onClick={() => {
+                      navigatePage(leaf.route);
+                      onNavigate?.();
+                    }}
+                  >
+                    {hasIcon ? <span className="nav-icon">{leaf.icon}</span> : null}
+                    <span className="nav-text">{leaf.label}</span>
+                    {leaf.count === undefined ? null : <Badge variant="neutral" className="nav-count">{leaf.count}</Badge>}
+                    {leaf.badge ? <Badge variant={navBadgeVariant(leaf.badge.tone)} className="nav-badge">{leaf.badge.label}</Badge> : null}
+                  </Button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      ))}
+    </ScrollArea>
+  );
 
   return (
     <div
@@ -2995,24 +3051,28 @@ export function App() {
         </div>
         {isAuthenticated ? readerSurfaceActive ? (
           <div className="topbar-main reader-topbar-main">
-            <form
-              className="reader-topbar-search"
-              onSubmit={(event) => {
-                setLibraryQuery(searchQuery);
-                void runSearch(event);
-              }}
-            >
-              <MagnifyingGlass aria-hidden="true" />
-              <Input
-                value={searchQuery}
-                onChange={(event) => {
-                  setSearchQuery(event.target.value);
-                  setLibraryQuery(event.target.value);
+            {accountSettingsRouteRequested ? (
+              <div className="reader-topbar-spacer" aria-hidden="true" />
+            ) : (
+              <form
+                className="reader-topbar-search"
+                onSubmit={(event) => {
+                  setLibraryQuery(searchQuery);
+                  void runSearch(event);
                 }}
-                placeholder="Search published material"
-                aria-label="Search published material"
-              />
-            </form>
+              >
+                <MagnifyingGlass aria-hidden="true" />
+                <Input
+                  value={searchQuery}
+                  onChange={(event) => {
+                    setSearchQuery(event.target.value);
+                    setLibraryQuery(event.target.value);
+                  }}
+                  placeholder="Search published material"
+                  aria-label="Search published material"
+                />
+              </form>
+            )}
             <div className="topbar-actions">
               <Button
                 variant="ghost"
@@ -3032,30 +3092,32 @@ export function App() {
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="identity-menu">
                   <DropdownMenuLabel>
-                    <span className="identity-menu-label">Signed in</span>
-                    <span className="identity-menu-value">{displayIdentity}</span>
+                    <span className="identity-menu-header">
+                      <span className="identity-menu-label">Signed in</span>
+                      <span className="identity-menu-title">
+                        <span className="identity-menu-value">{displayIdentity}</span>
+                        {currentPrincipal?.role ? <Badge variant="neutral">{currentPrincipal.role}</Badge> : null}
+                      </span>
+                      <span className="identity-menu-email">{currentPrincipal?.email ?? "No email available"}</span>
+                    </span>
                   </DropdownMenuLabel>
                   <DropdownMenuSeparator />
                   <DropdownMenuGroup>
                     <DropdownMenuItem onSelect={() => navigatePage("account-settings")}>
                       Settings
-                      <DropdownMenuShortcut>#account</DropdownMenuShortcut>
                     </DropdownMenuItem>
                     {canUseAdministration ? (
                       <DropdownMenuItem onSelect={() => navigatePage("library")}>
                         Administration
-                        <DropdownMenuShortcut>#admin</DropdownMenuShortcut>
                       </DropdownMenuItem>
                     ) : null}
                     <DropdownMenuItem onSelect={() => void refresh()}>
                       Refresh library
-                      <DropdownMenuShortcut>sync</DropdownMenuShortcut>
                     </DropdownMenuItem>
                   </DropdownMenuGroup>
                   <DropdownMenuSeparator />
                   <DropdownMenuItem variant="destructive" onSelect={() => void logout()}>
                     Sign out
-                    <DropdownMenuShortcut>auth</DropdownMenuShortcut>
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
@@ -3063,6 +3125,16 @@ export function App() {
           </div>
         ) : (
           <div className="topbar-main">
+            <Button
+              variant="ghost"
+              size="icon"
+              type="button"
+              className="mobile-nav-trigger"
+              aria-label="Open navigation"
+              onClick={() => setIsMobileNavOpen(true)}
+            >
+              <List aria-hidden="true" />
+            </Button>
             <Button
               ref={commandTriggerRef}
               variant="command"
@@ -3084,40 +3156,50 @@ export function App() {
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="identity-menu">
                   <DropdownMenuLabel>
-                    <span className="identity-menu-label">Signed in</span>
-                    <span className="identity-menu-value">{displayIdentity}</span>
+                    <span className="identity-menu-header">
+                      <span className="identity-menu-label">Signed in</span>
+                      <span className="identity-menu-title">
+                        <span className="identity-menu-value">{displayIdentity}</span>
+                        {currentPrincipal?.role ? <Badge variant="neutral">{currentPrincipal.role}</Badge> : null}
+                      </span>
+                      <span className="identity-menu-email">{currentPrincipal?.email ?? "No email available"}</span>
+                    </span>
                   </DropdownMenuLabel>
                   <DropdownMenuSeparator />
                   <DropdownMenuGroup>
                     <DropdownMenuItem onSelect={() => navigatePage("account-settings")}>
                       Settings
-                      <DropdownMenuShortcut>#account</DropdownMenuShortcut>
                     </DropdownMenuItem>
                     {canUseAdministration ? (
                       <DropdownMenuItem onSelect={() => navigatePage("library")}>
                         Administration
-                        <DropdownMenuShortcut>#admin</DropdownMenuShortcut>
                       </DropdownMenuItem>
                     ) : null}
                     <DropdownMenuItem onSelect={toggleDensity}>
                       {density === "comfortable" ? "Compact density" : "Comfortable density"}
-                      <DropdownMenuShortcut>view</DropdownMenuShortcut>
                     </DropdownMenuItem>
                     <DropdownMenuItem onSelect={() => void refresh()}>
                       Refresh
-                      <DropdownMenuShortcut>sync</DropdownMenuShortcut>
                     </DropdownMenuItem>
                   </DropdownMenuGroup>
                   <DropdownMenuSeparator />
                   <DropdownMenuItem variant="destructive" onSelect={() => void logout()}>
                     Sign out
-                    <DropdownMenuShortcut>auth</DropdownMenuShortcut>
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
             </div>
           </div>
-        ) : null}
+        ) : (
+          <div className="topbar-main public-topbar-main">
+            <span aria-hidden="true" />
+            <div className="topbar-actions">
+              <Button variant="primary" type="button" onClick={openLoginPanel}>
+                Log in
+              </Button>
+            </div>
+          </div>
+        )}
       </header>
 
       {isAuthenticated ? readerSurfaceActive ? (
@@ -3330,47 +3412,20 @@ export function App() {
             </Command>
           </CommandDialog>
 
-          <nav className="side-nav tree-nav" aria-label="Main pages" id="page-nav">
-        <ScrollArea className="side-nav-scroll">
-          {navSections.map((section) => (
-            <div className="nav-group" key={section.label}>
-              <p className="nav-label">{section.label}</p>
-              <div className="nav-tree">
-                <Button
-                  className={`nav-folder ${section.activeRoutes.includes(currentPage) ? "is-active-ancestor" : ""}`}
-                  type="button"
-                  variant="ghost"
-                  onClick={() => navigatePage(section.folderRoute)}
-                >
-                  <span className="folder-glyph" aria-hidden="true">{section.folderIcon}</span>
-                  <span className="nav-text">{section.folderLabel}</span>
-                  {section.count === undefined ? null : <Badge variant="neutral" className="nav-count">{section.count}</Badge>}
-                </Button>
-                <div className="nav-branch">
-                  {section.leaves.map((leaf) => {
-                    const hasIcon = Boolean(leaf.showIcon && leaf.icon);
+          <Sheet open={isMobileNavOpen} onOpenChange={setIsMobileNavOpen}>
+            <SheetContent side="left" className="mobile-nav-sheet">
+              <SheetHeader>
+                <SheetTitle>Navigation</SheetTitle>
+                <SheetDescription>Move between ForgetBase workspaces.</SheetDescription>
+              </SheetHeader>
+              <nav className="sheet-nav tree-nav" aria-label="Mobile main pages">
+                {renderNavigationSections(() => setIsMobileNavOpen(false))}
+              </nav>
+            </SheetContent>
+          </Sheet>
 
-                    return (
-                      <Button
-                        key={leaf.route}
-                        className={`nav-link nav-leaf ${hasIcon ? "has-icon" : "is-iconless"} ${currentPage === leaf.route ? "active" : ""}`}
-                        type="button"
-                        variant="ghost"
-                        aria-current={currentPage === leaf.route ? "page" : undefined}
-                        onClick={() => navigatePage(leaf.route)}
-                      >
-                        {hasIcon ? <span className="nav-icon">{leaf.icon}</span> : null}
-                        <span className="nav-text">{leaf.label}</span>
-                        {leaf.count === undefined ? null : <Badge variant="neutral" className="nav-count">{leaf.count}</Badge>}
-                        {leaf.badge ? <Badge variant={navBadgeVariant(leaf.badge.tone)} className="nav-badge">{leaf.badge.label}</Badge> : null}
-                      </Button>
-                    );
-                  })}
-                </div>
-              </div>
-            </div>
-          ))}
-        </ScrollArea>
+          <nav className="side-nav tree-nav" aria-label="Main pages" id="page-nav">
+        {renderNavigationSections()}
       </nav>
 
       <main className="main" id="main">
@@ -4345,7 +4400,17 @@ export function App() {
               </label>
               <Button type="submit">Save retention</Button>
               <Button type="button" onClick={() => void purgeTelemetryRetention(true)}>Dry run purge</Button>
-              <Button type="button" onClick={() => void purgeTelemetryRetention(false)}>Execute purge</Button>
+              <Button
+                type="button"
+                variant="danger"
+                onClick={() => {
+                  if (window.confirm("Execute telemetry purge now? Run a dry run first if you are unsure.")) {
+                    void purgeTelemetryRetention(false);
+                  }
+                }}
+              >
+                Execute purge
+              </Button>
             </form>
             {telemetryRetentionPolicy ? (
               <p>
@@ -4707,7 +4772,17 @@ export function App() {
             <div className="flex flex-wrap gap-2">
               <Button type="button" onClick={() => void loadManagedQueryCache()}>Load cache</Button>
               <Button type="button" onClick={() => void purgeManagedQueryCache(true)}>Dry run purge</Button>
-              <Button type="button" onClick={() => void purgeManagedQueryCache(false)}>Execute purge</Button>
+              <Button
+                type="button"
+                variant="danger"
+                onClick={() => {
+                  if (window.confirm("Execute managed-query cache purge now?")) {
+                    void purgeManagedQueryCache(false);
+                  }
+                }}
+              >
+                Execute purge
+              </Button>
             </div>
             {managedQueryCachePurgeResult ? (
               <p>
@@ -4722,7 +4797,17 @@ export function App() {
                 <strong>{entry.provider}</strong> {entry.model} hits {entry.hitCount}, expires{" "}
                 {new Date(entry.expiresAt).toLocaleString()}
                 {" "}
-                <Button type="button" onClick={() => void deleteManagedQueryCacheEntry(entry.cacheKey)}>Delete</Button>
+                <Button
+                  type="button"
+                  variant="danger"
+                  onClick={() => {
+                    if (window.confirm(`Delete cache entry ${entry.cacheKey}?`)) {
+                      void deleteManagedQueryCacheEntry(entry.cacheKey);
+                    }
+                  }}
+                >
+                  Delete
+                </Button>
               </p>
             )) : <p className="empty">No cache entries loaded.</p>}
           </div>
@@ -5122,11 +5207,31 @@ export function App() {
                 <Input value={memberUserId} onChange={(event) => setMemberUserId(event.target.value)} />
               </label>
               <Button type="submit" disabled={!memberGroupId || !memberUserId}>Add member</Button>
-              <Button type="button" onClick={() => void removeGroupMember()} disabled={!memberGroupId || !memberUserId}>
+              <Button
+                type="button"
+                variant="danger"
+                onClick={() => {
+                  if (window.confirm("Remove this user from the selected group?")) {
+                    void removeGroupMember();
+                  }
+                }}
+                disabled={!memberGroupId || !memberUserId}
+              >
                 Remove member
               </Button>
               <Button type="button" onClick={() => void loadGroupMembers()} disabled={!memberGroupId}>Members</Button>
-              <Button type="button" onClick={() => void deleteGroup()} disabled={!memberGroupId}>Delete group</Button>
+              <Button
+                type="button"
+                variant="danger"
+                onClick={() => {
+                  if (window.confirm("Delete the selected group? This cannot be undone.")) {
+                    void deleteGroup();
+                  }
+                }}
+                disabled={!memberGroupId}
+              >
+                Delete group
+              </Button>
             </form>
             {groups.length ? groups.map((group) => (
               <p key={group.id}>
@@ -5216,8 +5321,30 @@ export function App() {
                   <option value="true">yes</option>
                 </NativeSelect>
               </label>
-              <Button type="button" onClick={() => void rotateApiKey()} disabled={!selectedApiKeyId}>Rotate</Button>
-              <Button type="button" onClick={() => void revokeApiKey()} disabled={!selectedApiKeyId}>Revoke</Button>
+              <Button
+                type="button"
+                variant="danger"
+                onClick={() => {
+                  if (window.confirm("Rotate the selected API key?")) {
+                    void rotateApiKey();
+                  }
+                }}
+                disabled={!selectedApiKeyId}
+              >
+                Rotate
+              </Button>
+              <Button
+                type="button"
+                variant="danger"
+                onClick={() => {
+                  if (window.confirm("Revoke the selected API key? Existing clients using it will stop working.")) {
+                    void revokeApiKey();
+                  }
+                }}
+                disabled={!selectedApiKeyId}
+              >
+                Revoke
+              </Button>
             </form>
             <form className="grid gap-4 md:grid-cols-[repeat(auto-fit,minmax(160px,1fr))] md:items-end" onSubmit={(event) => event.preventDefault()}>
               <label>
@@ -5261,7 +5388,16 @@ export function App() {
                 />
               </label>
               <Button type="button" onClick={() => void loadLoginSessions()}>Load sessions</Button>
-              <Button type="button" onClick={() => void revokeLoginSession()} disabled={!selectedLoginSessionId}>
+              <Button
+                type="button"
+                variant="danger"
+                onClick={() => {
+                  if (window.confirm("Revoke the selected login session?")) {
+                    void revokeLoginSession();
+                  }
+                }}
+                disabled={!selectedLoginSessionId}
+              >
                 Revoke session
               </Button>
             </form>
@@ -5896,19 +6032,17 @@ rootIndexPath=index.md`}</pre>
           </section>
 
           <section className="auth-entry-grid auth-entry-grid--boundary" aria-label="Private beta boundary">
-            <Alert className="beta-boundary-panel" aria-labelledby="beta-boundary-title">
-              <AlertTitle>
+            <section className="beta-boundary-panel" aria-labelledby="beta-boundary-title">
+              <div>
                 <span className="eyebrow">Clear beta boundary</span>
                 <h2 id="beta-boundary-title">Built in public boundaries, not inflated claims.</h2>
-              </AlertTitle>
-              <AlertDescription>
                 <p>
                   Evaluate ForgetBase as a self-hostable core for governed agent instructions and context packages.
                   It is not claiming hosted-service maturity, enterprise SSO/SCIM completion, full managed-agent
                   orchestration, broad enterprise search parity, or certification-level compliance.
                 </p>
-              </AlertDescription>
-            </Alert>
+              </div>
+            </section>
             <Card className="beta-access-panel" aria-labelledby="beta-access-title">
               <CardHeader>
                 <CardDescription className="eyebrow">Private beta</CardDescription>
@@ -5928,7 +6062,7 @@ rootIndexPath=index.md`}</pre>
               </CardFooter>
             </Card>
           </section>
-          <Dialog open={showLoginPanel} onOpenChange={setShowLoginPanel}>
+          <Dialog open={showLoginPanel} onOpenChange={setShowLoginPanel} modal>
             <DialogContent
               className="login-dialog"
               id="login-dialog"
