@@ -20,7 +20,7 @@ export function DefinitionGrid({ items, compact = false, className, children, ..
   return (
     <Grid
       as="dl"
-      templateColumns={{ base: "1fr", sm: "repeat(2, minmax(0, 1fr))" }}
+      templateColumns="repeat(auto-fit, minmax(min(100%, 180px), 1fr))"
       gap="1px"
       minW="0"
       overflow="hidden"

@@ -4314,7 +4314,15 @@ export function App() {
               )}
             </SectionCard>
           </div>
-          <div className={routePanelClass(currentPage, settingsPanelRoutes)}>
+          <nav className={routePanelClass(currentPage, settingsPanelRoutes, "settings-local-nav")} aria-label="Settings sections">
+            <a href="#settings-policies">Policies</a>
+            <a href="#settings-actions">Action governance</a>
+            <a href="#settings-users">Users</a>
+            <a href="#settings-service-accounts">Service accounts</a>
+            <a href="#settings-api-keys">API keys</a>
+            <a href="#settings-sessions">Sessions</a>
+          </nav>
+          <div id="settings-policies" className={routePanelClass(currentPage, settingsPanelRoutes)}>
             <h3>Telemetry retention</h3>
             <form className="grid gap-4 md:grid-cols-[repeat(auto-fit,minmax(160px,1fr))] md:items-end" onSubmit={(event) => void saveTelemetryRetentionPolicy(event)}>
               <label>
@@ -4486,7 +4494,7 @@ export function App() {
               </p>
             ) : <p className="empty">No eval schedule policy loaded.</p>}
           </div>
-          <div className={routePanelClass(currentPage, ["approvals", ...settingsPanelRoutes])}>
+          <div id="settings-actions" className={routePanelClass(currentPage, ["approvals", ...settingsPanelRoutes])}>
             <h3>Action execution</h3>
             <form className="grid gap-4 md:grid-cols-[repeat(auto-fit,minmax(160px,1fr))] md:items-end" onSubmit={(event) => void saveActionExecutionPolicy(event)}>
               <label>
@@ -4851,7 +4859,7 @@ export function App() {
               </p>
             )) : <p className="empty">No audit events loaded.</p>}
           </div>
-          <div className={routePanelClass(currentPage, settingsPanelRoutes)}>
+          <div id="settings-users" className={routePanelClass(currentPage, settingsPanelRoutes)}>
             <h3>Users</h3>
             <form className="grid gap-4 md:grid-cols-[repeat(auto-fit,minmax(160px,1fr))] md:items-end" onSubmit={(event) => void createUser(event)}>
               <label>
@@ -4978,7 +4986,7 @@ export function App() {
               </p>
             ) : <p className="empty">No service policy loaded.</p>}
           </div>
-          <div className={routePanelClass(currentPage, settingsPanelRoutes)}>
+          <div id="settings-service-accounts" className={routePanelClass(currentPage, settingsPanelRoutes)}>
             <h3>Service accounts</h3>
             <form className="grid gap-4 md:grid-cols-[repeat(auto-fit,minmax(160px,1fr))] md:items-end" onSubmit={(event) => void createServiceAccount(event)}>
               <label>
@@ -5143,7 +5151,7 @@ export function App() {
               </p>
             )) : <p className="empty">No members loaded.</p>}
           </div>
-          <div className={routePanelClass(currentPage, settingsPanelRoutes)}>
+          <div id="settings-api-keys" className={routePanelClass(currentPage, settingsPanelRoutes)}>
             <h3>API keys</h3>
             <form className="grid gap-4 md:grid-cols-[repeat(auto-fit,minmax(160px,1fr))] md:items-end" onSubmit={(event) => void createApiKey(event)}>
               <label>
@@ -5242,7 +5250,7 @@ export function App() {
               </p>
             )) : <p className="empty">No API keys loaded.</p>}
           </div>
-          <div className={routePanelClass(currentPage, settingsPanelRoutes)}>
+          <div id="settings-sessions" className={routePanelClass(currentPage, settingsPanelRoutes)}>
             <h3>Login sessions</h3>
             <form className="grid gap-4 md:grid-cols-[repeat(auto-fit,minmax(160px,1fr))] md:items-end" onSubmit={(event) => event.preventDefault()}>
               <label>
