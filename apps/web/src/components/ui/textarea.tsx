@@ -1,18 +1,10 @@
 import * as React from "react";
+import { chakraRuntime } from "../../theme/chakra-runtime.js";
 
-import { cn } from "@/lib/utils.js";
+const ChakraTextarea = chakraRuntime.Textarea as React.ElementType;
 
-function Textarea({ className, ...props }: React.ComponentProps<"textarea">) {
-  return (
-    <textarea
-      data-slot="textarea"
-      className={cn(
-        "flex min-h-20 w-full min-w-0 rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground shadow-xs transition-colors outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-destructive/20",
-        className
-      )}
-      {...props}
-    />
-  );
+function Textarea(props: React.ComponentProps<"textarea">) {
+  return <ChakraTextarea data-slot="textarea" size="md" {...props} />;
 }
 
 export { Textarea };

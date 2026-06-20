@@ -1,15 +1,14 @@
 import * as React from "react";
+import { Badge, Box, CardBody, CardRoot, Heading, HStack, Stack, Text } from "@chakra-ui/react";
 
-import { Badge, type BadgeVariant } from "@/components/ui/badge.js";
-import { Card, CardContent } from "@/components/ui/card.js";
-import { cn } from "@/lib/utils.js";
+import type { BadgeVariant } from "@/components/ui/badge.js";
 
 export type MetricCardBadge = {
   label: React.ReactNode;
   variant?: BadgeVariant;
 };
 
-export type MetricCardProps = React.ComponentProps<typeof Card> & {
+export type MetricCardProps = React.ComponentProps<"div"> & {
   label: React.ReactNode;
   value: React.ReactNode;
   note?: React.ReactNode;
@@ -21,26 +20,63 @@ function isMetricCardBadge(value: MetricCardProps["badge"]): value is MetricCard
   return Boolean(value && typeof value === "object" && !React.isValidElement(value) && "label" in value);
 }
 
+function badgeColorPalette(variant?: BadgeVariant) {
+  switch (variant) {
+    case "success":
+    case "sensitivity-public":
+      return "green";
+    case "warning":
+    case "sensitivity-restricted":
+      return "yellow";
+    case "destructive":
+    case "sensitivity-confidential":
+    case "sensitivity-secret":
+      return "red";
+    case "info":
+    case "sensitivity-internal":
+      return "teal";
+    case "default":
+      return "brand";
+    case "neutral":
+    default:
+      return "gray";
+  }
+}
+
 export function MetricCard({ label, value, note, badge, icon, className, ...props }: MetricCardProps) {
   return (
-    <Card className={cn("min-w-0 shadow-none", className)} {...props}>
-      <CardContent className="grid gap-2 p-3">
-        <div className="flex min-w-0 items-start justify-between gap-2">
-          <div className="min-w-0 text-sm font-medium text-muted-foreground">{label}</div>
-          <div className="flex shrink-0 items-center gap-2">
-            {badge ? (
-              isMetricCardBadge(badge) ? (
-                <Badge variant={badge.variant ?? "neutral"}>{badge.label}</Badge>
-              ) : (
-                badge
-              )
-            ) : null}
-            {icon ? <span className="text-muted-foreground [&_svg]:size-4">{icon}</span> : null}
-          </div>
-        </div>
-        <div className="min-w-0 text-2xl font-semibold leading-tight text-foreground">{value}</div>
-        {note ? <div className="text-xs leading-5 text-muted-foreground">{note}</div> : null}
-      </CardContent>
-    </Card>
+    <CardRoot minW="0" className={className} {...props}>
+      <CardBody p="3">
+        <Stack gap="2">
+          <HStack align="start" justify="space-between" gap="2" minW="0">
+            <Text color="fg.muted" fontWeight="medium" minW="0" textStyle="sm">
+              {label}
+            </Text>
+            <HStack gap="2" align="center" flexShrink="0">
+              {badge ? (
+                isMetricCardBadge(badge) ? (
+                  <Badge colorPalette={badgeColorPalette(badge.variant ?? "neutral")}>{badge.label}</Badge>
+                ) : (
+                  badge
+                )
+              ) : null}
+              {icon ? (
+                <Box color="fg.muted" fontSize="md" lineHeight="1">
+                  {icon}
+                </Box>
+              ) : null}
+            </HStack>
+          </HStack>
+          <Heading as="div" size="2xl" minW="0">
+            {value}
+          </Heading>
+          {note ? (
+            <Text color="fg.muted" textStyle="xs">
+              {note}
+            </Text>
+          ) : null}
+        </Stack>
+      </CardBody>
+    </CardRoot>
   );
 }

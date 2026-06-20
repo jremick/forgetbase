@@ -1,15 +1,19 @@
 import * as React from "react";
+import { chakraRuntime } from "../../theme/chakra-runtime.js";
 
-import { cn } from "@/lib/utils.js";
+const ChakraSelect = (chakraRuntime.chakra as { select?: React.ElementType } | undefined)?.select ?? "select";
 
-function NativeSelect({ className, ...props }: React.ComponentProps<"select">) {
+function NativeSelect(props: React.ComponentProps<"select">) {
   return (
-    <select
+    <ChakraSelect
       data-slot="native-select"
-      className={cn(
-        "flex h-9 w-full min-w-0 rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground shadow-xs transition-colors outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50",
-        className
-      )}
+      minH="control"
+      width="full"
+      borderWidth="1px"
+      borderRadius="md"
+      paddingInline="3"
+      fontSize="sm"
+      _focusVisible={{ borderColor: "brand.500", boxShadow: "0 0 0 3px color-mix(in srgb, var(--chakra-colors-brand-500) 25%, transparent)" }}
       {...props}
     />
   );

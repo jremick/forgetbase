@@ -1,15 +1,24 @@
 import * as React from "react";
-
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert.js";
-import { Card, CardContent } from "@/components/ui/card.js";
-import { cn } from "@/lib/utils.js";
+import {
+  AlertContent,
+  AlertDescription,
+  AlertIndicator,
+  AlertRoot,
+  AlertTitle,
+  Box,
+  CardBody,
+  CardRoot,
+  Heading,
+  Stack,
+  Text
+} from "@chakra-ui/react";
 
 export type EmptyStateVariant = "plain" | "card" | "alert";
 export type EmptyStateStatus = "default" | "info" | "success" | "warning" | "destructive";
 
-type AlertVariant = NonNullable<React.ComponentProps<typeof Alert>["variant"]>;
+type AlertStatus = NonNullable<React.ComponentProps<typeof AlertRoot>["status"]>;
 
-export type EmptyStateProps = Omit<React.ComponentProps<"div">, "title"> & {
+export type EmptyStateProps = Omit<React.ComponentProps<typeof Box>, "title"> & {
   icon?: React.ReactNode;
   title: React.ReactNode;
   description?: React.ReactNode;
@@ -18,12 +27,12 @@ export type EmptyStateProps = Omit<React.ComponentProps<"div">, "title"> & {
   status?: EmptyStateStatus;
 };
 
-const emptyStateAlertVariant: Record<EmptyStateStatus, AlertVariant> = {
-  default: "default",
+const emptyStateAlertStatus: Record<EmptyStateStatus, AlertStatus> = {
+  default: "neutral",
   info: "info",
   success: "success",
   warning: "warning",
-  destructive: "destructive"
+  destructive: "error"
 };
 
 function EmptyStateBody({
@@ -33,14 +42,28 @@ function EmptyStateBody({
   actions
 }: Pick<EmptyStateProps, "icon" | "title" | "description" | "actions">) {
   return (
-    <div className="grid justify-items-center gap-3 text-center">
-      {icon ? <div className="text-muted-foreground [&_svg]:size-6">{icon}</div> : null}
-      <div className="grid gap-1">
-        <h3 className="text-sm font-semibold text-foreground">{title}</h3>
-        {description ? <p className="max-w-md text-sm leading-6 text-muted-foreground">{description}</p> : null}
-      </div>
-      {actions ? <div className="flex flex-wrap items-center justify-center gap-2">{actions}</div> : null}
-    </div>
+    <Stack align="center" gap="3" textAlign="center">
+      {icon ? (
+        <Box color="fg.muted" fontSize="xl" lineHeight="1">
+          {icon}
+        </Box>
+      ) : null}
+      <Stack gap="1" align="center">
+        <Heading as="h3" size="sm">
+          {title}
+        </Heading>
+        {description ? (
+          <Text color="fg.muted" maxW="md" textStyle="sm">
+            {description}
+          </Text>
+        ) : null}
+      </Stack>
+      {actions ? (
+        <Stack direction="row" gap="2" align="center" justify="center" flexWrap="wrap">
+          {actions}
+        </Stack>
+      ) : null}
+    </Stack>
   );
 }
 
@@ -56,39 +79,44 @@ export function EmptyState({
 }: EmptyStateProps) {
   if (variant === "alert") {
     return (
-      <Alert
-        variant={emptyStateAlertVariant[status]}
-        className={cn("items-start", className)}
+      <AlertRoot
+        status={emptyStateAlertStatus[status]}
+        variant="surface"
+        className={className}
         role={status === "destructive" || status === "warning" ? "alert" : "status"}
         {...props}
       >
-        <div className="col-start-2 flex min-w-0 flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-          <div className="flex min-w-0 gap-2">
-            {icon ? <span className="shrink-0 [&_svg]:size-4">{icon}</span> : null}
-            <div className="min-w-0 space-y-1">
+        {icon ? <AlertIndicator>{icon}</AlertIndicator> : null}
+        <AlertContent>
+          <Stack direction={{ base: "column", sm: "row" }} gap="3" align={{ base: "stretch", sm: "start" }} justify="space-between">
+            <Stack gap="1" minW="0">
               <AlertTitle>{title}</AlertTitle>
               {description ? <AlertDescription>{description}</AlertDescription> : null}
-            </div>
-          </div>
-          {actions ? <div className="flex flex-wrap items-center gap-2">{actions}</div> : null}
-        </div>
-      </Alert>
+            </Stack>
+            {actions ? (
+              <Stack direction="row" gap="2" align="center" flexWrap="wrap">
+                {actions}
+              </Stack>
+            ) : null}
+          </Stack>
+        </AlertContent>
+      </AlertRoot>
     );
   }
 
   if (variant === "card") {
     return (
-      <Card className={cn("shadow-none", className)} {...props}>
-        <CardContent className="p-6">
+      <CardRoot className={className} {...props}>
+        <CardBody p="6">
           <EmptyStateBody icon={icon} title={title} description={description} actions={actions} />
-        </CardContent>
-      </Card>
+        </CardBody>
+      </CardRoot>
     );
   }
 
   return (
-    <div className={cn("rounded-md border border-dashed border-border p-6", className)} {...props}>
+    <Box borderWidth="1px" borderStyle="dashed" rounded="md" p="6" className={className} {...props}>
       <EmptyStateBody icon={icon} title={title} description={description} actions={actions} />
-    </div>
+    </Box>
   );
 }

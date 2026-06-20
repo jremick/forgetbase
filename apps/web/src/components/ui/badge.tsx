@@ -1,41 +1,50 @@
 import * as React from "react";
-import { cva, type VariantProps } from "class-variance-authority";
+import { chakraRuntime } from "../../theme/chakra-runtime.js";
 
-import { cn } from "../../lib/utils.js";
+const ChakraBadge = chakraRuntime.Badge as React.ElementType;
 
-const badgeVariants = cva(
-  "inline-flex min-h-6 w-fit max-w-full shrink-0 items-center justify-center gap-1 overflow-hidden rounded-md border px-2 py-0.5 text-xs font-medium whitespace-nowrap transition-colors",
-  {
-    variants: {
-      variant: {
-        default: "border-transparent bg-primary text-primary-foreground",
-        success: "border-success bg-success text-success-foreground",
-        warning: "border-warning bg-warning text-warning-foreground",
-        destructive: "border-destructive/30 bg-destructive/10 text-destructive",
-        info: "border-info bg-info text-info-foreground",
-        neutral: "border-border bg-muted text-muted-foreground",
-        "sensitivity-public": "border-success bg-success text-success-foreground",
-        "sensitivity-internal": "border-info bg-info text-info-foreground",
-        "sensitivity-restricted": "border-warning bg-warning text-warning-foreground",
-        "sensitivity-confidential": "border-destructive/30 bg-destructive/10 text-destructive",
-        "sensitivity-secret": "border-destructive bg-destructive text-destructive-foreground"
-      }
-    },
-    defaultVariants: {
-      variant: "default"
-    }
-  }
-);
+export type BadgeVariant =
+  | "default"
+  | "success"
+  | "warning"
+  | "destructive"
+  | "info"
+  | "neutral"
+  | "sensitivity-public"
+  | "sensitivity-internal"
+  | "sensitivity-restricted"
+  | "sensitivity-confidential"
+  | "sensitivity-secret";
 
-export type BadgeProps = React.ComponentProps<"span"> & VariantProps<typeof badgeVariants>;
-export type BadgeVariant = NonNullable<VariantProps<typeof badgeVariants>["variant"]>;
+export type BadgeProps = Omit<React.ComponentProps<"span">, "color"> & {
+  variant?: BadgeVariant | null;
+};
 
-function Badge({ className, variant, ...props }: BadgeProps) {
+function badgePalette(variant: BadgeVariant | null | undefined) {
+  if (variant === "success" || variant === "sensitivity-public") return "green";
+  if (variant === "warning" || variant === "sensitivity-restricted") return "orange";
+  if (variant === "destructive" || variant === "sensitivity-confidential" || variant === "sensitivity-secret") return "red";
+  if (variant === "info" || variant === "sensitivity-internal") return "blue";
+  if (variant === "neutral") return "gray";
+  return "brand";
+}
+
+function badgeVisualVariant(variant: BadgeVariant | null | undefined) {
+  if (variant === "default" || variant === "sensitivity-secret") return "solid" as const;
+  return "subtle" as const;
+}
+
+function badgeVariants(_props?: { variant?: BadgeVariant | null; className?: string }) {
+  return _props?.className ?? "";
+}
+
+function Badge({ variant, ...props }: BadgeProps) {
   return (
-    <span
+    <ChakraBadge
       data-slot="badge"
       data-variant={variant ?? "default"}
-      className={cn(badgeVariants({ variant, className }))}
+      colorPalette={badgePalette(variant)}
+      variant={badgeVisualVariant(variant)}
       {...props}
     />
   );

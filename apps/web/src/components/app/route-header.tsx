@@ -1,14 +1,18 @@
 import * as React from "react";
-
 import {
-  Breadcrumb,
+  Box,
+  BreadcrumbCurrentLink,
   BreadcrumbItem,
   BreadcrumbLink,
   BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator
-} from "@/components/ui/breadcrumb.js";
-import { cn } from "@/lib/utils.js";
+  BreadcrumbRoot,
+  BreadcrumbSeparator,
+  Button,
+  Heading,
+  HStack,
+  Stack,
+  Text
+} from "@chakra-ui/react";
 
 export type RouteHeaderBreadcrumb = {
   label: React.ReactNode;
@@ -32,11 +36,11 @@ function isBreadcrumbItems(value: RouteHeaderProps["breadcrumbs"]): value is Rou
 
 function RouteHeaderBreadcrumbs({ breadcrumbs }: { breadcrumbs: React.ReactNode | RouteHeaderBreadcrumb[] }) {
   if (!isBreadcrumbItems(breadcrumbs)) {
-    return <div className="min-w-0">{breadcrumbs}</div>;
+    return <Box minW="0">{breadcrumbs}</Box>;
   }
 
   return (
-    <Breadcrumb>
+    <BreadcrumbRoot>
       <BreadcrumbList>
         {breadcrumbs.map((item, index) => {
           const isCurrent = item.current ?? index === breadcrumbs.length - 1;
@@ -46,16 +50,12 @@ function RouteHeaderBreadcrumbs({ breadcrumbs }: { breadcrumbs: React.ReactNode 
             <React.Fragment key={key}>
               <BreadcrumbItem>
                 {isCurrent ? (
-                  <BreadcrumbPage>{item.label}</BreadcrumbPage>
+                  <BreadcrumbCurrentLink>{item.label}</BreadcrumbCurrentLink>
                 ) : item.onClick ? (
                   <BreadcrumbLink asChild>
-                    <button
-                      type="button"
-                      className="rounded-sm outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
-                      onClick={item.onClick}
-                    >
+                    <Button type="button" variant="plain" size="xs" h="auto" minH="0" p="0" onClick={item.onClick}>
                       {item.label}
-                    </button>
+                    </Button>
                   </BreadcrumbLink>
                 ) : (
                   <BreadcrumbLink href={item.href ?? "#"}>{item.label}</BreadcrumbLink>
@@ -66,7 +66,7 @@ function RouteHeaderBreadcrumbs({ breadcrumbs }: { breadcrumbs: React.ReactNode 
           );
         })}
       </BreadcrumbList>
-    </Breadcrumb>
+    </BreadcrumbRoot>
   );
 }
 
@@ -82,20 +82,34 @@ export function RouteHeader({
   ...props
 }: RouteHeaderProps) {
   return (
-    <header className={cn("grid gap-3", className)} {...props}>
+    <Stack as="header" gap="3" className={className} {...props}>
       {breadcrumbs ? <RouteHeaderBreadcrumbs breadcrumbs={breadcrumbs} /> : null}
-      <div className="flex min-w-0 flex-col gap-3 md:flex-row md:items-start md:justify-between">
-        <div className="min-w-0 space-y-1">
-          {eyebrow ? <p className="text-xs font-medium text-muted-foreground uppercase tracking-normal">{eyebrow}</p> : null}
-          <div className="flex min-w-0 flex-wrap items-center gap-2">
-            <h1 className="min-w-0 text-2xl font-semibold leading-tight text-foreground">{title}</h1>
+      <Stack direction={{ base: "column", md: "row" }} gap="3" align={{ base: "stretch", md: "start" }} justify="space-between" minW="0">
+        <Stack gap="1" minW="0">
+          {eyebrow ? (
+            <Text color="fg.muted" fontWeight="medium" textStyle="xs" textTransform="uppercase">
+              {eyebrow}
+            </Text>
+          ) : null}
+          <HStack gap="2" align="center" flexWrap="wrap" minW="0">
+            <Heading as="h1" size="2xl" minW="0">
+              {title}
+            </Heading>
             {meta}
-          </div>
-          {lede ? <p className="max-w-3xl text-sm leading-6 text-muted-foreground">{lede}</p> : null}
-        </div>
-        {actions ? <div className="flex shrink-0 flex-wrap items-center gap-2">{actions}</div> : null}
-      </div>
+          </HStack>
+          {lede ? (
+            <Text color="fg.muted" maxW="3xl" textStyle="sm">
+              {lede}
+            </Text>
+          ) : null}
+        </Stack>
+        {actions ? (
+          <HStack gap="2" align="center" flexWrap="wrap" flexShrink="0">
+            {actions}
+          </HStack>
+        ) : null}
+      </Stack>
       {children}
-    </header>
+    </Stack>
   );
 }

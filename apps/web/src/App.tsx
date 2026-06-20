@@ -52,7 +52,7 @@ import type {
   TelemetryRetentionPolicy,
   TelemetryRetentionPurgeResult
 } from "@forgetbase/schema";
-import { BookOpen, ClipboardCheck, Copy, Download, LogOut, PackageOpen, RefreshCw, Search, Settings2 } from "lucide-react";
+import * as PhosphorIcons from "@phosphor-icons/react";
 import { Alert, AlertDescription, AlertTitle } from "./components/ui/alert.js";
 import { Badge, type BadgeVariant } from "./components/ui/badge.js";
 import { Button } from "./components/ui/button.js";
@@ -154,6 +154,28 @@ import {
   readInitialLoginTenantId
 } from "./local-dev-auth.js";
 import "./styles.css";
+
+const {
+  ArrowsClockwise,
+  BookOpen,
+  ClipboardText,
+  Copy,
+  DownloadSimple,
+  GearSix,
+  MagnifyingGlass,
+  Package,
+  SignOut
+} = PhosphorIcons as unknown as {
+  ArrowsClockwise: React.ElementType;
+  BookOpen: React.ElementType;
+  ClipboardText: React.ElementType;
+  Copy: React.ElementType;
+  DownloadSimple: React.ElementType;
+  GearSix: React.ElementType;
+  MagnifyingGlass: React.ElementType;
+  Package: React.ElementType;
+  SignOut: React.ElementType;
+};
 
 const sessionCookieActiveStorageKey = "forgetbase-session-cookie-active";
 const csrfCookieName = "forgetbase_csrf";
@@ -2889,7 +2911,7 @@ export function App() {
     {
       label: "Work",
       folderLabel: "Governance Work",
-      folderIcon: <ClipboardCheck aria-hidden="true" />,
+      folderIcon: <ClipboardText aria-hidden="true" />,
       folderRoute: "review",
       activeRoutes: ["review", "versions"],
       count: reviewDueAssets,
@@ -2901,7 +2923,7 @@ export function App() {
     {
       label: "Distribute",
       folderLabel: "Agent Distribution",
-      folderIcon: <PackageOpen aria-hidden="true" />,
+      folderIcon: <Package aria-hidden="true" />,
       folderRoute: "distribute",
       activeRoutes: ["distribute"],
       count: exportPackage?.assetCount ?? exportEligibleAssets,
@@ -2916,7 +2938,7 @@ export function App() {
     {
       label: "Operate",
       folderLabel: "Instruction Control",
-      folderIcon: <Settings2 aria-hidden="true" />,
+      folderIcon: <GearSix aria-hidden="true" />,
       folderRoute: "health",
       activeRoutes: [...operationsRouteValues],
       count: 5,
@@ -2980,7 +3002,7 @@ export function App() {
                 void runSearch(event);
               }}
             >
-              <Search aria-hidden="true" />
+              <MagnifyingGlass aria-hidden="true" />
               <Input
                 value={searchQuery}
                 onChange={(event) => {
@@ -2998,7 +3020,7 @@ export function App() {
                 type="button"
                 onClick={() => void refresh()}
               >
-                <RefreshCw aria-hidden="true" />
+                <ArrowsClockwise aria-hidden="true" />
                 Refresh
               </Button>
               <DropdownMenu>
@@ -3048,7 +3070,7 @@ export function App() {
               type="button"
               onClick={() => handleCommandOpenChange(true)}
             >
-              <Search aria-hidden="true" />
+              <MagnifyingGlass aria-hidden="true" />
               <span>Go to page or route</span>
               <span className="kbd">Cmd K</span>
             </Button>
@@ -3378,8 +3400,8 @@ export function App() {
                     />
                   </div>
                   <div className="connection-actions">
-                    <Button type="button" onClick={() => void refresh()}><RefreshCw aria-hidden="true" />Refresh</Button>
-                    <Button type="button" onClick={() => void logout()}><LogOut aria-hidden="true" />Sign out</Button>
+                    <Button type="button" onClick={() => void refresh()}><ArrowsClockwise aria-hidden="true" />Refresh</Button>
+                    <Button type="button" onClick={() => void logout()}><SignOut aria-hidden="true" />Sign out</Button>
                   </div>
                 </form>
               </CardContent>
@@ -3414,7 +3436,7 @@ export function App() {
                 : currentPage === "asset-read"
                   ? "Read the selected governed asset with trust state, permitted surfaces, and current agent contract in view."
                   : "Browse governed policies, guardrails, skills, templates, SOPs, playbooks, and human documents with trust metadata visible at a glance."}
-              actions={<Button type="button" onClick={() => void refresh()}><RefreshCw aria-hidden="true" />Refresh</Button>}
+              actions={<Button type="button" onClick={() => void refresh()}><ArrowsClockwise aria-hidden="true" />Refresh</Button>}
             />
             {currentPage === "library" ? (
               <div className="grid four">
@@ -3942,7 +3964,7 @@ export function App() {
           lede="Build a session-local package from approved, permission-filtered assets for API, CLI, MCP, JSON, and OKF consumers."
           actions={(
             <Button variant="primary" type="button" onClick={() => void generateExport()} disabled={isGeneratingExport}>
-              <Download aria-hidden="true" />{isGeneratingExport ? "Generating" : "Generate"}
+              <DownloadSimple aria-hidden="true" />{isGeneratingExport ? "Generating" : "Generate"}
             </Button>
           )}
         />
@@ -4039,7 +4061,7 @@ export function App() {
 
               <div className="flex flex-wrap items-center gap-2">
                 <Button variant="primary" type="submit" disabled={isGeneratingExport}>
-                  <Download aria-hidden="true" />{isGeneratingExport ? "Generating package" : "Generate package"}
+                  <DownloadSimple aria-hidden="true" />{isGeneratingExport ? "Generating package" : "Generate package"}
                 </Button>
                 <Button type="button" onClick={() => setExportPackage(null)} disabled={!exportPackage}>Clear local result</Button>
               </div>
@@ -4109,7 +4131,7 @@ export function App() {
                 description="Generate a package to inspect safe metadata for this browser session."
                 actions={(
                   <Button type="button" onClick={() => void generateExport()} disabled={isGeneratingExport}>
-                    <Download aria-hidden="true" />Generate package
+                    <DownloadSimple aria-hidden="true" />Generate package
                   </Button>
                 )}
               />
@@ -4158,7 +4180,7 @@ export function App() {
               onClick={() => void loadWorkspaceRoute(currentPage)}
               disabled={loadingWorkspaceRoute === currentPage}
             >
-              <RefreshCw aria-hidden="true" />
+              <ArrowsClockwise aria-hidden="true" />
               {loadingWorkspaceRoute === currentPage ? "Loading" : "Refresh workspace"}
             </Button>
           )}

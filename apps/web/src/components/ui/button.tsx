@@ -1,48 +1,66 @@
 import * as React from "react";
-import { cva, type VariantProps } from "class-variance-authority";
 import { Slot } from "@radix-ui/react-slot";
+import { chakraRuntime } from "../../theme/chakra-runtime.js";
 
-import { cn } from "../../lib/utils.js";
+const ChakraButton = chakraRuntime.Button as React.ElementType;
 
-const buttonVariants = cva(
-  "inline-flex shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium outline-none transition-colors focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0",
-  {
-    variants: {
-      variant: {
-        default: "border border-border bg-card text-card-foreground shadow-xs hover:bg-accent hover:text-accent-foreground",
-        primary: "bg-primary text-primary-foreground shadow-xs hover:bg-primary/90",
-        ghost: "text-foreground hover:bg-accent hover:text-accent-foreground",
-        command:
-          "justify-start border border-border bg-card px-3 text-muted-foreground shadow-xs hover:bg-accent hover:text-accent-foreground",
-        danger: "bg-destructive text-destructive-foreground shadow-xs hover:bg-destructive/90"
-      },
-      size: {
-        default: "h-9 px-4 py-2",
-        sm: "h-8 gap-1.5 px-3 text-xs",
-        icon: "size-9"
-      }
-    },
-    defaultVariants: {
-      variant: "default",
-      size: "default"
-    }
+type AppButtonVariant = "default" | "primary" | "ghost" | "command" | "danger";
+type AppButtonSize = "default" | "sm" | "icon";
+
+export type ButtonProps = React.ComponentProps<"button"> & {
+  asChild?: boolean;
+  variant?: AppButtonVariant;
+  size?: AppButtonSize;
+};
+
+function buttonVariantProps(variant: AppButtonVariant | null | undefined) {
+  if (variant === "primary") {
+    return { colorPalette: "brand", variant: "solid" as const };
   }
-);
 
-export type ButtonProps = React.ComponentProps<"button"> &
-  VariantProps<typeof buttonVariants> & {
-    asChild?: boolean;
-  };
+  if (variant === "ghost") {
+    return { variant: "ghost" as const };
+  }
 
-function Button({ className, variant, size, asChild = false, ...props }: ButtonProps) {
-  const Comp = asChild ? Slot : "button";
+  if (variant === "command") {
+    return { justifyContent: "flex-start" as const, variant: "outline" as const, width: "full" };
+  }
+
+  if (variant === "danger") {
+    return { colorPalette: "red", variant: "solid" as const };
+  }
+
+  return { variant: "outline" as const };
+}
+
+function buttonSizeProps(size: AppButtonSize | null | undefined) {
+  if (size === "sm") {
+    return { size: "sm" as const };
+  }
+
+  if (size === "icon") {
+    return { minWidth: "10", paddingInline: "0", size: "md" as const };
+  }
+
+  return { size: "md" as const };
+}
+
+function buttonVariants(_props?: { variant?: AppButtonVariant | null; size?: AppButtonSize | null; className?: string }) {
+  return _props?.className ?? "";
+}
+
+function Button({ variant, size, asChild = false, ...props }: ButtonProps) {
+  if (asChild) {
+    return <Slot data-slot="button" data-size={size ?? "default"} data-variant={variant ?? "default"} {...props} />;
+  }
 
   return (
-    <Comp
+    <ChakraButton
       data-slot="button"
       data-size={size ?? "default"}
       data-variant={variant ?? "default"}
-      className={cn(buttonVariants({ variant, size, className }))}
+      {...buttonVariantProps(variant)}
+      {...buttonSizeProps(size)}
       {...props}
     />
   );

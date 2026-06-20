@@ -1,6 +1,5 @@
 import * as React from "react";
-
-import { cn } from "@/lib/utils.js";
+import { Box, Heading, HStack, Stack, Text } from "@chakra-ui/react";
 
 import { EmptyState } from "./empty-state.js";
 
@@ -33,34 +32,45 @@ export function DataTableShell({
   const headingId = React.useId();
 
   return (
-    <section
+    <Stack
+      as="section"
       aria-label={title ? undefined : tableLabel}
       aria-labelledby={title ? headingId : undefined}
-      className={cn("grid min-w-0 gap-3", className)}
+      gap="3"
+      minW="0"
+      className={className}
       {...props}
     >
       {title || description || actions ? (
-        <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-          <div className="min-w-0 space-y-1">
+        <Stack direction={{ base: "column", sm: "row" }} gap="2" align={{ base: "stretch", sm: "end" }} justify="space-between" minW="0">
+          <Stack gap="1" minW="0">
             {title ? (
-              <h2 id={headingId} className="text-base font-semibold leading-none text-foreground">
+              <Heading as="h2" id={headingId} size="md">
                 {title}
-              </h2>
+              </Heading>
             ) : null}
-            {description ? <p className="text-sm leading-6 text-muted-foreground">{description}</p> : null}
-          </div>
-          {actions ? <div className="flex shrink-0 flex-wrap items-center gap-2">{actions}</div> : null}
-        </div>
+            {description ? (
+              <Text color="fg.muted" textStyle="sm">
+                {description}
+              </Text>
+            ) : null}
+          </Stack>
+          {actions ? (
+            <HStack gap="2" align="center" flexWrap="wrap" flexShrink="0">
+              {actions}
+            </HStack>
+          ) : null}
+        </Stack>
       ) : null}
-      <div className={cn("min-w-0 overflow-hidden rounded-md border border-border bg-card", contentClassName)}>
+      <Box minW="0" overflow="hidden" rounded="md" borderWidth="1px" bg="bg.panel" className={contentClassName}>
         {isEmpty ? (
-          <div className="p-4">
+          <Box p="4">
             {emptyState ?? <EmptyState title={emptyTitle} description={emptyDescription} />}
-          </div>
+          </Box>
         ) : (
           children
         )}
-      </div>
-    </section>
+      </Box>
+    </Stack>
   );
 }

@@ -1,27 +1,24 @@
 "use client";
 
 import * as React from "react";
-import * as ProgressPrimitive from "@radix-ui/react-progress";
+import { chakraRuntime } from "../../theme/chakra-runtime.js";
 
-import { cn } from "@/lib/utils.js";
+const ChakraProgress = chakraRuntime.Progress as {
+  Range: React.ElementType;
+  Root: React.ElementType;
+  Track: React.ElementType;
+};
 
-function Progress({ className, value, ...props }: React.ComponentProps<typeof ProgressPrimitive.Root>) {
+function Progress({ value, ...props }: React.ComponentProps<"div"> & { value?: number | null }) {
   const numericValue = typeof value === "number" && Number.isFinite(value) ? value : 0;
   const boundedValue = Math.max(0, Math.min(100, numericValue));
-  const progressValue = Math.round(boundedValue / 5) * 5;
 
   return (
-    <ProgressPrimitive.Root
-      data-slot="progress"
-      className={cn("relative h-2 w-full overflow-hidden rounded-full bg-primary/20", className)}
-      {...props}
-    >
-      <ProgressPrimitive.Indicator
-        data-slot="progress-indicator"
-        data-value={progressValue}
-        className="h-full w-full flex-1 bg-primary transition-all"
-      />
-    </ProgressPrimitive.Root>
+    <ChakraProgress.Root data-slot="progress" colorPalette="brand" value={boundedValue} {...props}>
+      <ChakraProgress.Track>
+        <ChakraProgress.Range data-slot="progress-indicator" />
+      </ChakraProgress.Track>
+    </ChakraProgress.Root>
   );
 }
 

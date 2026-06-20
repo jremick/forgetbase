@@ -1,19 +1,18 @@
 import * as React from "react";
-
 import {
-  Card,
-  CardAction,
-  CardContent,
+  CardBody,
   CardDescription,
   CardFooter,
   CardHeader,
-  CardTitle
-} from "@/components/ui/card.js";
-import { cn } from "@/lib/utils.js";
+  CardRoot,
+  CardTitle,
+  HStack,
+  Stack
+} from "@chakra-ui/react";
 
 export type SectionCardVariant = "default" | "compact" | "tool";
 
-export type SectionCardProps = Omit<React.ComponentProps<typeof Card>, "title"> & {
+export type SectionCardProps = Omit<React.ComponentProps<"div">, "title"> & {
   title?: React.ReactNode;
   description?: React.ReactNode;
   actions?: React.ReactNode;
@@ -24,21 +23,27 @@ export type SectionCardProps = Omit<React.ComponentProps<typeof Card>, "title"> 
   footerClassName?: string;
 };
 
+const sectionCardSize: Record<SectionCardVariant, React.ComponentProps<typeof CardRoot>["size"]> = {
+  default: "md",
+  compact: "sm",
+  tool: "md"
+};
+
 const sectionCardPadding: Record<SectionCardVariant, { header: string; content: string; footer: string }> = {
   default: {
-    header: "p-4",
-    content: "p-4 pt-0",
-    footer: "p-4 pt-0"
+    header: "4",
+    content: "4",
+    footer: "4"
   },
   compact: {
-    header: "p-3",
-    content: "p-3 pt-0",
-    footer: "p-3 pt-0"
+    header: "3",
+    content: "3",
+    footer: "3"
   },
   tool: {
-    header: "p-4 pb-3",
-    content: "p-4 pt-0",
-    footer: "border-t border-border p-3"
+    header: "4",
+    content: "4",
+    footer: "3"
   }
 };
 
@@ -59,18 +64,32 @@ export function SectionCard({
   const hasHeader = title || description || actions;
 
   return (
-    <Card className={cn(variant === "tool" && "shadow-none", className)} {...props}>
+    <CardRoot size={sectionCardSize[variant]} variant="outline" className={className} {...props}>
       {hasHeader ? (
-        <CardHeader className={cn("grid-cols-[minmax(0,1fr)_auto] items-start gap-3", padding.header, headerClassName)}>
-          <div className="min-w-0 space-y-1">
-            {title ? <CardTitle>{title}</CardTitle> : null}
-            {description ? <CardDescription>{description}</CardDescription> : null}
-          </div>
-          {actions ? <CardAction>{actions}</CardAction> : null}
+        <CardHeader p={padding.header} pb={children ? "3" : padding.header} className={headerClassName}>
+          <HStack align="start" justify="space-between" gap="3" minW="0">
+            <Stack gap="1" minW="0">
+              {title ? <CardTitle>{title}</CardTitle> : null}
+              {description ? <CardDescription>{description}</CardDescription> : null}
+            </Stack>
+            {actions ? (
+              <HStack gap="2" align="center" justify="end" flexShrink="0" flexWrap="wrap">
+                {actions}
+              </HStack>
+            ) : null}
+          </HStack>
         </CardHeader>
       ) : null}
-      {children ? <CardContent className={cn(padding.content, !hasHeader && "pt-4", contentClassName)}>{children}</CardContent> : null}
-      {footer ? <CardFooter className={cn(padding.footer, footerClassName)}>{footer}</CardFooter> : null}
-    </Card>
+      {children ? (
+        <CardBody p={padding.content} pt={hasHeader ? "0" : padding.content} className={contentClassName}>
+          {children}
+        </CardBody>
+      ) : null}
+      {footer ? (
+        <CardFooter borderTopWidth={variant === "tool" ? "1px" : undefined} p={padding.footer} pt={variant === "tool" ? padding.footer : "0"} className={footerClassName}>
+          {footer}
+        </CardFooter>
+      ) : null}
+    </CardRoot>
   );
 }

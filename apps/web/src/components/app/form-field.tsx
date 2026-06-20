@@ -1,7 +1,5 @@
 import * as React from "react";
-
-import { Label } from "@/components/ui/label.js";
-import { cn } from "@/lib/utils.js";
+import { Box, FieldErrorText, FieldHelperText, FieldLabel, FieldRequiredIndicator, FieldRoot } from "@chakra-ui/react";
 
 export type FormFieldProps = React.ComponentProps<"div"> & {
   label?: React.ReactNode;
@@ -24,16 +22,18 @@ export function FormField({
   ...props
 }: FormFieldProps) {
   return (
-    <div className={cn("grid min-w-0 gap-2", className)} data-invalid={errorText ? "true" : undefined} {...props}>
+    <FieldRoot invalid={Boolean(errorText)} required={required} gap="2" minW="0" className={className} {...props}>
       {label ? (
-        <Label htmlFor={htmlFor}>
+        <FieldLabel htmlFor={htmlFor}>
           {label}
-          {required ? <span aria-hidden="true" className="text-destructive">*</span> : null}
-        </Label>
+          <FieldRequiredIndicator />
+        </FieldLabel>
       ) : null}
-      <div className={cn("min-w-0", controlClassName)}>{children}</div>
-      {helpText ? <p className="text-xs leading-5 text-muted-foreground">{helpText}</p> : null}
-      {errorText ? <p className="text-xs font-medium leading-5 text-destructive">{errorText}</p> : null}
-    </div>
+      <Box minW="0" className={controlClassName}>
+        {children}
+      </Box>
+      {helpText ? <FieldHelperText>{helpText}</FieldHelperText> : null}
+      {errorText ? <FieldErrorText>{errorText}</FieldErrorText> : null}
+    </FieldRoot>
   );
 }

@@ -1,21 +1,11 @@
 "use client";
 
 import * as React from "react";
-import * as LabelPrimitive from "@radix-ui/react-label";
+import { chakraRuntime } from "../../theme/chakra-runtime.js";
 
-import { cn } from "@/lib/utils.js";
-
-function Label({ className, ...props }: React.ComponentProps<typeof LabelPrimitive.Root>) {
-  return (
-    <LabelPrimitive.Root
-      data-slot="label"
-      className={cn(
-        "inline-flex items-center gap-2 text-sm leading-none font-medium text-foreground select-none peer-disabled:cursor-not-allowed peer-disabled:opacity-50 group-data-[disabled=true]:pointer-events-none group-data-[disabled=true]:opacity-50",
-        className
-      )}
-      {...props}
-    />
-  );
+function Label(props: React.ComponentProps<"label">) {
+  const ChakraText = chakraRuntime.Text as React.ElementType;
+  return <ChakraText as="label" data-slot="label" textStyle="sm" fontWeight="medium" {...props} />;
 }
 
 export { Label };

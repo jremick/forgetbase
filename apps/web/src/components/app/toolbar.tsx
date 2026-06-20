@@ -1,7 +1,5 @@
 import * as React from "react";
-
-import { Separator } from "@/components/ui/separator.js";
-import { cn } from "@/lib/utils.js";
+import { Box, HStack, Separator } from "@chakra-ui/react";
 
 export type ToolbarProps = React.ComponentProps<"div"> & {
   leading?: React.ReactNode;
@@ -20,18 +18,43 @@ export function Toolbar({
   ...props
 }: ToolbarProps) {
   return (
-    <div
-      className={cn(
-        "flex min-w-0 flex-wrap items-center gap-2 rounded-md border border-border bg-card p-2 text-card-foreground",
-        className
-      )}
+    <HStack
+      gap="2"
+      align="center"
+      flexWrap="wrap"
+      minW="0"
+      rounded="md"
+      borderWidth="1px"
+      bg="bg.panel"
+      p="2"
+      className={className}
       {...props}
     >
-      {leading ? <div className="flex min-w-0 flex-wrap items-center gap-2">{leading}</div> : null}
-      {leading && (filters || children) && divided ? <Separator orientation="vertical" className="hidden h-6 sm:block" /> : null}
-      {filters ? <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">{filters}</div> : null}
-      {children ? <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">{children}</div> : null}
-      {actions ? <div className="ml-auto flex shrink-0 flex-wrap items-center justify-end gap-2">{actions}</div> : null}
-    </div>
+      {leading ? (
+        <HStack gap="2" align="center" flexWrap="wrap" minW="0">
+          {leading}
+        </HStack>
+      ) : null}
+      {leading && (filters || children) && divided ? (
+        <Separator orientation="vertical" h="6" hideBelow="sm" />
+      ) : null}
+      {filters ? (
+        <HStack gap="2" align="center" flex="1" flexWrap="wrap" minW="0">
+          {filters}
+        </HStack>
+      ) : null}
+      {children ? (
+        <HStack gap="2" align="center" flex="1" flexWrap="wrap" minW="0">
+          {children}
+        </HStack>
+      ) : null}
+      {actions ? (
+        <Box ms="auto">
+          <HStack gap="2" align="center" justify="end" flexWrap="wrap">
+            {actions}
+          </HStack>
+        </Box>
+      ) : null}
+    </HStack>
   );
 }

@@ -1,39 +1,41 @@
 import * as React from "react";
+import { chakraRuntime } from "../../theme/chakra-runtime.js";
 
-import { cn } from "@/lib/utils.js";
+const ChakraCard = chakraRuntime.Card as {
+  Body: React.ElementType;
+  Description: React.ElementType;
+  Footer: React.ElementType;
+  Header: React.ElementType;
+  Root: React.ElementType;
+  Title: React.ElementType;
+};
 
-function Card({ className, ...props }: React.ComponentProps<"div">) {
-  return (
-    <div
-      data-slot="card"
-      className={cn("flex min-w-0 flex-col rounded-lg border border-border bg-card text-card-foreground shadow-xs", className)}
-      {...props}
-    />
-  );
+function Card(props: React.ComponentProps<"div">) {
+  return <ChakraCard.Root data-slot="card" variant="outline" {...props} />;
 }
 
-function CardHeader({ className, ...props }: React.ComponentProps<"div">) {
-  return <div data-slot="card-header" className={cn("grid min-w-0 gap-1.5 p-4", className)} {...props} />;
+function CardHeader(props: React.ComponentProps<"div">) {
+  return <ChakraCard.Header data-slot="card-header" {...props} />;
 }
 
-function CardTitle({ className, ...props }: React.ComponentProps<"div">) {
-  return <div data-slot="card-title" className={cn("font-semibold leading-none text-card-foreground", className)} {...props} />;
+function CardTitle(props: React.ComponentProps<"div">) {
+  return <ChakraCard.Title as="div" data-slot="card-title" {...props} />;
 }
 
-function CardDescription({ className, ...props }: React.ComponentProps<"div">) {
-  return <div data-slot="card-description" className={cn("text-sm text-muted-foreground", className)} {...props} />;
+function CardDescription(props: React.ComponentProps<"div">) {
+  return <ChakraCard.Description data-slot="card-description" {...props} />;
 }
 
-function CardAction({ className, ...props }: React.ComponentProps<"div">) {
-  return <div data-slot="card-action" className={cn("col-start-2 row-span-2 row-start-1 self-start justify-self-end", className)} {...props} />;
+function CardAction(props: React.ComponentProps<"div">) {
+  return <div data-slot="card-action" {...props} />;
 }
 
-function CardContent({ className, ...props }: React.ComponentProps<"div">) {
-  return <div data-slot="card-content" className={cn("min-w-0 p-4 pt-0", className)} {...props} />;
+function CardContent(props: React.ComponentProps<"div">) {
+  return <ChakraCard.Body data-slot="card-content" {...props} />;
 }
 
-function CardFooter({ className, ...props }: React.ComponentProps<"div">) {
-  return <div data-slot="card-footer" className={cn("flex items-center gap-2 p-4 pt-0", className)} {...props} />;
+function CardFooter(props: React.ComponentProps<"div">) {
+  return <ChakraCard.Footer data-slot="card-footer" {...props} />;
 }
 
 export { Card, CardHeader, CardFooter, CardTitle, CardAction, CardDescription, CardContent };

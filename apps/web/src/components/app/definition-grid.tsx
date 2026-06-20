@@ -1,6 +1,5 @@
 import * as React from "react";
-
-import { cn } from "@/lib/utils.js";
+import { Box, Grid, Text } from "@chakra-ui/react";
 
 export type DefinitionGridItem = {
   term: React.ReactNode;
@@ -19,22 +18,31 @@ export function DefinitionGrid({ items, compact = false, className, children, ..
   const visibleItems = items?.filter((item) => !item.hidden);
 
   return (
-    <dl
-      className={cn(
-        "grid min-w-0 gap-px overflow-hidden rounded-md border border-border bg-border text-sm sm:grid-cols-2",
-        compact && "text-xs",
-        className
-      )}
+    <Grid
+      as="dl"
+      templateColumns={{ base: "1fr", sm: "repeat(2, minmax(0, 1fr))" }}
+      gap="1px"
+      minW="0"
+      overflow="hidden"
+      rounded="md"
+      borderWidth="1px"
+      bg="border"
+      textStyle={compact ? "xs" : "sm"}
+      className={className}
       {...props}
     >
       {visibleItems
         ? visibleItems.map((item, index) => (
-            <div key={item.key ?? index} className={cn("grid min-w-0 gap-1 bg-card p-3", item.className)}>
-              <dt className="text-muted-foreground">{item.term}</dt>
-              <dd className="min-w-0 break-words font-medium text-card-foreground">{item.description}</dd>
-            </div>
+            <Box key={item.key ?? index} bg="bg.panel" minW="0" p="3" className={item.className}>
+              <Text as="dt" color="fg.muted">
+                {item.term}
+              </Text>
+              <Text as="dd" color="fg" fontWeight="medium" minW="0" overflowWrap="break-word">
+                {item.description}
+              </Text>
+            </Box>
           ))
         : children}
-    </dl>
+    </Grid>
   );
 }
