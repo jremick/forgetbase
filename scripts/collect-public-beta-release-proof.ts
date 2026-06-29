@@ -40,6 +40,29 @@ const releaseAdminEmail = process.env.PUBLIC_BETA_RELEASE_ADMIN_EMAIL ?? "admin-
 const releaseReaderEmail = process.env.PUBLIC_BETA_RELEASE_READER_EMAIL ?? "reader-public-beta@example.test";
 const releaseUatPasswordRef = process.env.PUBLIC_BETA_RELEASE_UAT_PASSWORD_REF ?? "$PUBLIC_BETA_UAT_PASSWORD";
 const liveDemoReady = isPublicHttpsUrl(liveDemoUrl);
+const liveDemoRootUrl = liveDemoUrl;
+const liveDemoHealthUrl = liveDemoUrlForPath(liveDemoUrl, "/api/health");
+const liveDemoRootCheck = liveDemoReady ? run("curl", [
+  "--silent",
+  "--show-error",
+  "--fail",
+  "--location",
+  "--max-time",
+  "20",
+  "--output",
+  "/dev/null",
+  "--write-out",
+  "%{http_code} %{url_effective}",
+  liveDemoRootUrl
+]) : undefined;
+const liveDemoHealthCheck = liveDemoReady ? run("curl", [
+  "--silent",
+  "--show-error",
+  "--fail",
+  "--max-time",
+  "20",
+  liveDemoHealthUrl
+]) : undefined;
 const supportSurfaceFiles = [
   "SUPPORT.md",
   ".github/ISSUE_TEMPLATE/bug_report.yml",
@@ -83,6 +106,28 @@ const manifest = {
       name: "ci-default-branch",
       status: latestCi.status === "passed" ? "pass" : "fail",
       evidence: [urlEvidence(ciRunUrl)]
+    },
+    {
+      name: "live-demo-root",
+      status: liveDemoRootCheck?.ok === true ? "pass" : "fail",
+      command: `curl --silent --show-error --fail --location --max-time 20 --output /dev/null --write-out "%{http_code} %{url_effective}" ${liveDemoRootUrl}`,
+      evidence: [textEvidence(
+        liveDemoRootCheck?.stdout ||
+          liveDemoRootCheck?.stderr ||
+          "<public HTTPS demo root read-back>",
+        liveDemoReady ? undefined : "requires PUBLIC_BETA_LIVE_DEMO_URL"
+      )]
+    },
+    {
+      name: "live-demo-health",
+      status: liveDemoHealthCheck?.ok === true && parseJson(liveDemoHealthCheck.stdout)?.status === "ok" ? "pass" : "fail",
+      command: `curl --silent --show-error --fail --max-time 20 ${liveDemoHealthUrl}`,
+      evidence: [textEvidence(
+        liveDemoHealthCheck?.stdout ||
+          liveDemoHealthCheck?.stderr ||
+          "<public HTTPS demo /api/health read-back>",
+        liveDemoReady ? undefined : "requires PUBLIC_BETA_LIVE_DEMO_URL"
+      )]
     },
     {
       name: "public-uat",
@@ -316,6 +361,14 @@ function isPublicHttpsUrl(value: string): boolean {
       !hostname.endsWith(".local");
   } catch {
     return false;
+  }
+}
+
+function liveDemoUrlForPath(base: string, path: string): string {
+  try {
+    return new URL(path, base).toString();
+  } catch {
+    return `https://<public-demo-host>${path}`;
   }
 }
 

@@ -325,6 +325,10 @@ function readerAssetMatches(asset: AssetRecord, query: string): boolean {
   ].join(" ").toLowerCase().includes(normalizedQuery);
 }
 
+function normalizeReaderQuery(value: string): string {
+  return value.trim().toLowerCase();
+}
+
 function formatReaderDate(value: string): string {
   const parsed = Date.parse(value);
 
@@ -944,6 +948,25 @@ export function App() {
     () => readerPublishedAssets.filter((asset) => readerAssetMatches(asset, libraryQuery)),
     [libraryQuery, readerPublishedAssets]
   );
+  const readerSearchQuery = normalizeReaderQuery(libraryQuery);
+  const searchResponseQuery = normalizeReaderQuery(searchResponse?.query ?? "");
+  const readerSearchHasFreshResponse = Boolean(readerSearchQuery && searchResponse && searchResponseQuery === readerSearchQuery);
+  const readerSearchResults = useMemo(() => {
+    if (!readerSearchHasFreshResponse || !searchResponse) {
+      return [];
+    }
+
+    const seen = new Set<string>();
+
+    return searchResponse.results.filter((result) => {
+      if (!isPublishedReaderAsset(result.asset) || seen.has(result.asset.stableId)) {
+        return false;
+      }
+
+      seen.add(result.asset.stableId);
+      return true;
+    });
+  }, [readerSearchHasFreshResponse, searchResponse]);
   const readerAssetGroups = useMemo(() => {
     const groups = new Map<string, AssetRecord[]>();
 
@@ -963,6 +986,7 @@ export function App() {
   const readerCollectionCount = readerAssetGroups.length;
   const readerPageCount = readerPublishedAssets.length;
   const readerVisiblePageCount = filteredReaderAssets.length;
+  const readerSearchResultCount = readerSearchHasFreshResponse ? readerSearchResults.length : 0;
   const libraryFilterActive = Boolean(
     libraryQuery.trim() || libraryViewFilter !== "all" || librarySensitivityFilter !== "all"
   );
@@ -3524,10 +3548,62 @@ export function App() {
               <span>Collections</span>
             </div>
             <div>
-              <strong>{readerVisiblePageCount}</strong>
-              <span>{readerFilterActive ? "Matching pages" : "Visible pages"}</span>
+              <strong>{readerSearchHasFreshResponse ? readerSearchResultCount : readerVisiblePageCount}</strong>
+              <span>{readerSearchHasFreshResponse ? "Search results" : readerFilterActive ? "Matching pages" : "Visible pages"}</span>
             </div>
           </section>
+
+          {readerFilterActive ? (
+            <section className="reader-search-results" aria-label="Search results">
+              <div className="reader-search-results-header">
+                <div>
+                  <p className="eyebrow">Search results</p>
+                  <h2>Results for “{libraryQuery.trim()}”</h2>
+                </div>
+                <Button type="button" size="sm" variant="ghost" onClick={() => {
+                  setLibraryQuery("");
+                  setSearchQuery("");
+                  setSearchResponse(null);
+                }}>
+                  Clear
+                </Button>
+              </div>
+              {readerSearchHasFreshResponse ? (
+                readerSearchResults.length ? (
+                  <div className="reader-search-list">
+                    {readerSearchResults.slice(0, 5).map((result) => (
+                      <article className="reader-search-result" key={`${result.asset.stableId}:${result.chunkId}`}>
+                        <div>
+                          <p className="reader-search-meta">{formatAssetTypeLabel(result.asset.type)} · {formatReaderAccess(result.asset)}</p>
+                          <h3>{result.asset.title}</h3>
+                          <p>{formatReaderSnippet(result.citation.snippet || result.content, 180)}</p>
+                        </div>
+                        <Button
+                          type="button"
+                          size="sm"
+                          onClick={() => {
+                            setSelectedStableId(result.asset.stableId);
+                            setAssetContentView("human");
+                          }}
+                        >
+                          Open page
+                        </Button>
+                      </article>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="reader-empty-state">
+                    <h3>No readable results</h3>
+                    <p>No pages you can read matched this search.</p>
+                  </div>
+                )
+              ) : (
+                <div className="reader-search-prompt">
+                  <p>Press Enter to search page content and sources.</p>
+                </div>
+              )}
+            </section>
+          ) : null}
 
           <section className="reader-layout" aria-label="Published library">
             <aside className="reader-library" aria-label="Published material list">
@@ -3638,7 +3714,7 @@ export function App() {
                           </div>
                           {readerAskResponse ? (
                             <Badge variant={readerAskResponse.checks.deniedCount ? "warning" : "success"}>
-                              {readerAskResponse.checks.deniedCount ? "Some results hidden" : "Sources checked"}
+                              {readerAskResponse.checks.deniedCount ? "Limited results" : "Sources checked"}
                             </Badge>
                           ) : null}
                         </div>
@@ -3658,10 +3734,12 @@ export function App() {
                           <div className="reader-ask-answer" aria-live="polite">
                             <div>
                               <h4>Answer</h4>
-                              {renderReaderAnswer(readerAskResponse.answer)}
+                              {readerAskResponse.checks.deniedCount && !readerAskResponse.citations.length ? (
+                                <p>No accessible answer was found. Try another question or ask an admin for access.</p>
+                              ) : renderReaderAnswer(readerAskResponse.answer)}
                               {readerAskResponse.checks.deniedCount ? (
                                 <p className="reader-ask-note">
-                                  {readerAskResponse.checks.deniedCount} restricted result{readerAskResponse.checks.deniedCount === 1 ? " was" : "s were"} hidden.
+                                  Some matching pages are not available to your account.
                                 </p>
                               ) : null}
                             </div>
@@ -3685,7 +3763,7 @@ export function App() {
                                   ) : null}
                                 </>
                               ) : (
-                                <p className="reader-ask-note">No sources matched this question.</p>
+                                <p className="reader-ask-note">No accessible sources matched this question.</p>
                               )}
                             </div>
                           </div>

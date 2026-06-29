@@ -230,6 +230,10 @@ async function checkReleaseFlow(page: Page, viewportName: "desktop" | "mobile"):
   await expectText(page, "#reader-title", "Read pages", `release ${viewportName}: reader title`);
   await expectVisibleText(page, "Published pages", `release ${viewportName}: reader summary`);
   await expectVisibleText(page, "Ask this knowledge base", `release ${viewportName}: reader ask heading`);
+  await clickFirstVisible(page, "button", "Reader Access and Export Rules");
+  await page.locator(".reader-article").scrollIntoViewIfNeeded();
+  await expectText(page, ".reader-article-header h2", "Reader Access and Export Rules", `release ${viewportName}: reader article title`);
+  await assertReaderArticleDepth(page, `release ${viewportName}: reader article depth`);
   if (viewportName === "desktop") {
     await screenshot(page, "page-browse-tree.png", "release desktop: reader page tree screenshot");
     await screenshot(page, "page-read-view.png", "release desktop: reader page read screenshot");
@@ -242,7 +246,11 @@ async function checkReleaseFlow(page: Page, viewportName: "desktop" | "mobile"):
   await assertNoClippedText(page, `release ${viewportName}: reader ask clipped text`);
   await screenshot(page, viewportName === "desktop" ? "ask-with-sources.png" : "ask-with-sources-mobile.png", `release ${viewportName}: ask with sources screenshot`);
   await page.locator("#reader-search-input").fill("personal data");
-  await expectVisibleText(page, "Personal Data", `release ${viewportName}: reader search`);
+  await page.locator("#reader-search-input").press("Enter");
+  await page.waitForSelector(".reader-search-results", { timeout: 15000 });
+  await page.waitForSelector(".reader-search-result", { timeout: 15000 });
+  await expectVisibleText(page, "Results for", `release ${viewportName}: reader search heading`);
+  await assertReaderSearchResults(page, `release ${viewportName}: reader search results`);
   if (viewportName === "desktop") {
     await screenshot(page, "search-results.png", "release desktop: reader search results screenshot");
   }
@@ -252,8 +260,8 @@ async function checkReleaseFlow(page: Page, viewportName: "desktop" | "mobile"):
   if (viewportName === "desktop" && expectedRole === "reader") {
     await page.locator("#reader-ask-input").fill("credential vault escalation");
     await page.locator(".reader-ask-form button[type='submit']").click();
-    await expectVisibleText(page, "Some results hidden", "release desktop: restricted result badge");
-    await expectVisibleText(page, "restricted result", "release desktop: restricted result note");
+    await expectVisibleText(page, "Limited results", "release desktop: restricted result badge");
+    await expectVisibleText(page, "No accessible answer was found", "release desktop: restricted result note");
     await assertNoHorizontalOverflow(page, "release desktop: restricted result overflow");
     await assertNoClippedText(page, "release desktop: restricted result clipped text");
     await screenshot(page, "no-access-restricted-state.png", "release desktop: restricted result screenshot");
@@ -515,6 +523,49 @@ async function assertNoClippedText(page: Page, name: string): Promise<void> {
   }
 
   checks.push({ name, status: "pass", detail: 0 });
+}
+
+async function assertReaderArticleDepth(page: Page, name: string): Promise<void> {
+  const result = await page.evaluate(() => {
+    const body = document.querySelector(".reader-document-body");
+    const text = (body?.textContent ?? "").replace(/\s+/g, " ").trim();
+    const headings = body?.querySelectorAll("h2, h3").length ?? 0;
+    const contentBlocks = Array.from(body?.querySelectorAll("p, li") ?? [])
+      .filter((element) => (element.textContent ?? "").replace(/\s+/g, " ").trim().length > 24)
+      .length;
+    const words = text ? text.split(/\s+/).length : 0;
+
+    return { headings, contentBlocks, words };
+  });
+
+  if (result.headings < 4 || result.contentBlocks < 6 || result.words < 120) {
+    throw new Error(`${name}: expected a KB-style article with at least 4 section headings, 6 readable blocks, and 120 words; got ${JSON.stringify(result)}`);
+  }
+
+  checks.push({ name, status: "pass", detail: result.words });
+}
+
+async function assertReaderSearchResults(page: Page, name: string): Promise<void> {
+  const result = await page.evaluate(() => {
+    const rows = Array.from(document.querySelectorAll<HTMLElement>(".reader-search-result"));
+    const openButtons = rows.filter((row) => row.innerText.includes("Open page")).length;
+    const readableSnippets = rows.filter((row) => {
+      const paragraphs = Array.from(row.querySelectorAll("p"));
+      return paragraphs.some((paragraph) => (paragraph.textContent ?? "").replace(/\s+/g, " ").trim().length > 40);
+    }).length;
+
+    return {
+      rows: rows.length,
+      openButtons,
+      readableSnippets
+    };
+  });
+
+  if (result.rows < 1 || result.openButtons < 1 || result.readableSnippets < 1) {
+    throw new Error(`${name}: expected at least one result with a snippet and Open page action; got ${JSON.stringify(result)}`);
+  }
+
+  checks.push({ name, status: "pass", detail: result.rows });
 }
 
 async function assertProtectedSessionApiRequiresAuthentication(page: Page, name: string): Promise<void> {

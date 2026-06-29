@@ -54,6 +54,8 @@ const issues: string[] = [];
 const requiredCheckNames = [
   "clean-checkout",
   "ci-default-branch",
+  "live-demo-root",
+  "live-demo-health",
   "public-uat",
   "release-uat-admin",
   "release-uat-reader",
@@ -225,6 +227,8 @@ function validateChecks(value: unknown): void {
         commitSha: releaseCommitSha,
         checkNameIncludes: [
           "protected session API requires authentication",
+          "reader article depth",
+          "reader search results",
           "clipped text"
         ]
       });
@@ -246,6 +250,9 @@ function validateChecks(value: unknown): void {
         commitSha: releaseCommitSha,
         checkNameIncludes: [
           "protected session API requires authentication",
+          "reader article depth",
+          "reader search results",
+          "restricted result note",
           "clipped text"
         ]
       });

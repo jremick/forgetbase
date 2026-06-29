@@ -92,7 +92,9 @@ The screenshots must show:
 - exports
 - mobile reader view
 
-Stop if the reader can trigger admin actions, if restricted content appears for the reader, or if mobile screenshots show clipped text or horizontal overflow.
+The UAT report must also prove the selected page has a real article body and that reader search returns readable result snippets with Open page actions.
+
+Stop if the reader can trigger admin actions, if restricted content appears for the reader, if reader search is only a page-title filter, or if mobile screenshots show clipped text or horizontal overflow.
 
 ## Stack Safety Gates
 
