@@ -1660,6 +1660,10 @@ export function App() {
       const response = await request<SearchResponse>(`/search?${params.toString()}`);
       setSearchResponse(response);
       setMessage(`Search returned ${response.results.length} chunks`);
+
+      if (readerSurfaceActive) {
+        scrollReaderRegionIntoView("reader-search-results");
+      }
     } catch (searchError) {
       setError(searchError instanceof Error ? searchError.message : String(searchError));
     }
@@ -3013,6 +3017,12 @@ export function App() {
     window.location.hash = nextRoute;
   }
 
+  function scrollReaderRegionIntoView(id: string) {
+    window.requestAnimationFrame(() => {
+      document.getElementById(id)?.scrollIntoView({ block: "start", behavior: "auto" });
+    });
+  }
+
   function openAssetRead(stableId: string) {
     setSelectedStableId(stableId);
     navigatePage("asset-read");
@@ -3554,7 +3564,7 @@ export function App() {
           </section>
 
           {readerFilterActive ? (
-            <section className="reader-search-results" aria-label="Search results">
+            <section className="reader-search-results" id="reader-search-results" aria-label="Search results">
               <div className="reader-search-results-header">
                 <div>
                   <p className="eyebrow">Search results</p>
@@ -3584,6 +3594,7 @@ export function App() {
                           onClick={() => {
                             setSelectedStableId(result.asset.stableId);
                             setAssetContentView("human");
+                            scrollReaderRegionIntoView("reader-article");
                           }}
                         >
                           Open page
@@ -3675,7 +3686,7 @@ export function App() {
               </ScrollArea>
             </aside>
 
-            <article className="reader-article">
+            <article className="reader-article" id="reader-article">
               {assetDetail && readerSelectedAsset ? (
                 <>
                   <header className="reader-article-header">

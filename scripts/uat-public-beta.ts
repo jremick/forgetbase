@@ -251,9 +251,11 @@ async function checkReleaseFlow(page: Page, viewportName: "desktop" | "mobile"):
   await page.waitForSelector(".reader-search-result", { timeout: 15000 });
   await expectVisibleText(page, "Results for", `release ${viewportName}: reader search heading`);
   await assertReaderSearchResults(page, `release ${viewportName}: reader search results`);
+  await assertElementInViewport(page, ".reader-search-results", `release ${viewportName}: reader search results in view`);
   if (viewportName === "desktop") {
     await screenshot(page, "search-results.png", "release desktop: reader search results screenshot");
   }
+  await assertSearchResultOpensPage(page, `release ${viewportName}: reader search result opens page`);
   await assertNoJargon(page, "main", `release ${viewportName}: reader copy`);
   await assertNoHorizontalOverflow(page, `release ${viewportName}: reader overflow`);
   await assertNoClippedText(page, `release ${viewportName}: reader clipped text`);
@@ -566,6 +568,43 @@ async function assertReaderSearchResults(page: Page, name: string): Promise<void
   }
 
   checks.push({ name, status: "pass", detail: result.rows });
+}
+
+async function assertSearchResultOpensPage(page: Page, name: string): Promise<void> {
+  const firstResult = page.locator(".reader-search-result").first();
+  const expectedTitle = normalizeText(await firstResult.locator("h3").textContent());
+
+  if (!expectedTitle) {
+    throw new Error(`${name}: first search result did not have a readable title`);
+  }
+
+  await firstResult.getByRole("button", { name: "Open page" }).click();
+  await page.waitForFunction(
+    (title) => document.querySelector(".reader-article-header h2")?.textContent?.replace(/\s+/g, " ").trim() === title,
+    expectedTitle,
+    { timeout: 15000 }
+  );
+  await assertElementInViewport(page, ".reader-article", `${name}: opened page in view`);
+  await assertReaderArticleDepth(page, `${name}: opened page article depth`);
+  checks.push({ name, status: "pass", detail: expectedTitle });
+}
+
+async function assertElementInViewport(page: Page, selector: string, name: string): Promise<void> {
+  const result = await page.locator(selector).first().evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+
+    return {
+      top: Math.round(rect.top),
+      bottom: Math.round(rect.bottom),
+      viewportHeight: window.innerHeight
+    };
+  });
+
+  if (result.bottom <= 0 || result.top >= result.viewportHeight) {
+    throw new Error(`${name}: expected ${selector} to be visible in the viewport; got ${JSON.stringify(result)}`);
+  }
+
+  checks.push({ name, status: "pass", detail: result.top });
 }
 
 async function assertProtectedSessionApiRequiresAuthentication(page: Page, name: string): Promise<void> {

@@ -82,18 +82,30 @@ pre {
 }
 
 .skip-link {
-  position: fixed;
-  top: -48px;
+  position: absolute;
+  top: 0;
   left: 16px;
   z-index: 50;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
   padding: 8px 12px;
   border-radius: 6px;
   background: var(--fb-text);
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
   color: white;
+  white-space: nowrap;
 }
 
 .skip-link:focus {
+  position: fixed;
   top: 12px;
+  width: auto;
+  height: auto;
+  overflow: visible;
+  clip: auto;
+  clip-path: none;
 }
 
 .app-shell {
@@ -662,6 +674,7 @@ pre {
   gap: 14px;
   margin-bottom: 14px;
   padding: 0 32px;
+  scroll-margin-top: calc(var(--topbar) + 14px);
 }
 
 .reader-search-results-header {
@@ -802,6 +815,7 @@ pre {
   background:
     linear-gradient(90deg, rgba(255, 255, 255, 0.96), rgba(255, 255, 255, 0.9)),
     var(--fb-surface);
+  scroll-margin-top: calc(var(--topbar) + 14px);
   box-shadow: 0 24px 70px rgba(26, 32, 44, 0.07);
 }
 
