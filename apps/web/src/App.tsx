@@ -257,6 +257,11 @@ type ManagedQueryView = "answer" | "evidence" | "diagnostics";
 type PolicySettingsView = "retention" | "answers" | "ranking" | "evals" | "actions" | "data" | "privacy";
 type AccessSettingsView = "users" | "service-policy" | "service-accounts" | "groups" | "api-keys" | "sessions";
 type GeneratedPackage = AiExportPackage | OkfExportPackage;
+type ReaderSectionHeading = {
+  id: string;
+  text: string;
+  level: 2 | 3;
+};
 const assetTypeLabels: Record<string, string> = {
   "agent-instruction": "Agent Guide",
   "eval-case": "Check",
@@ -370,6 +375,52 @@ function normalizeHeadingText(value: string): string {
   return value.trim().replace(/\s+/g, " ").toLowerCase();
 }
 
+function readerHeadingId(text: string, index: number): string {
+  const slug = text
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, "")
+    .trim()
+    .replace(/\s+/g, "-")
+    .slice(0, 48)
+    .replace(/-+$/g, "");
+
+  return `reader-section-${index + 1}-${slug || "section"}`;
+}
+
+function extractReaderSectionHeadings(body: string, title: string): ReaderSectionHeading[] {
+  const lines = body.split(/\r?\n/);
+  const firstContentIndex = lines.findIndex((line) => line.trim());
+
+  if (firstContentIndex >= 0) {
+    const firstHeading = lines[firstContentIndex]?.match(/^#\s+(.+)$/);
+
+    if (firstHeading && normalizeHeadingText(firstHeading[1] ?? "") === normalizeHeadingText(title)) {
+      lines.splice(firstContentIndex, 1);
+    }
+  }
+
+  let sectionIndex = 0;
+
+  return lines.flatMap((rawLine) => {
+    const heading = rawLine.trim().match(/^(#{2,3})\s+(.+)$/);
+
+    if (!heading) {
+      return [];
+    }
+
+    const text = (heading[2] ?? "").trim();
+    const level = heading[1]?.length === 3 ? 3 : 2;
+    const entry = {
+      id: readerHeadingId(text, sectionIndex),
+      text,
+      level
+    } satisfies ReaderSectionHeading;
+    sectionIndex += 1;
+
+    return [entry];
+  });
+}
+
 function renderMarkdownDocument(body: string, title: string): ReactNode[] {
   const output: ReactNode[] = [];
   const lines = body.split(/\r?\n/);
@@ -385,6 +436,7 @@ function renderMarkdownDocument(body: string, title: string): ReactNode[] {
 
   let paragraphLines: string[] = [];
   let list: { ordered: boolean; items: string[] } | null = null;
+  let sectionIndex = 0;
 
   function flushParagraph() {
     if (!paragraphLines.length) {
@@ -428,9 +480,11 @@ function renderMarkdownDocument(body: string, title: string): ReactNode[] {
       if (level === 1) {
         output.push(<h1 key={`h1-${output.length}`}>{text}</h1>);
       } else if (level === 2) {
-        output.push(<h2 key={`h2-${output.length}`}>{text}</h2>);
+        output.push(<h2 id={readerHeadingId(text, sectionIndex)} key={`h2-${output.length}`}>{text}</h2>);
+        sectionIndex += 1;
       } else {
-        output.push(<h3 key={`h3-${output.length}`}>{text}</h3>);
+        output.push(<h3 id={readerHeadingId(text, sectionIndex)} key={`h3-${output.length}`}>{text}</h3>);
+        sectionIndex += 1;
       }
       return;
     }
@@ -931,6 +985,12 @@ export function App() {
   const selectedInstructionBody = versionSnapshot?.instructionObjects[0]?.body ?? "";
   const currentHumanBody = currentHumanDocument?.body ?? "";
   const selectedHumanBody = versionSnapshot?.humanDocuments[0]?.body ?? "";
+  const readerSectionHeadings = useMemo(
+    () => currentHumanBody && assetDetail
+      ? extractReaderSectionHeadings(currentHumanBody, assetDetail.asset.title).slice(0, 8)
+      : [],
+    [assetDetail, currentHumanBody]
+  );
   const approvedAssets = assets.filter((asset) => asset.status === "approved").length;
   const reviewDueAssets = assets.filter(isAssetGovernanceDue).length;
   const publicReaderAssets = assets.filter(isPublicReaderEligible).length;
@@ -3616,6 +3676,26 @@ export function App() {
             </section>
           ) : null}
 
+          <section className="reader-mobile-page-picker" aria-label="Choose a page">
+            <div>
+              <p className="eyebrow">Pages</p>
+              <p>{readerVisiblePageCount} page{readerVisiblePageCount === 1 ? "" : "s"} available</p>
+            </div>
+            <NativeSelect
+              aria-label="Choose a page"
+              value={readerSelectedAsset?.stableId ?? ""}
+              onChange={(event) => {
+                setSelectedStableId(event.target.value);
+                setAssetContentView("human");
+                scrollReaderRegionIntoView("reader-article");
+              }}
+            >
+              {filteredReaderAssets.map((asset) => (
+                <option key={asset.id} value={asset.stableId}>{asset.title}</option>
+              ))}
+            </NativeSelect>
+          </section>
+
           <section className="reader-layout" aria-label="Published library">
             <aside className="reader-library" aria-label="Published material list">
               <ScrollArea className="reader-library-scroll">
@@ -3700,6 +3780,24 @@ export function App() {
                       <Badge variant={stateBadgeVariant(assetDetail.asset.status)}>{formatReaderStatus(assetDetail.asset.status)}</Badge>
                     </div>
                   </header>
+
+                  {readerSectionHeadings.length ? (
+                    <nav className="reader-section-nav" aria-label="Page sections">
+                      <p>On this page</p>
+                      <div>
+                        {readerSectionHeadings.map((heading) => (
+                          <button
+                            type="button"
+                            className={heading.level === 3 ? "is-nested" : ""}
+                            key={heading.id}
+                            onClick={() => document.getElementById(heading.id)?.scrollIntoView({ block: "start" })}
+                          >
+                            {heading.text}
+                          </button>
+                        ))}
+                      </div>
+                    </nav>
+                  ) : null}
 
                   <div className="reader-content-grid">
                     <div className="reader-document">

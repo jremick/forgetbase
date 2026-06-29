@@ -59,6 +59,8 @@ assertIncludes(html, "knowledge base for people and AI tools", "HTML metadata");
 assertIncludes(app, "<h1 id=\"reader-title\">Read pages</h1>", "reader home");
 assertIncludes(app, "<h3 id=\"reader-ask-title\">Ask this knowledge base</h3>", "reader ask");
 assertIncludes(app, "Get an answer with the pages used to support it.", "reader ask");
+assertIncludes(app, "On this page", "reader section navigation");
+assertIncludes(app, "reader-mobile-page-picker", "reader mobile page picker");
 assertIncludes(app, "aria-label=\"Sources\"", "reader sources");
 assertIncludes(app, "Admin console", "reader admin handoff");
 assertIncludes(app, "Search pages", "reader action");
@@ -66,6 +68,8 @@ assertIncludes(app, "Search pages", "reader action");
 for (const selector of [
   ".reader-hero",
   ".reader-summary-strip",
+  ".reader-section-nav",
+  ".reader-mobile-page-picker",
   ".reader-content-grid",
   ".reader-rail",
   ".reader-ask-panel",

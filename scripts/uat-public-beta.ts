@@ -230,10 +230,14 @@ async function checkReleaseFlow(page: Page, viewportName: "desktop" | "mobile"):
   await expectText(page, "#reader-title", "Read pages", `release ${viewportName}: reader title`);
   await expectVisibleText(page, "Published pages", `release ${viewportName}: reader summary`);
   await expectVisibleText(page, "Ask this knowledge base", `release ${viewportName}: reader ask heading`);
+  if (viewportName === "mobile") {
+    await assertMobileReaderPagePicker(page, `release ${viewportName}: reader page picker`);
+  }
   await clickFirstVisible(page, "button", "Reader Access and Export Rules");
   await page.locator(".reader-article").scrollIntoViewIfNeeded();
   await expectText(page, ".reader-article-header h2", "Reader Access and Export Rules", `release ${viewportName}: reader article title`);
   await assertReaderArticleDepth(page, `release ${viewportName}: reader article depth`);
+  await assertReaderSectionNavigation(page, `release ${viewportName}: reader section navigation`);
   if (viewportName === "desktop") {
     await screenshot(page, "page-browse-tree.png", "release desktop: reader page tree screenshot");
     await screenshot(page, "page-read-view.png", "release desktop: reader page read screenshot");
@@ -545,6 +549,52 @@ async function assertReaderArticleDepth(page: Page, name: string): Promise<void>
   }
 
   checks.push({ name, status: "pass", detail: result.words });
+}
+
+async function assertMobileReaderPagePicker(page: Page, name: string): Promise<void> {
+  const result = await page.evaluate(() => {
+    const picker = document.querySelector<HTMLElement>(".reader-mobile-page-picker");
+    const select = picker?.querySelector<HTMLSelectElement>("select");
+    const rect = picker?.getBoundingClientRect();
+
+    return {
+      visible: Boolean(rect && rect.width > 0 && rect.height > 0),
+      label: picker?.textContent?.includes("Pages") ?? false,
+      options: select?.options.length ?? 0,
+      value: select?.value ?? ""
+    };
+  });
+
+  if (!result.visible || !result.label || result.options < 2 || !result.value) {
+    throw new Error(`${name}: expected a visible mobile page picker with multiple pages; got ${JSON.stringify(result)}`);
+  }
+
+  checks.push({ name, status: "pass", detail: result.options });
+}
+
+async function assertReaderSectionNavigation(page: Page, name: string): Promise<void> {
+  const result = await page.evaluate(() => {
+    const nav = document.querySelector(".reader-section-nav");
+    const buttons = Array.from(nav?.querySelectorAll("button") ?? []);
+    const headings = Array.from(document.querySelectorAll<HTMLElement>(".reader-document-body h2[id], .reader-document-body h3[id]"));
+
+    return {
+      label: nav?.textContent?.includes("On this page") ?? false,
+      buttons: buttons.length,
+      headings: headings.length,
+      firstButton: buttons[0]?.textContent?.replace(/\s+/g, " ").trim() ?? "",
+      firstHeading: headings[0]?.textContent?.replace(/\s+/g, " ").trim() ?? ""
+    };
+  });
+
+  if (!result.label || result.buttons < 3 || result.headings < 3 || result.firstButton !== result.firstHeading) {
+    throw new Error(`${name}: expected section navigation to match document headings; got ${JSON.stringify(result)}`);
+  }
+
+  await page.locator(".reader-section-nav button").first().click();
+  await assertElementInViewport(page, ".reader-document-body h2[id], .reader-document-body h3[id]", `${name}: section link scrolls to heading`);
+  await page.evaluate(() => window.scrollTo(0, 0));
+  checks.push({ name, status: "pass", detail: result.buttons });
 }
 
 async function assertReaderSearchResults(page: Page, name: string): Promise<void> {
