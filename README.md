@@ -128,6 +128,7 @@ Still future work:
 - [Remaining Functional Gaps](docs/REMAINING_FUNCTIONAL_GAPS.md)
 - [Backup And Restore Runbook](docs/runbooks/BACKUP_RESTORE.md)
 - [Docker Compose Deploy Runbook](docs/runbooks/DEPLOY_DOCKER_COMPOSE.md)
+- [Public Beta Release Runbook](docs/runbooks/PUBLIC_BETA_RELEASE.md)
 - [Railway Private Alpha Template](docs/runbooks/DEPLOY_RAILWAY_PRIVATE_TEMPLATE.md)
 - [Rollback Runbook](docs/runbooks/ROLLBACK.md)
 - [API Key Rotation Runbook](docs/runbooks/API_KEY_ROTATION.md)

@@ -12,6 +12,7 @@ People should be able to browse, read, search, and ask questions from human-frie
 Public beta means useful, polished, and verifiably safe for trial use. It does not mean production support, long-term API stability, hosted-service readiness, or advanced sign-in controls.
 
 Supported trial paths, volatile surfaces, and support boundaries are defined in [Public Beta Compatibility](PUBLIC_BETA_COMPATIBILITY.md).
+The final promotion sequence is defined in [Public Beta Release Runbook](runbooks/PUBLIC_BETA_RELEASE.md).
 
 ## Product Promise
 
