@@ -98,7 +98,7 @@ npx -y pnpm@11.7.0 release-proof:collect
 npx -y pnpm@11.7.0 release-proof:check work/public-beta-proof/public-beta-release-proof.json
 ```
 
-`release-proof:collect` writes a draft manifest with the current commit, available CI/GitHub read-backs, expected screenshot paths, and support-surface file links. It does not prove release readiness by itself; `release-proof:check` must pass after the stack-backed evidence is added.
+`release-proof:collect` writes a draft manifest with the current commit, available CI/GitHub read-backs, expected screenshot paths, and support-surface file links. It marks release UAT as failed until `PUBLIC_BETA_LIVE_DEMO_URL` is a real public HTTPS URL and the authenticated UAT reports were captured from that URL. It does not prove release readiness by itself; `release-proof:check` must pass after the stack-backed evidence is added.
 
 ## Browser Proof
 

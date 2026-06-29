@@ -14,6 +14,8 @@ type CommandResult = {
   stderr: string;
 };
 
+type CheckStatus = "pass" | "fail";
+
 const root = process.cwd();
 const repo = process.env.PUBLIC_BETA_REPO ?? "jremick/forgetbase";
 const outputPath = resolve(
@@ -37,6 +39,7 @@ const releaseUatTenantId = process.env.PUBLIC_BETA_RELEASE_UAT_TENANT_ID;
 const releaseAdminEmail = process.env.PUBLIC_BETA_RELEASE_ADMIN_EMAIL ?? "admin-public-beta@example.test";
 const releaseReaderEmail = process.env.PUBLIC_BETA_RELEASE_READER_EMAIL ?? "reader-public-beta@example.test";
 const releaseUatPasswordRef = process.env.PUBLIC_BETA_RELEASE_UAT_PASSWORD_REF ?? "$PUBLIC_BETA_UAT_PASSWORD";
+const liveDemoReady = isPublicHttpsUrl(liveDemoUrl);
 const supportSurfaceFiles = [
   "SUPPORT.md",
   ".github/ISSUE_TEMPLATE/bug_report.yml",
@@ -83,13 +86,22 @@ const manifest = {
     },
     {
       name: "public-uat",
-      status: "pass",
+      status: uatReportStatus("public-uat/public-beta-uat-report.json", {
+        mode: "public",
+        commitSha
+      }),
       command: "UAT_OUTPUT_DIR=work/public-beta-proof/public-uat npx -y pnpm@11.7.0 test:uat",
       evidence: [fileEvidence("public-uat/public-beta-uat-report.json")]
     },
     {
       name: "release-uat-admin",
-      status: "pass",
+      status: liveDemoReady
+        ? uatReportStatus("release-admin/public-beta-uat-report.json", {
+          mode: "release",
+          baseUrl: liveDemoUrl,
+          commitSha
+        })
+        : "fail",
       command: buildReleaseUatCommand({
         baseUrl: liveDemoUrl,
         expectedRole: "admin",
@@ -98,11 +110,20 @@ const manifest = {
         passwordRef: releaseUatPasswordRef,
         outputDir: "work/public-beta-proof/release-admin"
       }),
-      evidence: [fileEvidence("release-admin/public-beta-uat-report.json")]
+      evidence: [fileEvidence(
+        "release-admin/public-beta-uat-report.json",
+        liveDemoReady ? undefined : "local evidence only; rerun against PUBLIC_BETA_LIVE_DEMO_URL"
+      )]
     },
     {
       name: "release-uat-reader",
-      status: "pass",
+      status: liveDemoReady
+        ? uatReportStatus("release-reader/public-beta-uat-report.json", {
+          mode: "release",
+          baseUrl: liveDemoUrl,
+          commitSha
+        })
+        : "fail",
       command: buildReleaseUatCommand({
         baseUrl: liveDemoUrl,
         expectedRole: "reader",
@@ -111,7 +132,10 @@ const manifest = {
         passwordRef: releaseUatPasswordRef,
         outputDir: "work/public-beta-proof/release-reader"
       }),
-      evidence: [fileEvidence("release-reader/public-beta-uat-report.json")]
+      evidence: [fileEvidence(
+        "release-reader/public-beta-uat-report.json",
+        liveDemoReady ? undefined : "local evidence only; rerun against PUBLIC_BETA_LIVE_DEMO_URL"
+      )]
     },
     {
       name: "smoke-compose",
@@ -230,7 +254,7 @@ function gateReportEvidence(fileName: string): EvidenceRef {
   return fileEvidence(relative(proofDir, absolutePath), `${fileName} structured gate report`);
 }
 
-function gateReportStatus(fileName: string): "pass" | "fail" {
+function gateReportStatus(fileName: string): CheckStatus {
   const absolutePath = resolve(root, gateResultsDir, fileName);
 
   if (!existsSync(absolutePath)) {
@@ -239,6 +263,60 @@ function gateReportStatus(fileName: string): "pass" | "fail" {
 
   const parsed = parseJson(readFileSync(absolutePath, "utf8"));
   return parsed?.ok === true ? "pass" : "fail";
+}
+
+function uatReportStatus(
+  reportPath: string,
+  expected: { mode: "public" | "release"; baseUrl?: string; commitSha: string }
+): CheckStatus {
+  const absolutePath = resolve(proofDir, reportPath);
+
+  if (!existsSync(absolutePath)) {
+    return "fail";
+  }
+
+  const parsed = parseJson(readFileSync(absolutePath, "utf8"));
+
+  if (!parsed) {
+    return "fail";
+  }
+
+  if (parsed.mode !== expected.mode || parsed.commitSha !== expected.commitSha) {
+    return "fail";
+  }
+
+  if (expected.baseUrl && parsed.baseUrl !== expected.baseUrl) {
+    return "fail";
+  }
+
+  if (!Array.isArray(parsed.checks) || parsed.checks.some((check) => !isRecord(check) || check.status !== "pass")) {
+    return "fail";
+  }
+
+  if (!Array.isArray(parsed.screenshots) || parsed.screenshots.length === 0) {
+    return "fail";
+  }
+
+  return "pass";
+}
+
+function isPublicHttpsUrl(value: string): boolean {
+  if (value.includes("<") || value.includes(">")) {
+    return false;
+  }
+
+  try {
+    const url = new URL(value);
+    const hostname = url.hostname.toLowerCase();
+
+    return url.protocol === "https:" &&
+      hostname !== "localhost" &&
+      hostname !== "127.0.0.1" &&
+      hostname !== "::1" &&
+      !hostname.endsWith(".local");
+  } catch {
+    return false;
+  }
 }
 
 function browserEvidence(
