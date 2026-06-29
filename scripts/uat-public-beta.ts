@@ -199,7 +199,7 @@ async function checkPublicEntry(page: Page, viewportName: "desktop" | "mobile"):
   await expectTitle(page, "ForgetBase | Knowledge Base for People and AI Tools", `${viewportName}: page title`);
   await expectVisibleText(page, "Write and organize company knowledge once.", `${viewportName}: public lede`);
   await expectVisibleText(page, "People get a clean wiki-style reading view.", `${viewportName}: public reader lede`);
-  await expectVisibleText(page, "Reader and admin separated", `${viewportName}: trust badge`);
+  await expectVisibleText(page, "Separate reader and admin views", `${viewportName}: trust badge`);
   await expectVisibleText(page, "Useful beta, clear limits.", `${viewportName}: beta boundary`);
   await expectVisibleText(page, "Read pages", `${viewportName}: beta path read`);
   await expectVisibleText(page, "Search with sources", `${viewportName}: beta path search`);
@@ -227,9 +227,9 @@ async function checkReleaseFlow(page: Page, viewportName: "desktop" | "mobile"):
   await page.waitForSelector(".reader-ask-panel", { timeout: 15000 });
   await page.waitForSelector("#reader-title", { timeout: 15000 });
 
-  await expectText(page, "#reader-title", "Pages", `release ${viewportName}: reader title`);
+  await expectText(page, "#reader-title", "Read pages", `release ${viewportName}: reader title`);
   await expectVisibleText(page, "Published pages", `release ${viewportName}: reader summary`);
-  await expectVisibleText(page, "Ask with sources", `release ${viewportName}: reader ask heading`);
+  await expectVisibleText(page, "Ask this knowledge base", `release ${viewportName}: reader ask heading`);
   if (viewportName === "desktop") {
     await screenshot(page, "page-browse-tree.png", "release desktop: reader page tree screenshot");
     await screenshot(page, "page-read-view.png", "release desktop: reader page read screenshot");

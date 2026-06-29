@@ -308,7 +308,7 @@ function formatReaderStatus(value: string): string {
 }
 
 function formatReaderAccess(asset: AssetRecord): string {
-  return isPublicReaderEligible(asset) ? "Open demo page" : "Signed-in readers";
+  return isPublicReaderEligible(asset) ? "Open to readers" : "Signed-in readers";
 }
 
 function readerAssetMatches(asset: AssetRecord, query: string): boolean {
@@ -1662,7 +1662,6 @@ export function App() {
         })
       });
       setReaderAskResponse(response);
-      setMessage(`Answer ready with ${response.citations.length} source${response.citations.length === 1 ? "" : "s"}`);
     } catch (queryError) {
       setReaderAskResponse(null);
       setError(queryError instanceof Error ? queryError.message : String(queryError));
@@ -3500,8 +3499,8 @@ export function App() {
           <section className="reader-hero" aria-labelledby="reader-title">
             <div>
               <p className="eyebrow">Knowledge base</p>
-              <h1 id="reader-title">Pages</h1>
-              <p>Browse approved team knowledge, ask questions, and keep the source pages close.</p>
+              <h1 id="reader-title">Read pages</h1>
+              <p>Browse approved team pages. Search, read, and ask from the same source material.</p>
             </div>
             <div className="reader-hero-actions">
               {canUseAdministration ? (
@@ -3535,7 +3534,10 @@ export function App() {
               <ScrollArea className="reader-library-scroll">
                 <div className="nav-group reader-nav-group">
                   <div className="reader-library-heading">
-                    <p className="nav-label">Collections</p>
+                    <div>
+                      <p className="nav-label">Library</p>
+                      <p>{readerVisiblePageCount} page{readerVisiblePageCount === 1 ? "" : "s"} available</p>
+                    </div>
                     {readerFilterActive ? (
                       <Button type="button" size="sm" variant="ghost" onClick={() => {
                         setLibraryQuery("");
@@ -3612,114 +3614,118 @@ export function App() {
                     </div>
                   </header>
 
-                  <div className="reader-document">
-                    {currentHumanBody ? (
-                      <div className="reader-document-body">
-                        {renderMarkdownDocument(currentHumanBody, assetDetail.asset.title)}
-                      </div>
-                    ) : (
-                      <div className="reader-empty-state">
-                        <h3>No readable page yet</h3>
-                        <p>This item is published, but it does not have a human-readable page body yet.</p>
-                      </div>
-                    )}
-                  </div>
-
-                  <section className="reader-ask-panel" aria-labelledby="reader-ask-title">
-                    <div className="reader-ask-heading">
-                      <div>
-                        <p className="eyebrow">Ask</p>
-                        <h3 id="reader-ask-title">Ask with sources</h3>
-                        <p>Ask a question and see the pages used for the answer.</p>
-                      </div>
-                      {readerAskResponse ? (
-                        <Badge variant={readerAskResponse.checks.deniedCount ? "warning" : "success"}>
-                          {readerAskResponse.checks.deniedCount ? "Some results hidden" : "Sources checked"}
-                        </Badge>
-                      ) : null}
+                  <div className="reader-content-grid">
+                    <div className="reader-document">
+                      {currentHumanBody ? (
+                        <div className="reader-document-body">
+                          {renderMarkdownDocument(currentHumanBody, assetDetail.asset.title)}
+                        </div>
+                      ) : (
+                        <div className="reader-empty-state">
+                          <h3>No readable page yet</h3>
+                          <p>This item is published, but it does not have a human-readable page body yet.</p>
+                        </div>
+                      )}
                     </div>
-                    <form className="reader-ask-form" onSubmit={(event) => void runReaderAsk(event)}>
-                      <Input
-                        id="reader-ask-input"
-                        value={readerAskText}
-                        onChange={(event) => setReaderAskText(event.target.value)}
-                        placeholder="Ask about these pages"
-                        aria-label="Ask a question"
-                      />
-                      <Button type="submit" disabled={isReaderAskRunning || !readerAskText.trim()}>
-                        {isReaderAskRunning ? "Asking" : "Ask"}
-                      </Button>
-                    </form>
-                    {readerAskResponse ? (
-                      <div className="reader-ask-answer" aria-live="polite">
-                        <div>
-                          <h4>Answer</h4>
-                          {renderReaderAnswer(readerAskResponse.answer)}
-                          {readerAskResponse.checks.deniedCount ? (
-                            <p className="reader-ask-note">
-                              {readerAskResponse.checks.deniedCount} restricted result{readerAskResponse.checks.deniedCount === 1 ? " was" : "s were"} hidden.
-                            </p>
+
+                    <aside className="reader-rail" aria-label="Page tools">
+                      <section className="reader-ask-panel" aria-labelledby="reader-ask-title">
+                        <div className="reader-ask-heading">
+                          <div>
+                            <p className="eyebrow">Ask</p>
+                            <h3 id="reader-ask-title">Ask this knowledge base</h3>
+                            <p>Get an answer with the pages used to support it.</p>
+                          </div>
+                          {readerAskResponse ? (
+                            <Badge variant={readerAskResponse.checks.deniedCount ? "warning" : "success"}>
+                              {readerAskResponse.checks.deniedCount ? "Some results hidden" : "Sources checked"}
+                            </Badge>
                           ) : null}
                         </div>
-                        <div className="reader-citations" aria-label="Sources">
-                          <h4>Sources</h4>
-                          {readerAskResponse.citations.length ? (
-                            <>
-                              {readerAskResponse.citations.slice(0, 3).map((citation, index) => (
-                                <details className="reader-citation" key={`${citation.assetId}:${citation.chunkId}`} open={index === 0}>
-                                  <summary>
-                                    <strong>{citation.title}</strong>
-                                    <span>Source excerpt</span>
-                                  </summary>
-                                  <p>{formatReaderSnippet(citation.snippet, 130)}</p>
-                                </details>
-                              ))}
-                              {readerAskResponse.citations.length > 3 ? (
+                        <form className="reader-ask-form" onSubmit={(event) => void runReaderAsk(event)}>
+                          <Input
+                            id="reader-ask-input"
+                            value={readerAskText}
+                            onChange={(event) => setReaderAskText(event.target.value)}
+                            placeholder="Ask about these pages"
+                            aria-label="Ask a question"
+                          />
+                          <Button type="submit" disabled={isReaderAskRunning || !readerAskText.trim()}>
+                            {isReaderAskRunning ? "Asking" : "Ask"}
+                          </Button>
+                        </form>
+                        {readerAskResponse ? (
+                          <div className="reader-ask-answer" aria-live="polite">
+                            <div>
+                              <h4>Answer</h4>
+                              {renderReaderAnswer(readerAskResponse.answer)}
+                              {readerAskResponse.checks.deniedCount ? (
                                 <p className="reader-ask-note">
-                                  {readerAskResponse.citations.length - 3} more source{readerAskResponse.citations.length - 3 === 1 ? "" : "s"} checked.
+                                  {readerAskResponse.checks.deniedCount} restricted result{readerAskResponse.checks.deniedCount === 1 ? " was" : "s were"} hidden.
                                 </p>
                               ) : null}
-                            </>
-                          ) : (
-                            <p className="reader-ask-note">No sources matched this question.</p>
-                          )}
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="reader-ask-empty">
-                        <p>Try asking “What should be redacted?” or search for a page first.</p>
-                      </div>
-                    )}
-                  </section>
+                            </div>
+                            <div className="reader-citations" aria-label="Sources">
+                              <h4>Sources</h4>
+                              {readerAskResponse.citations.length ? (
+                                <>
+                                  {readerAskResponse.citations.slice(0, 3).map((citation, index) => (
+                                    <details className="reader-citation" key={`${citation.assetId}:${citation.chunkId}`} open={index === 0}>
+                                      <summary>
+                                        <strong>{citation.title}</strong>
+                                        <span>Excerpt</span>
+                                      </summary>
+                                      <p>{formatReaderSnippet(citation.snippet, 130)}</p>
+                                    </details>
+                                  ))}
+                                  {readerAskResponse.citations.length > 3 ? (
+                                    <p className="reader-ask-note">
+                                      {readerAskResponse.citations.length - 3} more source{readerAskResponse.citations.length - 3 === 1 ? "" : "s"} checked.
+                                    </p>
+                                  ) : null}
+                                </>
+                              ) : (
+                                <p className="reader-ask-note">No sources matched this question.</p>
+                              )}
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="reader-ask-empty">
+                            <p>Try asking “What should be redacted?” after choosing a page.</p>
+                          </div>
+                        )}
+                      </section>
 
-	                  <footer className="reader-source-panel" aria-label="Page details">
-	                    <div className="reader-source-heading">
-	                      <h3>Page info</h3>
-	                      <p>Freshness and ownership in plain language.</p>
-	                    </div>
-	                    <dl>
-	                      <div>
-	                        <dt>Version</dt>
-	                        <dd>{currentVersion ? `Version ${currentVersion.versionNumber}` : "Not versioned"}</dd>
-	                      </div>
-	                      <div>
-	                        <dt>Last updated</dt>
-	                        <dd>{formatReaderDate(assetDetail.asset.updatedAt)}</dd>
-	                      </div>
-	                      <div>
-	                        <dt>Access</dt>
-	                        <dd>{formatReaderAccess(assetDetail.asset)}</dd>
-	                      </div>
-	                      <div>
-	                        <dt>Maintainer</dt>
-	                        <dd>{formatReaderMaintainer(assetDetail.asset.ownerId)}</dd>
-	                      </div>
-	                      <div>
-	                        <dt>Review</dt>
-	                        <dd>{formatReaderReview(assetDetail.asset.reviewDueAt)}</dd>
-	                      </div>
-	                    </dl>
-	                  </footer>
+                      <section className="reader-source-panel" aria-label="Page details">
+                        <div className="reader-source-heading">
+                          <h3>Page info</h3>
+                          <p>Owner, access, and freshness.</p>
+                        </div>
+                        <dl>
+                          <div>
+                            <dt>Version</dt>
+                            <dd>{currentVersion ? `Version ${currentVersion.versionNumber}` : "Not versioned"}</dd>
+                          </div>
+                          <div>
+                            <dt>Last updated</dt>
+                            <dd>{formatReaderDate(assetDetail.asset.updatedAt)}</dd>
+                          </div>
+                          <div>
+                            <dt>Access</dt>
+                            <dd>{formatReaderAccess(assetDetail.asset)}</dd>
+                          </div>
+                          <div>
+                            <dt>Maintainer</dt>
+                            <dd>{formatReaderMaintainer(assetDetail.asset.ownerId)}</dd>
+                          </div>
+                          <div>
+                            <dt>Review</dt>
+                            <dd>{formatReaderReview(assetDetail.asset.reviewDueAt)}</dd>
+                          </div>
+                        </dl>
+                      </section>
+                    </aside>
+                  </div>
                 </>
               ) : (
                 <div className="reader-empty-state reader-empty-state--large">
@@ -3857,7 +3863,7 @@ export function App() {
                 <MetricCard label="Visible pages" value={assets.length} note="Filtered by your account." />
                 <MetricCard label="Reviewed" value={approvedAssets} note="Approved content loaded in the browser." />
                 <MetricCard label="Need review" value={reviewDueAssets} note="Draft, stale, in review, overdue, or inactive." />
-                <MetricCard label="Public demo" value={publicReaderAssets} note="Published and approved demo pages." />
+                <MetricCard label="Reader pages" value={publicReaderAssets} note="Published and approved pages readers can open." />
               </div>
             ) : null}
             <section className={`workspace ${currentPage === "library" ? "" : "workspace--focused"}`}>
@@ -3889,7 +3895,7 @@ export function App() {
                           </SelectTrigger>
                           <SelectContent>
                             <SelectItem value="all">All visible</SelectItem>
-                            <SelectItem value="public-reader">Public demo</SelectItem>
+                            <SelectItem value="public-reader">Reader-ready</SelectItem>
                             <SelectItem value="needs-governance">Needs review</SelectItem>
                             <SelectItem value="approved-active">Published and reviewed</SelectItem>
                           </SelectContent>
@@ -3950,7 +3956,7 @@ export function App() {
                             <strong className="text-[13px] leading-tight text-foreground">{asset.title}</strong>
                             <span className="library-page-meta">
                               <span>{formatAssetTypeLabel(asset.type)}</span>
-                              <span>{isPublicReaderEligible(asset) ? "Open demo page" : "Signed-in page"}</span>
+                              <span>{isPublicReaderEligible(asset) ? "Open to readers" : "Signed-in page"}</span>
                             </span>
                             {asset.summary ? (
                               <small className="overflow-hidden text-[11px] leading-snug text-muted-foreground [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:2]">
@@ -3993,9 +3999,9 @@ export function App() {
                       state={isAssetGovernanceDue(assetDetail.asset) ? "needs-review" : isPublicReaderEligible(assetDetail.asset) ? "trusted" : "restricted"}
                       title={assetDetail.asset.stableId}
                       description={isPublicReaderEligible(assetDetail.asset)
-                        ? "This page is published, reviewed, and visible in the public demo."
+                        ? "This page is published, reviewed, and visible to readers."
                         : isAssetGovernanceDue(assetDetail.asset)
-                          ? "This page needs review before it is ready for the demo."
+                          ? "This page needs review before readers should rely on it."
                           : "This page stays behind signed-in access."}
                       signals={[
                         { label: assetDetail.asset.lifecycleState, variant: stateBadgeVariant(assetDetail.asset.lifecycleState) },
@@ -6350,8 +6356,8 @@ export function App() {
               <div className="public-trust-strip" aria-label="Beta proof points">
                 <Badge variant="neutral">Apache 2.0 core</Badge>
                 <Badge variant="neutral">Docker Compose quickstart</Badge>
-                <Badge variant="info">Reader and admin separated</Badge>
-                <Badge variant="neutral">Safe demo content</Badge>
+                <Badge variant="info">Separate reader and admin views</Badge>
+                <Badge variant="neutral">Safe sample content</Badge>
               </div>
             </div>
 
@@ -6373,7 +6379,7 @@ export function App() {
 	                      <dl>
 	                        <div><dt>Maintainer</dt><dd>Security team</dd></div>
 	                        <div><dt>Status</dt><dd>Published and reviewed</dd></div>
-	                        <div><dt>Access</dt><dd>Open demo page</dd></div>
+	                        <div><dt>Access</dt><dd>Open to readers</dd></div>
 	                        <div><dt>Sources</dt><dd>3 cited sections</dd></div>
 	                      </dl>
 	                    </CardContent>
@@ -6424,7 +6430,7 @@ export function App() {
               <p className="eyebrow">Beta path</p>
               <h2 id="public-proof-title">Read first. Manage when you need to.</h2>
               <p>
-                Use the demo to browse pages, read content, search with sources, and then switch to the admin console
+                Use the beta to browse pages, read content, search with sources, and then switch to the admin console
                 to review, publish, manage access, and generate exports.
               </p>
             </div>
@@ -6469,7 +6475,7 @@ export function App() {
                 <CardDescription className="eyebrow">Beta access</CardDescription>
                 <CardTitle><h2 id="beta-access-title">Access by invitation.</h2></CardTitle>
                 <CardDescription>
-                  Beta users can log in with invitation credentials. The demo path stays visible before sign-in so teams
+                  Beta users can log in with invitation credentials. The preview stays visible before sign-in so teams
                   can review scope and limits.
                 </CardDescription>
               </CardHeader>

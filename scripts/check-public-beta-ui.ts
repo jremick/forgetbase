@@ -49,16 +49,16 @@ assertIncludes(app, 'return pageRoutes.has(aliasedRoute) ? aliasedRoute : "reade
 assertIncludes(app, "A knowledge base for people and AI tools.", "public hero");
 assertIncludes(app, "Write and organize company knowledge once.", "public hero");
 assertIncludes(app, "People get a clean wiki-style reading view.", "public hero");
-assertIncludes(app, "Reader and admin separated", "public trust strip");
+assertIncludes(app, "Separate reader and admin views", "public trust strip");
 assertIncludes(app, "Beta access", "public access boundary");
 assertIncludes(app, "Beta access. Invitation required.", "login dialog");
 assertIncludes(app, "<h3>Read pages</h3>", "public beta path");
 assertIncludes(app, "<h3>Manage content</h3>", "public beta path");
 assertIncludes(html, "Knowledge Base for People and AI Tools", "HTML metadata");
 assertIncludes(html, "knowledge base for people and AI tools", "HTML metadata");
-assertIncludes(app, "<h1 id=\"reader-title\">Pages</h1>", "reader home");
-assertIncludes(app, "<h3 id=\"reader-ask-title\">Ask with sources</h3>", "reader ask");
-assertIncludes(app, "Ask a question and see the pages used for the answer.", "reader ask");
+assertIncludes(app, "<h1 id=\"reader-title\">Read pages</h1>", "reader home");
+assertIncludes(app, "<h3 id=\"reader-ask-title\">Ask this knowledge base</h3>", "reader ask");
+assertIncludes(app, "Get an answer with the pages used to support it.", "reader ask");
 assertIncludes(app, "aria-label=\"Sources\"", "reader sources");
 assertIncludes(app, "Admin console", "reader admin handoff");
 assertIncludes(app, "Search pages", "reader action");
@@ -66,6 +66,8 @@ assertIncludes(app, "Search pages", "reader action");
 for (const selector of [
   ".reader-hero",
   ".reader-summary-strip",
+  ".reader-content-grid",
+  ".reader-rail",
   ".reader-ask-panel",
   ".reader-ask-answer",
   ".reader-citation",

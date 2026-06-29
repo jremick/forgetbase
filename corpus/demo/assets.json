@@ -794,8 +794,8 @@
       "stableId": "playbook.public-demo-no-export",
       "type": "playbook",
       "ownerId": "user_ops",
-      "title": "Read-Only Demo Page",
-      "summary": "Approved demo page that is readable but intentionally omitted from export packages.",
+      "title": "Reader Access and Export Rules",
+      "summary": "Approved page that readers can open, while exports remain a separate choice.",
       "lifecycleState": "active",
       "sensitivity": "public-demo",
       "audience": ["ai-team", "demo-operators"],
@@ -833,7 +833,7 @@
       },
       "humanDocument": {
         "format": "markdown",
-        "body": "# Read-Only Demo Page\n\nThis page is active, reviewed, and readable in the demo. It is intentionally excluded from export packages so the demo can show that read access and export access are separate choices.",
+        "body": "# Reader Access and Export Rules\n\nThis page is active, reviewed, and available to readers. It is intentionally excluded from export packages so teams can keep read access and export access as separate choices.",
         "renderOptions": {
           "audience": "demo-operators"
         }
