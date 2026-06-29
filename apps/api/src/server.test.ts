@@ -2576,7 +2576,7 @@ describe("API asset registry routes", () => {
       latencyMs: null,
       attempts: []
     });
-    expect(publicQuery.json().answer).toContain("playbook.managed-public");
+    expect(publicQuery.json().answer).toContain("Managed Query Public Playbook");
     expect(uniqueStableIds(publicQuery.json().results)).toEqual(["playbook.managed-public"]);
     expect(publicQuery.json().citations[0].stableId).toBe("playbook.managed-public");
     expect(publicQuery.json().checks.grounded).toBe(true);
@@ -4245,7 +4245,7 @@ describe("API asset registry routes", () => {
       });
 
       expect(quotaFallbackResponse.statusCode).toBe(200);
-      expect(quotaFallbackResponse.json().answer).toContain("Deterministic managed answer draft");
+      expect(quotaFallbackResponse.json().answer).toContain("Answer from the pages I can access");
       expect(quotaFallbackResponse.json().generation).toMatchObject({
         provider: "openai",
         model: "gpt-test",
@@ -4300,7 +4300,7 @@ describe("API asset registry routes", () => {
       });
 
       expect(fallbackResponse.statusCode).toBe(200);
-      expect(fallbackResponse.json().answer).toContain("Deterministic managed answer draft");
+      expect(fallbackResponse.json().answer).toContain("Answer from the pages I can access");
       expect(fallbackResponse.json().generation).toMatchObject({
         provider: "openai",
         model: "gpt-test",

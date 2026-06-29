@@ -65,6 +65,25 @@ jobs:
       - name: Build
         run: pnpm build
 
+      - name: Check public beta UI source gate
+        run: pnpm public-beta:check
+
+      - name: Check deployment security defaults
+        run: pnpm security:check-deployment-defaults
+
+      - name: Install Playwright Chromium
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Run public beta UAT
+        run: UAT_OUTPUT_DIR="${RUNNER_TEMP}/public-beta-uat" pnpm test:uat
+
+      - name: Upload public beta UAT evidence
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: public-beta-uat
+          path: ${{ runner.temp }}/public-beta-uat
+
       - name: Validate demo corpus
         run: pnpm --filter @forgetbase/cli start -- validate --file corpus/demo/assets.json --as-of 2026-06-16 --fail-on-warnings
 

@@ -1,0 +1,57 @@
+name: Feature request
+description: Suggest a focused public beta improvement.
+title: "[Feature]: "
+labels: ["enhancement", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Keep requests grounded in the public beta goal: reader-first knowledge base, separated admin console, plain language, and verifiable proof gates.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Reader UI
+        - Admin console
+        - Search and sources
+        - Access and permissions
+        - Exports
+        - API/CLI/MCP
+        - Deployment
+        - Release proof
+        - Docs
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What user problem or adoption blocker does this solve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed change
+      description: Describe the smallest useful change.
+    validations:
+      required: true
+  - type: textarea
+    id: proof
+    attributes:
+      label: How would we verify it?
+      description: Name the test, screenshot, command, or release proof that should show this works.
+      placeholder: test:uat screenshot, restricted leakage check, API contract test, docs read-back, etc.
+    validations:
+      required: true
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope check
+      options:
+        - label: This request fits the public beta scope or clearly states why the scope should change.
+          required: true
+        - label: This request does not require private/customer data to evaluate.
+          required: true

@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security report
+    url: https://github.com/jremick/forgetbase/security/policy
+    about: Report suspected vulnerabilities privately.
+  - name: Public beta goal
+    url: https://github.com/jremick/forgetbase/blob/main/docs/PUBLIC_BETA_GOAL.md
+    about: Review the current public beta scope and release gates.

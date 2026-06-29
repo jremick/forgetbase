@@ -59,8 +59,13 @@ describe("local dev auth defaults", () => {
     expect(readInitialLoginEmail(undefined, deployed)).toBe("");
     expect(readInitialLoginPassword(deployed)).toBe("");
 
-    expect(readInitialLoginTenantId(stored, local)).toBe("");
     expect(readInitialLoginEmail(stored, local)).toBe("");
+  });
+
+  it("can read a hidden tenant override for automated local release checks", () => {
+    expect(readInitialLoginTenantId(storage({ "forgetbase-login-tenant": "tenant_custom" }), location("localhost", "5175"))).toBe(
+      "tenant_custom"
+    );
   });
 
   it("uses the login response key only for local split-origin review", () => {

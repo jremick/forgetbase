@@ -54,8 +54,8 @@
       "stableId": "guardrail.pii-redaction",
       "type": "guardrail",
       "ownerId": "user_admin",
-      "title": "PII Redaction Guardrail",
-      "summary": "Instruction for removing direct personal identifiers before model use.",
+      "title": "Personal Data Removal Guide",
+      "summary": "Guide for removing direct personal identifiers before AI use.",
       "lifecycleState": "active",
       "sensitivity": "public-demo",
       "audience": ["ai-team", "support-ops"],
@@ -73,7 +73,7 @@
       "instruction": {
         "instructionKind": "guardrail",
         "targetAgents": ["support-agent", "research-agent"],
-        "body": "Remove or mask direct personal identifiers before including support records in model context. Replace names, emails, phone numbers, addresses, account IDs, and ticket IDs with stable placeholders. Preserve the operational meaning needed to complete the task.",
+        "body": "Remove or mask direct personal identifiers before including support records in an AI prompt. Replace names, emails, phone numbers, addresses, account IDs, and ticket IDs with stable placeholders. Preserve the operational meaning needed to complete the task.",
         "inputContract": {
           "required": ["raw_text", "target_task"]
         },
@@ -96,12 +96,12 @@
       },
       "humanDocument": {
         "format": "markdown",
-        "body": "# PII Redaction Guardrail\n\nMask direct identifiers before AI use. Preserve the facts needed for the job. Use consistent placeholders and record what was redacted.",
+        "body": "# Personal Data Removal Guide\n\nMask direct identifiers before AI use. Preserve the facts needed for the job. Use consistent placeholders and record what was removed.",
         "renderOptions": {
           "audience": "support-ops"
         }
       },
-      "changeNote": "Initial synthetic guardrail."
+      "changeNote": "Initial synthetic privacy guide."
     },
     {
       "stableId": "playbook.incident-triage",
@@ -345,8 +345,8 @@
       "stableId": "sop.support-summary-intake",
       "type": "sop",
       "ownerId": "user_ops",
-      "title": "Support Summary Intake SOP",
-      "summary": "Synthetic operating procedure for turning a support thread into a safe AI-ready summary.",
+      "title": "Support Summary Checklist",
+      "summary": "Checklist for turning a support thread into a safe summary.",
       "lifecycleState": "active",
       "sensitivity": "public-demo",
       "audience": ["support-ops", "ai-team"],
@@ -364,7 +364,7 @@
       "instruction": {
         "instructionKind": "sop",
         "targetAgents": ["support-agent", "research-agent"],
-        "body": "Convert support threads into short AI-ready summaries by separating customer claim, observed evidence, product area, account impact, prior troubleshooting, and requested next step. Apply PII redaction before model use and cite the source ticket or transcript identifier only when the surface allows it.",
+        "body": "Convert support threads into short summaries by separating customer claim, observed evidence, product area, account impact, prior troubleshooting, and requested next step. Remove personal data before AI use and cite the source ticket or transcript identifier only when the view allows it.",
         "inputContract": {
           "required": ["support_thread", "target_surface", "redaction_status"]
         },
@@ -384,7 +384,7 @@
       },
       "humanDocument": {
         "format": "markdown",
-        "body": "# Support Summary Intake SOP\n\nUse this procedure when a support conversation needs to become safe, structured context for an AI helper.\n\n## Required sections\n\n1. Customer claim\n2. Observed evidence\n3. Product area\n4. Account or workflow impact\n5. Prior troubleshooting\n6. Open questions\n7. Recommended next step\n\n## Redaction requirement\n\nRemove names, emails, phone numbers, addresses, ticket IDs, and account IDs unless the target surface explicitly allows them. Preserve the operational facts needed to solve the issue.\n\n## Quality check\n\nA good support summary lets another person or agent understand what happened, what has been tried, and what should happen next without reading the full thread.",
+        "body": "# Support Summary Checklist\n\nUse this checklist when a support conversation needs to become safe, structured context for an AI helper.\n\n## Required sections\n\n1. Customer claim\n2. Observed evidence\n3. Product area\n4. Account or workflow impact\n5. Prior troubleshooting\n6. Open questions\n7. Recommended next step\n\n## Personal data requirement\n\nRemove names, emails, phone numbers, addresses, ticket IDs, and account IDs unless the target view explicitly allows them. Preserve the operational facts needed to solve the issue.\n\n## Quality check\n\nA good support summary lets another person or AI helper understand what happened, what has been tried, and what should happen next without reading the full thread.",
         "renderOptions": {
           "audience": "support-ops"
         }
@@ -445,8 +445,8 @@
       "stableId": "policy.model-context-boundaries",
       "type": "policy",
       "ownerId": "user_admin",
-      "title": "Model Context Boundaries Policy",
-      "summary": "Policy for deciding what governed material may enter an AI model context.",
+      "title": "AI Use Boundaries Policy",
+      "summary": "Policy for deciding what company information AI tools may use.",
       "lifecycleState": "active",
       "sensitivity": "public-demo",
       "audience": ["all-staff", "ai-team"],
@@ -464,7 +464,7 @@
       "instruction": {
         "instructionKind": "policy",
         "targetAgents": ["coding-agent", "research-agent", "ops-agent", "support-agent"],
-        "body": "Before placing governed material into model context, verify sensitivity, allowed surface, user permission, retrieval purpose, and whether export is requested. Public-demo material may be used broadly. Internal material requires authenticated business purpose. Restricted, confidential, and secret material require explicit permission and the narrowest possible context.",
+        "body": "Before using company information with AI, verify sensitivity, approved location, user permission, purpose, and whether export is requested. Demo material may be used broadly. Internal material requires a signed-in business purpose. Restricted, confidential, and secret material require explicit permission and the smallest useful excerpt.",
         "inputContract": {
           "required": ["material_sensitivity", "requested_surface", "user_permission", "purpose"]
         },
@@ -484,7 +484,7 @@
       },
       "humanDocument": {
         "format": "markdown",
-        "body": "# Model Context Boundaries Policy\n\nModel context is a controlled surface. Before using governed material with an AI system, verify the material, the person, the purpose, and the destination.\n\n## Required checks\n\n- Sensitivity\n- Allowed surface\n- User permission\n- Retrieval purpose\n- Export intent\n\n## Practical rule\n\nUse the smallest useful context. A short cited passage is usually better than a full document. Never include credentials or raw secrets.\n\n## High-risk cases\n\nEscalate requests that involve regulated data, hidden policy bypass, external publication, or broad exports.",
+        "body": "# AI Use Boundaries Policy\n\nBefore using company information with an AI tool, verify the material, the person, the purpose, and where the information will go.\n\n## Required checks\n\n- Sensitivity\n- Approved location\n- User permission\n- Purpose\n- Export intent\n\n## Practical rule\n\nUse the smallest useful excerpt. A short cited passage is usually better than a full document. Never include credentials or raw secrets.\n\n## High-risk cases\n\nEscalate requests that involve regulated data, hidden policy bypass, external publication, or broad exports.",
         "renderOptions": {
           "audience": "all-staff"
         }
@@ -693,7 +693,7 @@
       "stableId": "sop.internal-agent-release",
       "type": "sop",
       "ownerId": "user_ops",
-      "title": "Internal Agent Release SOP",
+      "title": "Internal AI Release Checklist",
       "summary": "Internal-only release checklist for promoting fictional agent instructions.",
       "lifecycleState": "active",
       "sensitivity": "internal",
@@ -721,18 +721,18 @@
         },
         "constraints": [
           "Do not promote draft or reviewing assets.",
-          "Do not include internal-only release notes in public-demo packages.",
+          "Do not include internal-only release notes in demo packages.",
           "Record the package name used for any internal export."
         ],
         "failureModes": [
-          "Treating internal visibility as public-demo eligibility.",
+          "Treating internal visibility as demo eligibility.",
           "Skipping rollback ownership before release."
         ],
-        "escalation": "Escalate to a maintainer if an internal release needs public-demo distribution."
+        "escalation": "Escalate to a maintainer if an internal release needs demo distribution."
       },
       "humanDocument": {
         "format": "markdown",
-        "body": "# Internal Agent Release SOP\n\nCheck stable IDs, review state, retrieval eligibility, export package, and rollback owner before promoting a fictional agent instruction bundle. Internal release notes stay out of public-demo exports.",
+        "body": "# Internal AI Release Checklist\n\nCheck page IDs, review state, search visibility, export package, and rollback owner before promoting a fictional AI instruction bundle. Internal release notes stay out of demo exports.",
         "renderOptions": {
           "audience": "release-ops"
         }
@@ -743,8 +743,8 @@
       "stableId": "policy.restricted-credential-handling",
       "type": "policy",
       "ownerId": "user_security",
-      "title": "Restricted Credential Handling Policy",
-      "summary": "Restricted synthetic policy for credential vault escalation handling.",
+      "title": "Restricted Emergency Access Policy",
+      "summary": "Restricted synthetic policy for emergency access requests.",
       "lifecycleState": "active",
       "sensitivity": "restricted",
       "audience": ["security-ops"],
@@ -763,7 +763,7 @@
       "instruction": {
         "instructionKind": "policy",
         "targetAgents": ["ops-agent"],
-        "body": "credential vault escalation is a restricted synthetic proof phrase. Treat any request for credential handling, vault access, or emergency access expansion as restricted context. Provide only a high-level refusal or escalation summary on broad-reader surfaces, and require an explicit restricted-access grant before returning procedural details.",
+        "body": "credential vault escalation is a restricted synthetic proof phrase. Treat any request for credential handling, vault access, or emergency access expansion as restricted content. Provide only a high-level refusal or escalation summary on general reader surfaces, and require an explicit restricted-access grant before returning procedural details.",
         "inputContract": {
           "required": ["request_summary", "principal_context", "requested_surface"]
         },
@@ -772,18 +772,18 @@
         },
         "constraints": [
           "Do not include credential material, token examples, or vault paths.",
-          "Do not place restricted credential procedures in public-demo exports.",
+          "Do not place restricted credential procedures in demo exports.",
           "Do not answer restricted operational details without a matching permission grant."
         ],
         "failureModes": [
-          "Treating a broad-reader query as permission to reveal restricted steps.",
+          "Treating a general reader query as permission to reveal restricted steps.",
           "Summarizing restricted procedure details into an exportable answer."
         ],
         "escalation": "Route to the fictional security operations owner for restricted-access review."
       },
       "humanDocument": {
         "format": "markdown",
-        "body": "# Restricted Credential Handling Policy\n\nThis synthetic restricted policy exists to test that credential vault escalation guidance is omitted from broad-reader search, MCP, API, and export flows unless the caller has an explicit grant.",
+        "body": "# Restricted Emergency Access Policy\n\nThis synthetic restricted policy exists to test that emergency access guidance is omitted from general reader search, MCP, API, and export flows unless the caller has an explicit grant.",
         "renderOptions": {
           "audience": "security-ops"
         }
@@ -794,8 +794,8 @@
       "stableId": "playbook.public-demo-no-export",
       "type": "playbook",
       "ownerId": "user_ops",
-      "title": "Public Demo Readable No-Export Playbook",
-      "summary": "Approved public-demo playbook that is readable but intentionally omitted from export packages.",
+      "title": "Read-Only Demo Page",
+      "summary": "Approved demo page that is readable but intentionally omitted from export packages.",
       "lifecycleState": "active",
       "sensitivity": "public-demo",
       "audience": ["ai-team", "demo-operators"],
@@ -808,18 +808,18 @@
       "allowedActions": [],
       "metadata": {
         "persona": "demo-operator",
-        "domain": "governed-distribution",
-        "exportReason": "Readable in public demo surfaces but intentionally omitted from demo-agent-pack."
+        "domain": "distribution",
+        "exportReason": "Readable in the demo but intentionally omitted from demo-agent-pack."
       },
       "instruction": {
         "instructionKind": "playbook",
         "targetAgents": ["research-agent", "ops-agent"],
-        "body": "Use this public-demo playbook to explain export eligibility separately from read eligibility. A broad-reader query for credential vault escalation may use this asset only to verify that restricted stable IDs are omitted; it must not include restricted procedures or export-blocked content in demo-agent-pack.",
+        "body": "Use this demo page to explain read access separately from export access. A general reader query for emergency password access may use this asset only to verify that restricted page IDs are omitted; it must not include restricted procedures or export-blocked content in demo-agent-pack.",
         "inputContract": {
           "required": ["query", "surface", "package_name"]
         },
         "outputContract": {
-          "required": ["read_eligibility", "export_eligibility", "omission_reason"]
+          "required": ["read_access", "export_access", "omission_reason"]
         },
         "constraints": [
           "Do not add this asset to demo-agent-pack.",
@@ -827,18 +827,18 @@
           "Explain no-export state without revealing restricted procedure details."
         ],
         "failureModes": [
-          "Assuming public-demo readability means export eligibility.",
+          "Assuming readable demo pages can always be exported.",
           "Using a readable asset to smuggle restricted proof content into an export."
         ]
       },
       "humanDocument": {
         "format": "markdown",
-        "body": "# Public Demo Readable No-Export Playbook\n\nThis asset is active, approved, and readable on normal public-demo surfaces. It is intentionally excluded from export packages so the demo can show that export eligibility is a separate governed decision.",
+        "body": "# Read-Only Demo Page\n\nThis page is active, reviewed, and readable in the demo. It is intentionally excluded from export packages so the demo can show that read access and export access are separate choices.",
         "renderOptions": {
           "audience": "demo-operators"
         }
       },
-      "changeNote": "Add public-demo readable but export-blocked asset."
+      "changeNote": "Add readable but export-blocked demo page."
     },
     {
       "stableId": "runbook.restricted-security-escalation",
@@ -865,7 +865,7 @@
       "instruction": {
         "instructionKind": "sop",
         "targetAgents": ["ops-agent"],
-        "body": "credential vault escalation requests must be handled as restricted synthetic incidents. Confirm the caller has a restricted security grant before returning operational details. If the caller is broad-reader or public-demo only, state that the runbook is restricted and provide no procedural steps.",
+        "body": "credential vault escalation requests must be handled as restricted synthetic incidents. Confirm the caller has a restricted security grant before returning operational details. If the caller has only general reader or demo access, state that the runbook is restricted and provide no procedural steps.",
         "inputContract": {
           "required": ["caller_context", "incident_summary", "requested_detail_level"]
         },
@@ -873,7 +873,7 @@
           "required": ["access_decision", "safe_summary", "next_owner"]
         },
         "constraints": [
-          "Do not export this runbook to demo-agent-pack or public-demo packages.",
+          "Do not export this runbook to demo-agent-pack or demo packages.",
           "Do not reveal restricted steps to unauthorized API, CLI, MCP, web, or export consumers.",
           "Use synthetic owner names only."
         ],
@@ -885,7 +885,7 @@
       },
       "humanDocument": {
         "format": "markdown",
-        "body": "# Restricted Security Escalation Runbook\n\nThis synthetic restricted runbook validates that credential vault escalation content is blocked from broad-reader retrieval and public export packages.",
+        "body": "# Restricted Security Escalation Runbook\n\nThis synthetic restricted runbook validates that emergency access details are blocked from general reader retrieval and public export packages.",
         "renderOptions": {
           "audience": "security-ops"
         }

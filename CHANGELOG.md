@@ -1,12 +1,12 @@
 # Changelog
 
-All notable changes will be recorded here once public alpha releases begin.
+All notable changes will be recorded here once public beta releases begin.
 
 ## Unreleased
 
 ### Added
 
-- Agent-native governed asset registry with stable IDs, lifecycle state, separate instruction objects, and human documents.
+- Knowledge-base registry with stable page IDs, publishing state, separate AI instructions, and human-readable documents.
 - Local users, service accounts, groups, scoped API keys, password login, OIDC configuration, and permission-filtered reads.
 - REST/OpenAPI, CLI, MCP, worker, and operational web UI surfaces.
 - Postgres-backed retrieval chunks, permission-aware search, citations, managed query, provider-routed generation, deterministic fallback, and eval scaffolding.
@@ -20,8 +20,8 @@ All notable changes will be recorded here once public alpha releases begin.
 - Full quality-based orchestration.
 - External side-effecting action adapters.
 - Hosted service packaging.
-- SCIM, MFA enforcement, remembered-device trust policy, and certification-level compliance process.
+- SCIM, MFA enforcement, remembered-device trust policy, and compliance certification process.
 
-## 0.1.0-alpha.1
+## 0.1.0-beta.1
 
-Not released yet. See [docs/ALPHA_RELEASE_CHECKLIST.md](docs/ALPHA_RELEASE_CHECKLIST.md).
+Not released yet. See [docs/PUBLIC_BETA_GOAL.md](docs/PUBLIC_BETA_GOAL.md).

@@ -12,6 +12,7 @@ export const localDevLoginDefaults = {
   email: "admin@example.test",
   password: "local-dev-password"
 } as const;
+export const loginTenantStorageKey = "forgetbase-login-tenant";
 
 function getBrowserLocation(): BrowserLocation | undefined {
   return typeof window === "undefined" ? undefined : window.location;
@@ -68,10 +69,10 @@ export function readInitialApiUrl(
 }
 
 export function readInitialLoginTenantId(
-  _storage: BrowserStorage | undefined = getBrowserStorage(),
+  storage: BrowserStorage | undefined = getBrowserStorage(),
   _location: BrowserLocation | undefined = getBrowserLocation()
 ): string {
-  return "";
+  return storage?.getItem(loginTenantStorageKey)?.trim() ?? "";
 }
 
 export function readInitialLoginEmail(

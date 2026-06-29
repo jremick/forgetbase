@@ -19,12 +19,20 @@ The workspace explicitly allows the `esbuild` build script through `allowBuilds`
 ## Verification
 
 ```bash
+npx -y pnpm@11.7.0 public-beta:preflight
+```
+
+The preflight script is the local, non-Docker public beta gate. The broader local verification set is:
+
+```bash
 npx -y pnpm@11.7.0 typecheck
 npx -y pnpm@11.7.0 test
 npx -y pnpm@11.7.0 build
 npx -y pnpm@11.7.0 --filter @forgetbase/cli start -- validate --file corpus/demo/assets.json --as-of 2026-06-16 --fail-on-warnings
 npx -y pnpm@11.7.0 openapi:check
 npx -y pnpm@11.7.0 claims:lint
+npx -y pnpm@11.7.0 public-beta:check
+npx -y pnpm@11.7.0 test:uat
 npx -y pnpm@11.7.0 contracts:check
 npx -y pnpm@11.7.0 security:check-deployment-defaults
 docker compose config --quiet
@@ -54,15 +62,39 @@ With Docker Compose API running and `FORGETBASE_OIDC_STATE_SECRET` set for the A
 npx -y pnpm@11.7.0 auth:verify-oidc-login
 ```
 
+Run the public-beta browser proof after the web build. Without `UAT_BASE_URL`, the command serves `apps/web/dist` locally and verifies the public entry at desktop and mobile widths:
+
+```bash
+npx -y pnpm@11.7.0 --filter @forgetbase/web build
+npx -y pnpm@11.7.0 test:uat
+```
+
+For release proof, run against a same-origin app/API stack and require login:
+
+```bash
+UAT_BASE_URL=http://127.0.0.1:8080/ UAT_MODE=release UAT_EXPECT_ROLE=admin npx -y pnpm@11.7.0 test:uat
+```
+
+Set `UAT_EXPECT_ROLE=reader` with reader credentials to prove reader accounts are forced back to `#reader` and do not see the admin console handoff.
+
+Before tagging or announcing public beta, create the release proof manifest from `docs/PUBLIC_BETA_RELEASE_PROOF.template.json` and validate it:
+
+```bash
+npx -y pnpm@11.7.0 release-proof:collect
+npx -y pnpm@11.7.0 release-proof:check work/public-beta-proof/public-beta-release-proof.json
+```
+
+The collector writes a draft manifest from current repo facts and expected evidence paths. The manifest must still point to real screenshots, CI read-backs, stack-backed checks, GitHub security read-backs, known limitations, and support policy evidence before `release-proof:check` will pass. Run `npx -y pnpm@11.7.0 github:public-beta:check` after the repository settings are ready and include its JSON output in the manifest. These release checks intentionally stay out of default CI because they depend on a live demo URL, a seeded app/API stack, and GitHub repository settings.
+
 ## CI
 
 The GitHub Actions workflow at `.github/workflows/ci.yml` runs on pushes to `main` and pull requests.
 
-It uses official GitHub actions for checkout and Node setup, installs with the repo-pinned `pnpm@11.7.0`, then runs deterministic, secret-free beta gates: typecheck, build, strict demo corpus validation, static Compose config parsing for the base, same-origin, and TLS overlays, `openapi:check`, `claims:lint`, `contracts:check`, and the test suite against a `pgvector/pgvector:pg17` Postgres service through `TEST_DATABASE_URL`.
+It uses official GitHub actions for checkout and Node setup, installs with the repo-pinned `pnpm@11.7.0`, then runs deterministic, secret-free beta gates: typecheck, build, `public-beta:check`, static public browser UAT with screenshot artifact upload, strict demo corpus validation, static Compose config parsing for the base, same-origin, and TLS overlays, `openapi:check`, `claims:lint`, `contracts:check`, `security:check-deployment-defaults`, and the test suite against a `pgvector/pgvector:pg17` Postgres service through `TEST_DATABASE_URL`.
 
-The frozen private-beta machine-consumer lane is documented in [ForgetBase Private Beta Contract](BETA_PRIVATE_CONTRACT.md). The contract is intentionally narrower than the full route, CLI, SDK, and MCP surface; broader admin/provider/telemetry/action routes remain preview unless a later contract update moves them into scope.
+The older API, CLI, SDK, and MCP contract is documented in [ForgetBase Private Beta Contract](BETA_PRIVATE_CONTRACT.md). That contract is narrower than the full route surface; broader admin/provider/telemetry/action routes remain preview unless a later contract update moves them into scope.
 
-Default CI intentionally does not run `smoke:compose`, `security:verify-restricted-leakage`, `db:verify-backup-restore`, `auth:verify-oidc-login`, provider smoke checks, or browser UAT. Those checks require a running API lifecycle, Docker runtime state, release data, fake/real identity setup, provider secrets, or browser walkthrough state. Keep them as local release/manual gates until a CI wrapper owns setup, health waiting, evidence capture, and cleanup.
+Default CI intentionally does not run `smoke:compose`, `security:verify-restricted-leakage`, `db:verify-backup-restore`, `auth:verify-oidc-login`, provider smoke checks, or release-mode browser UAT. Those checks require a running API lifecycle, Docker runtime state, release data, fake/real identity setup, provider secrets, or authenticated walkthrough state. Keep them as local release/manual gates until a CI wrapper owns setup, health waiting, evidence capture, and cleanup.
 
 ## API Smoke Check
 

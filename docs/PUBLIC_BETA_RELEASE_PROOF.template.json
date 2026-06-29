@@ -1,0 +1,248 @@
+{
+  "schemaVersion": "1",
+  "stage": "public-beta",
+  "release": {
+    "commitSha": "<40-character git commit SHA>",
+    "tag": "v0.1.0-beta.1",
+    "ciRunUrl": "https://github.com/jremick/forgetbase/actions/runs/<run-id>",
+    "ciHeadSha": "<40-character CI head SHA>",
+    "ciStatus": "passed",
+    "generatedAt": "2026-06-29T00:00:00.000Z",
+    "liveDemoUrl": "https://<public-demo-host>"
+  },
+  "compatibility": {
+    "node": "22.x",
+    "pnpm": "11.7.0",
+    "docker": "Docker Compose v2 with Docker Engine running",
+    "database": "Postgres 17 with pgvector",
+    "browser": "Chromium via Playwright",
+    "document": "docs/PUBLIC_BETA_COMPATIBILITY.md"
+  },
+  "checks": [
+    {
+      "name": "clean-checkout",
+      "status": "pass",
+      "command": "npx -y pnpm@11.7.0 install --frozen-lockfile && npx -y pnpm@11.7.0 typecheck && npx -y pnpm@11.7.0 build && npx -y pnpm@11.7.0 test && npx -y pnpm@11.7.0 contracts:check && npx -y pnpm@11.7.0 claims:lint && npx -y pnpm@11.7.0 public-beta:check && npx -y pnpm@11.7.0 openapi:check && npx -y pnpm@11.7.0 security:check-deployment-defaults && git diff --check",
+      "evidence": [
+        {
+          "kind": "file",
+          "value": "gate-results/clean-checkout.json",
+          "note": "Structured gate report with final clean worktree state"
+        }
+      ]
+    },
+    {
+      "name": "ci-default-branch",
+      "status": "pass",
+      "evidence": [
+        {
+          "kind": "url",
+          "value": "https://github.com/jremick/forgetbase/actions/runs/<run-id>"
+        }
+      ]
+    },
+    {
+      "name": "public-uat",
+      "status": "pass",
+      "command": "UAT_OUTPUT_DIR=work/public-beta-proof/public-uat npx -y pnpm@11.7.0 test:uat",
+      "evidence": [
+        {
+          "kind": "file",
+          "value": "public-uat/public-beta-uat-report.json"
+        }
+      ]
+    },
+    {
+      "name": "release-uat-admin",
+      "status": "pass",
+      "command": "UAT_BASE_URL=https://<public-demo-host>/ UAT_MODE=release UAT_EXPECT_ROLE=admin UAT_OUTPUT_DIR=work/public-beta-proof/release-admin npx -y pnpm@11.7.0 test:uat",
+      "evidence": [
+        {
+          "kind": "file",
+          "value": "release-admin/public-beta-uat-report.json"
+        }
+      ]
+    },
+    {
+      "name": "release-uat-reader",
+      "status": "pass",
+      "command": "UAT_BASE_URL=https://<public-demo-host>/ UAT_MODE=release UAT_EXPECT_ROLE=reader UAT_EMAIL=<reader-email> UAT_PASSWORD=<reader-password> UAT_OUTPUT_DIR=work/public-beta-proof/release-reader npx -y pnpm@11.7.0 test:uat",
+      "evidence": [
+        {
+          "kind": "file",
+          "value": "release-reader/public-beta-uat-report.json"
+        }
+      ]
+    },
+    {
+      "name": "smoke-compose",
+      "status": "pass",
+      "command": "npx -y pnpm@11.7.0 smoke:compose",
+      "evidence": [
+        {
+          "kind": "file",
+          "value": "gate-results/smoke-compose.json"
+        }
+      ]
+    },
+    {
+      "name": "restricted-leakage",
+      "status": "pass",
+      "command": "npx -y pnpm@11.7.0 security:verify-restricted-leakage",
+      "evidence": [
+        {
+          "kind": "file",
+          "value": "gate-results/restricted-leakage.json"
+        }
+      ]
+    },
+    {
+      "name": "backup-restore",
+      "status": "pass",
+      "command": "npx -y pnpm@11.7.0 db:verify-backup-restore",
+      "evidence": [
+        {
+          "kind": "file",
+          "value": "gate-results/backup-restore.json"
+        }
+      ]
+    },
+    {
+      "name": "github-readback",
+      "status": "pass",
+      "command": "npx -y pnpm@11.7.0 github:public-beta:check",
+      "evidence": [
+        {
+          "kind": "text",
+          "value": "<github:public-beta:check JSON output showing public visibility, reader-first metadata, license, topics, vulnerability reporting, branch protection or rulesets, and successful CI>"
+        }
+      ]
+    },
+    {
+      "name": "support-surfaces",
+      "status": "pass",
+      "evidence": [
+        {
+          "kind": "file",
+          "value": "../../SUPPORT.md"
+        },
+        {
+          "kind": "file",
+          "value": "../../.github/ISSUE_TEMPLATE/bug_report.yml"
+        },
+        {
+          "kind": "file",
+          "value": "../../.github/ISSUE_TEMPLATE/feature_request.yml"
+        },
+        {
+          "kind": "file",
+          "value": "../../.github/pull_request_template.md"
+        }
+      ]
+    }
+  ],
+  "browserProof": [
+    {
+      "label": "public-reader-home",
+      "viewport": "desktop",
+      "flow": "Public entry",
+      "evidence": [{ "kind": "file", "value": "public-uat/public-desktop.png" }]
+    },
+    {
+      "label": "page-browse-tree",
+      "viewport": "desktop",
+      "flow": "Signed-in reader browse tree",
+      "evidence": [{ "kind": "file", "value": "release-reader/page-browse-tree.png" }]
+    },
+    {
+      "label": "page-read-view",
+      "viewport": "desktop",
+      "flow": "Signed-in reader page view",
+      "evidence": [{ "kind": "file", "value": "release-reader/page-read-view.png" }]
+    },
+    {
+      "label": "search-results",
+      "viewport": "desktop",
+      "flow": "Signed-in reader search",
+      "evidence": [{ "kind": "file", "value": "release-reader/search-results.png" }]
+    },
+    {
+      "label": "ask-with-sources",
+      "viewport": "desktop",
+      "flow": "Ask with sources",
+      "evidence": [{ "kind": "file", "value": "release-reader/ask-with-sources.png" }]
+    },
+    {
+      "label": "no-access-restricted-state",
+      "viewport": "desktop",
+      "flow": "Reader restricted-content boundary",
+      "evidence": [{ "kind": "file", "value": "release-reader/no-access-restricted-state.png" }]
+    },
+    {
+      "label": "login-gate",
+      "viewport": "desktop",
+      "flow": "Private beta login",
+      "evidence": [{ "kind": "file", "value": "public-uat/public-desktop.png" }]
+    },
+    {
+      "label": "admin-overview",
+      "viewport": "desktop",
+      "flow": "Admin console",
+      "evidence": [{ "kind": "file", "value": "release-admin/admin-desktop.png" }]
+    },
+    {
+      "label": "reviews",
+      "viewport": "desktop",
+      "flow": "Admin reviews",
+      "evidence": [{ "kind": "file", "value": "release-admin/reviews.png" }]
+    },
+    {
+      "label": "policies",
+      "viewport": "desktop",
+      "flow": "Admin policies",
+      "evidence": [{ "kind": "file", "value": "release-admin/policies.png" }]
+    },
+    {
+      "label": "access-management",
+      "viewport": "desktop",
+      "flow": "Admin access management",
+      "evidence": [{ "kind": "file", "value": "release-admin/access-management.png" }]
+    },
+    {
+      "label": "approvals",
+      "viewport": "desktop",
+      "flow": "Admin approvals",
+      "evidence": [{ "kind": "file", "value": "release-admin/approvals.png" }]
+    },
+    {
+      "label": "exports",
+      "viewport": "desktop",
+      "flow": "Admin exports",
+      "evidence": [{ "kind": "file", "value": "release-admin/exports.png" }]
+    },
+    {
+      "label": "mobile-reader",
+      "viewport": "mobile",
+      "flow": "Signed-in reader",
+      "evidence": [{ "kind": "file", "value": "release-reader/reader-mobile.png" }]
+    }
+  ],
+  "githubReadback": {
+    "repo": "jremick/forgetbase",
+    "visibility": "public",
+    "defaultBranch": "main",
+    "license": "Apache-2.0",
+    "privateVulnerabilityReporting": "enabled",
+    "topics": ["forgetbase", "knowledge-base", "ai-tools", "self-hosted", "docker-compose"],
+    "evidence": [
+      {
+        "kind": "text",
+        "value": "<gh repo view and GitHub API read-back summary>"
+      }
+    ]
+  },
+  "knownLimitations": [
+    "Public beta is for trial use, not production support or certification-level compliance."
+  ],
+  "supportPolicy": "Use GitHub issues for reproducible bugs and concrete feature requests; use GitHub private vulnerability reporting for suspected vulnerabilities."
+}

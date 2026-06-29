@@ -6326,17 +6326,17 @@ function uniqueStableIds(results: SearchResult[]): string[] {
 
 function buildDeterministicAnswer(query: string, results: SearchResult[]): string {
   if (!results.length) {
-    return `No permitted governed instruction context was found for: ${query}`;
+    return `No readable page content was found for: ${query}`;
   }
 
   const lines = results.slice(0, 5).map((result, index) =>
-    `${index + 1}. ${result.asset.stableId}: ${normalizeSnippet(result.citation.snippet)}`
+    `${index + 1}. ${result.asset.title}: ${normalizeSnippet(result.citation.snippet)}`
   );
 
   return [
-    `Deterministic managed answer draft for: ${query}`,
+    `Answer from the pages I can access for: ${query}`,
     "",
-    "Use the following governed context before answering or acting:",
+    "What I found:",
     ...lines
   ].join("\n");
 }

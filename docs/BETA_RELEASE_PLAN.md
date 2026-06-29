@@ -1,8 +1,10 @@
 # ForgetBase Beta Release Plan
 
-Status: planning artifact
+Status: historical planning artifact; superseded for current release execution by [Public Beta Goal](PUBLIC_BETA_GOAL.md)
 Last updated: 2026-06-19
 Audience: product, design, engineering, and release planning
+
+> Note: this document reflects an earlier beta strategy pass. The current public beta direction is reader-first: ForgetBase should work as a small company knowledge base for people, with a clearly separated admin console for content, access, exports, and system settings. Use [Public Beta Goal](PUBLIC_BETA_GOAL.md) as the current release source of truth.
 
 ## Executive Decision
 

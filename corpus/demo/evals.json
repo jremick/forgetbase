@@ -10,7 +10,7 @@
   "cases": [
     {
       "id": "eval.pii-redaction-citation",
-      "query": "direct personal identifiers support records model context",
+      "query": "direct personal identifiers support records AI prompt",
       "expectedStableIds": ["guardrail.pii-redaction"],
       "requiredCitationCount": 1,
       "tags": ["privacy", "citation-accuracy"]
@@ -31,7 +31,7 @@
     },
     {
       "id": "eval.restricted-block-boundary",
-      "query": "credential vault escalation broad reader restricted stable IDs omitted",
+      "query": "emergency password access general reader restricted page IDs omitted",
       "expectedStableIds": ["playbook.public-demo-no-export"],
       "requiredCitationCount": 1,
       "tags": ["restricted-boundary", "policy-compliance"],
@@ -45,7 +45,7 @@
     },
     {
       "id": "eval.export-eligibility",
-      "query": "readable public demo playbook omitted from demo agent pack export eligibility",
+      "query": "readable demo page omitted from demo agent pack export access",
       "expectedStableIds": ["playbook.public-demo-no-export"],
       "requiredCitationCount": 1,
       "tags": ["export-eligibility", "governed-distribution"],

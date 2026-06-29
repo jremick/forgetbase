@@ -152,6 +152,7 @@ import {
 } from "./lib/asset-ui.js";
 import {
   apiUrlStorageKey,
+  loginTenantStorageKey,
   localDevLoginDefaults,
   localSplitOriginAuthKey,
   readInitialApiUrl,
@@ -191,7 +192,7 @@ const configuredApiUrl = import.meta.env.VITE_FORGETBASE_API_URL?.trim();
 const demoEvalCases = [
   {
     id: "eval.pii-redaction-citation",
-    query: "direct personal identifiers support records model context",
+    query: "direct personal identifiers support records AI prompt",
     expectedStableIds: ["guardrail.pii-redaction"],
     requiredCitationCount: 1,
     tags: ["privacy", "citation-accuracy"]
@@ -253,21 +254,23 @@ type NavSectionConfig = {
 };
 type AssetContentView = "human" | "instruction" | "version" | "raw";
 type ManagedQueryView = "answer" | "evidence" | "diagnostics";
+type PolicySettingsView = "retention" | "answers" | "ranking" | "evals" | "actions" | "data" | "privacy";
+type AccessSettingsView = "users" | "service-policy" | "service-accounts" | "groups" | "api-keys" | "sessions";
 type GeneratedPackage = AiExportPackage | OkfExportPackage;
 const assetTypeLabels: Record<string, string> = {
-  "agent-instruction": "Agent Instruction",
-  "eval-case": "Eval Case",
-  "guardrail": "Guardrail",
+  "agent-instruction": "Agent Guide",
+  "eval-case": "Check",
+  "guardrail": "Privacy Guide",
   "guideline": "Guideline",
-  "human-document": "Human Document",
-  "playbook": "Playbook",
+  "human-document": "Document",
+  "playbook": "Guide",
   "policy": "Policy",
   "reference": "Reference",
   "skill": "Skill",
-  "sop": "SOP",
-  "telemetry-policy": "Telemetry Policy",
+  "sop": "Checklist",
+  "telemetry-policy": "Privacy Policy",
   "template": "Template",
-  "tool-instruction": "Tool Instruction"
+  "tool-instruction": "Tool Guide"
 };
 
 function formatAssetTypeLabel(type: string): string {
@@ -279,6 +282,84 @@ function formatAssetTypeLabel(type: string): string {
     .split("-")
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(" ");
+}
+
+function formatReaderLifecycle(value: string): string {
+  const labels: Record<string, string> = {
+    active: "Published",
+    archived: "Archived",
+    deprecated: "Deprecated",
+    draft: "Draft",
+    restricted: "Restricted"
+  };
+
+  return labels[value] ?? formatAssetTypeLabel(value);
+}
+
+function formatReaderStatus(value: string): string {
+  const labels: Record<string, string> = {
+    approved: "Reviewed",
+    draft: "Draft",
+    rejected: "Needs changes",
+    reviewing: "In review"
+  };
+
+  return labels[value] ?? formatAssetTypeLabel(value);
+}
+
+function formatReaderAccess(asset: AssetRecord): string {
+  return isPublicReaderEligible(asset) ? "Open demo page" : "Signed-in readers";
+}
+
+function readerAssetMatches(asset: AssetRecord, query: string): boolean {
+  const normalizedQuery = query.trim().toLowerCase();
+
+  if (!normalizedQuery) {
+    return true;
+  }
+
+  return [
+    asset.title,
+    asset.summary ?? "",
+    formatAssetTypeLabel(asset.type)
+  ].join(" ").toLowerCase().includes(normalizedQuery);
+}
+
+function formatReaderDate(value: string): string {
+  const parsed = Date.parse(value);
+
+  if (!Number.isFinite(parsed)) {
+    return value;
+  }
+
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric"
+  }).format(new Date(parsed));
+}
+
+function formatReaderMaintainer(ownerId: string): string {
+  const cleaned = ownerId.replace(/^user[_-]/, "").replace(/[_-]+/g, " ").trim();
+
+  if (!cleaned) {
+    return "Maintainer";
+  }
+
+  return `${cleaned
+    .split(/\s+/)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ")} team`;
+}
+
+function formatReaderReview(reviewDueAt: string): string {
+  const relative = formatReviewDue(reviewDueAt);
+
+  if (relative === "due today" || relative.startsWith("overdue")) {
+    return relative;
+  }
+
+  return `Review due ${formatReaderDate(reviewDueAt)}`;
 }
 
 function normalizeHeadingText(value: string): string {
@@ -376,6 +457,72 @@ function renderMarkdownDocument(body: string, title: string): ReactNode[] {
   return output;
 }
 
+function cleanReaderAnswerText(value: string): string {
+  return value
+    .replace(/^#+\s*/, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function formatReaderSnippet(value: string, maxLength: number): string {
+  const cleaned = cleanReaderAnswerText(value);
+
+  if (cleaned.length <= maxLength && /[.!?)]$/.test(cleaned)) {
+    return cleaned;
+  }
+
+  const bounded = cleaned.length > maxLength ? cleaned.slice(0, maxLength) : cleaned;
+  const trimmed = bounded.slice(0, Math.max(0, bounded.lastIndexOf(" "))).trim() || bounded.trim();
+
+  return /[.!?)]$/.test(trimmed) ? trimmed : `${trimmed.replace(/[,:;]+$/, "")}...`;
+}
+
+function renderReaderAnswer(answer: string): ReactNode {
+  const lines = answer.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  const intro = lines.find((line) => line.startsWith("Answer from the pages I can access"));
+  const findings = lines
+    .filter((line) => /^\d+\.\s+/.test(line))
+    .map((line) => {
+      const text = cleanReaderAnswerText(line.replace(/^\d+\.\s+/, ""));
+      const separatorIndex = text.indexOf(":");
+
+      if (separatorIndex <= 0) {
+        return { title: "", body: formatReaderSnippet(text, 220) };
+      }
+
+      return {
+        title: text.slice(0, separatorIndex).trim(),
+        body: formatReaderSnippet(text.slice(separatorIndex + 1), 220)
+      };
+    });
+  const fallbackParagraphs = lines.filter((line) =>
+    line !== intro &&
+    line !== "What I found:" &&
+    !/^\d+\.\s+/.test(line)
+  );
+
+  return (
+    <div className="reader-ask-body">
+      {intro ? <p>I found matching guidance in the pages you can access.</p> : null}
+      {findings.length ? (
+        <>
+          <ol className="reader-answer-list">
+            {findings.slice(0, 3).map((finding, index) => (
+              <li key={`${index}-${finding.title || finding.body}`}>
+                {finding.title ? <strong>{finding.title}</strong> : null}
+                <span>{finding.body}</span>
+              </li>
+            ))}
+          </ol>
+          {findings.length > 3 ? <p className="reader-ask-note">{findings.length - 3} more source note{findings.length - 3 === 1 ? "" : "s"} checked.</p> : null}
+        </>
+      ) : fallbackParagraphs.map((paragraph, index) => (
+        <p key={`${index}-${paragraph}`}>{cleanReaderAnswerText(paragraph)}</p>
+      ))}
+    </div>
+  );
+}
+
 const pageRouteValues = [
   "reader",
   "account-settings",
@@ -389,6 +536,8 @@ const pageRouteValues = [
   "health",
   "integrations",
   "settings",
+  "policies",
+  "access",
   "approvals"
 ] as const;
 const operationsRouteValues = [
@@ -396,59 +545,72 @@ const operationsRouteValues = [
   "health",
   "integrations",
   "settings",
+  "policies",
+  "access",
   "approvals"
 ] as const;
 const legacyPageRouteAliases: Record<string, string> = {
-  access: "settings",
   exports: "distribute",
   operate: "health",
   operations: "health",
-  policies: "settings",
   providers: "integrations",
   telemetry: "activity"
 };
 const activityPanelRoutes = ["activity", "telemetry"];
 const activityAndHealthPanelRoutes = ["activity", "telemetry", "health"];
 const integrationsPanelRoutes = ["integrations", "providers"];
-const settingsPanelRoutes = ["settings", "access", "policies"];
+const settingsNavigationRoutes = ["settings", "policies", "access"];
+const settingsOverviewRoutes = ["settings"];
+const policySettingsPanelRoutes = ["policies"];
+const accessSettingsPanelRoutes = ["access"];
 const pageRoutes = new Set<string>(pageRouteValues);
 const operationsRoutes = new Set<string>(operationsRouteValues);
 const sensitivityFilterValues = ["public-demo", "internal", "restricted", "confidential", "secret"] as const;
 const defaultOperationsPageCopy = {
-  eyebrow: "Instruction control plane",
-  title: "Health Workspace",
-  lede: "Check API status, provider readiness, recent telemetry, action governance, and maintenance posture."
+  eyebrow: "Admin",
+  title: "System Health",
+  lede: "Check the API, providers, recent activity, approvals, and maintenance jobs."
 };
 const operationsPageCopy: Record<string, { eyebrow: string; title: string; lede: string }> = {
   review: {
-    eyebrow: "Governance work",
-    title: "Review Queue",
-    lede: "Triage assets that need approval, lifecycle review, or release attention."
+    eyebrow: "Admin",
+    title: "Reviews",
+    lede: "Review pages that need approval, updates, or publishing."
   },
   activity: {
-    eyebrow: "Activity and observability",
-    title: "Activity Workspace",
-    lede: "Inspect retrieval, audit, feedback, model generation, retention, cache, and eval signals."
+    eyebrow: "Admin",
+    title: "Activity",
+    lede: "Review recent search, audit, feedback, cache, and model activity."
   },
   health: {
-    eyebrow: "Operational health",
-    title: "Health Workspace",
-    lede: "Check API status, provider readiness, recent telemetry, action governance, and maintenance posture."
+    eyebrow: "Admin",
+    title: "System Health",
+    lede: "Check the API, providers, recent activity, approvals, and maintenance jobs."
   },
   integrations: {
-    eyebrow: "Integrations",
-    title: "Integrations Workspace",
-    lede: "Configure model providers, readiness checks, and external authentication providers."
+    eyebrow: "Admin",
+    title: "Integrations",
+    lede: "Manage model providers, health checks, and sign-in providers."
   },
   settings: {
-    eyebrow: "Admin settings",
-    title: "Settings Workspace",
-    lede: "Manage access, service accounts, groups, keys, sessions, policies, retention, secrets, and PII controls."
+    eyebrow: "Admin",
+    title: "Settings",
+    lede: "Choose the settings area you need."
+  },
+  policies: {
+    eyebrow: "Admin",
+    title: "Policies",
+    lede: "Manage retention, answers, ranking, actions, cache, secrets, and redaction."
+  },
+  access: {
+    eyebrow: "Admin",
+    title: "Access",
+    lede: "Manage users, groups, service accounts, API keys, and sessions."
   },
   approvals: {
-    eyebrow: "Action governance",
-    title: "Approvals Workspace",
-    lede: "Review dry-run defaults, approval requirements, action requests, and kill-switch posture."
+    eyebrow: "Admin",
+    title: "Approvals",
+    lede: "Review approval rules, pending requests, and safety switches."
   }
 };
 
@@ -459,7 +621,7 @@ function routePanelClass(currentPage: string, routes: string[], baseClass = "gri
 function normalizePageRoute(route: string): string {
   const aliasedRoute = legacyPageRouteAliases[route] ?? route;
 
-  return pageRoutes.has(aliasedRoute) ? aliasedRoute : "library";
+  return pageRoutes.has(aliasedRoute) ? aliasedRoute : "reader";
 }
 
 function isPublishedReaderAsset(asset: AssetRecord): boolean {
@@ -515,14 +677,19 @@ export function App() {
   const [selectedStableId, setSelectedStableId] = useState<string>("");
   const [assetDetail, setAssetDetail] = useState<AssetDetail | null>(null);
   const [assetContentView, setAssetContentView] = useState<AssetContentView>("human");
+  const [policySettingsView, setPolicySettingsView] = useState<PolicySettingsView>("retention");
+  const [accessSettingsView, setAccessSettingsView] = useState<AccessSettingsView>("users");
   const [selectedVersionNumber, setSelectedVersionNumber] = useState("");
   const [versionSnapshot, setVersionSnapshot] = useState<AssetVersionSnapshot | null>(null);
   const [reviewQueue, setReviewQueue] = useState<AssetReviewQueueResponse | null>(null);
   const [publishReviewDueAt, setPublishReviewDueAt] = useState("");
   const [workflowNote, setWorkflowNote] = useState("");
-  const [searchQuery, setSearchQuery] = useState("PII redaction");
+  const [searchQuery, setSearchQuery] = useState("personal data");
   const [searchResponse, setSearchResponse] = useState<SearchResponse | null>(null);
-  const [managedQueryText, setManagedQueryText] = useState("PII redaction");
+  const [readerAskText, setReaderAskText] = useState("What should be redacted?");
+  const [readerAskResponse, setReaderAskResponse] = useState<ManagedQueryResponse | null>(null);
+  const [isReaderAskRunning, setIsReaderAskRunning] = useState(false);
+  const [managedQueryText, setManagedQueryText] = useState("personal data");
   const [managedQueryMode, setManagedQueryMode] =
     useState<"deterministic-retrieval" | "provider-routed">("deterministic-retrieval");
   const [managedQueryProvider, setManagedQueryProvider] = useState<ModelProvider>("openai");
@@ -644,7 +811,7 @@ export function App() {
   const [oneTimeSecret, setOneTimeSecret] = useState("");
   const [feedbackRecords, setFeedbackRecords] = useState<ManagedQueryFeedback[]>([]);
   const [feedbackTelemetryEventId, setFeedbackTelemetryEventId] = useState("");
-  const [feedbackQuery, setFeedbackQuery] = useState("PII redaction");
+  const [feedbackQuery, setFeedbackQuery] = useState("personal data");
   const [feedbackOutcome, setFeedbackOutcome] = useState<"accepted" | "rejected" | "needs-review">("accepted");
   const [feedbackCitationAccuracy, setFeedbackCitationAccuracy] = useState("5");
   const [evalReport, setEvalReport] = useState<ManagedQueryEvalReport | null>(null);
@@ -774,7 +941,7 @@ export function App() {
     [assets, libraryQuery, librarySensitivityFilter, libraryViewFilter]
   );
   const filteredReaderAssets = useMemo(
-    () => readerPublishedAssets.filter((asset) => libraryAssetMatches(asset, libraryQuery)),
+    () => readerPublishedAssets.filter((asset) => readerAssetMatches(asset, libraryQuery)),
     [libraryQuery, readerPublishedAssets]
   );
   const readerAssetGroups = useMemo(() => {
@@ -793,6 +960,9 @@ export function App() {
       }))
       .sort((left, right) => left.type.localeCompare(right.type));
   }, [filteredReaderAssets]);
+  const readerCollectionCount = readerAssetGroups.length;
+  const readerPageCount = readerPublishedAssets.length;
+  const readerVisiblePageCount = filteredReaderAssets.length;
   const libraryFilterActive = Boolean(
     libraryQuery.trim() || libraryViewFilter !== "all" || librarySensitivityFilter !== "all"
   );
@@ -893,7 +1063,7 @@ export function App() {
   }, [sessionCookieActive]);
 
   useEffect(() => {
-    localStorage.removeItem("forgetbase-login-tenant");
+    localStorage.removeItem(loginTenantStorageKey);
     localStorage.removeItem("forgetbase-login-email");
   }, []);
 
@@ -1194,6 +1364,7 @@ export function App() {
     setSelectedVersionNumber("");
     setVersionSnapshot(null);
     setReviewQueue(null);
+    setReaderAskResponse(null);
     setExportPackage(null);
     setTelemetryEvents([]);
     setTelemetrySummary(null);
@@ -1467,6 +1638,36 @@ export function App() {
       setMessage(`Search returned ${response.results.length} chunks`);
     } catch (searchError) {
       setError(searchError instanceof Error ? searchError.message : String(searchError));
+    }
+  }
+
+  async function runReaderAsk(event?: FormEvent) {
+    event?.preventDefault();
+
+    if (!readerAskText.trim()) {
+      return;
+    }
+
+    setError("");
+    setIsReaderAskRunning(true);
+
+    try {
+      const response = await request<ManagedQueryResponse>("/agent/query", {
+        method: "POST",
+        body: JSON.stringify({
+          query: readerAskText,
+          limit: 5,
+          mode: "deterministic-retrieval",
+          cache: false
+        })
+      });
+      setReaderAskResponse(response);
+      setMessage(`Answer ready with ${response.citations.length} source${response.citations.length === 1 ? "" : "s"}`);
+    } catch (queryError) {
+      setReaderAskResponse(null);
+      setError(queryError instanceof Error ? queryError.message : String(queryError));
+    } finally {
+      setIsReaderAskRunning(false);
     }
   }
 
@@ -1987,7 +2188,7 @@ export function App() {
       setPiiRedactionPolicy(policy);
       setPiiRedactionEnabled(policy.redactionEnabled ? "true" : "false");
       setPiiRedactionRuleKinds(policy.enabledRuleKinds.join(","));
-      setMessage("Loaded PII redaction policy");
+      setMessage("Loaded personal data policy");
     } catch (piiError) {
       setError(piiError instanceof Error ? piiError.message : String(piiError));
     }
@@ -2008,7 +2209,7 @@ export function App() {
       setPiiRedactionPolicy(policy);
       setPiiRedactionEnabled(policy.redactionEnabled ? "true" : "false");
       setPiiRedactionRuleKinds(policy.enabledRuleKinds.join(","));
-      setMessage("Saved PII redaction policy");
+      setMessage("Saved personal data policy");
     } catch (piiError) {
       setError(piiError instanceof Error ? piiError.message : String(piiError));
     }
@@ -2869,15 +3070,8 @@ export function App() {
         ];
       case "integrations":
         return [loadProviderConfigs, loadProviderHealth, loadAuthProviderConfigs];
-      case "settings":
+      case "policies":
         return [
-          loadUsers,
-          loadServiceAccounts,
-          loadServiceAccountPolicy,
-          loadGroups,
-          loadApiKeys,
-          loadLoginSessions,
-          loadApiKeyRotationReport,
           loadManagedQueryPolicy,
           loadRetrievalRankingPolicy,
           loadEvalSchedulePolicy,
@@ -2887,6 +3081,16 @@ export function App() {
           loadManagedQueryRetentionPolicy,
           loadSecretReferencePolicy,
           loadPiiRedactionPolicy
+        ];
+      case "access":
+        return [
+          loadUsers,
+          loadServiceAccounts,
+          loadServiceAccountPolicy,
+          loadGroups,
+          loadApiKeys,
+          loadLoginSessions,
+          loadApiKeyRotationReport
         ];
       case "approvals":
         return [loadActionExecutionPolicy, loadAgentActions];
@@ -2932,21 +3136,21 @@ export function App() {
   const navSections: NavSectionConfig[] = [
     {
       label: "Read",
-      folderLabel: "Library",
+      folderLabel: "Pages",
       folderIcon: <BookOpen aria-hidden="true" />,
       folderRoute: "library",
       activeRoutes: ["reader", "library", "search", "asset-read"],
       count: assets.length,
       leaves: [
-        { route: "reader", label: "Reader interface", count: readerPublishedAssets.length },
-        { route: "library", label: "Asset library", count: approvedAssets },
-        { route: "search", label: "Search / query" },
-        { route: "asset-read", label: "Reading room", badge: assetDetail ? { label: "live", tone: "warn" } : undefined }
+        { route: "reader", label: "Read pages", count: readerPublishedAssets.length },
+        { route: "library", label: "Content list", count: approvedAssets },
+        { route: "search", label: "Search and ask" },
+        { route: "asset-read", label: "Page detail", badge: assetDetail ? { label: "open", tone: "warn" } : undefined }
       ]
     },
     {
-      label: "Work",
-      folderLabel: "Governance Work",
+      label: "Manage",
+      folderLabel: "Reviews",
       folderIcon: <ClipboardText aria-hidden="true" />,
       folderRoute: "review",
       activeRoutes: ["review", "versions"],
@@ -2957,8 +3161,8 @@ export function App() {
       ]
     },
     {
-      label: "Distribute",
-      folderLabel: "Agent Distribution",
+      label: "Share",
+      folderLabel: "Exports",
       folderIcon: <Package aria-hidden="true" />,
       folderRoute: "distribute",
       activeRoutes: ["distribute"],
@@ -2966,14 +3170,14 @@ export function App() {
       leaves: [
         {
           route: "distribute",
-          label: "Package builder",
+          label: "Export builder",
           badge: exportPackage ? { label: "format" in exportPackage ? exportPackage.format : "json", tone: "ok" } : undefined
         }
       ]
     },
     {
-      label: "Operate",
-      folderLabel: "Instruction Control",
+      label: "Admin",
+      folderLabel: "System",
       folderIcon: <GearSix aria-hidden="true" />,
       folderRoute: "health",
       activeRoutes: [...operationsRouteValues],
@@ -2983,6 +3187,8 @@ export function App() {
         { route: "health", label: "Health", badge: health === "ok" ? { label: "ok", tone: "ok" } : { label: health, tone: "bad" } },
         { route: "integrations", label: "Integrations", count: providerConfigs.length + authProviderConfigs.length },
         { route: "settings", label: "Settings" },
+        { route: "policies", label: "Policies" },
+        { route: "access", label: "Access" },
         { route: "approvals", label: "Approvals", badge: agentActions.length ? { label: agentActions.length, tone: "warn" } : undefined }
       ]
     }
@@ -3099,26 +3305,28 @@ export function App() {
               >
                 <MagnifyingGlass aria-hidden="true" />
                 <Input
+                  id="reader-search-input"
                   value={searchQuery}
                   onChange={(event) => {
                     setSearchQuery(event.target.value);
                     setLibraryQuery(event.target.value);
                   }}
-                  placeholder="Search published material"
-                  aria-label="Search published material"
+                  placeholder="Search pages"
+                  aria-label="Search pages"
                 />
               </form>
             )}
             <div className="topbar-actions">
-              <Button
-                variant="ghost"
-                size="sm"
-                type="button"
-                onClick={() => void refresh()}
-              >
-                <ArrowsClockwise aria-hidden="true" />
-                Refresh
-              </Button>
+	              <Button
+	                variant="ghost"
+	                size="sm"
+	                type="button"
+	                className="reader-refresh-button"
+	                onClick={() => void refresh()}
+	              >
+	                <ArrowsClockwise aria-hidden="true" />
+	                <span className="reader-refresh-label">Refresh</span>
+	              </Button>
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button variant="ghost" size="sm" type="button" className="identity-trigger">
@@ -3144,11 +3352,11 @@ export function App() {
                     </DropdownMenuItem>
                     {canUseAdministration ? (
                       <DropdownMenuItem onSelect={() => navigatePage("library")}>
-                        Administration
+                        Admin console
                       </DropdownMenuItem>
                     ) : null}
                     <DropdownMenuItem onSelect={() => void refresh()}>
-                      Refresh library
+                      Refresh pages
                     </DropdownMenuItem>
                   </DropdownMenuGroup>
                   <DropdownMenuSeparator />
@@ -3289,12 +3497,45 @@ export function App() {
             </Alert>
           ) : null}
 
+          <section className="reader-hero" aria-labelledby="reader-title">
+            <div>
+              <p className="eyebrow">Knowledge base</p>
+              <h1 id="reader-title">Pages</h1>
+              <p>Browse approved team knowledge, ask questions, and keep the source pages close.</p>
+            </div>
+            <div className="reader-hero-actions">
+              {canUseAdministration ? (
+                <Button type="button" variant="ghost" onClick={() => navigatePage("library")}>
+                  Admin console
+                </Button>
+              ) : null}
+              <Button type="button" onClick={() => document.getElementById("reader-search-input")?.focus()}>
+                Search pages
+              </Button>
+            </div>
+          </section>
+
+          <section className="reader-summary-strip" aria-label="Knowledge base summary">
+            <div>
+              <strong>{readerPageCount}</strong>
+              <span>Published pages</span>
+            </div>
+            <div>
+              <strong>{readerCollectionCount}</strong>
+              <span>Collections</span>
+            </div>
+            <div>
+              <strong>{readerVisiblePageCount}</strong>
+              <span>{readerFilterActive ? "Matching pages" : "Visible pages"}</span>
+            </div>
+          </section>
+
           <section className="reader-layout" aria-label="Published library">
             <aside className="reader-library" aria-label="Published material list">
               <ScrollArea className="reader-library-scroll">
                 <div className="nav-group reader-nav-group">
                   <div className="reader-library-heading">
-                    <p className="nav-label">Published Library</p>
+                    <p className="nav-label">Collections</p>
                     {readerFilterActive ? (
                       <Button type="button" size="sm" variant="ghost" onClick={() => {
                         setLibraryQuery("");
@@ -3316,7 +3557,14 @@ export function App() {
                             setAssetContentView("human");
                           }}
                         >
-                          <span className="folder-glyph" aria-hidden="true">{group.type.slice(0, 2).toUpperCase()}</span>
+                          <span className="folder-glyph" aria-hidden="true">
+                            {formatAssetTypeLabel(group.type)
+                              .split(/\s+/)
+                              .map((part) => part[0])
+                              .join("")
+                              .slice(0, 2)
+                              .toUpperCase()}
+                          </span>
                           <span className="nav-text">{formatAssetTypeLabel(group.type)}</span>
                           <Badge variant="neutral" className="nav-count">{group.assets.length}</Badge>
                         </Button>
@@ -3340,8 +3588,8 @@ export function App() {
                       </div>
                     )) : (
                       <div className="reader-empty-state">
-                        <h3>No published material found</h3>
-                        <p>{readerFilterActive ? "Clear search to see all published material." : "No active, approved web material is available to this reader account yet."}</p>
+                        <h3>No pages found</h3>
+                        <p>{readerFilterActive ? "Clear search to see all pages." : "No approved pages are available to this reader account yet."}</p>
                       </div>
                     )}
                   </div>
@@ -3354,13 +3602,13 @@ export function App() {
                 <>
                   <header className="reader-article-header">
                     <div>
-                      <p className="eyebrow">{assetDetail.asset.type}</p>
+                      <p className="eyebrow">{formatAssetTypeLabel(assetDetail.asset.type)}</p>
                       <h2>{assetDetail.asset.title}</h2>
                       {assetDetail.asset.summary ? <p>{assetDetail.asset.summary}</p> : null}
                     </div>
                     <div className="reader-status">
-                      <Badge variant={stateBadgeVariant(assetDetail.asset.lifecycleState)}>{assetDetail.asset.lifecycleState}</Badge>
-                      <Badge variant={stateBadgeVariant(assetDetail.asset.status)}>{assetDetail.asset.status}</Badge>
+                      <Badge variant={stateBadgeVariant(assetDetail.asset.lifecycleState)}>{formatReaderLifecycle(assetDetail.asset.lifecycleState)}</Badge>
+                      <Badge variant={stateBadgeVariant(assetDetail.asset.status)}>{formatReaderStatus(assetDetail.asset.status)}</Badge>
                     </div>
                   </header>
 
@@ -3371,37 +3619,112 @@ export function App() {
                       </div>
                     ) : (
                       <div className="reader-empty-state">
-                        <h3>No human-readable page</h3>
-                        <p>This published asset does not have a human document body yet.</p>
+                        <h3>No readable page yet</h3>
+                        <p>This item is published, but it does not have a human-readable page body yet.</p>
                       </div>
                     )}
                   </div>
 
-                  <footer className="reader-source-panel" aria-label="Publication details">
-                    <dl>
+                  <section className="reader-ask-panel" aria-labelledby="reader-ask-title">
+                    <div className="reader-ask-heading">
                       <div>
-                        <dt>Stable ID</dt>
-                        <dd>{assetDetail.asset.stableId}</dd>
+                        <p className="eyebrow">Ask</p>
+                        <h3 id="reader-ask-title">Ask with sources</h3>
+                        <p>Ask a question and see the pages used for the answer.</p>
                       </div>
-                      <div>
-                        <dt>Version</dt>
-                        <dd>{currentVersion ? `v${currentVersion.versionNumber}` : "none"}</dd>
+                      {readerAskResponse ? (
+                        <Badge variant={readerAskResponse.checks.deniedCount ? "warning" : "success"}>
+                          {readerAskResponse.checks.deniedCount ? "Some results hidden" : "Sources checked"}
+                        </Badge>
+                      ) : null}
+                    </div>
+                    <form className="reader-ask-form" onSubmit={(event) => void runReaderAsk(event)}>
+                      <Input
+                        id="reader-ask-input"
+                        value={readerAskText}
+                        onChange={(event) => setReaderAskText(event.target.value)}
+                        placeholder="Ask about these pages"
+                        aria-label="Ask a question"
+                      />
+                      <Button type="submit" disabled={isReaderAskRunning || !readerAskText.trim()}>
+                        {isReaderAskRunning ? "Asking" : "Ask"}
+                      </Button>
+                    </form>
+                    {readerAskResponse ? (
+                      <div className="reader-ask-answer" aria-live="polite">
+                        <div>
+                          <h4>Answer</h4>
+                          {renderReaderAnswer(readerAskResponse.answer)}
+                          {readerAskResponse.checks.deniedCount ? (
+                            <p className="reader-ask-note">
+                              {readerAskResponse.checks.deniedCount} restricted result{readerAskResponse.checks.deniedCount === 1 ? " was" : "s were"} hidden.
+                            </p>
+                          ) : null}
+                        </div>
+                        <div className="reader-citations" aria-label="Sources">
+                          <h4>Sources</h4>
+                          {readerAskResponse.citations.length ? (
+                            <>
+                              {readerAskResponse.citations.slice(0, 3).map((citation, index) => (
+                                <details className="reader-citation" key={`${citation.assetId}:${citation.chunkId}`} open={index === 0}>
+                                  <summary>
+                                    <strong>{citation.title}</strong>
+                                    <span>Source excerpt</span>
+                                  </summary>
+                                  <p>{formatReaderSnippet(citation.snippet, 130)}</p>
+                                </details>
+                              ))}
+                              {readerAskResponse.citations.length > 3 ? (
+                                <p className="reader-ask-note">
+                                  {readerAskResponse.citations.length - 3} more source{readerAskResponse.citations.length - 3 === 1 ? "" : "s"} checked.
+                                </p>
+                              ) : null}
+                            </>
+                          ) : (
+                            <p className="reader-ask-note">No sources matched this question.</p>
+                          )}
+                        </div>
                       </div>
-                      <div>
-                        <dt>Updated</dt>
-                        <dd>{new Date(assetDetail.asset.updatedAt).toLocaleString()}</dd>
+                    ) : (
+                      <div className="reader-ask-empty">
+                        <p>Try asking “What should be redacted?” or search for a page first.</p>
                       </div>
-                      <div>
-                        <dt>Access</dt>
-                        <dd>{isPublicReaderEligible(assetDetail.asset) ? "public reader" : "authenticated reader"}</dd>
-                      </div>
-                    </dl>
-                  </footer>
+                    )}
+                  </section>
+
+	                  <footer className="reader-source-panel" aria-label="Page details">
+	                    <div className="reader-source-heading">
+	                      <h3>Page info</h3>
+	                      <p>Freshness and ownership in plain language.</p>
+	                    </div>
+	                    <dl>
+	                      <div>
+	                        <dt>Version</dt>
+	                        <dd>{currentVersion ? `Version ${currentVersion.versionNumber}` : "Not versioned"}</dd>
+	                      </div>
+	                      <div>
+	                        <dt>Last updated</dt>
+	                        <dd>{formatReaderDate(assetDetail.asset.updatedAt)}</dd>
+	                      </div>
+	                      <div>
+	                        <dt>Access</dt>
+	                        <dd>{formatReaderAccess(assetDetail.asset)}</dd>
+	                      </div>
+	                      <div>
+	                        <dt>Maintainer</dt>
+	                        <dd>{formatReaderMaintainer(assetDetail.asset.ownerId)}</dd>
+	                      </div>
+	                      <div>
+	                        <dt>Review</dt>
+	                        <dd>{formatReaderReview(assetDetail.asset.reviewDueAt)}</dd>
+	                      </div>
+	                    </dl>
+	                  </footer>
                 </>
               ) : (
                 <div className="reader-empty-state reader-empty-state--large">
-                  <h2>No published material selected</h2>
-                  <p>Select an item from the published library after it loads.</p>
+                  <h2>No page selected</h2>
+                  <p>Select a page from the list after it loads.</p>
                 </div>
               )}
             </article>
@@ -3415,7 +3738,7 @@ export function App() {
             open={isCommandOpen}
             onOpenChange={handleCommandOpenChange}
             title="ForgetBase command palette"
-            description="Navigate between governed instruction workspaces."
+            description="Move between ForgetBase pages."
             className="command-dialog"
             onCloseAutoFocus={(event) => {
               event.preventDefault();
@@ -3516,38 +3839,38 @@ export function App() {
             <RouteHeader
               className="page-route-header"
               breadcrumbs={routeBreadcrumbs(currentPage)}
-              eyebrow={currentPage === "versions" ? "Governance work" : "Reader library"}
+              eyebrow={currentPage === "versions" ? "Admin" : "Admin"}
               title={currentPage === "asset-read"
                 ? assetDetail?.asset.title ?? "Reading room"
                 : currentPage === "versions"
                   ? "Version Compare"
-                  : "Governed Asset Library"}
+                  : "Content"}
               lede={currentPage === "versions"
-                ? "Inspect current and selected asset versions before restoring, publishing, or closing review work."
+                ? "Compare versions before restoring, publishing, or closing a review."
                 : currentPage === "asset-read"
-                  ? "Read the selected governed asset with trust state, permitted surfaces, and current agent contract in view."
-                  : "Browse governed policies, guardrails, skills, templates, SOPs, playbooks, and human documents with trust metadata visible at a glance."}
+                  ? "Read the selected page with review state, access, versions, and source details."
+                  : "Manage pages, policies, guides, templates, checklists, and other knowledge content."}
               actions={<Button type="button" onClick={() => void refresh()}><ArrowsClockwise aria-hidden="true" />Refresh</Button>}
             />
             {currentPage === "library" ? (
               <div className="grid four">
-                <MetricCard label="Visible assets" value={assets.length} note="Server-filtered for the current principal." />
-                <MetricCard label="Approved current" value={approvedAssets} note="Approved assets loaded in the browser." />
-                <MetricCard label="Need governance" value={reviewDueAssets} note="Draft, stale, reviewing, overdue, or non-active." />
-                <MetricCard label="Public reader" value={publicReaderAssets} note="public-demo plus active and approved." />
+                <MetricCard label="Visible pages" value={assets.length} note="Filtered by your account." />
+                <MetricCard label="Reviewed" value={approvedAssets} note="Approved content loaded in the browser." />
+                <MetricCard label="Need review" value={reviewDueAssets} note="Draft, stale, in review, overdue, or inactive." />
+                <MetricCard label="Public demo" value={publicReaderAssets} note="Published and approved demo pages." />
               </div>
             ) : null}
             <section className={`workspace ${currentPage === "library" ? "" : "workspace--focused"}`}>
               {currentPage === "library" ? (
                 <DataTableShell
-                  title="Assets"
+                  title="Content"
                   description={`${filteredLibraryAssets.length} of ${assets.length} visible in this view`}
                   isEmpty={!filteredLibraryAssets.length}
-                  emptyTitle="No assets match this view"
-                  emptyDescription="Adjust filters or refresh the library."
+                  emptyTitle="No content matches this view"
+                  emptyDescription="Adjust filters or refresh the list."
                 >
                 <Toolbar
-                  aria-label="Asset filters"
+                  aria-label="Content filters"
                   className="rounded-none border-x-0 border-t-0"
                   filters={(
                     <>
@@ -3565,10 +3888,10 @@ export function App() {
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
-                            <SelectItem value="all">All permitted</SelectItem>
-                            <SelectItem value="public-reader">Public reader</SelectItem>
-                            <SelectItem value="needs-governance">Needs governance</SelectItem>
-                            <SelectItem value="approved-active">Approved active</SelectItem>
+                            <SelectItem value="all">All visible</SelectItem>
+                            <SelectItem value="public-reader">Public demo</SelectItem>
+                            <SelectItem value="needs-governance">Needs review</SelectItem>
+                            <SelectItem value="approved-active">Published and reviewed</SelectItem>
                           </SelectContent>
                         </Select>
                       </FormField>
@@ -3603,15 +3926,12 @@ export function App() {
                     </Button>
                   )}
                 />
-                <Table>
+                <Table className="library-table">
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Asset</TableHead>
-                      <TableHead>Type</TableHead>
+                      <TableHead>Page</TableHead>
                       <TableHead>State</TableHead>
-                      <TableHead>Sensitivity</TableHead>
                       <TableHead>Review</TableHead>
-                      <TableHead>Public</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -3625,10 +3945,13 @@ export function App() {
                         tabIndex={0}
                         aria-selected={asset.stableId === selectedAsset?.stableId}
                       >
-                        <TableCell className="min-w-[260px] whitespace-normal">
-                          <span className="grid min-w-[240px] gap-0.5">
+                        <TableCell className="library-page-cell">
+                          <span className="grid min-w-0 gap-1">
                             <strong className="text-[13px] leading-tight text-foreground">{asset.title}</strong>
-                            <span className="font-mono text-[11px] leading-snug text-muted-foreground">{asset.stableId}</span>
+                            <span className="library-page-meta">
+                              <span>{formatAssetTypeLabel(asset.type)}</span>
+                              <span>{isPublicReaderEligible(asset) ? "Open demo page" : "Signed-in page"}</span>
+                            </span>
                             {asset.summary ? (
                               <small className="overflow-hidden text-[11px] leading-snug text-muted-foreground [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:2]">
                                 {asset.summary}
@@ -3636,21 +3959,14 @@ export function App() {
                             ) : null}
                           </span>
                         </TableCell>
-                        <TableCell>{asset.type}</TableCell>
-                        <TableCell>
-                          <span className="flex flex-wrap gap-1.5">
-                            <Badge variant={stateBadgeVariant(asset.lifecycleState)}>{asset.lifecycleState}</Badge>
-                            <Badge variant={stateBadgeVariant(asset.status)}>{asset.status}</Badge>
+                        <TableCell className="library-state-cell">
+                          <span className="asset-state-stack">
+                            <Badge variant={stateBadgeVariant(asset.lifecycleState)}>{formatReaderLifecycle(asset.lifecycleState)}</Badge>
+                            <Badge variant={stateBadgeVariant(asset.status)}>{formatReaderStatus(asset.status)}</Badge>
                           </span>
                         </TableCell>
-                        <TableCell><Badge variant={sensitivityBadgeVariant(asset.sensitivity)}>{asset.sensitivity}</Badge></TableCell>
-                        <TableCell>
+                        <TableCell className="library-review-cell">
                           <Badge variant={isAssetGovernanceDue(asset) ? "warning" : "success"}>{formatReviewDue(asset.reviewDueAt)}</Badge>
-                        </TableCell>
-                        <TableCell>
-                          <Badge variant={isPublicReaderEligible(asset) ? "success" : "neutral"}>
-                            {isPublicReaderEligible(asset) ? "eligible" : "gated"}
-                          </Badge>
                         </TableCell>
                       </TableRow>
                     ))}
@@ -3661,7 +3977,7 @@ export function App() {
 
               <SectionCard
                 title={assetDetail?.asset.title ?? "Asset detail"}
-                description="Governed reading room"
+                description="Page details"
                 variant="tool"
                 className="min-w-0"
                 actions={assetDetail ? (
@@ -3677,10 +3993,10 @@ export function App() {
                       state={isAssetGovernanceDue(assetDetail.asset) ? "needs-review" : isPublicReaderEligible(assetDetail.asset) ? "trusted" : "restricted"}
                       title={assetDetail.asset.stableId}
                       description={isPublicReaderEligible(assetDetail.asset)
-                        ? "This asset is active, approved, and marked public-demo for reader-safe access."
+                        ? "This page is published, reviewed, and visible in the public demo."
                         : isAssetGovernanceDue(assetDetail.asset)
-                          ? "This asset needs governance attention before it is a clean public-reader candidate."
-                          : "This asset remains behind authenticated access and permission-aware retrieval."}
+                          ? "This page needs review before it is ready for the demo."
+                          : "This page stays behind signed-in access."}
                       signals={[
                         { label: assetDetail.asset.lifecycleState, variant: stateBadgeVariant(assetDetail.asset.lifecycleState) },
                         { label: assetDetail.asset.status, variant: stateBadgeVariant(assetDetail.asset.status) },
@@ -4282,6 +4598,13 @@ export function App() {
             description={`This route now opens #${currentPage} to match the updated information architecture.`}
           />
         ) : null}
+        {settingsNavigationRoutes.includes(currentPage) ? (
+          <StatusAlert
+            status="info"
+            title="Admin safety"
+            description="Actions that remove access, keys, sessions, groups, or cache data ask for confirmation before they run."
+          />
+        ) : null}
         <section className="operations-grid">
         <section className="grid gap-4" aria-labelledby="ops-title">
           <h2 id="ops-title" className="sr-only">{operationsPage.title}</h2>
@@ -4405,15 +4728,42 @@ export function App() {
               )}
             </SectionCard>
           </div>
-          <nav className={routePanelClass(currentPage, settingsPanelRoutes, "settings-local-nav")} aria-label="Settings sections">
-            <a href="#settings-policies">Policies</a>
-            <a href="#settings-actions">Action governance</a>
-            <a href="#settings-users">Users</a>
-            <a href="#settings-service-accounts">Service accounts</a>
-            <a href="#settings-api-keys">API keys</a>
-            <a href="#settings-sessions">Sessions</a>
+          <div className={routePanelClass(currentPage, settingsOverviewRoutes, "grid gap-4")}>
+            <SectionCard
+              title="Choose a settings area"
+              description="Use Policies for system rules and Access for people, service accounts, keys, and sessions."
+              variant="tool"
+            >
+              <div className="settings-overview-actions">
+                <Button type="button" variant="primary" onClick={() => navigatePage("policies")}>Policies</Button>
+                <Button type="button" onClick={() => navigatePage("access")}>Access</Button>
+                <Button type="button" onClick={() => navigatePage("approvals")}>Approvals</Button>
+              </div>
+            </SectionCard>
+          </div>
+          <nav className={routePanelClass(currentPage, settingsNavigationRoutes, "settings-local-nav")} aria-label="Settings sections">
+            <button type="button" className={currentPage === "settings" ? "active" : ""} onClick={() => navigatePage("settings")}>Overview</button>
+            <button type="button" className={currentPage === "policies" ? "active" : ""} onClick={() => navigatePage("policies")}>Policies</button>
+            <button type="button" className={currentPage === "access" ? "active" : ""} onClick={() => navigatePage("access")}>Access</button>
+            <button type="button" onClick={() => navigatePage("approvals")}>Approvals</button>
           </nav>
-          <div id="settings-policies" className={routePanelClass(currentPage, settingsPanelRoutes)}>
+          <Tabs
+            value={currentPage === "approvals" ? "actions" : policySettingsView}
+            onValueChange={(value) => setPolicySettingsView(value as PolicySettingsView)}
+            className={routePanelClass(currentPage, ["approvals", ...policySettingsPanelRoutes], "admin-section-tabs")}
+          >
+            {currentPage === "policies" ? (
+              <TabsList className="h-auto w-full flex-wrap justify-start">
+                <TabsTrigger value="retention">Retention</TabsTrigger>
+                <TabsTrigger value="answers">Answers</TabsTrigger>
+                <TabsTrigger value="ranking">Ranking</TabsTrigger>
+                <TabsTrigger value="evals">Evals</TabsTrigger>
+                <TabsTrigger value="actions">Actions</TabsTrigger>
+                <TabsTrigger value="data">Data</TabsTrigger>
+                <TabsTrigger value="privacy">Privacy</TabsTrigger>
+              </TabsList>
+            ) : null}
+          <TabsContent id="settings-policies" value="retention" className="grid gap-4">
             <h3>Telemetry retention</h3>
             <form className="grid gap-4 md:grid-cols-[repeat(auto-fit,minmax(160px,1fr))] md:items-end" onSubmit={(event) => void saveTelemetryRetentionPolicy(event)}>
               <label>
@@ -4466,8 +4816,8 @@ export function App() {
                 feedback {telemetryRetentionPurgeResult.managedQueryFeedback.deletedCount}
               </p>
             ) : null}
-          </div>
-          <div className={routePanelClass(currentPage, settingsPanelRoutes)}>
+          </TabsContent>
+          <TabsContent value="answers" className="grid gap-4">
             <h3>Managed query policy</h3>
             <form className="grid gap-4 md:grid-cols-[repeat(auto-fit,minmax(160px,1fr))] md:items-end" onSubmit={(event) => void saveManagedQueryPolicy(event)}>
               <label>
@@ -4516,8 +4866,8 @@ export function App() {
                 {String(managedQueryPolicy.requireGrounded)}
               </p>
             ) : <p className="empty">No managed query policy loaded.</p>}
-          </div>
-          <div className={routePanelClass(currentPage, settingsPanelRoutes)}>
+          </TabsContent>
+          <TabsContent value="ranking" className="grid gap-4">
             <h3>Retrieval ranking policy</h3>
             <form className="grid gap-4 md:grid-cols-[repeat(auto-fit,minmax(160px,1fr))] md:items-end" onSubmit={(event) => void saveRetrievalRankingPolicy(event)}>
               <label>
@@ -4560,8 +4910,8 @@ export function App() {
                 exact phrase +{retrievalRankingPolicy.exactPhraseBoost}
               </p>
             ) : <p className="empty">No retrieval ranking policy loaded.</p>}
-          </div>
-          <div className={routePanelClass(currentPage, settingsPanelRoutes)}>
+          </TabsContent>
+          <TabsContent value="evals" className="grid gap-4">
             <h3>Eval schedule</h3>
             <form className="grid gap-4 md:grid-cols-[repeat(auto-fit,minmax(160px,1fr))] md:items-end" onSubmit={(event) => void saveEvalSchedulePolicy(event)}>
               <label>
@@ -4594,8 +4944,8 @@ export function App() {
                 {evalSchedulePolicy.lastRunAt ? ` at ${new Date(evalSchedulePolicy.lastRunAt).toLocaleString()}` : ""}
               </p>
             ) : <p className="empty">No eval schedule policy loaded.</p>}
-          </div>
-          <div id="settings-actions" className={routePanelClass(currentPage, ["approvals", ...settingsPanelRoutes])}>
+          </TabsContent>
+          <TabsContent id="settings-actions" value="actions" className="grid gap-4">
             <h3>Action execution</h3>
             <form className="grid gap-4 md:grid-cols-[repeat(auto-fit,minmax(160px,1fr))] md:items-end" onSubmit={(event) => void saveActionExecutionPolicy(event)}>
               <label>
@@ -4776,8 +5126,8 @@ export function App() {
                 </article>
               );
             }) : <p className="empty">No action requests loaded.</p>}
-          </div>
-          <div className={routePanelClass(currentPage, settingsPanelRoutes)}>
+          </TabsContent>
+          <TabsContent value="data" className="grid gap-4">
             <h3>Managed query cache</h3>
             <form className="grid gap-4 md:grid-cols-[repeat(auto-fit,minmax(160px,1fr))] md:items-end" onSubmit={(event) => void saveManagedQueryCachePolicy(event)}>
               <label>
@@ -4846,8 +5196,8 @@ export function App() {
                 </Button>
               </p>
             )) : <p className="empty">No cache entries loaded.</p>}
-          </div>
-          <div className={routePanelClass(currentPage, settingsPanelRoutes)}>
+          </TabsContent>
+          <TabsContent value="data" className="grid gap-4">
             <h3>Managed query retention</h3>
             <form className="grid gap-4 md:grid-cols-[repeat(auto-fit,minmax(160px,1fr))] md:items-end" onSubmit={(event) => void saveManagedQueryRetentionPolicy(event)}>
               <label>
@@ -4891,8 +5241,8 @@ export function App() {
                 {formatRetentionDays(managedQueryRetentionPolicy.metadataRetentionDays)}
               </p>
             ) : <p className="empty">No managed query retention policy loaded.</p>}
-          </div>
-          <div className={routePanelClass(currentPage, settingsPanelRoutes)}>
+          </TabsContent>
+          <TabsContent value="privacy" className="grid gap-4">
             <h3>Secret references</h3>
             <form className="grid gap-4 md:grid-cols-[repeat(auto-fit,minmax(160px,1fr))] md:items-end" onSubmit={(event) => void saveSecretReferencePolicy(event)}>
               <label>
@@ -4931,9 +5281,9 @@ export function App() {
                 {String(secretReferencePolicy.allowUnlistedEnvVars)}
               </p>
             ) : <p className="empty">No secret reference policy loaded.</p>}
-          </div>
-          <div className={routePanelClass(currentPage, settingsPanelRoutes)}>
-            <h3>PII redaction</h3>
+          </TabsContent>
+          <TabsContent value="privacy" className="grid gap-4">
+            <h3>Personal data cleanup</h3>
             <form className="grid gap-4 md:grid-cols-[repeat(auto-fit,minmax(160px,1fr))] md:items-end" onSubmit={(event) => void savePiiRedactionPolicy(event)}>
               <label>
                 Enabled
@@ -4952,7 +5302,7 @@ export function App() {
                   onChange={(event) => setPiiRedactionRuleKinds(event.target.value)}
                 />
               </label>
-              <Button type="submit">Save PII policy</Button>
+              <Button type="submit">Save personal data policy</Button>
               <Button type="button" onClick={() => void loadPiiRedactionPolicy()}>Load policy</Button>
             </form>
             {piiRedactionPolicy ? (
@@ -4962,8 +5312,9 @@ export function App() {
                 enabled {String(piiRedactionPolicy.redactionEnabled)}, rules{" "}
                 {formatList(piiRedactionPolicy.enabledRuleKinds)}
               </p>
-            ) : <p className="empty">No PII redaction policy loaded.</p>}
-          </div>
+            ) : <p className="empty">No personal data policy loaded.</p>}
+          </TabsContent>
+          </Tabs>
           <div className={routePanelClass(currentPage, activityPanelRoutes)}>
             <h3>Retrieval events</h3>
             {telemetryEvents.length ? telemetryEvents.map((event) => (
@@ -4980,7 +5331,20 @@ export function App() {
               </p>
             )) : <p className="empty">No audit events loaded.</p>}
           </div>
-          <div id="settings-users" className={routePanelClass(currentPage, settingsPanelRoutes)}>
+          <Tabs
+            value={accessSettingsView}
+            onValueChange={(value) => setAccessSettingsView(value as AccessSettingsView)}
+            className={routePanelClass(currentPage, accessSettingsPanelRoutes, "admin-section-tabs")}
+          >
+            <TabsList className="h-auto w-full flex-wrap justify-start">
+              <TabsTrigger value="users">Users</TabsTrigger>
+              <TabsTrigger value="service-policy">Service policy</TabsTrigger>
+              <TabsTrigger value="service-accounts">Service accounts</TabsTrigger>
+              <TabsTrigger value="groups">Groups</TabsTrigger>
+              <TabsTrigger value="api-keys">API keys</TabsTrigger>
+              <TabsTrigger value="sessions">Sessions</TabsTrigger>
+            </TabsList>
+          <TabsContent id="settings-users" value="users" className="grid gap-4">
             <h3>Users</h3>
             <form className="grid gap-4 md:grid-cols-[repeat(auto-fit,minmax(160px,1fr))] md:items-end" onSubmit={(event) => void createUser(event)}>
               <label>
@@ -5074,8 +5438,8 @@ export function App() {
                 </Button>
               </p>
             )) : <p className="empty">No users loaded.</p>}
-          </div>
-          <div className={routePanelClass(currentPage, settingsPanelRoutes)}>
+          </TabsContent>
+          <TabsContent value="service-policy" className="grid gap-4">
             <h3>Service policy</h3>
             <form className="grid gap-4 md:grid-cols-[repeat(auto-fit,minmax(160px,1fr))] md:items-end" onSubmit={(event) => void updateServiceAccountPolicy(event)}>
               <label>
@@ -5106,8 +5470,8 @@ export function App() {
                 <strong>{serviceAccountPolicy.source}</strong> max services {policyValue(serviceAccountPolicy.maxServiceAccounts)}, max keys {policyValue(serviceAccountPolicy.maxActiveApiKeysPerServiceAccount)}, default expiry {policyValue(serviceAccountPolicy.defaultApiKeyExpiresInDays)}d
               </p>
             ) : <p className="empty">No service policy loaded.</p>}
-          </div>
-          <div id="settings-service-accounts" className={routePanelClass(currentPage, settingsPanelRoutes)}>
+          </TabsContent>
+          <TabsContent id="settings-service-accounts" value="service-accounts" className="grid gap-4">
             <h3>Service accounts</h3>
             <form className="grid gap-4 md:grid-cols-[repeat(auto-fit,minmax(160px,1fr))] md:items-end" onSubmit={(event) => void createServiceAccount(event)}>
               <label>
@@ -5215,8 +5579,8 @@ export function App() {
                 </Button>
               </p>
             )) : <p className="empty">No service accounts loaded.</p>}
-          </div>
-          <div className={routePanelClass(currentPage, settingsPanelRoutes)}>
+          </TabsContent>
+          <TabsContent value="groups" className="grid gap-4">
             <h3>Groups</h3>
             <form className="grid gap-4 md:grid-cols-[repeat(auto-fit,minmax(160px,1fr))] md:items-end" onSubmit={(event) => void createGroup(event)}>
               <label>
@@ -5291,8 +5655,8 @@ export function App() {
                 </Button>
               </p>
             )) : <p className="empty">No members loaded.</p>}
-          </div>
-          <div id="settings-api-keys" className={routePanelClass(currentPage, settingsPanelRoutes)}>
+          </TabsContent>
+          <TabsContent id="settings-api-keys" value="api-keys" className="grid gap-4">
             <h3>API keys</h3>
             <form className="grid gap-4 md:grid-cols-[repeat(auto-fit,minmax(160px,1fr))] md:items-end" onSubmit={(event) => void createApiKey(event)}>
               <label>
@@ -5412,8 +5776,8 @@ export function App() {
                 <strong>{record.name}</strong> {keyOwnerLabel(record)} {record.secretPreview} {record.scopes.join(",")} {record.revokedAt ? "revoked" : "active"} {record.id}
               </p>
             )) : <p className="empty">No API keys loaded.</p>}
-          </div>
-          <div id="settings-sessions" className={routePanelClass(currentPage, settingsPanelRoutes)}>
+          </TabsContent>
+          <TabsContent id="settings-sessions" value="sessions" className="grid gap-4">
             <h3>Login sessions</h3>
             <form className="grid gap-4 md:grid-cols-[repeat(auto-fit,minmax(160px,1fr))] md:items-end" onSubmit={(event) => event.preventDefault()}>
               <label>
@@ -5444,7 +5808,8 @@ export function App() {
                 <Button type="button" onClick={() => setSelectedLoginSessionId(session.id)}>Select</Button>
               </p>
             )) : <p className="empty">No login sessions loaded.</p>}
-          </div>
+          </TabsContent>
+          </Tabs>
           <div className={routePanelClass(currentPage, activityPanelRoutes)}>
             <h3>Managed query feedback</h3>
             <form className="grid gap-4 md:grid-cols-[repeat(auto-fit,minmax(160px,1fr))] md:items-end" onSubmit={(event) => void submitFeedback(event)}>
@@ -5959,11 +6324,11 @@ export function App() {
         <main className="public-entry-main" id="main">
           <section className="public-hero" aria-labelledby="public-hero-title">
             <div className="public-hero-copy">
-              <p className="eyebrow">Self-hostable beta core</p>
-              <h1 id="public-hero-title">Governed instructions for AI agents, self-hosted.</h1>
+              <p className="eyebrow">Public beta</p>
+              <h1 id="public-hero-title">A knowledge base for people and AI tools.</h1>
               <p className="public-hero-lede">
-                ForgetBase gives teams a permissioned source of truth for the prompts, policies, playbooks, skills, SOPs,
-                eval cases, and context packages their agents retrieve through API, CLI, MCP, JSON, and OKF exports.
+                Write and organize company knowledge once. People get a clean wiki-style reading view.
+                AI tools can search it, cite sources, and use only the content they are allowed to see.
               </p>
               <div className="public-hero-actions" aria-label="Landing actions">
                 <Button
@@ -5979,14 +6344,14 @@ export function App() {
                     document.getElementById("public-proof-title")?.scrollIntoView({ block: "start" });
                   }}
                 >
-                  View the demo path
+                  See what is included
                 </Button>
               </div>
               <div className="public-trust-strip" aria-label="Beta proof points">
                 <Badge variant="neutral">Apache 2.0 core</Badge>
                 <Badge variant="neutral">Docker Compose quickstart</Badge>
-                <Badge variant="info">API, CLI, MCP, JSON, and OKF</Badge>
-                <Badge variant="neutral">Synthetic demo corpus</Badge>
+                <Badge variant="info">Reader and admin separated</Badge>
+                <Badge variant="neutral">Safe demo content</Badge>
               </div>
             </div>
 
@@ -5996,55 +6361,59 @@ export function App() {
                   <span></span>
                   <span></span>
                   <span></span>
-                  <strong>#distribute</strong>
+                  <strong>#reader</strong>
                 </div>
                 <div className="proof-product-grid">
                   <Card className="proof-panel proof-panel-primary">
                     <CardHeader className="proof-panel-header">
-                      <CardDescription className="proof-label">Approved instruction</CardDescription>
-                      <CardTitle><h2>PII redaction guardrail</h2></CardTitle>
+                      <CardDescription className="proof-label">Published page</CardDescription>
+                      <CardTitle><h2>Personal data removal guide</h2></CardTitle>
                     </CardHeader>
-                    <CardContent className="proof-panel-content">
-                      <dl>
-                        <div><dt>Stable ID</dt><dd>guardrail.pii-redaction</dd></div>
-                        <div><dt>State</dt><dd>active / approved</dd></div>
-                        <div><dt>Sensitivity</dt><dd>public-demo</dd></div>
-                        <div><dt>Allowed surfaces</dt><dd>web, api, cli, mcp, export</dd></div>
-                      </dl>
-                    </CardContent>
+	                    <CardContent className="proof-panel-content">
+	                      <dl>
+	                        <div><dt>Maintainer</dt><dd>Security team</dd></div>
+	                        <div><dt>Status</dt><dd>Published and reviewed</dd></div>
+	                        <div><dt>Access</dt><dd>Open demo page</dd></div>
+	                        <div><dt>Sources</dt><dd>3 cited sections</dd></div>
+	                      </dl>
+	                    </CardContent>
                   </Card>
                   <Card className="proof-panel">
                     <CardHeader className="proof-panel-header">
-                      <CardDescription className="proof-label">Agent package</CardDescription>
-                      <CardTitle><h3>demo-agent-pack</h3></CardTitle>
+                      <CardDescription className="proof-label">Ask with sources</CardDescription>
+                      <CardTitle><h3>What should be redacted?</h3></CardTitle>
                     </CardHeader>
-                    <CardContent className="proof-panel-content">
-                      <div className="proof-package-state">
-                        <Badge variant="success">JSON ready</Badge>
-                        <Badge variant="success">OKF 0.1 ready</Badge>
-                        <Badge variant="neutral">projection hash</Badge>
-                      </div>
-                    </CardContent>
-                  </Card>
-                  <Card className="proof-panel proof-terminal">
-                    <CardHeader className="proof-panel-header">
-                      <CardDescription className="proof-label">Consumer fetch</CardDescription>
-                    </CardHeader>
-                    <CardContent className="proof-panel-content">
-                      <pre>{`GET /exports/ai-package
-format=okf
-rootIndexPath=index.md`}</pre>
-                    </CardContent>
-                  </Card>
-                  <Card className="proof-panel proof-safety">
-                    <CardHeader className="proof-panel-header">
-                      <CardDescription className="proof-label">Boundary proof</CardDescription>
-                    </CardHeader>
-                    <CardContent className="proof-panel-content">
-                      <Badge variant="warning">restricted asset omitted</Badge>
-                      <span>Denied items are counted, not previewed.</span>
-                    </CardContent>
-                  </Card>
+	                    <CardContent className="proof-panel-content">
+	                      <p className="proof-answer-preview">
+	                        Remove direct identifiers before AI use. Preserve the facts needed for the job.
+	                      </p>
+	                      <div className="proof-package-state">
+	                        <Badge variant="success">Sources shown</Badge>
+	                        <Badge variant="neutral">Restricted pages hidden</Badge>
+	                      </div>
+	                    </CardContent>
+	                  </Card>
+	                  <Card className="proof-panel">
+	                    <CardHeader className="proof-panel-header">
+	                      <CardDescription className="proof-label">Sources</CardDescription>
+	                    </CardHeader>
+	                    <CardContent className="proof-panel-content">
+	                      <div className="proof-source-list">
+	                        <span>Personal data removal guide</span>
+	                        <span>Support summary checklist</span>
+	                        <span>Acceptable use policy</span>
+	                      </div>
+	                    </CardContent>
+	                  </Card>
+	                  <Card className="proof-panel proof-safety">
+	                    <CardHeader className="proof-panel-header">
+	                      <CardDescription className="proof-label">Access check</CardDescription>
+	                    </CardHeader>
+	                    <CardContent className="proof-panel-content">
+	                      <Badge variant="warning">Restricted page hidden</Badge>
+	                      <span>Readers only see pages they are allowed to read.</span>
+	                    </CardContent>
+	                  </Card>
                 </div>
               </div>
             </div>
@@ -6052,40 +6421,56 @@ rootIndexPath=index.md`}</pre>
 
           <section className="public-proof-section" aria-labelledby="public-proof-title">
             <div>
-              <p className="eyebrow">15-minute beta path</p>
-              <h2 id="public-proof-title">One governed path from draft to agent consumer.</h2>
+              <p className="eyebrow">Beta path</p>
+              <h2 id="public-proof-title">Read first. Manage when you need to.</h2>
               <p>
-                Use the local demo to inspect a governed asset, review its lifecycle state, search with citations, and
-                generate JSON or OKF packages from the same permission-filtered API.
+                Use the demo to browse pages, read content, search with sources, and then switch to the admin console
+                to review, publish, manage access, and generate exports.
               </p>
             </div>
             <div className="public-step-list" aria-label="Beta path steps">
-              <Card className="public-step-card"><CardContent>Create or import synthetic governed assets.</CardContent></Card>
-              <Card className="public-step-card"><CardContent>Review, publish, and inspect trust metadata.</CardContent></Card>
-              <Card className="public-step-card"><CardContent>Package approved context for API, CLI, MCP, JSON, and OKF.</CardContent></Card>
-              <Card className="public-step-card"><CardContent>Verify restricted context stays out of broad-reader exports.</CardContent></Card>
+              <div className="public-step-card">
+                <span className="public-step-icon"><BookOpen aria-hidden="true" /></span>
+                <h3>Read pages</h3>
+                <p>Browse approved pages in a calm reading view.</p>
+              </div>
+              <div className="public-step-card">
+                <span className="public-step-icon"><MagnifyingGlass aria-hidden="true" /></span>
+                <h3>Search with sources</h3>
+                <p>Find answers and keep the cited pages close.</p>
+              </div>
+              <div className="public-step-card">
+                <span className="public-step-icon"><GearSix aria-hidden="true" /></span>
+                <h3>Manage content</h3>
+                <p>Use the admin console for reviews, access, and settings.</p>
+              </div>
+              <div className="public-step-card">
+                <span className="public-step-icon"><Package aria-hidden="true" /></span>
+                <h3>Check exports</h3>
+                <p>Verify restricted content stays out of reader views and exports.</p>
+              </div>
             </div>
           </section>
 
-          <section className="auth-entry-grid auth-entry-grid--boundary" aria-label="Private beta boundary">
+          <section className="auth-entry-grid auth-entry-grid--boundary" aria-label="Public beta boundary">
             <section className="beta-boundary-panel" aria-labelledby="beta-boundary-title">
               <div>
                 <span className="eyebrow">Clear beta boundary</span>
-                <h2 id="beta-boundary-title">Built in public boundaries, not inflated claims.</h2>
+                <h2 id="beta-boundary-title">Useful beta, clear limits.</h2>
                 <p>
-                  Evaluate ForgetBase as a self-hostable core for governed agent instructions and context packages.
-                  It is not claiming hosted-service maturity, enterprise SSO/SCIM completion, full managed-agent
-                  orchestration, broad enterprise search parity, or certification-level compliance.
+                  Use ForgetBase to test a self-hosted knowledge base for people and AI tools.
+                  The beta does not include production support, hosted-service guarantees, advanced sign-in controls,
+                  or compliance certification.
                 </p>
               </div>
             </section>
             <Card className="beta-access-panel" aria-labelledby="beta-access-title">
               <CardHeader>
-                <CardDescription className="eyebrow">Private beta</CardDescription>
+                <CardDescription className="eyebrow">Beta access</CardDescription>
                 <CardTitle><h2 id="beta-access-title">Access by invitation.</h2></CardTitle>
                 <CardDescription>
-                  Beta users can log in with their invitation credentials. The self-hostable demo path remains visible
-                  before sign-in for reviewing scope and beta boundaries.
+                  Beta users can log in with invitation credentials. The demo path stays visible before sign-in so teams
+                  can review scope and limits.
                 </CardDescription>
               </CardHeader>
               <CardFooter>
@@ -6111,7 +6496,7 @@ rootIndexPath=index.md`}</pre>
                 <div>
                   <DialogTitle id="login-title">Log in to ForgetBase</DialogTitle>
                   <DialogDescription id="login-description" className="lede">
-                    Private beta. Access by invitation.
+                    Beta access. Invitation required.
                   </DialogDescription>
                 </div>
               </DialogHeader>

@@ -1,8 +1,10 @@
 # Contributing
 
-ForgetBase is a public-alpha candidate. Contributions are welcome after the repository is public, but the project is still changing quickly.
+ForgetBase is a public-beta candidate. Contributions are welcome after the repository is public, but the project is still changing quickly.
 
-## Good Alpha Contributions
+Review [Public Beta Compatibility](docs/PUBLIC_BETA_COMPATIBILITY.md) before proposing behavior that would create a compatibility promise.
+
+## Good Beta Contributions
 
 - reproducible bug reports
 - documentation fixes
