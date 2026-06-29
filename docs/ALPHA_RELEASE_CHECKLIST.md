@@ -13,11 +13,11 @@ The alpha should not claim production readiness, hosted-service readiness, stabl
 ## Current Repository State
 
 - GitHub repository: `jremick/forgetbase`
-- Visibility: private at last read-back on 2026-06-17
+- Visibility: private at last read-back on 2026-06-29
 - Default branch: `main`
-- Current GitHub description: `Agent-native instruction CMS and governed knowledge control plane for AI teams`
+- Current GitHub description: `Self-hosted knowledge base for people and AI tools`
 - GitHub license detection: Apache-2.0
-- GitHub topics: `agentic-ai`, `ai-agents`, `cms`, `docker-compose`, `knowledge-management`, `mcp`, `openapi`, `postgres`, `retrieval`, `typescript`
+- GitHub topics: `ai-tools`, `docker-compose`, `forgetbase`, `instruction-management`, `knowledge-base`, `mcp`, `openapi`, `postgres`, `retrieval`, `self-hosted`, `typescript`
 - Latest GitHub release: none
 - Local branch state: alpha-candidate implementation committed and pushed to `main`
 

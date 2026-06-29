@@ -26,12 +26,8 @@ The immediate beta blocker is not backend feature count. The repo already has su
 This plan synthesizes:
 
 - Local repo grounding: `README.md`, `docs/END_TO_END_GOAL.md`, `docs/TECHNICAL_SPEC.md`, `docs/DECISIONS.md`, `docs/MVP_SCOPE.md`, `docs/DEVELOPMENT.md`, `docs/REMAINING_FUNCTIONAL_GAPS.md`, `docs/ROADMAP.md`, `docs/design/README.md`, `apps/web/src/App.tsx`, `apps/web/src/styles.css`, and API/security surfaces.
-- Web research source pack: analyst, UX, security, standards, and vendor sources recorded in `work/model-council/forgetbase-beta-20260619/source-register.md`.
 - Three Codex subagent passes: market/value synthesis, UI/UX best-practice research, and codebase trace.
-- Gemini CLI contrarian pass: `work/model-council/forgetbase-beta-20260619/stage1/gemini-contrarian.md`.
-- Claude Code contrarian pass: `work/model-council/forgetbase-beta-20260619/stage1/claude-contrarian.md`.
-
-The strict gateway-backed model-council route was not fully available because the local model gateway route lacked usable auth in this session. The council still used the two explicit delegate routes requested: Gemini CLI and Claude Code delegate, plus the parent Codex synthesis and subagents.
+- External and contrarian review notes from the original planning session. Those maintainer scratch notes are no longer part of the tracked public repo surface.
 
 ## Market Verdict
 
