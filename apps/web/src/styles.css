@@ -234,6 +234,13 @@ pre {
   width: min(100%, 760px);
 }
 
+.command > span:not(.kbd) {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .kbd {
   margin-left: auto;
   color: var(--fb-muted);
@@ -241,6 +248,7 @@ pre {
 }
 
 .identity-trigger {
+  min-width: 0;
   max-width: 260px;
 }
 
@@ -2188,10 +2196,29 @@ pre {
     grid-template-columns: auto minmax(0, 1fr) auto;
   }
 
+  .admin-shell .topbar-main {
+    gap: 8px;
+  }
+
   .topbar-main .command,
   .topbar-main .identity-trigger,
   .topbar-actions [data-slot="button"] {
     min-height: 44px;
+  }
+
+  .admin-shell .topbar-main .command {
+    min-width: 0;
+  }
+
+  .admin-shell .topbar-main .identity-trigger {
+    width: 44px;
+    min-width: 44px;
+    padding-inline: 0;
+    justify-content: center;
+  }
+
+  .admin-shell .topbar-main .identity-trigger .identity-name {
+    display: none;
   }
 
   .kbd {

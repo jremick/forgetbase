@@ -3490,7 +3490,13 @@ export function App() {
 	              </Button>
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <Button variant="ghost" size="sm" type="button" className="identity-trigger">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    type="button"
+                    className="identity-trigger"
+                    aria-label={`Account menu for ${displayIdentity}`}
+                  >
                     <span className="avatar">{displayInitials}</span>
                     <span className="identity-name">{displayIdentity}</span>
                   </Button>
@@ -3554,7 +3560,13 @@ export function App() {
             <div className="topbar-actions">
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <Button variant="ghost" size="sm" type="button" className="identity-trigger">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    type="button"
+                    className="identity-trigger"
+                    aria-label={`Account menu for ${displayIdentity}`}
+                  >
                     <span className="avatar">{displayInitials}</span>
                     <span className="identity-name">{displayIdentity}</span>
                   </Button>
