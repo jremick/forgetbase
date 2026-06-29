@@ -63,9 +63,16 @@ assertIncludes(app, "On this page", "reader section navigation");
 assertIncludes(app, "reader-mobile-page-picker", "reader mobile page picker");
 assertIncludes(app, "aria-label=\"Sources\"", "reader sources");
 assertIncludes(app, "Admin console", "reader admin handoff");
+assertIncludes(app, "\"admin/content\": \"library\"", "admin content route");
+assertIncludes(app, "\"admin/system/settings\": \"settings\"", "admin settings route");
+assertIncludes(app, "window.history.replaceState({}, document.title", "admin canonical hash rewrite");
+assertIncludes(app, "className=\"side-nav tree-nav admin-side-nav\"", "admin console shell");
+assertIncludes(app, "renderAdminShellHeader(() => setIsMobileNavOpen(false))", "mobile admin shell header");
+assertIncludes(app, "Reader view", "admin reader handoff");
 assertIncludes(app, "Search pages", "reader action");
 
 for (const selector of [
+  ".admin-side-header",
   ".reader-hero",
   ".reader-summary-strip",
   ".reader-section-nav",

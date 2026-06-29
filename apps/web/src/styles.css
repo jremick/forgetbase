@@ -319,6 +319,42 @@ pre {
   overflow: auto;
 }
 
+.admin-side-nav {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.admin-side-header {
+  display: grid;
+  gap: 8px;
+  padding: 16px;
+  border-bottom: 1px solid var(--fb-border);
+  background: linear-gradient(180deg, #ffffff, color-mix(in srgb, var(--fb-subtle) 42%, white));
+}
+
+.admin-side-header .nav-label {
+  padding: 0;
+}
+
+.admin-side-header h2 {
+  margin: 0;
+  color: var(--fb-text);
+  font-size: 18px;
+  line-height: 1.2;
+}
+
+.admin-side-header p:not(.nav-label) {
+  margin: 0;
+  color: var(--fb-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.admin-side-header [data-slot="button"] {
+  justify-content: flex-start;
+  width: 100%;
+}
+
 .nav-group {
   display: grid;
   gap: 4px;

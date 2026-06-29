@@ -614,6 +614,40 @@ const legacyPageRouteAliases: Record<string, string> = {
   providers: "integrations",
   telemetry: "activity"
 };
+const adminRouteAliases: Record<string, string> = {
+  admin: "library",
+  "admin/content": "library",
+  "admin/content/search": "search",
+  "admin/content/page": "asset-read",
+  "admin/reviews": "review",
+  "admin/reviews/version-compare": "versions",
+  "admin/exports": "distribute",
+  "admin/system": "health",
+  "admin/system/activity": "activity",
+  "admin/system/health": "health",
+  "admin/system/integrations": "integrations",
+  "admin/system/settings": "settings",
+  "admin/system/policies": "policies",
+  "admin/system/access": "access",
+  "admin/system/approvals": "approvals"
+};
+const canonicalRouteHashes: Record<string, string> = {
+  "account-settings": "account-settings",
+  "asset-read": "admin/content/page",
+  "search": "admin/content/search",
+  "reader": "reader",
+  "library": "admin/content",
+  "review": "admin/reviews",
+  "versions": "admin/reviews/version-compare",
+  "distribute": "admin/exports",
+  "activity": "admin/system/activity",
+  "health": "admin/system/health",
+  "integrations": "admin/system/integrations",
+  "settings": "admin/system/settings",
+  "policies": "admin/system/policies",
+  "access": "admin/system/access",
+  "approvals": "admin/system/approvals"
+};
 const activityPanelRoutes = ["activity", "telemetry"];
 const activityAndHealthPanelRoutes = ["activity", "telemetry", "health"];
 const integrationsPanelRoutes = ["integrations", "providers"];
@@ -625,48 +659,48 @@ const pageRoutes = new Set<string>(pageRouteValues);
 const operationsRoutes = new Set<string>(operationsRouteValues);
 const sensitivityFilterValues = ["public-demo", "internal", "restricted", "confidential", "secret"] as const;
 const defaultOperationsPageCopy = {
-  eyebrow: "Admin",
+  eyebrow: "Admin console",
   title: "System Health",
   lede: "Check the API, providers, recent activity, approvals, and maintenance jobs."
 };
 const operationsPageCopy: Record<string, { eyebrow: string; title: string; lede: string }> = {
   review: {
-    eyebrow: "Admin",
+    eyebrow: "Admin console",
     title: "Reviews",
     lede: "Review pages that need approval, updates, or publishing."
   },
   activity: {
-    eyebrow: "Admin",
+    eyebrow: "Admin console",
     title: "Activity",
     lede: "Review recent search, audit, feedback, cache, and model activity."
   },
   health: {
-    eyebrow: "Admin",
+    eyebrow: "Admin console",
     title: "System Health",
     lede: "Check the API, providers, recent activity, approvals, and maintenance jobs."
   },
   integrations: {
-    eyebrow: "Admin",
+    eyebrow: "Admin console",
     title: "Integrations",
     lede: "Manage model providers, health checks, and sign-in providers."
   },
   settings: {
-    eyebrow: "Admin",
+    eyebrow: "Admin console",
     title: "Settings",
     lede: "Choose the settings area you need."
   },
   policies: {
-    eyebrow: "Admin",
+    eyebrow: "Admin console",
     title: "Policies",
     lede: "Manage retention, answers, ranking, actions, cache, secrets, and redaction."
   },
   access: {
-    eyebrow: "Admin",
+    eyebrow: "Admin console",
     title: "Access",
     lede: "Manage users, groups, service accounts, API keys, and sessions."
   },
   approvals: {
-    eyebrow: "Admin",
+    eyebrow: "Admin console",
     title: "Approvals",
     lede: "Review approval rules, pending requests, and safety switches."
   }
@@ -677,9 +711,16 @@ function routePanelClass(currentPage: string, routes: string[], baseClass = "gri
 }
 
 function normalizePageRoute(route: string): string {
-  const aliasedRoute = legacyPageRouteAliases[route] ?? route;
+  const cleanedRoute = route.replace(/^#/, "").replace(/^\/+/, "").replace(/\/+$/, "");
+  const aliasedRoute = adminRouteAliases[cleanedRoute] ?? legacyPageRouteAliases[cleanedRoute] ?? cleanedRoute;
 
   return pageRoutes.has(aliasedRoute) ? aliasedRoute : "reader";
+}
+
+function canonicalRouteHash(route: string): string {
+  const normalizedRoute = normalizePageRoute(route);
+
+  return canonicalRouteHashes[normalizedRoute] ?? normalizedRoute;
 }
 
 function isPublishedReaderAsset(asset: AssetRecord): boolean {
@@ -1158,8 +1199,15 @@ export function App() {
   useEffect(() => {
     const syncPageFromHash = () => {
       const routeFromHash = window.location.hash.replace("#", "");
-      setCurrentHashRoute(routeFromHash);
-      setCurrentPage(normalizePageRoute(routeFromHash));
+      const normalizedRoute = normalizePageRoute(routeFromHash);
+      const canonicalHash = routeFromHash ? canonicalRouteHash(normalizedRoute) : "";
+
+      setCurrentHashRoute(canonicalHash);
+      setCurrentPage(normalizedRoute);
+
+      if (routeFromHash && routeFromHash !== canonicalHash) {
+        window.history.replaceState({}, document.title, `${window.location.pathname}${window.location.search}#${canonicalHash}`);
+      }
     };
 
     syncPageFromHash();
@@ -3074,7 +3122,7 @@ export function App() {
   function navigatePage(route: string) {
     const nextRoute = normalizePageRoute(route);
     setCurrentPage(nextRoute);
-    window.location.hash = nextRoute;
+    window.location.hash = canonicalRouteHash(nextRoute);
   }
 
   function scrollReaderRegionIntoView(id: string) {
@@ -3093,47 +3141,48 @@ export function App() {
 
     if (normalizedRoute === "search") {
       return [
-        { label: "Read", onClick: () => navigatePage("library") },
+        { label: "Admin console", onClick: () => navigatePage("admin/content") },
         { label: "Search", current: true }
       ];
     }
 
     if (normalizedRoute === "asset-read") {
       return [
-        { label: "Read", onClick: () => navigatePage("library") },
-        { label: "Reading room", current: true }
+        { label: "Admin console", onClick: () => navigatePage("admin/content") },
+        { label: "Page detail", current: true }
       ];
     }
 
     if (normalizedRoute === "versions") {
       return [
-        { label: "Work", onClick: () => navigatePage("review") },
+        { label: "Reviews", onClick: () => navigatePage("admin/reviews") },
         { label: "Version compare", current: true }
       ];
     }
 
     if (normalizedRoute === "review") {
       return [
-        { label: "Work", onClick: () => navigatePage("review") },
+        { label: "Admin console", onClick: () => navigatePage("admin/content") },
         { label: "Review queue", current: true }
       ];
     }
 
     if (normalizedRoute === "distribute") {
       return [
-        { label: "Distribute", current: true }
+        { label: "Admin console", onClick: () => navigatePage("admin/content") },
+        { label: "Exports", current: true }
       ];
     }
 
     if (operationsRoutes.has(normalizedRoute)) {
       return [
-        { label: "Operate", onClick: () => navigatePage("health") },
-        { label: operationsPageCopy[normalizedRoute]?.title ?? "Operations", current: true }
+        { label: "System", onClick: () => navigatePage("admin/system/health") },
+        { label: operationsPageCopy[normalizedRoute]?.title ?? "System", current: true }
       ];
     }
 
     return [
-      { label: "Read", current: true }
+      { label: "Admin console", current: true }
     ];
   }
 
@@ -3228,21 +3277,21 @@ export function App() {
   const activeAssetContentView = currentPage === "versions" ? "version" : assetContentView;
   const navSections: NavSectionConfig[] = [
     {
-      label: "Read",
+      label: "Content",
       folderLabel: "Pages",
       folderIcon: <BookOpen aria-hidden="true" />,
       folderRoute: "library",
       activeRoutes: ["reader", "library", "search", "asset-read"],
       count: assets.length,
       leaves: [
-        { route: "reader", label: "Read pages", count: readerPublishedAssets.length },
-        { route: "library", label: "Content list", count: approvedAssets },
+        { route: "reader", label: "Reader view", count: readerPublishedAssets.length },
+        { route: "library", label: "All content", count: approvedAssets },
         { route: "search", label: "Search and ask" },
         { route: "asset-read", label: "Page detail", badge: assetDetail ? { label: "open", tone: "warn" } : undefined }
       ]
     },
     {
-      label: "Manage",
+      label: "Review",
       folderLabel: "Reviews",
       folderIcon: <ClipboardText aria-hidden="true" />,
       folderRoute: "review",
@@ -3254,7 +3303,7 @@ export function App() {
       ]
     },
     {
-      label: "Share",
+      label: "Exports",
       folderLabel: "Exports",
       folderIcon: <Package aria-hidden="true" />,
       folderRoute: "distribute",
@@ -3269,7 +3318,7 @@ export function App() {
       ]
     },
     {
-      label: "Admin",
+      label: "System",
       folderLabel: "System",
       folderIcon: <GearSix aria-hidden="true" />,
       folderRoute: "health",
@@ -3308,6 +3357,25 @@ export function App() {
       routes: Array.from(routes.values())
     };
   });
+  const renderAdminShellHeader = (onNavigate?: () => void) => (
+    <div className="admin-side-header">
+      <p className="nav-label">Admin console</p>
+      <h2>Manage ForgetBase</h2>
+      <p>Content, access, exports, and system settings.</p>
+      <Button
+        type="button"
+        size="sm"
+        variant="ghost"
+        onClick={() => {
+          navigatePage("reader");
+          onNavigate?.();
+        }}
+      >
+        <BookOpen aria-hidden="true" />
+        Reader view
+      </Button>
+    </div>
+  );
   const renderNavigationSections = (onNavigate?: () => void) => (
     <ScrollArea className="side-nav-scroll">
       {navSections.map((section) => {
@@ -3340,10 +3408,10 @@ export function App() {
                     return (
                       <Button
                         key={leaf.route}
-                        className={`nav-link nav-leaf ${hasIcon ? "has-icon" : "is-iconless"} ${currentPage === leaf.route ? "active" : ""}`}
+                        className={`nav-link nav-leaf ${hasIcon ? "has-icon" : "is-iconless"} ${currentPage === normalizePageRoute(leaf.route) ? "active" : ""}`}
                         type="button"
                         variant="ghost"
-                        aria-current={currentPage === leaf.route ? "page" : undefined}
+                        aria-current={currentPage === normalizePageRoute(leaf.route) ? "page" : undefined}
                         onClick={() => {
                           navigatePage(leaf.route);
                           onNavigate?.();
@@ -3367,7 +3435,7 @@ export function App() {
 
   return (
     <div
-      className={`app-shell ${isAuthenticated ? readerSurfaceActive ? "reader-shell" : "" : "auth-shell"}`}
+      className={`app-shell ${isAuthenticated ? readerSurfaceActive ? "reader-shell" : "admin-shell" : "auth-shell"}`}
       data-density={density}
     >
       <a className="skip-link" href="#main">Skip to content</a>
@@ -3444,7 +3512,7 @@ export function App() {
                       Settings
                     </DropdownMenuItem>
                     {canUseAdministration ? (
-                      <DropdownMenuItem onSelect={() => navigatePage("library")}>
+                      <DropdownMenuItem onSelect={() => navigatePage("admin/content")}>
                         Admin console
                       </DropdownMenuItem>
                     ) : null}
@@ -3480,7 +3548,7 @@ export function App() {
               onClick={() => handleCommandOpenChange(true)}
             >
               <MagnifyingGlass aria-hidden="true" />
-              <span>Go to page or route</span>
+              <span>Search admin console</span>
               <span className="kbd">Cmd K</span>
             </Button>
             <div className="topbar-actions">
@@ -3508,8 +3576,8 @@ export function App() {
                       Settings
                     </DropdownMenuItem>
                     {canUseAdministration ? (
-                      <DropdownMenuItem onSelect={() => navigatePage("library")}>
-                        Administration
+                      <DropdownMenuItem onSelect={() => navigatePage("reader")}>
+                        Reader view
                       </DropdownMenuItem>
                     ) : null}
                     <DropdownMenuItem onSelect={toggleDensity}>
@@ -3576,7 +3644,7 @@ export function App() {
               </dl>
               <div className="account-settings-actions">
                 {canUseAdministration ? (
-                  <Button type="button" onClick={() => navigatePage("library")}>Administration</Button>
+                  <Button type="button" onClick={() => navigatePage("admin/content")}>Admin console</Button>
                 ) : null}
                 <Button type="button" variant="ghost" onClick={() => void logout()}>Sign out</Button>
               </div>
@@ -3598,7 +3666,7 @@ export function App() {
             </div>
             <div className="reader-hero-actions">
               {canUseAdministration ? (
-                <Button type="button" variant="ghost" onClick={() => navigatePage("library")}>
+                <Button type="button" variant="ghost" onClick={() => navigatePage("admin/content")}>
                   Admin console
                 </Button>
               ) : null}
@@ -3930,8 +3998,8 @@ export function App() {
           <CommandDialog
             open={isCommandOpen}
             onOpenChange={handleCommandOpenChange}
-            title="ForgetBase command palette"
-            description="Move between ForgetBase pages."
+            title="Admin console command palette"
+            description="Move between admin console pages."
             className="command-dialog"
             onCloseAutoFocus={(event) => {
               event.preventDefault();
@@ -3939,7 +4007,7 @@ export function App() {
             }}
           >
             <Command>
-              <CommandInput placeholder="Go to page or route..." />
+              <CommandInput placeholder="Go to an admin page..." />
               <CommandList>
                 <CommandEmpty>No route found.</CommandEmpty>
                 {commandSections.map((section) => (
@@ -3947,7 +4015,7 @@ export function App() {
                     {section.routes.map((route) => (
                       <CommandItem
                         key={route.route}
-                        value={`${section.label} ${route.label} ${route.route}`}
+                        value={`${section.label} ${route.label} ${route.route} ${canonicalRouteHash(route.route)}`}
                         onSelect={() => {
                           navigatePage(route.route);
                           handleCommandOpenChange(false);
@@ -3955,7 +4023,7 @@ export function App() {
                       >
                         <span>{route.label}</span>
                         {route.badge === undefined ? null : <Badge variant="neutral" className="command-route-badge">{route.badge}</Badge>}
-                        <CommandShortcut>#{route.route}</CommandShortcut>
+                        <CommandShortcut>#{canonicalRouteHash(route.route)}</CommandShortcut>
                       </CommandItem>
                     ))}
                   </CommandGroup>
@@ -3967,20 +4035,22 @@ export function App() {
           <Sheet open={isMobileNavOpen} onOpenChange={setIsMobileNavOpen}>
             <SheetContent side="left" className="mobile-nav-sheet">
               <SheetHeader>
-                <SheetTitle>Navigation</SheetTitle>
-                <SheetDescription>Move between ForgetBase workspaces.</SheetDescription>
+                <SheetTitle>Admin console</SheetTitle>
+                <SheetDescription>Manage content, access, exports, and system settings.</SheetDescription>
               </SheetHeader>
               <nav className="sheet-nav tree-nav" aria-label="Mobile main pages">
+                {renderAdminShellHeader(() => setIsMobileNavOpen(false))}
                 {renderNavigationSections(() => setIsMobileNavOpen(false))}
               </nav>
             </SheetContent>
           </Sheet>
 
-          <nav className="side-nav tree-nav" aria-label="Main pages" id="page-nav">
-        {renderNavigationSections()}
-      </nav>
+          <nav className="side-nav tree-nav admin-side-nav" aria-label="Admin console" id="page-nav">
+            {renderAdminShellHeader()}
+            {renderNavigationSections()}
+          </nav>
 
-      <main className="main" id="main">
+          <main className="main" id="main">
         {sessionCookieActive ? null : (
           <details className="developer-connection">
             <summary>Developer connection</summary>
@@ -4032,7 +4102,7 @@ export function App() {
             <RouteHeader
               className="page-route-header"
               breadcrumbs={routeBreadcrumbs(currentPage)}
-              eyebrow={currentPage === "versions" ? "Admin" : "Admin"}
+              eyebrow="Admin console"
               title={currentPage === "asset-read"
                 ? assetDetail?.asset.title ?? "Reading room"
                 : currentPage === "versions"
@@ -4573,7 +4643,7 @@ export function App() {
           <StatusAlert
             status="info"
             title="Legacy alias"
-            description={<>Legacy <code>#exports</code> opens the Distribute package builder. Use <code>#distribute</code> for the first-class route.</>}
+            description={<>Legacy <code>#exports</code> opens the package builder. Use <code>#{canonicalRouteHash("distribute")}</code> for the admin route.</>}
             className="mb-4"
           />
         ) : null}
@@ -4788,7 +4858,7 @@ export function App() {
         {isLegacyRouteAlias ? (
           <StatusAlert
             title={`Legacy #${currentHashRoute} route`}
-            description={`This route now opens #${currentPage} to match the updated information architecture.`}
+            description={`This route now opens #${canonicalRouteHash(currentPage)} to match the updated information architecture.`}
           />
         ) : null}
         {settingsNavigationRoutes.includes(currentPage) ? (
@@ -6695,7 +6765,7 @@ export function App() {
               </DialogHeader>
               {currentPage === "distribute" ? (
                 <Alert variant="info" className="queued-route">
-                  <AlertDescription>Demo path queued: <code>#{currentPage}</code></AlertDescription>
+                  <AlertDescription>Demo path queued: <code>#{canonicalRouteHash(currentPage)}</code></AlertDescription>
                 </Alert>
               ) : null}
               <Separator />

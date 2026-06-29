@@ -276,7 +276,7 @@ async function checkReleaseFlow(page: Page, viewportName: "desktop" | "mobile"):
 
   if (expectedRole === "reader") {
     await expectHiddenText(page, "Admin console", `release ${viewportName}: reader has no admin handoff`);
-    await page.goto(`${baseUrl.replace(/#.*$/, "")}#settings`, { waitUntil: "domcontentloaded" });
+    await page.goto(`${baseUrl.replace(/#.*$/, "")}#admin/system/settings`, { waitUntil: "domcontentloaded" });
     await page.waitForSelector("#reader-title", { timeout: 10000 });
     const hash = await page.evaluate(() => window.location.hash);
     if (hash !== "#reader") {
@@ -287,11 +287,16 @@ async function checkReleaseFlow(page: Page, viewportName: "desktop" | "mobile"):
   }
 
   if (viewportName === "mobile") {
+    await checkMobileAdminShell(page);
     return;
   }
 
   await clickUnique(page, "button", "Admin console");
   await page.waitForSelector(".side-nav", { timeout: 10000 });
+  await expectHash(page, "#admin/content", "release: admin canonical content route");
+  await expectVisibleText(page, "Manage ForgetBase", "release: admin console shell title");
+  await expectVisibleText(page, "Reader view", "release: admin reader handoff");
+  await assertLegacyAdminHashCanonicalizes(page);
   await expectVisibleText(page, "Content", "release: admin content label");
   await expectVisibleText(page, "Reviews", "release: admin reviews label");
   await expectVisibleText(page, "Exports", "release: admin exports label");
@@ -299,10 +304,10 @@ async function checkReleaseFlow(page: Page, viewportName: "desktop" | "mobile"):
   await assertNoHorizontalOverflow(page, "release: admin desktop overflow");
   await assertNoClippedText(page, "release: admin desktop clipped text");
   await screenshot(page, "admin-desktop.png", "release: admin screenshot");
-  await screenshotAdminRoute(page, "review", "Review queue", "reviews.png", "release: admin reviews screenshot");
-  await screenshotAdminRoute(page, "policies", "Telemetry retention", "policies.png", "release: admin policies screenshot");
-  await screenshotAdminRoute(page, "access", "Users", "access-management.png", "release: admin access screenshot");
-  await screenshotAdminRoute(page, "approvals", "Action execution", "approvals.png", "release: admin approvals screenshot");
+  await screenshotAdminRoute(page, "admin/reviews", "Review queue", "reviews.png", "release: admin reviews screenshot");
+  await screenshotAdminRoute(page, "admin/system/policies", "Telemetry retention", "policies.png", "release: admin policies screenshot");
+  await screenshotAdminRoute(page, "admin/system/access", "Users", "access-management.png", "release: admin access screenshot");
+  await screenshotAdminRoute(page, "admin/system/approvals", "Action execution", "approvals.png", "release: admin approvals screenshot");
   await screenshotExportRoute(page);
 }
 
@@ -328,6 +333,29 @@ function routeUrl(route: string): string {
   return url.toString();
 }
 
+async function checkMobileAdminShell(page: Page): Promise<void> {
+  await clickUnique(page, "button", "Admin console");
+  await page.waitForSelector(".app-shell.admin-shell", { timeout: 10000 });
+  await expectHash(page, "#admin/content", "release mobile: admin canonical content route");
+  await page.getByRole("button", { name: "Open navigation" }).click();
+  await expectVisibleText(page, "Manage ForgetBase", "release mobile: admin console shell title");
+  await expectVisibleText(page, "Reader view", "release mobile: admin reader handoff");
+  await assertNoHorizontalOverflow(page, "release mobile: admin shell overflow");
+  await assertNoClippedText(page, "release mobile: admin shell clipped text");
+  await screenshot(page, "admin-mobile.png", "release mobile: admin shell screenshot");
+}
+
+async function assertLegacyAdminHashCanonicalizes(page: Page): Promise<void> {
+  await page.goto(routeUrl("settings"), { waitUntil: "domcontentloaded" });
+  await expectVisibleText(page, "Settings", "release: legacy settings route loaded");
+  await expectHash(page, "#admin/system/settings", "release: legacy settings route canonicalized");
+  await page.goto(routeUrl("exports"), { waitUntil: "domcontentloaded" });
+  await expectVisibleText(page, "Package builder", "release: legacy exports route loaded");
+  await expectHash(page, "#admin/exports", "release: legacy exports route canonicalized");
+  await page.goto(routeUrl("admin/content"), { waitUntil: "domcontentloaded" });
+  await expectHash(page, "#admin/content", "release: admin content route restored");
+}
+
 async function screenshotAdminRoute(
   page: Page,
   route: string,
@@ -337,13 +365,16 @@ async function screenshotAdminRoute(
 ): Promise<void> {
   await page.goto(routeUrl(route), { waitUntil: "domcontentloaded" });
   await expectVisibleText(page, expectedText, `${name}: route loaded`);
+  if (route.startsWith("admin/")) {
+    await expectHash(page, `#${route}`, `${name}: canonical hash`);
+  }
   await assertNoHorizontalOverflow(page, `${name}: overflow`);
   await assertNoClippedText(page, `${name}: clipped text`);
   await screenshot(page, fileName, name);
 }
 
 async function screenshotExportRoute(page: Page): Promise<void> {
-  await page.goto(routeUrl("distribute"), { waitUntil: "domcontentloaded" });
+  await page.goto(routeUrl("admin/exports"), { waitUntil: "domcontentloaded" });
   await expectVisibleText(page, "Package builder", "release: admin exports route loaded");
   await page.getByRole("button", { name: /^Generate$/ }).click();
   await expectVisibleText(page, "Included stable IDs", "release: admin export generated");
@@ -431,6 +462,21 @@ async function expectHiddenText(page: Page, text: string, name: string): Promise
   }
 
   checks.push({ name, status: "pass", detail: count });
+}
+
+async function expectHash(page: Page, expected: string, name: string): Promise<void> {
+  await page.waitForFunction(
+    (expectedHash) => window.location.hash === expectedHash,
+    expected,
+    { timeout: 10000 }
+  );
+  const hash = await page.evaluate(() => window.location.hash);
+
+  if (hash !== expected) {
+    throw new Error(`${name}: expected hash "${expected}", got "${hash}"`);
+  }
+
+  checks.push({ name, status: "pass", detail: hash });
 }
 
 async function assertNoJargon(page: Page, selector: string, name: string): Promise<void> {
