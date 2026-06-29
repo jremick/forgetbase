@@ -49,7 +49,7 @@ curl --silent --show-error --fail "$PUBLIC_BETA_LIVE_DEMO_URL/"
 curl --silent --show-error --fail "$PUBLIC_BETA_LIVE_DEMO_URL/api/health"
 ```
 
-Then confirm the deployment uses the release commit, imports only the synthetic demo corpus, and exposes the reader UI at the root URL.
+Then confirm the deployment uses the release commit, imports only the synthetic demo corpus, and exposes the reader-first UI at the root URL. The release proof collector checks the root HTML for the current knowledge-base metadata and rejects stale builds that still advertise the older agent-instruction positioning.
 
 ## Browser UAT
 

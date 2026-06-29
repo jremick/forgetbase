@@ -45,16 +45,14 @@ const liveDemoHealthUrl = liveDemoUrlForPath(liveDemoUrl, "/api/health");
 const liveDemoRootCheck = liveDemoReady ? run("curl", [
   "--silent",
   "--show-error",
-  "--fail",
   "--location",
   "--max-time",
   "20",
-  "--output",
-  "/dev/null",
   "--write-out",
-  "%{http_code} %{url_effective}",
+  "\n__FORGETBASE_LIVE_ROOT__%{http_code} %{url_effective}",
   liveDemoRootUrl
 ]) : undefined;
+const liveDemoRootReadback = summarizeLiveDemoRoot(liveDemoRootCheck, liveDemoRootUrl);
 const liveDemoHealthCheck = liveDemoReady ? run("curl", [
   "--silent",
   "--show-error",
@@ -109,10 +107,10 @@ const manifest = {
     },
     {
       name: "live-demo-root",
-      status: liveDemoRootCheck?.ok === true ? "pass" : "fail",
-      command: `curl --silent --show-error --fail --location --max-time 20 --output /dev/null --write-out "%{http_code} %{url_effective}" ${liveDemoRootUrl}`,
+      status: liveDemoRootReadback.ok ? "pass" : "fail",
+      command: `curl --silent --show-error --location --max-time 20 --write-out "\\n__FORGETBASE_LIVE_ROOT__%{http_code} %{url_effective}" ${liveDemoRootUrl}`,
       evidence: [textEvidence(
-        liveDemoRootCheck?.stdout ||
+        liveDemoRootReadback.evidence ||
           liveDemoRootCheck?.stderr ||
           "<public HTTPS demo root read-back>",
         liveDemoReady ? undefined : "requires PUBLIC_BETA_LIVE_DEMO_URL"
@@ -435,6 +433,65 @@ function run(command: string, args: string[]): CommandResult {
     ok: result.status === 0,
     stdout: (result.stdout ?? "").trim(),
     stderr: (result.stderr ?? "").trim()
+  };
+}
+
+function summarizeLiveDemoRoot(
+  result: CommandResult | undefined,
+  expectedUrl: string
+): { ok: boolean; evidence: string } {
+  const requiredText = [
+    "ForgetBase | Knowledge Base for People and AI Tools",
+    "ForgetBase: A Knowledge Base for People and AI Tools",
+    "knowledge base for people and AI tools"
+  ];
+  const forbiddenText = [
+    "ForgetBase | Governed Instructions for AI Agents",
+    "ForgetBase: Governed Instructions for AI Agents",
+    "governed registry for agent instructions",
+    "context packages with API, CLI, MCP"
+  ];
+
+  if (!result) {
+    return {
+      ok: false,
+      evidence: JSON.stringify({
+        ok: false,
+        expectedUrl,
+        reason: "missing live root read-back"
+      })
+    };
+  }
+
+  const marker = "\n__FORGETBASE_LIVE_ROOT__";
+  const markerIndex = result.stdout.lastIndexOf(marker);
+  const html = markerIndex === -1 ? result.stdout : result.stdout.slice(0, markerIndex);
+  const meta = markerIndex === -1 ? "" : result.stdout.slice(markerIndex + marker.length).trim();
+  const [statusCodeText = "", ...effectiveUrlParts] = meta.split(/\s+/);
+  const statusCode = Number.parseInt(statusCodeText, 10);
+  const effectiveUrl = effectiveUrlParts.join(" ");
+  const required = requiredText.map((text) => ({ text, present: html.includes(text) }));
+  const forbidden = forbiddenText.map((text) => ({ text, present: html.includes(text) }));
+  const hasRequiredText = required.every((entry) => entry.present);
+  const hasForbiddenText = forbidden.some((entry) => entry.present);
+  const ok = result.ok &&
+    statusCode >= 200 &&
+    statusCode < 300 &&
+    hasRequiredText &&
+    !hasForbiddenText;
+
+  return {
+    ok,
+    evidence: JSON.stringify({
+      ok,
+      statusCode: Number.isNaN(statusCode) ? null : statusCode,
+      effectiveUrl,
+      expectedUrl,
+      htmlBytes: Buffer.byteLength(html, "utf8"),
+      requiredText: required,
+      forbiddenText: forbidden,
+      stderr: result.stderr || undefined
+    })
   };
 }
 

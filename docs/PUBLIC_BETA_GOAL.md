@@ -148,7 +148,7 @@ Before public beta, record:
 - commit SHA
 - CI run URL and status
 - live demo URL
-- live demo root and `/api/health` read-backs
+- live demo root content and `/api/health` read-backs
 - clean-checkout verification summary
 - browser screenshot bundle
 - restricted leakage result
@@ -161,7 +161,7 @@ Before public beta, record:
 - GitHub repo visibility, license, topics, README, and release text read-back
 - `github:public-beta:check` JSON output
 
-The release proof bundle is a JSON manifest plus referenced screenshots/log summaries. It must pass `release-proof:check`; the check rejects placeholder values, missing screenshots, localhost live-demo URLs, missing live demo root or health read-backs, missing required gates, missing compatibility evidence, stale reader/admin UAT, and missing GitHub/security read-back evidence.
+The release proof bundle is a JSON manifest plus referenced screenshots/log summaries. It must pass `release-proof:check`; the check rejects placeholder values, missing screenshots, localhost live-demo URLs, stale live root HTML, missing health read-backs, missing required gates, missing compatibility evidence, stale reader/admin UAT, and missing GitHub/security read-back evidence.
 
 ## Done
 

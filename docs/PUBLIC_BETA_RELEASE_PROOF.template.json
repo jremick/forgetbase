@@ -42,6 +42,28 @@
       ]
     },
     {
+      "name": "live-demo-root",
+      "status": "pass",
+      "command": "curl --silent --show-error --location --max-time 20 --write-out \"\\n__FORGETBASE_LIVE_ROOT__%{http_code} %{url_effective}\" https://<public-demo-host>",
+      "evidence": [
+        {
+          "kind": "text",
+          "value": "{\"ok\":true,\"statusCode\":200,\"effectiveUrl\":\"https://<public-demo-host>/\",\"htmlBytes\":1234,\"requiredText\":[{\"text\":\"ForgetBase | Knowledge Base for People and AI Tools\",\"present\":true},{\"text\":\"ForgetBase: A Knowledge Base for People and AI Tools\",\"present\":true},{\"text\":\"knowledge base for people and AI tools\",\"present\":true}],\"forbiddenText\":[{\"text\":\"ForgetBase | Governed Instructions for AI Agents\",\"present\":false},{\"text\":\"ForgetBase: Governed Instructions for AI Agents\",\"present\":false},{\"text\":\"governed registry for agent instructions\",\"present\":false},{\"text\":\"context packages with API, CLI, MCP\",\"present\":false}]}"
+        }
+      ]
+    },
+    {
+      "name": "live-demo-health",
+      "status": "pass",
+      "command": "curl --silent --show-error --fail --max-time 20 https://<public-demo-host>/api/health",
+      "evidence": [
+        {
+          "kind": "text",
+          "value": "{\"status\":\"ok\",\"service\":\"forgetbase-api\",\"version\":\"0.1.0\"}"
+        }
+      ]
+    },
+    {
       "name": "public-uat",
       "status": "pass",
       "command": "UAT_OUTPUT_DIR=work/public-beta-proof/public-uat npx -y pnpm@11.7.0 test:uat",

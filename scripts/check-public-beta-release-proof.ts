@@ -258,6 +258,10 @@ function validateChecks(value: unknown): void {
       });
     }
 
+    if (check.name === "live-demo-root") {
+      requireLiveDemoRootEvidence(check.evidence, "checks.live-demo-root.evidence");
+    }
+
     if (check.name === "github-readback") {
       requireGithubCheckerEvidence(check.evidence, "checks.github-readback.evidence");
     }
@@ -631,6 +635,63 @@ function requireGithubCheckerEvidence(value: unknown, path: string): void {
   const failed = findings.filter((finding) => isRecord(finding) && finding.status === "fail");
   if (failed.length > 0) {
     issues.push(`${path} github:public-beta:check evidence includes failing findings`);
+  }
+}
+
+function requireLiveDemoRootEvidence(value: unknown, path: string): void {
+  const textEvidence = evidenceRecords(value)
+    .find((evidence) => evidence.kind === "text" && typeof evidence.value === "string" && evidence.value.trim().startsWith("{"));
+
+  if (!textEvidence || typeof textEvidence.value !== "string") {
+    issues.push(`${path} must include JSON text output from the live root read-back`);
+    return;
+  }
+
+  let payload: unknown;
+  try {
+    payload = JSON.parse(textEvidence.value) as unknown;
+  } catch (error) {
+    issues.push(`${path} live root evidence is not valid JSON: ${(error as Error).message}`);
+    return;
+  }
+
+  if (!isRecord(payload)) {
+    issues.push(`${path} live root evidence must be a JSON object`);
+    return;
+  }
+
+  if (payload.ok !== true) {
+    issues.push(`${path} live root evidence must have ok=true`);
+  }
+
+  if (typeof payload.statusCode !== "number" || payload.statusCode < 200 || payload.statusCode >= 300) {
+    issues.push(`${path} live root evidence must include a 2xx statusCode`);
+  }
+
+  if (typeof payload.effectiveUrl !== "string") {
+    issues.push(`${path} live root evidence must include effectiveUrl`);
+  } else {
+    requireUrl(payload.effectiveUrl, `${path}.effectiveUrl`, { requireHttps: true, rejectLocalhost: true });
+  }
+
+  if (!Array.isArray(payload.requiredText) || payload.requiredText.length < 1) {
+    issues.push(`${path} live root evidence must include requiredText checks`);
+  } else {
+    for (const [index, entry] of payload.requiredText.entries()) {
+      if (!isRecord(entry) || typeof entry.text !== "string" || entry.present !== true) {
+        issues.push(`${path} requiredText.${index} must be present`);
+      }
+    }
+  }
+
+  if (!Array.isArray(payload.forbiddenText) || payload.forbiddenText.length < 1) {
+    issues.push(`${path} live root evidence must include forbiddenText checks`);
+  } else {
+    for (const [index, entry] of payload.forbiddenText.entries()) {
+      if (!isRecord(entry) || typeof entry.text !== "string" || entry.present !== false) {
+        issues.push(`${path} forbiddenText.${index} must be absent`);
+      }
+    }
   }
 }
 
