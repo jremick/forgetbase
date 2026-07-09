@@ -6,7 +6,7 @@ services:
       POSTGRES_USER: forgetbase
       POSTGRES_PASSWORD: forgetbase_dev
     ports:
-      - "${FORGETBASE_POSTGRES_PORT:-5432}:5432"
+      - "${FORGETBASE_POSTGRES_PORT:-127.0.0.1:5432}:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
       - ./infra/docker/postgres-init:/docker-entrypoint-initdb.d:ro
@@ -43,11 +43,20 @@ services:
       FORGETBASE_LOGIN_SESSION_IDLE_TIMEOUT_SECONDS: ${FORGETBASE_LOGIN_SESSION_IDLE_TIMEOUT_SECONDS:-14400}
       FORGETBASE_LOGIN_SESSION_ABSOLUTE_MAX_AGE_SECONDS: ${FORGETBASE_LOGIN_SESSION_ABSOLUTE_MAX_AGE_SECONDS:-2592000}
       FORGETBASE_LOGIN_REFRESH_TOKEN_MAX_AGE_SECONDS: ${FORGETBASE_LOGIN_REFRESH_TOKEN_MAX_AGE_SECONDS:-604800}
+      FORGETBASE_LOGIN_THROTTLE_MAX_ATTEMPTS: ${FORGETBASE_LOGIN_THROTTLE_MAX_ATTEMPTS:-5}
+      FORGETBASE_LOGIN_THROTTLE_WINDOW_MS: ${FORGETBASE_LOGIN_THROTTLE_WINDOW_MS:-60000}
+      FORGETBASE_LOGIN_THROTTLE_BLOCK_MS: ${FORGETBASE_LOGIN_THROTTLE_BLOCK_MS:-60000}
+      FORGETBASE_LOGIN_THROTTLE_MAX_ENTRIES: ${FORGETBASE_LOGIN_THROTTLE_MAX_ENTRIES:-10000}
     ports:
-      - "${FORGETBASE_API_PORT:-3000}:3000"
+      - "${FORGETBASE_API_PORT:-127.0.0.1:3000}:3000"
     depends_on:
       migrate:
         condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "wget --quiet --output-document=- http://127.0.0.1:3000/ready >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   worker:
     build:
@@ -93,7 +102,7 @@ services:
       dockerfile: infra/docker/node.Dockerfile
     command: ["pnpm", "--filter", "@forgetbase/web", "exec", "vite", "preview", "--host", "0.0.0.0"]
     ports:
-      - "${FORGETBASE_WEB_PORT:-5175}:4173"
+      - "${FORGETBASE_WEB_PORT:-127.0.0.1:5175}:4173"
     depends_on:
       - api
 

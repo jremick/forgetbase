@@ -195,21 +195,20 @@ async function checkPublicEntry(page: Page, viewportName: "desktop" | "mobile"):
     await assertProtectedSessionApiRequiresAuthentication(page, `${viewportName}: protected session API requires authentication`);
   }
 
-  await expectText(page, "h1", "A knowledge base for people and AI tools.", `${viewportName}: public h1`);
+  await expectText(page, "h1", "Log in to ForgetBase", `${viewportName}: login h1`);
   await expectTitle(page, "ForgetBase | Knowledge Base for People and AI Tools", `${viewportName}: page title`);
-  await expectVisibleText(page, "Write and organize company knowledge once.", `${viewportName}: public lede`);
-  await expectVisibleText(page, "People get a clean wiki-style reading view.", `${viewportName}: public reader lede`);
-  await expectVisibleText(page, "Separate reader and admin views", `${viewportName}: trust badge`);
-  await expectVisibleText(page, "Useful beta, clear limits.", `${viewportName}: beta boundary`);
-  await expectVisibleText(page, "Read pages", `${viewportName}: beta path read`);
-  await expectVisibleText(page, "Search with sources", `${viewportName}: beta path search`);
-  await expectVisibleText(page, "Manage content", `${viewportName}: beta path manage`);
-  await expectVisibleText(page, "Check exports", `${viewportName}: beta path exports`);
+  await expectVisibleText(page, "Use your account to read pages or manage the knowledge base.", `${viewportName}: login description`);
+  await page.waitForSelector(".login-panel", { timeout: 15000 });
+  await page.waitForSelector(".public-login-form", { timeout: 15000 });
+  await page.waitForSelector("#login-email", { timeout: 15000 });
+  await page.waitForSelector("#login-password", { timeout: 15000 });
+  await expectHiddenText(page, "A knowledge base for people and AI tools.", `${viewportName}: marketing h1 removed`);
+  await expectHiddenText(page, "Write and organize company knowledge once.", `${viewportName}: marketing lede removed`);
+  await expectHiddenText(page, "Separate reader and admin views", `${viewportName}: marketing trust badge removed`);
   await assertNoJargon(page, "main", `${viewportName}: public copy`);
   await assertNoHorizontalOverflow(page, `${viewportName}: public overflow`);
   await assertNoClippedText(page, `${viewportName}: public clipped text`);
-  await assertHeroFits(page, `${viewportName}: hero fits`);
-  await screenshot(page, `public-${viewportName}.png`, `${viewportName}: public screenshot`);
+  await screenshot(page, `login-${viewportName}.png`, `${viewportName}: login screenshot`);
 }
 
 async function checkReleaseFlow(page: Page, viewportName: "desktop" | "mobile"): Promise<void> {
@@ -219,25 +218,35 @@ async function checkReleaseFlow(page: Page, viewportName: "desktop" | "mobile"):
 
   await applyTenantOverride(page);
   await page.goto(baseUrl, { waitUntil: "domcontentloaded" });
-  await clickFirstVisible(page, "button", "Log in");
   await page.locator("#login-email").fill(email);
   await page.locator("#login-password").fill(password);
   await page.locator(".public-login-form button[type='submit']").click();
   await page.waitForSelector(".app-shell.reader-shell", { timeout: 15000 });
-  await page.waitForSelector(".reader-ask-panel", { timeout: 15000 });
-  await page.waitForSelector("#reader-title", { timeout: 15000 });
+  await page.waitForSelector(
+    viewportName === "desktop" ? ".reader-library" : ".reader-mobile-page-picker",
+    { timeout: 15000 }
+  );
+  await page.waitForSelector(".reader-article", { timeout: 15000 });
+  await page.waitForSelector(".reader-page-footer", { timeout: 15000 });
 
-  await expectText(page, "#reader-title", "Read pages", `release ${viewportName}: reader title`);
-  await expectVisibleText(page, "Published pages", `release ${viewportName}: reader summary`);
-  await expectVisibleText(page, "Ask this knowledge base", `release ${viewportName}: reader ask heading`);
+  const readerPageNavigation = viewportName === "desktop"
+    ? page.locator(".reader-library .nav-chrome-label")
+    : page.locator(".reader-mobile-page-picker");
+  await readerPageNavigation.filter({ hasText: /pages/i }).waitFor({ state: "visible", timeout: 15000 });
+  checks.push({ name: `release ${viewportName}: reader page navigation`, status: "pass" });
+  if (viewportName === "desktop") {
+    await expectVisibleText(page, "Cmd K", `release ${viewportName}: reader search shortcut`);
+  }
   if (viewportName === "mobile") {
     await assertMobileReaderPagePicker(page, `release ${viewportName}: reader page picker`);
   }
-  await clickFirstVisible(page, "button", "Reader Access and Export Rules");
+  await assertReaderNestedNavigation(page, `release ${viewportName}: reader nested navigation`);
+  await selectReaderPageForUat(page, "Reader Access and Export Rules");
   await page.locator(".reader-article").scrollIntoViewIfNeeded();
-  await expectText(page, ".reader-article-header h2", "Reader Access and Export Rules", `release ${viewportName}: reader article title`);
+  await expectText(page, ".reader-article-header h1", "Reader Access and Export Rules", `release ${viewportName}: reader article title`);
   await assertReaderArticleDepth(page, `release ${viewportName}: reader article depth`);
   await assertReaderSectionNavigation(page, `release ${viewportName}: reader section navigation`);
+  await assertReaderPageFooter(page, `release ${viewportName}: reader page footer`);
   if (viewportName === "desktop") {
     await screenshot(page, "page-browse-tree.png", "release desktop: reader page tree screenshot");
     await screenshot(page, "page-read-view.png", "release desktop: reader page read screenshot");
@@ -247,8 +256,13 @@ async function checkReleaseFlow(page: Page, viewportName: "desktop" | "mobile"):
   await page.waitForSelector(".reader-ask-answer", { timeout: 15000 });
   await expectVisibleText(page, "Answer", `release ${viewportName}: reader ask answer`);
   await expectVisibleText(page, "Sources", `release ${viewportName}: reader ask sources`);
+  await page.waitForSelector(".reader-citation", { timeout: 15000 });
   await assertNoClippedText(page, `release ${viewportName}: reader ask clipped text`);
-  await screenshot(page, viewportName === "desktop" ? "ask-with-sources.png" : "ask-with-sources-mobile.png", `release ${viewportName}: ask with sources screenshot`);
+  await screenshot(
+    page,
+    viewportName === "desktop" ? "ask-with-sources.png" : "ask-with-sources-mobile.png",
+    `release ${viewportName}: ask with sources screenshot`
+  );
   await page.locator("#reader-search-input").fill("personal data");
   await page.locator("#reader-search-input").press("Enter");
   await page.waitForSelector(".reader-search-results", { timeout: 15000 });
@@ -275,9 +289,9 @@ async function checkReleaseFlow(page: Page, viewportName: "desktop" | "mobile"):
   await screenshot(page, `reader-${viewportName}.png`, `release ${viewportName}: reader screenshot`);
 
   if (expectedRole === "reader") {
-    await expectHiddenText(page, "Admin console", `release ${viewportName}: reader has no admin handoff`);
+    await assertReaderHasNoAdminControls(page, `release ${viewportName}: reader has no admin controls`);
     await page.goto(`${baseUrl.replace(/#.*$/, "")}#admin/system/settings`, { waitUntil: "domcontentloaded" });
-    await page.waitForSelector("#reader-title", { timeout: 10000 });
+    await page.waitForSelector(".reader-article", { timeout: 10000 });
     const hash = await page.evaluate(() => window.location.hash);
     if (hash !== "#reader") {
       throw new Error(`Reader direct admin route was not forced back to #reader; got ${hash}`);
@@ -291,11 +305,10 @@ async function checkReleaseFlow(page: Page, viewportName: "desktop" | "mobile"):
     return;
   }
 
-  await clickUnique(page, "button", "Admin console");
+  await page.goto(routeUrl("admin/content"), { waitUntil: "domcontentloaded" });
   await page.waitForSelector(".side-nav", { timeout: 10000 });
   await expectHash(page, "#admin/content", "release: admin canonical content route");
   await expectVisibleText(page, "Manage ForgetBase", "release: admin console shell title");
-  await expectVisibleText(page, "Reader view", "release: admin reader handoff");
   await assertLegacyAdminHashCanonicalizes(page);
   await expectVisibleText(page, "Content", "release: admin content label");
   await expectVisibleText(page, "Reviews", "release: admin reviews label");
@@ -315,6 +328,11 @@ async function applyTenantOverride(page: Page): Promise<void> {
   await page.context().clearCookies();
 
   await page.addInitScript((value) => {
+    if (window.sessionStorage.getItem("forgetbase-uat-storage-initialized") === "true") {
+      return;
+    }
+
+    window.sessionStorage.setItem("forgetbase-uat-storage-initialized", "true");
     window.localStorage.removeItem("forgetbase-api-key");
     window.localStorage.removeItem("forgetbase-session-cookie-active");
     window.localStorage.removeItem("forgetbase-login-email");
@@ -334,12 +352,11 @@ function routeUrl(route: string): string {
 }
 
 async function checkMobileAdminShell(page: Page): Promise<void> {
-  await clickUnique(page, "button", "Admin console");
+  await page.goto(routeUrl("admin/content"), { waitUntil: "domcontentloaded" });
   await page.waitForSelector(".app-shell.admin-shell", { timeout: 10000 });
   await expectHash(page, "#admin/content", "release mobile: admin canonical content route");
   await page.getByRole("button", { name: "Open navigation" }).click();
   await expectVisibleText(page, "Manage ForgetBase", "release mobile: admin console shell title");
-  await expectVisibleText(page, "Reader view", "release mobile: admin reader handoff");
   await assertNoHorizontalOverflow(page, "release mobile: admin shell overflow");
   await assertNoClippedText(page, "release mobile: admin shell clipped text");
   await screenshot(page, "admin-mobile.png", "release mobile: admin shell screenshot");
@@ -462,6 +479,35 @@ async function expectHiddenText(page: Page, text: string, name: string): Promise
   }
 
   checks.push({ name, status: "pass", detail: count });
+}
+
+async function assertReaderHasNoAdminControls(page: Page, name: string): Promise<void> {
+  const result = await page.evaluate(() => {
+    const exactAdminControls = Array.from(document.querySelectorAll("button, [role='menuitem'], a"))
+      .filter((element) => element.textContent?.replace(/\s+/g, " ").trim() === "Admin")
+      .filter((element) => {
+        const rect = (element as HTMLElement).getBoundingClientRect();
+        const style = window.getComputedStyle(element);
+        return rect.width > 0 && rect.height > 0 && style.display !== "none" && style.visibility !== "hidden";
+      });
+    const adminShells = Array.from(document.querySelectorAll(".admin-shell, .admin-side-nav"))
+      .filter((element) => {
+        const rect = (element as HTMLElement).getBoundingClientRect();
+        const style = window.getComputedStyle(element);
+        return rect.width > 0 && rect.height > 0 && style.display !== "none" && style.visibility !== "hidden";
+      });
+
+    return {
+      adminShells: adminShells.length,
+      exactAdminControls: exactAdminControls.length
+    };
+  });
+
+  if (result.adminShells > 0 || result.exactAdminControls > 0) {
+    throw new Error(`${name}: found ${JSON.stringify(result)}`);
+  }
+
+  checks.push({ name, status: "pass", detail: 0 });
 }
 
 async function expectHash(page: Page, expected: string, name: string): Promise<void> {
@@ -600,22 +646,69 @@ async function assertReaderArticleDepth(page: Page, name: string): Promise<void>
 async function assertMobileReaderPagePicker(page: Page, name: string): Promise<void> {
   const result = await page.evaluate(() => {
     const picker = document.querySelector<HTMLElement>(".reader-mobile-page-picker");
+    const desktopNavigation = document.querySelector<HTMLElement>(".reader-library");
     const select = picker?.querySelector<HTMLSelectElement>("select");
     const rect = picker?.getBoundingClientRect();
+    const desktopRect = desktopNavigation?.getBoundingClientRect();
 
     return {
       visible: Boolean(rect && rect.width > 0 && rect.height > 0),
+      desktopNavigationVisible: Boolean(desktopRect && desktopRect.width > 0 && desktopRect.height > 0),
       label: picker?.textContent?.includes("Pages") ?? false,
       options: select?.options.length ?? 0,
       value: select?.value ?? ""
     };
   });
 
-  if (!result.visible || !result.label || result.options < 2 || !result.value) {
-    throw new Error(`${name}: expected a visible mobile page picker with multiple pages; got ${JSON.stringify(result)}`);
+  if (!result.visible || result.desktopNavigationVisible || !result.label || result.options < 2 || !result.value) {
+    throw new Error(`${name}: expected one visible mobile page picker and a hidden desktop tree; got ${JSON.stringify(result)}`);
   }
 
   checks.push({ name, status: "pass", detail: result.options });
+}
+
+async function assertReaderNestedNavigation(page: Page, name: string): Promise<void> {
+  const mobilePicker = page.locator(".reader-mobile-page-picker");
+  if (await mobilePicker.isVisible()) {
+    await mobilePicker.locator("select").selectOption({ label: "Reader Nested Navigation Example" });
+  } else {
+    await clickFirstVisible(page, "button", "Reader experience");
+    await clickFirstVisible(page, "button", "Lifecycle states");
+    await clickFirstVisible(page, "button", "Nested page sample");
+  }
+  await page.waitForFunction(
+    () => document.querySelector(".reader-article-header h1")?.textContent?.replace(/\s+/g, " ").trim() === "Reader Nested Navigation Example",
+    undefined,
+    { timeout: 15000 }
+  );
+  await assertReaderArticleDepth(page, `${name}: nested article depth`);
+  checks.push({ name, status: "pass", detail: "Reader experience > Lifecycle states > Nested page sample" });
+}
+
+async function assertReaderPageFooter(page: Page, name: string): Promise<void> {
+  const result = await page.evaluate(() => {
+    const footer = document.querySelector<HTMLElement>(".reader-page-footer");
+    const terms = Array.from(footer?.querySelectorAll("dt") ?? [])
+      .map((term) => term.textContent?.replace(/\s+/g, " ").trim() ?? "")
+      .filter(Boolean);
+    const values = Array.from(footer?.querySelectorAll("dd") ?? [])
+      .map((value) => value.textContent?.replace(/\s+/g, " ").trim() ?? "")
+      .filter(Boolean);
+    const rect = footer?.getBoundingClientRect();
+
+    return {
+      visible: Boolean(rect && rect.width > 0 && rect.height > 0),
+      heading: footer?.querySelector("h3")?.textContent?.replace(/\s+/g, " ").trim() ?? "",
+      terms,
+      values
+    };
+  });
+
+  if (!result.visible || result.heading || result.terms.length < 3 || result.values.length < 3) {
+    throw new Error(`${name}: expected a compact page details footer with configured fields and no heading; got ${JSON.stringify(result)}`);
+  }
+
+  checks.push({ name, status: "pass", detail: result.terms.join(", ") });
 }
 
 async function assertReaderSectionNavigation(page: Page, name: string): Promise<void> {
@@ -676,13 +769,24 @@ async function assertSearchResultOpensPage(page: Page, name: string): Promise<vo
 
   await firstResult.getByRole("button", { name: "Open page" }).click();
   await page.waitForFunction(
-    (title) => document.querySelector(".reader-article-header h2")?.textContent?.replace(/\s+/g, " ").trim() === title,
+    (title) => document.querySelector(".reader-article-header h1")?.textContent?.replace(/\s+/g, " ").trim() === title,
     expectedTitle,
     { timeout: 15000 }
   );
   await assertElementInViewport(page, ".reader-article", `${name}: opened page in view`);
   await assertReaderArticleDepth(page, `${name}: opened page article depth`);
   checks.push({ name, status: "pass", detail: expectedTitle });
+}
+
+async function selectReaderPageForUat(page: Page, title: string): Promise<void> {
+  const mobilePicker = page.locator(".reader-mobile-page-picker");
+
+  if (await mobilePicker.isVisible()) {
+    await mobilePicker.locator("select").selectOption({ label: title });
+    return;
+  }
+
+  await clickFirstVisible(page, "button", title === "Reader Access and Export Rules" ? "Read vs export" : title);
 }
 
 async function assertElementInViewport(page: Page, selector: string, name: string): Promise<void> {

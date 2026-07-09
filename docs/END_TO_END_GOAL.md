@@ -2,9 +2,9 @@
 
 ## Goal Statement
 
-Build ForgetBase as an Apache 2.0 open-core, self-hostable, SMB-ready instruction control plane for agentic AI systems.
+Build ForgetBase as an Apache 2.0 open-core, self-hostable, SMB-ready knowledge system for people and AI tools, with an instruction control plane as its governed core.
 
-The system must let AI teams and individual power users manage governed AI instructions, policies, guardrails, playbooks, tool guidance, reusable skills, SOPs, templates, evaluation cases, and human-readable documents as versioned assets. Agents and AI tools must be able to retrieve and apply those assets directly through API, CLI, MCP, ChatGPT-compatible, Claude-compatible, Codex-compatible, and Claude Code-compatible surfaces. Humans must be able to inspect, approve, publish, debug, and read content through an operational web UI.
+The system must let AI teams and individual power users manage governed AI instructions, policies, guardrails, playbooks, tool guidance, reusable skills, SOPs, templates, evaluation cases, and human-readable documents as versioned assets. Agents and AI tools must be able to retrieve and apply those assets directly through API, CLI, MCP, ChatGPT-compatible, Claude-compatible, Codex-compatible, and Claude Code-compatible surfaces. People must be able to browse, read, search, ask, and inspect sources through a reader UI, while admins inspect, approve, publish, debug, and control access through a separate operational UI.
 
 ## Production Outcome
 
@@ -32,7 +32,7 @@ The MVP proves the open-source core:
 - REST/OpenAPI
 - CLI
 - MCP server
-- operational web UI
+- reader web UI and separate operational admin UI
 - synthetic demo corpus
 - validation and restricted export tests
 - telemetry and audit foundations

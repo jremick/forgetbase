@@ -420,6 +420,7 @@ function authBootstrapFixture(): Record<string, unknown> {
       keyPrefix: "fb_test",
       secretPreview: "fb_test...",
       scopes: ["admin", "asset:read", "asset:write", "permission:write"],
+      allowedSurfaces: ["api", "cli", "mcp", "web", "export"],
       expiresAt: null,
       revokedAt: null,
       createdAt: "2026-06-19T00:00:00.000Z",

@@ -6,7 +6,7 @@ Teams can write and organize knowledge once. People get a clean reading UI. AI t
 
 ## Current Status
 
-This repository is being prepared for public beta. The current goal is documented in [Public Beta Goal](docs/PUBLIC_BETA_GOAL.md).
+This private repository is being prepared for public beta through controlled live user testing. The current release target is documented in [Public Beta Goal](docs/PUBLIC_BETA_GOAL.md), and the pre-release testing boundary is documented in [Private Live UAT](docs/PRIVATE_LIVE_UAT.md).
 
 Expected public beta limits:
 
@@ -15,6 +15,7 @@ Expected public beta limits:
 - Supported trial paths and volatile surfaces are documented in [Public Beta Compatibility](docs/PUBLIC_BETA_COMPATIBILITY.md).
 - Full quality-based orchestration, external side-effecting action adapters, connector credential governance, SCIM, hosted service features, and advanced analytics are future work.
 - Current packages are private workspace packages; no npm publishing workflow is defined yet.
+- Repository visibility, tags, and releases remain unchanged until explicit owner approval after the private-live evidence gates pass.
 
 ## Quick Start
 
@@ -109,6 +110,7 @@ Still future work:
 - [Legacy Alpha Release Checklist](docs/ALPHA_RELEASE_CHECKLIST.md)
 - [Public Beta Goal](docs/PUBLIC_BETA_GOAL.md)
 - [Public Beta Compatibility](docs/PUBLIC_BETA_COMPATIBILITY.md)
+- [Private Live UAT](docs/PRIVATE_LIVE_UAT.md)
 - [Changelog](CHANGELOG.md)
 - [Contributing](CONTRIBUTING.md)
 - [Support](SUPPORT.md)

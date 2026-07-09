@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import type {
   AccountLinkingMode,
   AgentActionExecutionPolicy,
@@ -52,11 +52,30 @@ import type {
   TelemetryRetentionPolicy,
   TelemetryRetentionPurgeResult
 } from "@forgetbase/schema";
-import * as PhosphorIcons from "@phosphor-icons/react";
+import { ArrowsClockwise } from "@phosphor-icons/react/dist/icons/ArrowsClockwise";
+import { BookOpen } from "@phosphor-icons/react/dist/icons/BookOpen";
+import { ClipboardText } from "@phosphor-icons/react/dist/icons/ClipboardText";
+import { Copy } from "@phosphor-icons/react/dist/icons/Copy";
+import { DownloadSimple } from "@phosphor-icons/react/dist/icons/DownloadSimple";
+import { GearSix } from "@phosphor-icons/react/dist/icons/GearSix";
+import { List } from "@phosphor-icons/react/dist/icons/List";
+import { MagnifyingGlass } from "@phosphor-icons/react/dist/icons/MagnifyingGlass";
+import { Package } from "@phosphor-icons/react/dist/icons/Package";
+import { SignOut } from "@phosphor-icons/react/dist/icons/SignOut";
 import { Alert, AlertDescription, AlertTitle } from "./components/ui/alert.js";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle
+} from "./components/ui/alert-dialog.js";
 import { Badge, type BadgeVariant } from "./components/ui/badge.js";
 import { Button } from "./components/ui/button.js";
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "./components/ui/card.js";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./components/ui/card.js";
 import {
   DataTableShell,
   DefinitionGrid,
@@ -79,14 +98,6 @@ import {
   CommandList,
   CommandShortcut
 } from "./components/ui/command.js";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle
-} from "./components/ui/dialog.js";
 import { Checkbox } from "./components/ui/checkbox.js";
 import {
   DropdownMenu,
@@ -100,8 +111,6 @@ import {
 import { Input } from "./components/ui/input.js";
 import { Label } from "./components/ui/label.js";
 import { NativeSelect } from "./components/ui/native-select.js";
-import { ScrollArea } from "./components/ui/scroll-area.js";
-import { Separator } from "./components/ui/separator.js";
 import {
   Sheet,
   SheetContent,
@@ -162,30 +171,6 @@ import {
 } from "./local-dev-auth.js";
 import "./styles.css";
 
-const {
-  ArrowsClockwise,
-  BookOpen,
-  ClipboardText,
-  Copy,
-  DownloadSimple,
-  GearSix,
-  List,
-  MagnifyingGlass,
-  Package,
-  SignOut
-} = PhosphorIcons as unknown as {
-  ArrowsClockwise: React.ElementType;
-  BookOpen: React.ElementType;
-  ClipboardText: React.ElementType;
-  Copy: React.ElementType;
-  DownloadSimple: React.ElementType;
-  GearSix: React.ElementType;
-  List: React.ElementType;
-  MagnifyingGlass: React.ElementType;
-  Package: React.ElementType;
-  SignOut: React.ElementType;
-};
-
 const sessionCookieActiveStorageKey = "forgetbase-session-cookie-active";
 const csrfCookieName = "forgetbase_csrf";
 const configuredApiUrl = import.meta.env.VITE_FORGETBASE_API_URL?.trim();
@@ -228,8 +213,13 @@ const actionTypes: AgentActionType[] = [
 
 const unsafeMethods = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 const navWidthStorageKey = "forgetbase-web-nav-width";
+const navCollapsedStorageKey = "forgetbase-web-nav-collapsed";
 const densityStorageKey = "forgetbase-web-density";
 const navExpandedStorageKey = "forgetbase-web-nav-expanded";
+const navWidthDefault = 280;
+const navWidthMin = 240;
+const navWidthMax = 420;
+const navCollapsedWidth = 64;
 type AuthState = "checking" | "authenticated" | "unauthenticated";
 type NavBadgeTone = "warn" | "bad" | "ok";
 type NavLeafConfig = {
@@ -252,6 +242,10 @@ type NavSectionConfig = {
   count?: number | string;
   leaves: NavLeafConfig[];
 };
+type ReaderNavNode = {
+  asset: AssetRecord;
+  children: ReaderNavNode[];
+};
 type AssetContentView = "human" | "instruction" | "version" | "raw";
 type ManagedQueryView = "answer" | "evidence" | "diagnostics";
 type PolicySettingsView = "retention" | "answers" | "ranking" | "evals" | "actions" | "data" | "privacy";
@@ -262,6 +256,8 @@ type ReaderSectionHeading = {
   text: string;
   level: 2 | 3;
 };
+type ReleaseAction = "review" | "publish" | "restore";
+type ConfirmedReleaseAction = Exclude<ReleaseAction, "review">;
 const assetTypeLabels: Record<string, string> = {
   "agent-instruction": "Agent Guide",
   "eval-case": "Check",
@@ -659,48 +655,39 @@ const pageRoutes = new Set<string>(pageRouteValues);
 const operationsRoutes = new Set<string>(operationsRouteValues);
 const sensitivityFilterValues = ["public-demo", "internal", "restricted", "confidential", "secret"] as const;
 const defaultOperationsPageCopy = {
-  eyebrow: "Admin console",
   title: "System Health",
   lede: "Check the API, providers, recent activity, approvals, and maintenance jobs."
 };
-const operationsPageCopy: Record<string, { eyebrow: string; title: string; lede: string }> = {
+const operationsPageCopy: Record<string, { title: string; lede: string }> = {
   review: {
-    eyebrow: "Admin console",
     title: "Reviews",
     lede: "Review pages that need approval, updates, or publishing."
   },
   activity: {
-    eyebrow: "Admin console",
     title: "Activity",
     lede: "Review recent search, audit, feedback, cache, and model activity."
   },
   health: {
-    eyebrow: "Admin console",
     title: "System Health",
     lede: "Check the API, providers, recent activity, approvals, and maintenance jobs."
   },
   integrations: {
-    eyebrow: "Admin console",
     title: "Integrations",
     lede: "Manage model providers, health checks, and sign-in providers."
   },
   settings: {
-    eyebrow: "Admin console",
     title: "Settings",
     lede: "Choose the settings area you need."
   },
   policies: {
-    eyebrow: "Admin console",
     title: "Policies",
     lede: "Manage retention, answers, ranking, actions, cache, secrets, and redaction."
   },
   access: {
-    eyebrow: "Admin console",
     title: "Access",
     lede: "Manage users, groups, service accounts, API keys, and sessions."
   },
   approvals: {
-    eyebrow: "Admin console",
     title: "Approvals",
     lede: "Review approval rules, pending requests, and safety switches."
   }
@@ -745,6 +732,105 @@ function navBadgeVariant(tone?: NavBadgeTone): BadgeVariant {
   return "neutral";
 }
 
+function clampNavWidth(width: number): number {
+  const viewportMax = typeof window === "undefined"
+    ? navWidthMax
+    : Math.min(navWidthMax, Math.max(navWidthMin, window.innerWidth - 520));
+
+  return Math.min(viewportMax, Math.max(navWidthMin, Math.round(width)));
+}
+
+function readInitialNavWidth(): number {
+  if (typeof window === "undefined") {
+    return navWidthDefault;
+  }
+
+  const storedWidth = Number.parseInt(localStorage.getItem(navWidthStorageKey) || "", 10);
+
+  return Number.isFinite(storedWidth) ? clampNavWidth(storedWidth) : navWidthDefault;
+}
+
+function readAssetMetadataString(asset: AssetRecord, key: string): string | null {
+  const value = asset.metadata[key];
+
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function readAssetMetadataStringArray(asset: AssetRecord, key: string): string[] {
+  const value = asset.metadata[key];
+
+  return Array.isArray(value)
+    ? value.filter((entry): entry is string => typeof entry === "string" && Boolean(entry.trim())).map((entry) => entry.trim())
+    : [];
+}
+
+function readAssetMetadataNumber(asset: AssetRecord, key: string): number | null {
+  const value = asset.metadata[key];
+
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    const parsed = Number.parseFloat(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  return null;
+}
+
+function readerNavLabel(asset: AssetRecord): string {
+  return readAssetMetadataString(asset, "readerNavLabel") ?? asset.title;
+}
+
+function readerParentId(asset: AssetRecord): string | null {
+  return readAssetMetadataString(asset, "readerParentId");
+}
+
+function readerNavOrder(asset: AssetRecord): number {
+  return readAssetMetadataNumber(asset, "readerNavOrder") ?? Number.MAX_SAFE_INTEGER;
+}
+
+function sortReaderNodes(nodes: ReaderNavNode[]): ReaderNavNode[] {
+  return nodes
+    .map((node) => ({ ...node, children: sortReaderNodes(node.children) }))
+    .sort((left, right) =>
+      readerNavOrder(left.asset) - readerNavOrder(right.asset) ||
+      readerNavLabel(left.asset).localeCompare(readerNavLabel(right.asset))
+    );
+}
+
+function buildReaderNavTree(assets: AssetRecord[]): ReaderNavNode[] {
+  const nodes = new Map<string, ReaderNavNode>();
+
+  assets.forEach((asset) => {
+    nodes.set(asset.stableId, { asset, children: [] });
+  });
+
+  const roots: ReaderNavNode[] = [];
+
+  nodes.forEach((node) => {
+    const parentId = readerParentId(node.asset);
+    const parentNode = parentId && parentId !== node.asset.stableId ? nodes.get(parentId) : undefined;
+
+    if (parentNode) {
+      parentNode.children.push(node);
+    } else {
+      roots.push(node);
+    }
+  });
+
+  return sortReaderNodes(roots);
+}
+
+function readerNodeContainsStableId(node: ReaderNavNode, stableId: string | undefined): boolean {
+  if (!stableId) {
+    return false;
+  }
+
+  return node.asset.stableId === stableId || node.children.some((child) => readerNodeContainsStableId(child, stableId));
+}
+
 function readCookie(name: string): string {
   const prefix = `${name}=`;
   const cookie = document.cookie.split("; ").find((candidate) => candidate.startsWith(prefix));
@@ -760,6 +846,14 @@ function readCookie(name: string): string {
   }
 }
 
+function readInitialReaderPageId(): string {
+  if (typeof window === "undefined") {
+    return "";
+  }
+
+  return new URLSearchParams(window.location.search).get("page")?.trim() ?? "";
+}
+
 export function App() {
   const [apiUrl, setApiUrl] = useState(() => readInitialApiUrl(configuredApiUrl));
   const [apiKey, setApiKey] = useState(() => localStorage.getItem("forgetbase-api-key") ?? "");
@@ -771,9 +865,8 @@ export function App() {
   const [loginTenantId] = useState(readInitialLoginTenantId);
   const [loginEmail, setLoginEmail] = useState(readInitialLoginEmail);
   const [loginPassword, setLoginPassword] = useState(readInitialLoginPassword);
-  const [showLoginPanel, setShowLoginPanel] = useState(false);
   const [assets, setAssets] = useState<AssetRecord[]>([]);
-  const [selectedStableId, setSelectedStableId] = useState<string>("");
+  const [selectedStableId, setSelectedStableId] = useState(readInitialReaderPageId);
   const [assetDetail, setAssetDetail] = useState<AssetDetail | null>(null);
   const [assetContentView, setAssetContentView] = useState<AssetContentView>("human");
   const [policySettingsView, setPolicySettingsView] = useState<PolicySettingsView>("retention");
@@ -788,6 +881,9 @@ export function App() {
   const [readerAskText, setReaderAskText] = useState("What should be redacted?");
   const [readerAskResponse, setReaderAskResponse] = useState<ManagedQueryResponse | null>(null);
   const [isReaderAskRunning, setIsReaderAskRunning] = useState(false);
+  const [readerAskError, setReaderAskError] = useState("");
+  const [pendingReleaseAction, setPendingReleaseAction] = useState<ReleaseAction | null>(null);
+  const [releaseActionToConfirm, setReleaseActionToConfirm] = useState<ConfirmedReleaseAction | null>(null);
   const [managedQueryText, setManagedQueryText] = useState("personal data");
   const [managedQueryMode, setManagedQueryMode] =
     useState<"deterministic-retrieval" | "provider-routed">("deterministic-retrieval");
@@ -978,6 +1074,10 @@ export function App() {
   const [density, setDensity] = useState(() =>
     typeof window === "undefined" ? "comfortable" : localStorage.getItem(densityStorageKey) || "comfortable"
   );
+  const [navWidth, setNavWidth] = useState(readInitialNavWidth);
+  const [isNavCollapsed, setIsNavCollapsed] = useState(() =>
+    typeof window === "undefined" ? false : localStorage.getItem(navCollapsedStorageKey) === "true"
+  );
   const [expandedNavSections, setExpandedNavSections] = useState<Record<string, boolean>>(() => {
     if (typeof window === "undefined") {
       return {};
@@ -1069,25 +1169,9 @@ export function App() {
     });
   }, [readerSearchHasFreshResponse, searchResponse]);
   const readerAssetGroups = useMemo(() => {
-    const groups = new Map<string, AssetRecord[]>();
-
-    filteredReaderAssets.forEach((asset) => {
-      const group = groups.get(asset.type) ?? [];
-      group.push(asset);
-      groups.set(asset.type, group);
-    });
-
-    return Array.from(groups.entries())
-      .map(([type, groupAssets]) => ({
-        type,
-        assets: groupAssets.sort((left, right) => left.title.localeCompare(right.title))
-      }))
-      .sort((left, right) => left.type.localeCompare(right.type));
+    return buildReaderNavTree(filteredReaderAssets);
   }, [filteredReaderAssets]);
-  const readerCollectionCount = readerAssetGroups.length;
-  const readerPageCount = readerPublishedAssets.length;
   const readerVisiblePageCount = filteredReaderAssets.length;
-  const readerSearchResultCount = readerSearchHasFreshResponse ? readerSearchResults.length : 0;
   const libraryFilterActive = Boolean(
     libraryQuery.trim() || libraryViewFilter !== "all" || librarySensitivityFilter !== "all"
   );
@@ -1157,16 +1241,6 @@ export function App() {
     filteredReaderAssets[0] ??
     readerPublishedAssets[0];
 
-  function openLoginPanel() {
-    setShowLoginPanel(true);
-    window.requestAnimationFrame(() => {
-      const emailInput = document.getElementById("login-email");
-      if (emailInput instanceof HTMLInputElement) {
-        emailInput.focus();
-      }
-    });
-  }
-
   useEffect(() => {
     localStorage.setItem(apiUrlStorageKey, apiUrl);
   }, [apiUrl]);
@@ -1220,24 +1294,38 @@ export function App() {
   }, [density]);
 
   useEffect(() => {
+    localStorage.setItem(navWidthStorageKey, String(navWidth));
+    document.documentElement.style.setProperty("--nav", `${isNavCollapsed ? navCollapsedWidth : navWidth}px`);
+  }, [isNavCollapsed, navWidth]);
+
+  useEffect(() => {
+    localStorage.setItem(navCollapsedStorageKey, String(isNavCollapsed));
+  }, [isNavCollapsed]);
+
+  useEffect(() => {
     localStorage.setItem(navExpandedStorageKey, JSON.stringify(expandedNavSections));
   }, [expandedNavSections]);
 
   useEffect(() => {
-    if (!isAuthenticated || readerSurfaceActive) {
+    if (!isAuthenticated) {
       return undefined;
     }
 
-    const openCommandShortcut = (event: KeyboardEvent) => {
+    const handleCommandShortcut = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
-        setIsCommandOpen(true);
+
+        if (readerLibrarySurfaceActive) {
+          document.getElementById("reader-search-input")?.focus();
+        } else if (!readerSurfaceActive) {
+          setIsCommandOpen(true);
+        }
       }
     };
 
-    window.addEventListener("keydown", openCommandShortcut);
-    return () => window.removeEventListener("keydown", openCommandShortcut);
-  }, [isAuthenticated, readerSurfaceActive]);
+    window.addEventListener("keydown", handleCommandShortcut);
+    return () => window.removeEventListener("keydown", handleCommandShortcut);
+  }, [isAuthenticated, readerLibrarySurfaceActive, readerSurfaceActive]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -1303,6 +1391,22 @@ export function App() {
       setAssetContentView("human");
     }
   }, [readerPublishedAssets, readerLibrarySurfaceActive, selectedStableId]);
+
+  useEffect(() => {
+    if (!readerLibrarySurfaceActive || !selectedStableId) {
+      return;
+    }
+
+    const url = new URL(window.location.href);
+    if (url.searchParams.get("page") === selectedStableId && url.hash === "#reader") {
+      return;
+    }
+
+    url.searchParams.set("page", selectedStableId);
+    url.hash = "reader";
+    window.history.replaceState({}, document.title, `${url.pathname}${url.search}${url.hash}`);
+    setCurrentHashRoute("reader");
+  }, [readerLibrarySurfaceActive, selectedStableId]);
 
   useEffect(() => {
     if (isAuthenticated && selectedAsset && !accountSettingsRouteRequested) {
@@ -1474,6 +1578,7 @@ export function App() {
         displayName: response.user.displayName,
         role: response.user.role,
         scopes: response.apiKey.scopes,
+        allowedSurfaces: response.apiKey.allowedSurfaces,
         groupIds: []
       });
       setApiKey(localAuthKey);
@@ -1497,6 +1602,7 @@ export function App() {
     setVersionSnapshot(null);
     setReviewQueue(null);
     setReaderAskResponse(null);
+    setReaderAskError("");
     setExportPackage(null);
     setTelemetryEvents([]);
     setTelemetrySummary(null);
@@ -1581,6 +1687,7 @@ export function App() {
         displayName: response.user.displayName,
         role: response.user.role,
         scopes: response.apiKey.scopes,
+        allowedSurfaces: response.apiKey.allowedSurfaces,
         groupIds: []
       });
       setApiKey(localAuthKey);
@@ -1660,11 +1767,12 @@ export function App() {
   }
 
   async function publishAsset() {
-    if (!assetDetail) {
+    if (!assetDetail || pendingReleaseAction) {
       return;
     }
 
     setError("");
+    setPendingReleaseAction("publish");
 
     try {
       const detail = await request<AssetDetail>(`/assets/${encodeURIComponent(assetDetail.asset.stableId)}/publish`, {
@@ -1680,6 +1788,8 @@ export function App() {
       setMessage(`Published ${detail.asset.stableId}`);
     } catch (publishError) {
       setError(publishError instanceof Error ? publishError.message : String(publishError));
+    } finally {
+      setPendingReleaseAction(null);
     }
   }
 
@@ -1701,11 +1811,12 @@ export function App() {
   }
 
   async function completeAssetReview() {
-    if (!assetDetail) {
+    if (!assetDetail || pendingReleaseAction) {
       return;
     }
 
     setError("");
+    setPendingReleaseAction("review");
 
     try {
       const detail = await request<AssetDetail>(`/assets/${encodeURIComponent(assetDetail.asset.stableId)}/review`, {
@@ -1725,15 +1836,18 @@ export function App() {
       setMessage(`Reviewed ${detail.asset.stableId}`);
     } catch (reviewError) {
       setError(reviewError instanceof Error ? reviewError.message : String(reviewError));
+    } finally {
+      setPendingReleaseAction(null);
     }
   }
 
   async function restoreVersion() {
-    if (!assetDetail || !selectedVersionNumber) {
+    if (!assetDetail || !selectedVersionNumber || pendingReleaseAction) {
       return;
     }
 
     setError("");
+    setPendingReleaseAction("restore");
 
     try {
       const detail = await request<AssetDetail>(`/assets/${encodeURIComponent(assetDetail.asset.stableId)}/restore`, {
@@ -1749,6 +1863,8 @@ export function App() {
       setMessage(`Restored ${detail.asset.stableId} to v${selectedVersionNumber}`);
     } catch (restoreError) {
       setError(restoreError instanceof Error ? restoreError.message : String(restoreError));
+    } finally {
+      setPendingReleaseAction(null);
     }
   }
 
@@ -1785,6 +1901,7 @@ export function App() {
     }
 
     setError("");
+    setReaderAskError("");
     setIsReaderAskRunning(true);
 
     try {
@@ -1800,7 +1917,7 @@ export function App() {
       setReaderAskResponse(response);
     } catch (queryError) {
       setReaderAskResponse(null);
-      setError(queryError instanceof Error ? queryError.message : String(queryError));
+      setReaderAskError(queryError instanceof Error ? queryError.message : String(queryError));
     } finally {
       setIsReaderAskRunning(false);
     }
@@ -3141,14 +3258,14 @@ export function App() {
 
     if (normalizedRoute === "search") {
       return [
-        { label: "Admin console", onClick: () => navigatePage("admin/content") },
+        { label: "Content", onClick: () => navigatePage("admin/content") },
         { label: "Search", current: true }
       ];
     }
 
     if (normalizedRoute === "asset-read") {
       return [
-        { label: "Admin console", onClick: () => navigatePage("admin/content") },
+        { label: "Content", onClick: () => navigatePage("admin/content") },
         { label: "Page detail", current: true }
       ];
     }
@@ -3162,14 +3279,14 @@ export function App() {
 
     if (normalizedRoute === "review") {
       return [
-        { label: "Admin console", onClick: () => navigatePage("admin/content") },
+        { label: "Reviews", onClick: () => navigatePage("admin/reviews") },
         { label: "Review queue", current: true }
       ];
     }
 
     if (normalizedRoute === "distribute") {
       return [
-        { label: "Admin console", onClick: () => navigatePage("admin/content") },
+        { label: "Content", onClick: () => navigatePage("admin/content") },
         { label: "Exports", current: true }
       ];
     }
@@ -3182,7 +3299,7 @@ export function App() {
     }
 
     return [
-      { label: "Admin console", current: true }
+      { label: "Content", current: true }
     ];
   }
 
@@ -3266,6 +3383,67 @@ export function App() {
     setDensity((current) => current === "comfortable" ? "compact" : "comfortable");
   }
 
+  function toggleNavCollapsed() {
+    setIsNavCollapsed((current) => !current);
+  }
+
+  function commitNavWidth(width: number) {
+    setIsNavCollapsed(false);
+    setNavWidth(clampNavWidth(width));
+  }
+
+  function startNavResize(event: ReactPointerEvent<HTMLButtonElement>) {
+    if (event.button !== 0) {
+      return;
+    }
+
+    const nav = event.currentTarget.closest(".side-nav");
+
+    if (!(nav instanceof HTMLElement)) {
+      return;
+    }
+
+    event.preventDefault();
+    const handle = event.currentTarget;
+    const navLeft = nav.getBoundingClientRect().left;
+
+    handle.setPointerCapture(event.pointerId);
+    document.documentElement.classList.add("is-resizing-nav");
+    commitNavWidth(event.clientX - navLeft);
+
+    const handlePointerMove = (moveEvent: PointerEvent) => {
+      commitNavWidth(moveEvent.clientX - navLeft);
+    };
+    const stopResize = () => {
+      document.documentElement.classList.remove("is-resizing-nav");
+      document.removeEventListener("pointermove", handlePointerMove);
+      document.removeEventListener("pointerup", stopResize);
+      document.removeEventListener("pointercancel", stopResize);
+    };
+
+    document.addEventListener("pointermove", handlePointerMove);
+    document.addEventListener("pointerup", stopResize);
+    document.addEventListener("pointercancel", stopResize);
+  }
+
+  function resizeNavFromKeyboard(event: ReactKeyboardEvent<HTMLButtonElement>) {
+    const step = event.shiftKey ? 32 : 16;
+
+    if (event.key === "ArrowLeft") {
+      event.preventDefault();
+      commitNavWidth(navWidth - step);
+    } else if (event.key === "ArrowRight") {
+      event.preventDefault();
+      commitNavWidth(navWidth + step);
+    } else if (event.key === "Home") {
+      event.preventDefault();
+      commitNavWidth(navWidthMin);
+    } else if (event.key === "End") {
+      event.preventDefault();
+      commitNavWidth(navWidthMax);
+    }
+  }
+
   function toggleNavSection(sectionKey: string) {
     setExpandedNavSections((current) => ({
       ...current,
@@ -3281,10 +3459,9 @@ export function App() {
       folderLabel: "Pages",
       folderIcon: <BookOpen aria-hidden="true" />,
       folderRoute: "library",
-      activeRoutes: ["reader", "library", "search", "asset-read"],
+      activeRoutes: ["library", "search", "asset-read"],
       count: assets.length,
       leaves: [
-        { route: "reader", label: "Reader view", count: readerPublishedAssets.length },
         { route: "library", label: "All content", count: approvedAssets },
         { route: "search", label: "Search and ask" },
         { route: "asset-read", label: "Page detail", badge: assetDetail ? { label: "open", tone: "warn" } : undefined }
@@ -3357,27 +3534,82 @@ export function App() {
       routes: Array.from(routes.values())
     };
   });
-  const renderAdminShellHeader = (onNavigate?: () => void) => (
-    <div className="admin-side-header">
-      <p className="nav-label">Admin console</p>
-      <h2>Manage ForgetBase</h2>
-      <p>Content, access, exports, and system settings.</p>
+  const selectReaderPage = (stableId: string) => {
+    setSelectedStableId(stableId);
+    setAssetContentView("human");
+    window.requestAnimationFrame(() => {
+      document.querySelector<HTMLElement>(".reader-article-header h1")?.focus({ preventScroll: true });
+    });
+  };
+  const renderNavChrome = (label: string, count?: number) => (
+    <div className="nav-chrome">
       <Button
         type="button"
-        size="sm"
+        size="icon"
         variant="ghost"
-        onClick={() => {
-          navigatePage("reader");
-          onNavigate?.();
-        }}
+        className="nav-collapse-button"
+        aria-label={isNavCollapsed ? `Expand ${label}` : `Collapse ${label}`}
+        aria-pressed={isNavCollapsed}
+        onClick={toggleNavCollapsed}
       >
-        <BookOpen aria-hidden="true" />
-        Reader view
+        <List aria-hidden="true" />
       </Button>
+      <span className="nav-chrome-label">
+        {label}{count === undefined ? null : <span className="nav-chrome-count">({count})</span>}
+      </span>
+    </div>
+  );
+  const renderNavResizer = () => (
+    <button
+      type="button"
+      className="nav-resizer"
+      aria-label="Resize page navigation"
+      aria-valuemin={navWidthMin}
+      aria-valuemax={navWidthMax}
+      aria-valuenow={navWidth}
+      role="separator"
+      onPointerDown={startNavResize}
+      onKeyDown={resizeNavFromKeyboard}
+    />
+  );
+  const readerIconMap: Record<string, React.ElementType> = {
+    book: BookOpen,
+    checklist: ClipboardText,
+    export: Package,
+    guide: BookOpen,
+    policy: ClipboardText,
+    privacy: GearSix,
+    search: MagnifyingGlass,
+    system: GearSix
+  };
+  const renderReaderNavIcon = (asset: AssetRecord, hasChildren: boolean) => {
+    const configuredIcon = readAssetMetadataString(asset, "readerIcon");
+    const iconKey = (configuredIcon ?? (hasChildren ? "book" : asset.type)).toLowerCase();
+    const Icon = readerIconMap[iconKey] ?? readerIconMap[asset.type] ?? BookOpen;
+
+    return <Icon aria-hidden="true" />;
+  };
+  const readerPageInfoItems = (asset: AssetRecord): Array<{ key: string; term: string; description: ReactNode }> => {
+    const fieldCatalog: Record<string, { term: string; description: ReactNode }> = {
+      version: { term: "Version", description: currentVersion ? `Version ${currentVersion.versionNumber}` : "Not versioned" },
+      updated: { term: "Last updated", description: formatReaderDate(asset.updatedAt) },
+      access: { term: "Access", description: formatReaderAccess(asset) },
+      maintainer: { term: "Maintainer", description: formatReaderMaintainer(asset.ownerId) },
+      review: { term: "Review", description: formatReaderReview(asset.reviewDueAt) }
+    };
+    const configuredFields = readAssetMetadataStringArray(asset, "readerPageInfoFields");
+    const fields = configuredFields.length ? configuredFields : ["version", "updated", "access", "maintainer", "review"];
+
+    return fields.flatMap((key) => fieldCatalog[key] ? [{ key, ...fieldCatalog[key] }] : []);
+  };
+  const renderAdminShellHeader = () => (
+    <div className="admin-side-header">
+      <h2>Manage ForgetBase</h2>
+      <p>Content, access, exports, and system settings.</p>
     </div>
   );
   const renderNavigationSections = (onNavigate?: () => void) => (
-    <ScrollArea className="side-nav-scroll">
+    <div className="side-nav-scroll">
       {navSections.map((section) => {
         const isExpanded = Boolean(expandedNavSections[section.folderRoute]);
         const isActiveAncestor = section.activeRoutes.includes(currentPage);
@@ -3385,7 +3617,6 @@ export function App() {
 
         return (
           <div className="nav-group" key={section.label}>
-            <p className="nav-label">{section.label}</p>
             <div className="nav-tree">
               <Button
                 className={`nav-folder ${isActiveAncestor ? "is-active-ancestor" : ""} ${isExpanded ? "is-expanded" : ""}`}
@@ -3430,13 +3661,97 @@ export function App() {
           </div>
         );
       })}
-    </ScrollArea>
+    </div>
   );
+  const renderReaderNavNode = (node: ReaderNavNode, depth = 0): ReactNode => {
+    const hasChildren = node.children.length > 0;
+    const isActive = node.asset.stableId === readerSelectedAsset?.stableId;
+    const isSelectedBranch = readerNodeContainsStableId(node, readerSelectedAsset?.stableId);
+    const branchKey = `reader:${node.asset.stableId}`;
+    const branchId = `reader-nav-branch-${node.asset.id}`;
+    const isExpanded = hasChildren ? expandedNavSections[branchKey] ?? isSelectedBranch : false;
+
+    if (!hasChildren) {
+      return (
+        <Button
+          type="button"
+          key={node.asset.id}
+          className={`nav-link nav-leaf reader-nav-node has-dot ${isActive ? "active" : ""}`}
+          data-depth={depth}
+          variant="ghost"
+          aria-current={isActive ? "page" : undefined}
+          onClick={() => selectReaderPage(node.asset.stableId)}
+        >
+          <span className="nav-icon reader-leaf-dot" aria-hidden="true"></span>
+          <span className="nav-text">{readerNavLabel(node.asset)}</span>
+        </Button>
+      );
+    }
+
+    return (
+      <div className="reader-tree-group" key={node.asset.id} data-depth={depth}>
+        <Button
+          className={`nav-folder reader-nav-node ${isSelectedBranch ? "is-active-ancestor" : ""} ${isExpanded ? "is-expanded" : ""} ${isActive ? "active" : ""}`}
+          data-depth={depth}
+          type="button"
+          variant="ghost"
+          aria-expanded={isExpanded}
+          aria-controls={branchId}
+          aria-current={isActive ? "page" : undefined}
+          onClick={() => {
+            selectReaderPage(node.asset.stableId);
+            setExpandedNavSections((current) => ({
+              ...current,
+              [branchKey]: !(current[branchKey] ?? isSelectedBranch)
+            }));
+          }}
+        >
+          <span className="folder-glyph reader-folder-icon" aria-hidden="true">{renderReaderNavIcon(node.asset, true)}</span>
+          <span className="nav-text">{readerNavLabel(node.asset)}</span>
+          <Badge variant="neutral" className="nav-count">{node.children.length}</Badge>
+          <span className="nav-chevron" aria-hidden="true"></span>
+        </Button>
+        {isExpanded ? (
+          <div className="nav-branch" id={branchId}>
+            {node.children.map((child) => renderReaderNavNode(child, depth + 1))}
+          </div>
+        ) : null}
+      </div>
+    );
+  };
+  const renderReaderCollapsedNavNode = (node: ReaderNavNode): ReactNode => {
+    const hasChildren = node.children.length > 0;
+    const isActive = node.asset.stableId === readerSelectedAsset?.stableId;
+    const isSelectedBranch = readerNodeContainsStableId(node, readerSelectedAsset?.stableId);
+
+    return (
+      <Button
+        type="button"
+        key={node.asset.id}
+        className={`reader-collapsed-node ${isSelectedBranch ? "is-active-ancestor" : ""} ${isActive ? "active" : ""}`}
+        variant="ghost"
+        aria-label={readerNavLabel(node.asset)}
+        aria-current={isActive ? "page" : undefined}
+        title={readerNavLabel(node.asset)}
+        onClick={() => selectReaderPage(node.asset.stableId)}
+      >
+        {hasChildren ? (
+          <span className="folder-glyph reader-folder-icon" aria-hidden="true">{renderReaderNavIcon(node.asset, true)}</span>
+        ) : (
+          <span className="nav-icon reader-leaf-dot" aria-hidden="true"></span>
+        )}
+      </Button>
+    );
+  };
+  const shellStyle = {
+    "--nav": `${isNavCollapsed ? navCollapsedWidth : navWidth}px`
+  } as CSSProperties & Record<"--nav", string>;
 
   return (
     <div
-      className={`app-shell ${isAuthenticated ? readerSurfaceActive ? "reader-shell" : "admin-shell" : "auth-shell"}`}
+      className={`app-shell ${isAuthenticated ? readerSurfaceActive ? "reader-shell" : "admin-shell" : "auth-shell"} ${isNavCollapsed ? "nav-collapsed" : ""} ${accountSettingsRouteRequested ? "reader-shell--account" : ""}`}
       data-density={density}
+      style={shellStyle}
     >
       <a className="skip-link" href="#main">Skip to content</a>
       <header className="topbar">
@@ -3475,19 +3790,10 @@ export function App() {
                   placeholder="Search pages"
                   aria-label="Search pages"
                 />
+                <span className="kbd reader-search-kbd">Cmd K</span>
               </form>
             )}
             <div className="topbar-actions">
-	              <Button
-	                variant="ghost"
-	                size="sm"
-	                type="button"
-	                className="reader-refresh-button"
-	                onClick={() => void refresh()}
-	              >
-	                <ArrowsClockwise aria-hidden="true" />
-	                <span className="reader-refresh-label">Refresh</span>
-	              </Button>
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button
@@ -3519,12 +3825,9 @@ export function App() {
                     </DropdownMenuItem>
                     {canUseAdministration ? (
                       <DropdownMenuItem onSelect={() => navigatePage("admin/content")}>
-                        Admin console
+                        Admin
                       </DropdownMenuItem>
                     ) : null}
-                    <DropdownMenuItem onSelect={() => void refresh()}>
-                      Refresh pages
-                    </DropdownMenuItem>
                   </DropdownMenuGroup>
                   <DropdownMenuSeparator />
                   <DropdownMenuItem variant="destructive" onSelect={() => void logout()}>
@@ -3554,7 +3857,7 @@ export function App() {
               onClick={() => handleCommandOpenChange(true)}
             >
               <MagnifyingGlass aria-hidden="true" />
-              <span>Search admin console</span>
+              <span>Search admin pages</span>
               <span className="kbd">Cmd K</span>
             </Button>
             <div className="topbar-actions">
@@ -3610,16 +3913,50 @@ export function App() {
         ) : (
           <div className="topbar-main public-topbar-main">
             <span aria-hidden="true" />
-            <div className="topbar-actions">
-              <Button variant="primary" type="button" onClick={openLoginPanel}>
-                Log in
-              </Button>
-            </div>
           </div>
         )}
       </header>
 
       {isAuthenticated ? readerSurfaceActive ? (
+        <>
+        {readerLibrarySurfaceActive ? (
+          <aside className="side-nav tree-nav reader-library" aria-label="Published material list">
+            {renderNavChrome("Pages", readerVisiblePageCount)}
+            {isNavCollapsed ? (
+              <div className="nav-group reader-nav-group reader-nav-group--collapsed">
+                <div className="nav-tree reader-collapsed-tree">
+                  {readerAssetGroups.length ? readerAssetGroups.map((node) => renderReaderCollapsedNavNode(node)) : null}
+                </div>
+              </div>
+            ) : (
+              <>
+                <div className="nav-group reader-nav-group">
+                  {readerFilterActive ? (
+                    <div className="reader-library-tools">
+                      {readerFilterActive ? (
+                        <Button type="button" size="sm" variant="ghost" onClick={() => {
+                          setLibraryQuery("");
+                          setSearchQuery("");
+                        }}>
+                          Clear
+                        </Button>
+                      ) : null}
+                    </div>
+                  ) : null}
+                  <div className="nav-tree">
+                    {readerAssetGroups.length ? readerAssetGroups.map((node) => renderReaderNavNode(node)) : (
+                      <div className="reader-empty-state">
+                        <h3>No pages found</h3>
+                        <p>{readerFilterActive ? "Clear search to see all pages." : "No approved pages are available to this reader account yet."}</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+                {renderNavResizer()}
+              </>
+            )}
+          </aside>
+        ) : null}
         <main className={`reader-main ${accountSettingsRouteRequested ? "reader-main--account" : ""}`} id="main">
           {accountSettingsRouteRequested ? (
             <section className="account-settings-page" aria-labelledby="account-settings-title">
@@ -3656,7 +3993,7 @@ export function App() {
               </dl>
               <div className="account-settings-actions">
                 {canUseAdministration ? (
-                  <Button type="button" onClick={() => navigatePage("admin/content")}>Admin console</Button>
+                  <Button type="button" onClick={() => navigatePage("admin/content")}>Admin</Button>
                 ) : null}
                 <Button type="button" variant="ghost" onClick={() => void logout()}>Sign out</Button>
               </div>
@@ -3669,39 +4006,11 @@ export function App() {
               <AlertDescription>{error}</AlertDescription>
             </Alert>
           ) : null}
-
-          <section className="reader-hero" aria-labelledby="reader-title">
-            <div>
-              <p className="eyebrow">Knowledge base</p>
-              <h1 id="reader-title">Read pages</h1>
-              <p>Browse approved team pages. Search, read, and ask from the same source material.</p>
-            </div>
-            <div className="reader-hero-actions">
-              {canUseAdministration ? (
-                <Button type="button" variant="ghost" onClick={() => navigatePage("admin/content")}>
-                  Admin console
-                </Button>
-              ) : null}
-              <Button type="button" onClick={() => document.getElementById("reader-search-input")?.focus()}>
-                Search pages
-              </Button>
-            </div>
-          </section>
-
-          <section className="reader-summary-strip" aria-label="Knowledge base summary">
-            <div>
-              <strong>{readerPageCount}</strong>
-              <span>Published pages</span>
-            </div>
-            <div>
-              <strong>{readerCollectionCount}</strong>
-              <span>Collections</span>
-            </div>
-            <div>
-              <strong>{readerSearchHasFreshResponse ? readerSearchResultCount : readerVisiblePageCount}</strong>
-              <span>{readerSearchHasFreshResponse ? "Search results" : readerFilterActive ? "Matching pages" : "Visible pages"}</span>
-            </div>
-          </section>
+          {message ? (
+            <Alert variant="success" className="reader-alert" role="status" aria-live="polite">
+              <AlertDescription>{message}</AlertDescription>
+            </Alert>
+          ) : null}
 
           {readerFilterActive ? (
             <section className="reader-search-results" id="reader-search-results" aria-label="Search results">
@@ -3732,8 +4041,7 @@ export function App() {
                           type="button"
                           size="sm"
                           onClick={() => {
-                            setSelectedStableId(result.asset.stableId);
-                            setAssetContentView("human");
+                            selectReaderPage(result.asset.stableId);
                             scrollReaderRegionIntoView("reader-article");
                           }}
                         >
@@ -3765,8 +4073,7 @@ export function App() {
               aria-label="Choose a page"
               value={readerSelectedAsset?.stableId ?? ""}
               onChange={(event) => {
-                setSelectedStableId(event.target.value);
-                setAssetContentView("human");
+                selectReaderPage(event.target.value);
                 scrollReaderRegionIntoView("reader-article");
               }}
             >
@@ -3776,83 +4083,14 @@ export function App() {
             </NativeSelect>
           </section>
 
-          <section className="reader-layout" aria-label="Published library">
-            <aside className="reader-library" aria-label="Published material list">
-              <ScrollArea className="reader-library-scroll">
-                <div className="nav-group reader-nav-group">
-                  <div className="reader-library-heading">
-                    <div>
-                      <p className="nav-label">Library</p>
-                      <p>{readerVisiblePageCount} page{readerVisiblePageCount === 1 ? "" : "s"} available</p>
-                    </div>
-                    {readerFilterActive ? (
-                      <Button type="button" size="sm" variant="ghost" onClick={() => {
-                        setLibraryQuery("");
-                        setSearchQuery("");
-                      }}>
-                        Clear
-                      </Button>
-                    ) : null}
-                  </div>
-                  <div className="nav-tree">
-                    {readerAssetGroups.length ? readerAssetGroups.map((group) => (
-                      <div className="reader-tree-group" key={group.type}>
-                        <Button
-                          className={`nav-folder ${group.assets.some((asset) => asset.stableId === readerSelectedAsset?.stableId) ? "is-active-ancestor" : ""}`}
-                          type="button"
-                          variant="ghost"
-                          onClick={() => {
-                            setSelectedStableId(group.assets[0]?.stableId ?? "");
-                            setAssetContentView("human");
-                          }}
-                        >
-                          <span className="folder-glyph" aria-hidden="true">
-                            {formatAssetTypeLabel(group.type)
-                              .split(/\s+/)
-                              .map((part) => part[0])
-                              .join("")
-                              .slice(0, 2)
-                              .toUpperCase()}
-                          </span>
-                          <span className="nav-text">{formatAssetTypeLabel(group.type)}</span>
-                          <Badge variant="neutral" className="nav-count">{group.assets.length}</Badge>
-                        </Button>
-                        <div className="nav-branch">
-                          {group.assets.map((asset) => (
-                            <Button
-                              type="button"
-                              key={asset.id}
-                              className={`nav-link nav-leaf is-iconless ${asset.stableId === readerSelectedAsset?.stableId ? "active" : ""}`}
-                              variant="ghost"
-                              aria-current={asset.stableId === readerSelectedAsset?.stableId ? "page" : undefined}
-                              onClick={() => {
-                                setSelectedStableId(asset.stableId);
-                                setAssetContentView("human");
-                              }}
-                            >
-                              <span className="nav-text">{asset.title}</span>
-                            </Button>
-                          ))}
-                        </div>
-                      </div>
-                    )) : (
-                      <div className="reader-empty-state">
-                        <h3>No pages found</h3>
-                        <p>{readerFilterActive ? "Clear search to see all pages." : "No approved pages are available to this reader account yet."}</p>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </ScrollArea>
-            </aside>
-
+          <section className="reader-layout reader-layout--content" aria-label="Published library">
             <article className="reader-article" id="reader-article">
               {assetDetail && readerSelectedAsset ? (
                 <>
                   <header className="reader-article-header">
                     <div>
                       <p className="eyebrow">{formatAssetTypeLabel(assetDetail.asset.type)}</p>
-                      <h2>{assetDetail.asset.title}</h2>
+                      <h1 tabIndex={-1}>{assetDetail.asset.title}</h1>
                       {assetDetail.asset.summary ? <p>{assetDetail.asset.summary}</p> : null}
                     </div>
                     <div className="reader-status">
@@ -3879,120 +4117,117 @@ export function App() {
                     </nav>
                   ) : null}
 
-                  <div className="reader-content-grid">
-                    <div className="reader-document">
-                      {currentHumanBody ? (
-                        <div className="reader-document-body">
-                          {renderMarkdownDocument(currentHumanBody, assetDetail.asset.title)}
-                        </div>
-                      ) : (
-                        <div className="reader-empty-state">
-                          <h3>No readable page yet</h3>
-                          <p>This item is published, but it does not have a human-readable page body yet.</p>
-                        </div>
-                      )}
-                    </div>
+                  <div className="reader-document">
+                    {currentHumanBody ? (
+                      <div className="reader-document-body">
+                        {renderMarkdownDocument(currentHumanBody, assetDetail.asset.title)}
+                      </div>
+                    ) : (
+                      <div className="reader-empty-state">
+                        <h3>No readable page yet</h3>
+                        <p>This item is published, but it does not have a human-readable page body yet.</p>
+                      </div>
+                    )}
+                  </div>
 
-                    <aside className="reader-rail" aria-label="Page tools">
-                      <section className="reader-ask-panel" aria-labelledby="reader-ask-title">
-                        <div className="reader-ask-heading">
-                          <div>
-                            <p className="eyebrow">Ask</p>
-                            <h3 id="reader-ask-title">Ask this knowledge base</h3>
-                            <p>Get an answer with the pages used to support it.</p>
-                          </div>
-                          {readerAskResponse ? (
-                            <Badge variant={readerAskResponse.checks.deniedCount ? "warning" : "success"}>
-                              {readerAskResponse.checks.deniedCount ? "Limited results" : "Sources checked"}
-                            </Badge>
+                  <section className="reader-ask-panel" aria-labelledby="reader-ask-title">
+                    <div className="reader-ask-heading">
+                      <div>
+                        <p className="eyebrow">Ask</p>
+                        <h2 id="reader-ask-title">Ask this knowledge base</h2>
+                        <p>Get an answer with citations from pages available to your account.</p>
+                      </div>
+                      {readerAskResponse ? (
+                        <Badge variant={readerAskResponse.checks.deniedCount ? "warning" : "success"}>
+                          {readerAskResponse.checks.deniedCount ? "Limited results" : "Sources checked"}
+                        </Badge>
+                      ) : null}
+                    </div>
+                    <form className="reader-ask-form" onSubmit={(event) => void runReaderAsk(event)}>
+                      <Label htmlFor="reader-ask-input" className="sr-only">Ask a question</Label>
+                      <Input
+                        id="reader-ask-input"
+                        value={readerAskText}
+                        onChange={(event) => setReaderAskText(event.target.value)}
+                        placeholder="Ask about these pages"
+                        aria-describedby="reader-ask-help"
+                      />
+                      <p id="reader-ask-help" className="reader-ask-note">Answers only use content your account can read.</p>
+                      <Button type="submit" disabled={isReaderAskRunning || !readerAskText.trim()}>
+                        {isReaderAskRunning ? "Finding sources…" : "Ask"}
+                      </Button>
+                    </form>
+                    {isReaderAskRunning ? (
+                      <div className="reader-ask-loading" role="status" aria-live="polite">
+                        <span className="reader-loading-dot" aria-hidden="true" />
+                        Finding an answer and checking accessible sources.
+                      </div>
+                    ) : null}
+                    {readerAskError ? (
+                      <Alert variant="destructive" className="reader-ask-error">
+                        <AlertTitle>Could not answer this question</AlertTitle>
+                        <AlertDescription>{readerAskError}</AlertDescription>
+                      </Alert>
+                    ) : null}
+                    {readerAskResponse && !isReaderAskRunning ? (
+                      <div className="reader-ask-answer" aria-live="polite">
+                        <div>
+                          <h3>Answer</h3>
+                          {readerAskResponse.checks.deniedCount && !readerAskResponse.citations.length ? (
+                            <div className="reader-no-access-state">
+                              <strong>No accessible answer was found.</strong>
+                              <p>Try another question or ask an admin for access to the matching pages.</p>
+                            </div>
+                          ) : renderReaderAnswer(readerAskResponse.answer)}
+                          {readerAskResponse.checks.deniedCount && readerAskResponse.citations.length ? (
+                            <p className="reader-ask-note">Some matching pages are not available to your account.</p>
                           ) : null}
                         </div>
-                        <form className="reader-ask-form" onSubmit={(event) => void runReaderAsk(event)}>
-                          <Input
-                            id="reader-ask-input"
-                            value={readerAskText}
-                            onChange={(event) => setReaderAskText(event.target.value)}
-                            placeholder="Ask about these pages"
-                            aria-label="Ask a question"
-                          />
-                          <Button type="submit" disabled={isReaderAskRunning || !readerAskText.trim()}>
-                            {isReaderAskRunning ? "Asking" : "Ask"}
-                          </Button>
-                        </form>
-                        {readerAskResponse ? (
-                          <div className="reader-ask-answer" aria-live="polite">
-                            <div>
-                              <h4>Answer</h4>
-                              {readerAskResponse.checks.deniedCount && !readerAskResponse.citations.length ? (
-                                <p>No accessible answer was found. Try another question or ask an admin for access.</p>
-                              ) : renderReaderAnswer(readerAskResponse.answer)}
-                              {readerAskResponse.checks.deniedCount ? (
-                                <p className="reader-ask-note">
-                                  Some matching pages are not available to your account.
-                                </p>
-                              ) : null}
-                            </div>
-                            <div className="reader-citations" aria-label="Sources">
-                              <h4>Sources</h4>
-                              {readerAskResponse.citations.length ? (
-                                <>
-                                  {readerAskResponse.citations.slice(0, 3).map((citation, index) => (
-                                    <details className="reader-citation" key={`${citation.assetId}:${citation.chunkId}`} open={index === 0}>
-                                      <summary>
-                                        <strong>{citation.title}</strong>
-                                        <span>Excerpt</span>
-                                      </summary>
-                                      <p>{formatReaderSnippet(citation.snippet, 130)}</p>
-                                    </details>
-                                  ))}
-                                  {readerAskResponse.citations.length > 3 ? (
-                                    <p className="reader-ask-note">
-                                      {readerAskResponse.citations.length - 3} more source{readerAskResponse.citations.length - 3 === 1 ? "" : "s"} checked.
-                                    </p>
-                                  ) : null}
-                                </>
-                              ) : (
-                                <p className="reader-ask-note">No accessible sources matched this question.</p>
-                              )}
-                            </div>
-                          </div>
-                        ) : (
-                          <div className="reader-ask-empty">
-                            <p>Try asking “What should be redacted?” after choosing a page.</p>
-                          </div>
-                        )}
-                      </section>
-
-                      <section className="reader-source-panel" aria-label="Page details">
-                        <div className="reader-source-heading">
-                          <h3>Page info</h3>
-                          <p>Owner, access, and freshness.</p>
+                        <div className="reader-citations" aria-label="Sources">
+                          <h3>Sources</h3>
+                          {readerAskResponse.citations.length ? (
+                            readerAskResponse.citations.slice(0, 5).map((citation, index) => (
+                              <details className="reader-citation" key={`${citation.assetId}:${citation.chunkId}`} open={index === 0}>
+                                <summary>
+                                  <strong>{citation.title}</strong>
+                                  <span>Source {index + 1}</span>
+                                </summary>
+                                <p>{formatReaderSnippet(citation.snippet, 180)}</p>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="ghost"
+                                  onClick={() => {
+                                    selectReaderPage(citation.stableId);
+                                    scrollReaderRegionIntoView("reader-article");
+                                  }}
+                                >
+                                  Open source page
+                                </Button>
+                              </details>
+                            ))
+                          ) : (
+                            <p className="reader-ask-note">No accessible sources matched this question.</p>
+                          )}
                         </div>
-                        <dl>
-                          <div>
-                            <dt>Version</dt>
-                            <dd>{currentVersion ? `Version ${currentVersion.versionNumber}` : "Not versioned"}</dd>
-                          </div>
-                          <div>
-                            <dt>Last updated</dt>
-                            <dd>{formatReaderDate(assetDetail.asset.updatedAt)}</dd>
-                          </div>
-                          <div>
-                            <dt>Access</dt>
-                            <dd>{formatReaderAccess(assetDetail.asset)}</dd>
-                          </div>
-                          <div>
-                            <dt>Maintainer</dt>
-                            <dd>{formatReaderMaintainer(assetDetail.asset.ownerId)}</dd>
-                          </div>
-                          <div>
-                            <dt>Review</dt>
-                            <dd>{formatReaderReview(assetDetail.asset.reviewDueAt)}</dd>
-                          </div>
-                        </dl>
-                      </section>
-                    </aside>
-                  </div>
+                      </div>
+                    ) : !isReaderAskRunning ? (
+                      <div className="reader-ask-empty">
+                        <p>Try asking “What should be redacted?”</p>
+                      </div>
+                    ) : null}
+                  </section>
+
+                  <footer className="reader-page-footer" aria-label="Page details">
+                    <dl>
+                      {readerPageInfoItems(assetDetail.asset).map((item) => (
+                        <div key={item.key}>
+                          <dt>{item.term}</dt>
+                          <dd>{item.description}</dd>
+                        </div>
+                      ))}
+                    </dl>
+                  </footer>
                 </>
               ) : (
                 <div className="reader-empty-state reader-empty-state--large">
@@ -4005,13 +4240,14 @@ export function App() {
             </>
           )}
         </main>
+        </>
       ) : (
         <>
           <CommandDialog
             open={isCommandOpen}
             onOpenChange={handleCommandOpenChange}
-            title="Admin console command palette"
-            description="Move between admin console pages."
+            title="Command palette"
+            description="Move between admin pages."
             className="command-dialog"
             onCloseAutoFocus={(event) => {
               event.preventDefault();
@@ -4047,19 +4283,25 @@ export function App() {
           <Sheet open={isMobileNavOpen} onOpenChange={setIsMobileNavOpen}>
             <SheetContent side="left" className="mobile-nav-sheet">
               <SheetHeader>
-                <SheetTitle>Admin console</SheetTitle>
+                <SheetTitle>Navigation</SheetTitle>
                 <SheetDescription>Manage content, access, exports, and system settings.</SheetDescription>
               </SheetHeader>
               <nav className="sheet-nav tree-nav" aria-label="Mobile main pages">
-                {renderAdminShellHeader(() => setIsMobileNavOpen(false))}
+                {renderAdminShellHeader()}
                 {renderNavigationSections(() => setIsMobileNavOpen(false))}
               </nav>
             </SheetContent>
           </Sheet>
 
-          <nav className="side-nav tree-nav admin-side-nav" aria-label="Admin console" id="page-nav">
-            {renderAdminShellHeader()}
-            {renderNavigationSections()}
+          <nav className="side-nav tree-nav admin-side-nav" aria-label="Admin pages" id="page-nav">
+            {renderNavChrome("Pages")}
+            {isNavCollapsed ? null : (
+              <>
+                {renderAdminShellHeader()}
+                {renderNavigationSections()}
+                {renderNavResizer()}
+              </>
+            )}
           </nav>
 
           <main className="main" id="main">
@@ -4098,15 +4340,15 @@ export function App() {
           </details>
         )}
 
-        {message ? (
-          <Alert variant="success" className="shell-alert">
-            <AlertDescription>{message}</AlertDescription>
-          </Alert>
-        ) : null}
         {error ? (
           <Alert variant="destructive" className="shell-alert">
             <AlertTitle>Request failed</AlertTitle>
             <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        ) : null}
+        {message ? (
+          <Alert variant="success" className="shell-alert" role="status" aria-live="polite">
+            <AlertDescription>{message}</AlertDescription>
           </Alert>
         ) : null}
 
@@ -4114,7 +4356,6 @@ export function App() {
             <RouteHeader
               className="page-route-header"
               breadcrumbs={routeBreadcrumbs(currentPage)}
-              eyebrow="Admin console"
               title={currentPage === "asset-read"
                 ? assetDetail?.asset.title ?? "Reading room"
                 : currentPage === "versions"
@@ -4297,15 +4538,19 @@ export function App() {
                       variant="tool"
                       actions={(
                         <>
-                          <Button size="sm" type="button" onClick={() => void completeAssetReview()}>Review</Button>
-                          <Button size="sm" type="button" onClick={() => void publishAsset()}>Publish</Button>
+                          <Button size="sm" type="button" onClick={() => void completeAssetReview()} disabled={pendingReleaseAction !== null}>
+                            {pendingReleaseAction === "review" ? "Reviewing…" : "Review"}
+                          </Button>
+                          <Button size="sm" type="button" onClick={() => setReleaseActionToConfirm("publish")} disabled={pendingReleaseAction !== null}>
+                            {pendingReleaseAction === "publish" ? "Publishing…" : "Publish"}
+                          </Button>
                           <Button
                             size="sm"
                             type="button"
-                            onClick={() => void restoreVersion()}
-                            disabled={!versionSnapshot || selectedVersionIsCurrent}
+                            onClick={() => setReleaseActionToConfirm("restore")}
+                            disabled={!versionSnapshot || selectedVersionIsCurrent || pendingReleaseAction !== null}
                           >
-                            Restore
+                            {pendingReleaseAction === "restore" ? "Restoring…" : "Restore"}
                           </Button>
                         </>
                       )}
@@ -4342,6 +4587,45 @@ export function App() {
                         </div>
                       </div>
                     </SectionCard>
+                    <AlertDialog
+                      open={releaseActionToConfirm !== null}
+                      onOpenChange={(open) => {
+                        if (!open && !pendingReleaseAction) {
+                          setReleaseActionToConfirm(null);
+                        }
+                      }}
+                    >
+                      <AlertDialogContent>
+                        <AlertDialogHeader>
+                          <AlertDialogTitle>
+                            {releaseActionToConfirm === "restore" ? "Restore this version?" : "Publish this page?"}
+                          </AlertDialogTitle>
+                          <AlertDialogDescription>
+                            {releaseActionToConfirm === "restore"
+                              ? `This will make version ${selectedVersionNumber || "selected"} the current content for ${assetDetail.asset.stableId}.`
+                              : `This will publish ${assetDetail.asset.stableId} using the current review date and change note.`}
+                          </AlertDialogDescription>
+                        </AlertDialogHeader>
+                        <AlertDialogFooter>
+                          <AlertDialogCancel disabled={pendingReleaseAction !== null}>Cancel</AlertDialogCancel>
+                          <AlertDialogAction
+                            disabled={pendingReleaseAction !== null}
+                            variant={releaseActionToConfirm === "restore" ? "danger" : "primary"}
+                            onClick={() => {
+                              const action = releaseActionToConfirm;
+                              setReleaseActionToConfirm(null);
+                              if (action === "restore") {
+                                void restoreVersion();
+                              } else if (action === "publish") {
+                                void publishAsset();
+                              }
+                            }}
+                          >
+                            {releaseActionToConfirm === "restore" ? "Restore version" : "Publish page"}
+                          </AlertDialogAction>
+                        </AlertDialogFooter>
+                      </AlertDialogContent>
+                    </AlertDialog>
                     <Tabs
                       value={activeAssetContentView}
                       onValueChange={(value) => setAssetContentView(value as AssetContentView)}
@@ -4853,7 +5137,6 @@ export function App() {
         <RouteHeader
           className="page-route-header"
           breadcrumbs={routeBreadcrumbs(currentPage)}
-          eyebrow={operationsPage.eyebrow}
           title={operationsPage.title}
           lede={operationsPage.lede}
           actions={(
@@ -6596,191 +6879,31 @@ export function App() {
       </main>
         </>
       ) : (
-        <main className="public-entry-main" id="main">
-          <section className="public-hero" aria-labelledby="public-hero-title">
-            <div className="public-hero-copy">
-              <p className="eyebrow">Public beta</p>
-              <h1 id="public-hero-title">A knowledge base for people and AI tools.</h1>
-              <p className="public-hero-lede">
-                Write and organize company knowledge once. People get a clean wiki-style reading view.
-                AI tools can search it, cite sources, and use only the content they are allowed to see.
-              </p>
-              <div className="public-hero-actions" aria-label="Landing actions">
-                <Button
-                  variant="primary"
-                  type="button"
-                  onClick={openLoginPanel}
-                >
-                  Log in
-                </Button>
-                <Button
-                  type="button"
-                  onClick={() => {
-                    document.getElementById("public-proof-title")?.scrollIntoView({ block: "start" });
-                  }}
-                >
-                  See what is included
-                </Button>
-              </div>
-              <div className="public-trust-strip" aria-label="Beta proof points">
-                <Badge variant="neutral">Apache 2.0 core</Badge>
-                <Badge variant="neutral">Docker Compose quickstart</Badge>
-                <Badge variant="info">Separate reader and admin views</Badge>
-                <Badge variant="neutral">Safe sample content</Badge>
-              </div>
-            </div>
-
-            <div className="public-proof-scene" aria-label="Product proof preview">
-              <div className="proof-browser">
-                <div className="proof-window-bar">
-                  <span></span>
-                  <span></span>
-                  <span></span>
-                  <strong>#reader</strong>
-                </div>
-                <div className="proof-product-grid">
-                  <Card className="proof-panel proof-panel-primary">
-                    <CardHeader className="proof-panel-header">
-                      <CardDescription className="proof-label">Published page</CardDescription>
-                      <CardTitle><h2>Personal data removal guide</h2></CardTitle>
-                    </CardHeader>
-	                    <CardContent className="proof-panel-content">
-	                      <dl>
-	                        <div><dt>Maintainer</dt><dd>Security team</dd></div>
-	                        <div><dt>Status</dt><dd>Published and reviewed</dd></div>
-	                        <div><dt>Access</dt><dd>Open to readers</dd></div>
-	                        <div><dt>Sources</dt><dd>3 cited sections</dd></div>
-	                      </dl>
-	                    </CardContent>
-                  </Card>
-                  <Card className="proof-panel">
-                    <CardHeader className="proof-panel-header">
-                      <CardDescription className="proof-label">Ask with sources</CardDescription>
-                      <CardTitle><h3>What should be redacted?</h3></CardTitle>
-                    </CardHeader>
-	                    <CardContent className="proof-panel-content">
-	                      <p className="proof-answer-preview">
-	                        Remove direct identifiers before AI use. Preserve the facts needed for the job.
-	                      </p>
-	                      <div className="proof-package-state">
-	                        <Badge variant="success">Sources shown</Badge>
-	                        <Badge variant="neutral">Restricted pages hidden</Badge>
-	                      </div>
-	                    </CardContent>
-	                  </Card>
-	                  <Card className="proof-panel">
-	                    <CardHeader className="proof-panel-header">
-	                      <CardDescription className="proof-label">Sources</CardDescription>
-	                    </CardHeader>
-	                    <CardContent className="proof-panel-content">
-	                      <div className="proof-source-list">
-	                        <span>Personal data removal guide</span>
-	                        <span>Support summary checklist</span>
-	                        <span>Acceptable use policy</span>
-	                      </div>
-	                    </CardContent>
-	                  </Card>
-	                  <Card className="proof-panel proof-safety">
-	                    <CardHeader className="proof-panel-header">
-	                      <CardDescription className="proof-label">Access check</CardDescription>
-	                    </CardHeader>
-	                    <CardContent className="proof-panel-content">
-	                      <Badge variant="warning">Restricted page hidden</Badge>
-	                      <span>Readers only see pages they are allowed to read.</span>
-	                    </CardContent>
-	                  </Card>
-                </div>
-              </div>
-            </div>
-          </section>
-
-          <section className="public-proof-section" aria-labelledby="public-proof-title">
-            <div>
-              <p className="eyebrow">Beta path</p>
-              <h2 id="public-proof-title">Read first. Manage when you need to.</h2>
-              <p>
-                Use the beta to browse pages, read content, search with sources, and then switch to the admin console
-                to review, publish, manage access, and generate exports.
-              </p>
-            </div>
-            <div className="public-step-list" aria-label="Beta path steps">
-              <div className="public-step-card">
-                <span className="public-step-icon"><BookOpen aria-hidden="true" /></span>
-                <h3>Read pages</h3>
-                <p>Browse approved pages in a calm reading view.</p>
-              </div>
-              <div className="public-step-card">
-                <span className="public-step-icon"><MagnifyingGlass aria-hidden="true" /></span>
-                <h3>Search with sources</h3>
-                <p>Find answers and keep the cited pages close.</p>
-              </div>
-              <div className="public-step-card">
-                <span className="public-step-icon"><GearSix aria-hidden="true" /></span>
-                <h3>Manage content</h3>
-                <p>Use the admin console for reviews, access, and settings.</p>
-              </div>
-              <div className="public-step-card">
-                <span className="public-step-icon"><Package aria-hidden="true" /></span>
-                <h3>Check exports</h3>
-                <p>Verify restricted content stays out of reader views and exports.</p>
-              </div>
-            </div>
-          </section>
-
-          <section className="auth-entry-grid auth-entry-grid--boundary" aria-label="Public beta boundary">
-            <section className="beta-boundary-panel" aria-labelledby="beta-boundary-title">
-              <div>
-                <span className="eyebrow">Clear beta boundary</span>
-                <h2 id="beta-boundary-title">Useful beta, clear limits.</h2>
-                <p>
-                  Use ForgetBase to test a self-hosted knowledge base for people and AI tools.
-                  The beta does not include production support, hosted-service guarantees, advanced sign-in controls,
-                  or compliance certification.
-                </p>
-              </div>
-            </section>
-            <Card className="beta-access-panel" aria-labelledby="beta-access-title">
-              <CardHeader>
-                <CardDescription className="eyebrow">Beta access</CardDescription>
-                <CardTitle><h2 id="beta-access-title">Access by invitation.</h2></CardTitle>
-                <CardDescription>
-                  Beta users can log in with invitation credentials. The preview stays visible before sign-in so teams
-                  can review scope and limits.
-                </CardDescription>
-              </CardHeader>
-              <CardFooter>
-                <Button variant="primary" type="button" onClick={openLoginPanel}>Log in</Button>
-                {authState === "checking" ? (
-                  <Alert variant="info" className="public-session-alert">
-                    <AlertDescription>Checking session</AlertDescription>
-                  </Alert>
-                ) : null}
-              </CardFooter>
-            </Card>
-          </section>
-          <Dialog open={showLoginPanel} onOpenChange={setShowLoginPanel} modal>
-            <DialogContent
-              className="login-dialog"
-              id="login-dialog"
-              aria-describedby="login-description"
-            >
-              <DialogHeader className="login-dialog-header">
+        <main className="public-entry-main login-entry-main" id="main">
+          <Card className="login-panel" aria-labelledby="login-title">
+            <CardHeader className="login-dialog-header">
                 <span className="mark login-mark" aria-hidden="true">
                   <img className="mark-image" src="/favicon.svg" alt="" />
                 </span>
                 <div>
-                  <DialogTitle id="login-title">Log in to ForgetBase</DialogTitle>
-                  <DialogDescription id="login-description" className="lede">
-                    Beta access. Invitation required.
-                  </DialogDescription>
+                <CardDescription className="eyebrow">ForgetBase</CardDescription>
+                <CardTitle><h1 id="login-title">Log in to ForgetBase</h1></CardTitle>
+                <CardDescription id="login-description" className="lede">
+                  Use your account to read pages or manage the knowledge base.
+                </CardDescription>
                 </div>
-              </DialogHeader>
+            </CardHeader>
+            <CardContent className="login-panel-content">
               {currentPage === "distribute" ? (
                 <Alert variant="info" className="queued-route">
                   <AlertDescription>Demo path queued: <code>#{canonicalRouteHash(currentPage)}</code></AlertDescription>
                 </Alert>
               ) : null}
-              <Separator />
+              {authState === "checking" ? (
+                <Alert variant="info" className="public-session-alert">
+                  <AlertDescription>Checking session</AlertDescription>
+                </Alert>
+              ) : null}
               <form className="public-login-form" onSubmit={(event) => void login(event)}>
                 <div className="public-login-field">
                   <Label htmlFor="login-email">Username / email</Label>
@@ -6804,7 +6927,7 @@ export function App() {
                     required
                   />
                 </div>
-                <DialogFooter className="public-login-actions">
+                <div className="public-login-actions">
                   <Button
                     type="submit"
                     variant="primary"
@@ -6812,7 +6935,7 @@ export function App() {
                   >
                     Log in
                   </Button>
-                </DialogFooter>
+                </div>
               </form>
               {message ? (
                 <Alert variant="success" className="public-login-alert">
@@ -6825,8 +6948,8 @@ export function App() {
                   <AlertDescription>{error}</AlertDescription>
                 </Alert>
               ) : null}
-            </DialogContent>
-          </Dialog>
+            </CardContent>
+          </Card>
         </main>
       )}
     </div>

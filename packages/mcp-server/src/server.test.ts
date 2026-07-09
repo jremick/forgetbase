@@ -300,6 +300,7 @@ function betaAssetDetailFixture(): AssetDetail {
       sourceKind: "manual",
       sourceRef: null,
       currentVersionId: "version_beta_public_1",
+      metadata: {},
       createdAt: "2026-06-19T00:00:00.000Z",
       updatedAt: "2026-06-19T00:00:00.000Z"
     },

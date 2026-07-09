@@ -2,7 +2,7 @@
 
 ## MVP Purpose
 
-The MVP proves the open-source core of an agent-native instruction management platform. It should not attempt to ship the full managed orchestration layer.
+The MVP proves the open-source core of a knowledge system for people and AI tools, backed by an agent-native governed registry. It should not attempt to ship the full managed orchestration layer.
 
 ## Included
 
@@ -41,7 +41,8 @@ The MVP proves the open-source core of an agent-native instruction management pl
 - REST/OpenAPI
 - CLI
 - MCP server
-- operational web UI
+- reader web UI for browse, read, search, and cited answers
+- separate operational admin UI for governance and access
 - AI export package
 - OKF v0.1 export projection enabled by default as a permission-filtered agent package format
 
@@ -92,6 +93,7 @@ The MVP proves the open-source core of an agent-native instruction management pl
 
 The MVP is acceptable when:
 
+- a reader can browse, read, search, and ask with sources without seeing admin actions
 - a maintainer can create and publish an instruction object and linked human doc
 - an API client can search and fetch permission-appropriate results
 - the CLI can validate, import, search, and export

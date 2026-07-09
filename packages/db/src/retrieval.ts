@@ -7,6 +7,7 @@ import {
   searchResultSchema,
   type AssetDetail,
   type AssetRecord,
+  type AssetVersionAssetSnapshot,
   type ChunkSourceKind,
   type RetrievalEvent,
   type RetrievalEventCreateInput,
@@ -74,6 +75,16 @@ export class PostgresRetrievalRepository implements RetrievalRepository {
 
     try {
       await client.query("BEGIN");
+      const current = await client.query<{ current_version_id: string | null }>(
+        "SELECT current_version_id FROM assets WHERE tenant_id = $1 AND id = $2 FOR UPDATE",
+        [detail.asset.tenantId, detail.asset.id]
+      );
+      const currentVersionId = current.rows[0]?.current_version_id ?? null;
+
+      if (!currentVersionId || currentVersionId !== detail.asset.currentVersionId) {
+        throw new Error(`Refusing to index stale asset detail for ${detail.asset.stableId}`);
+      }
+
       await client.query("DELETE FROM asset_chunks WHERE asset_id = $1", [detail.asset.id]);
 
       for (const [embeddingIndex, chunk] of chunks.entries()) {
@@ -205,6 +216,7 @@ export class PostgresRetrievalRepository implements RetrievalRepository {
           JOIN assets ON assets.id = asset_chunks.asset_id
           CROSS JOIN search_query
           WHERE asset_chunks.tenant_id = $1
+            AND asset_chunks.version_id = assets.current_version_id
             AND (
               ($9 = 'lexical' AND asset_chunks.search_vector @@ search_query.query)
               OR ($9 = 'vector'
@@ -395,6 +407,7 @@ export class InMemoryRetrievalRepository implements RetrievalRepository {
 
     return this.chunks
       .filter((chunk) => chunk.asset.tenantId === tenantId)
+      .filter((chunk) => chunk.citation.versionId === chunk.asset.currentVersionId)
       .map((chunk) => {
         const lexicalRank = scoreChunk(chunk, terms);
         const exactPhraseBoost = exactPhraseMatches(chunk, input.query) ? rankingPolicy.exactPhraseBoost : 0;
@@ -473,19 +486,28 @@ export class InMemoryRetrievalRepository implements RetrievalRepository {
 
 function buildChunks(detail: AssetDetail): BuiltChunk[] {
   const chunks: BuiltChunk[] = [];
+  const currentVersionId = detail.asset.currentVersionId;
+
+  if (!currentVersionId) {
+    throw new Error(`Cannot index asset ${detail.asset.stableId} without a current version`);
+  }
 
   if (detail.asset.summary) {
     chunks.push(...splitIntoChunks({
       asset: detail.asset,
       sourceKind: "asset-summary",
       sourceId: detail.asset.id,
-      versionId: detail.asset.currentVersionId,
+      versionId: currentVersionId,
       title: detail.asset.title,
       body: `${detail.asset.title}\n\n${detail.asset.summary}`
     }));
   }
 
   for (const instruction of detail.instructionObjects) {
+    if (instruction.versionId !== currentVersionId) {
+      continue;
+    }
+
     chunks.push(...splitIntoChunks({
       asset: detail.asset,
       sourceKind: "agent-instruction",
@@ -503,6 +525,10 @@ function buildChunks(detail: AssetDetail): BuiltChunk[] {
   }
 
   for (const document of detail.humanDocuments) {
+    if (document.versionId !== currentVersionId) {
+      continue;
+    }
+
     chunks.push(...splitIntoChunks({
       asset: detail.asset,
       sourceKind: "human-document",
@@ -520,7 +546,7 @@ function splitIntoChunks(input: {
   asset: AssetRecord;
   sourceKind: ChunkSourceKind;
   sourceId: string | null;
-  versionId: string | null;
+  versionId: string;
   title: string;
   body: string;
 }): BuiltChunk[] {
@@ -624,12 +650,12 @@ async function getAssetDetail(client: Queryable, assetId: string): Promise<Asset
     [assetId]
   );
   const instructions = await client.query<InstructionObjectRow>(
-    "SELECT * FROM instruction_objects WHERE asset_id = $1 ORDER BY created_at ASC",
-    [assetId]
+    "SELECT * FROM instruction_objects WHERE asset_id = $1 AND version_id = $2 ORDER BY created_at ASC",
+    [assetId, assetRow.current_version_id]
   );
   const humanDocuments = await client.query<HumanDocumentRow>(
-    "SELECT * FROM human_documents WHERE asset_id = $1 ORDER BY created_at ASC",
-    [assetId]
+    "SELECT * FROM human_documents WHERE asset_id = $1 AND version_id = $2 ORDER BY created_at ASC",
+    [assetId, assetRow.current_version_id]
   );
 
   return {
@@ -640,6 +666,7 @@ async function getAssetDetail(client: Queryable, assetId: string): Promise<Asset
       versionNumber: row.version_number,
       contentHash: row.content_hash,
       metadata: row.metadata,
+      assetSnapshot: row.asset_snapshot,
       createdBy: row.created_by,
       createdAt: toIso(row.created_at),
       changeNote: row.change_note
@@ -692,6 +719,7 @@ function mapAssetRow(row: AssetRow): AssetRecord {
     allowedExports: row.allowed_exports,
     allowedActions: row.allowed_actions,
     currentVersionId: row.current_version_id,
+    metadata: row.metadata,
     createdAt: toIso(row.created_at),
     updatedAt: toIso(row.updated_at)
   });
@@ -849,7 +877,7 @@ function toDateOnly(value: Date | string): string {
 interface BuiltChunk {
   sourceKind: ChunkSourceKind;
   sourceId: string | null;
-  versionId: string | null;
+  versionId: string;
   chunkIndex: number;
   title: string;
   body: string;
@@ -921,6 +949,7 @@ interface AssetRow extends QueryResultRow {
   allowed_surfaces: string[];
   allowed_exports: string[];
   allowed_actions: string[];
+  metadata: Record<string, unknown>;
   current_version_id: string | null;
   created_at: Date | string;
   updated_at: Date | string;
@@ -932,6 +961,7 @@ interface AssetVersionRow extends QueryResultRow {
   version_number: number;
   content_hash: string;
   metadata: Record<string, unknown>;
+  asset_snapshot: AssetVersionAssetSnapshot;
   created_by: string | null;
   created_at: Date | string;
   change_note: string | null;

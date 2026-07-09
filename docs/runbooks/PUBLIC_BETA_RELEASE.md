@@ -2,6 +2,8 @@
 
 Use this runbook for the final promotion from public beta candidate to public beta release.
 
+The next candidate tag is `v0.1.0-beta.2`. The existing `v0.1.0-beta.1` tag is a private beta snapshot and must not be moved or reused.
+
 ## Scope
 
 - The release is for the self-hosted core and synthetic demo corpus only.
@@ -9,6 +11,7 @@ Use this runbook for the final promotion from public beta candidate to public be
 - The admin console is for managing content, access, exports, users, and system settings.
 - No private, customer, employee, or regulated data should be imported.
 - Do not make the repository public, tag a release, or announce public beta until the owner explicitly approves that action.
+- Complete the controlled live-testing phase in [Private Live UAT](../PRIVATE_LIVE_UAT.md) before considering public promotion.
 
 ## Release Inputs
 
@@ -18,6 +21,7 @@ Record these before running the final gates:
 - intended release tag
 - public HTTPS demo URL
 - GitHub Actions CI run URL for the release commit
+- release tenant ID used by both authenticated UAT accounts
 - admin UAT account for the demo
 - reader UAT account for the demo
 - support contact path
@@ -60,8 +64,10 @@ PUBLIC_BETA_LIVE_DEMO_URL=https://demo.example.com \
 UAT_BASE_URL=https://demo.example.com/ \
 UAT_MODE=release \
 UAT_EXPECT_ROLE=admin \
+UAT_TENANT_ID="$PUBLIC_BETA_RELEASE_UAT_TENANT_ID" \
 UAT_EMAIL="$PUBLIC_BETA_RELEASE_ADMIN_EMAIL" \
 UAT_PASSWORD="$PUBLIC_BETA_UAT_PASSWORD" \
+UAT_OUTPUT_DIR=work/public-beta-proof/release-admin \
 npx -y pnpm@11.7.0 test:uat
 ```
 
@@ -70,14 +76,16 @@ PUBLIC_BETA_LIVE_DEMO_URL=https://demo.example.com \
 UAT_BASE_URL=https://demo.example.com/ \
 UAT_MODE=release \
 UAT_EXPECT_ROLE=reader \
+UAT_TENANT_ID="$PUBLIC_BETA_RELEASE_UAT_TENANT_ID" \
 UAT_EMAIL="$PUBLIC_BETA_RELEASE_READER_EMAIL" \
 UAT_PASSWORD="$PUBLIC_BETA_UAT_PASSWORD" \
+UAT_OUTPUT_DIR=work/public-beta-proof/release-reader \
 npx -y pnpm@11.7.0 test:uat
 ```
 
 The screenshots must show:
 
-- reader home
+- public login entry
 - page list
 - clean page reading view
 - search results
@@ -106,6 +114,8 @@ npx -y pnpm@11.7.0 security:verify-restricted-leakage
 npx -y pnpm@11.7.0 db:verify-backup-restore
 ```
 
+`smoke:compose` already exercises the leakage verifier. The explicit second command is intentional here because the release proof records a standalone restricted-leakage result.
+
 For a public deployment, also run the deployment-default check with the real public entrypoint and browser origin:
 
 ```bash
@@ -114,6 +124,10 @@ FORGETBASE_PUBLIC_ENTRYPOINT=external-tls-proxy \
 FORGETBASE_REQUIRE_AUTHENTICATION=true \
 FORGETBASE_SESSION_COOKIE_SECURE=true \
 FORGETBASE_CORS_ALLOWED_ORIGINS="$PUBLIC_BETA_LIVE_DEMO_URL" \
+FORGETBASE_POSTGRES_PORT=127.0.0.1:5432 \
+FORGETBASE_API_PORT=127.0.0.1:3000 \
+FORGETBASE_WEB_PORT=127.0.0.1:5175 \
+FORGETBASE_PROXY_PORT=127.0.0.1:8080 \
 npx -y pnpm@11.7.0 security:check-deployment-defaults
 ```
 
@@ -145,7 +159,7 @@ Collect and validate the proof manifest after the live demo, UAT reports, stack 
 
 ```bash
 PUBLIC_BETA_LIVE_DEMO_URL=https://demo.example.com \
-PUBLIC_BETA_TAG=v0.1.0-beta.1 \
+PUBLIC_BETA_TAG=v0.1.0-beta.2 \
 npx -y pnpm@11.7.0 release-proof:collect
 
 npx -y pnpm@11.7.0 release-proof:check work/public-beta-proof/public-beta-release-proof.json
@@ -158,8 +172,8 @@ The proof check must pass before tagging or announcing public beta. A failing re
 Only after the proof check passes:
 
 ```bash
-git tag -a v0.1.0-beta.1 -m "ForgetBase v0.1.0-beta.1"
-git push origin v0.1.0-beta.1
+git tag -a v0.1.0-beta.2 -m "ForgetBase v0.1.0-beta.2"
+git push origin v0.1.0-beta.2
 ```
 
 Create the GitHub release from the tag. Keep the release notes plain:

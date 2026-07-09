@@ -3,7 +3,7 @@
   "stage": "public-beta",
   "release": {
     "commitSha": "<40-character git commit SHA>",
-    "tag": "v0.1.0-beta.1",
+    "tag": "v0.1.0-beta.2",
     "ciRunUrl": "https://github.com/jremick/forgetbase/actions/runs/<run-id>",
     "ciHeadSha": "<40-character CI head SHA>",
     "ciStatus": "passed",
@@ -165,12 +165,6 @@
   ],
   "browserProof": [
     {
-      "label": "public-reader-home",
-      "viewport": "desktop",
-      "flow": "Public entry",
-      "evidence": [{ "kind": "file", "value": "public-uat/public-desktop.png" }]
-    },
-    {
       "label": "page-browse-tree",
       "viewport": "desktop",
       "flow": "Signed-in reader browse tree",
@@ -203,8 +197,8 @@
     {
       "label": "login-gate",
       "viewport": "desktop",
-      "flow": "Private beta login",
-      "evidence": [{ "kind": "file", "value": "public-uat/public-desktop.png" }]
+      "flow": "Public login entry",
+      "evidence": [{ "kind": "file", "value": "public-uat/login-desktop.png" }]
     },
     {
       "label": "admin-overview",

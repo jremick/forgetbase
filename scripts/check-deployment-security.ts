@@ -90,13 +90,21 @@ function checkTemplatePosture(): void {
   const sameOriginNginx = readRepoFile("infra/docker/nginx.same-origin.conf");
   const tlsNginx = readRepoFile("infra/docker/nginx.tls.conf");
   const railwayNginx = readRepoFile("infra/docker/nginx.railway-proxy.conf.template");
+  const nodeDockerfile = readRepoFile("infra/docker/node.Dockerfile");
+  const railwayApiDockerfile = readRepoFile("infra/docker/railway-api.Dockerfile");
+  const railwayWorkerDockerfile = readRepoFile("infra/docker/railway-worker.Dockerfile");
+  const railwayWebDockerfile = readRepoFile("infra/docker/railway-web.Dockerfile");
+  const railwayProxyDockerfile = readRepoFile("infra/docker/railway-proxy.Dockerfile");
   const railwayRunbook = readRepoFile("docs/runbooks/DEPLOY_RAILWAY_PRIVATE_TEMPLATE.md");
   const dockerRunbook = readRepoFile("docs/runbooks/DEPLOY_DOCKER_COMPOSE.md");
   const server = readRepoFile("apps/api/src/server.ts");
 
-  requireIncludes("compose.yaml", compose, "HOST: 0.0.0.0", "local Compose direct API bind remains explicit");
-  requireIncludes("compose.yaml", compose, "${FORGETBASE_API_PORT:-3000}:3000", "local Compose API port remains overrideable");
+  requireIncludes("compose.yaml", compose, "HOST: 0.0.0.0", "API listens on the container network");
+  requireIncludes("compose.yaml", compose, "${FORGETBASE_POSTGRES_PORT:-127.0.0.1:5432}:5432", "local Compose Postgres defaults to loopback");
+  requireIncludes("compose.yaml", compose, "${FORGETBASE_API_PORT:-127.0.0.1:3000}:3000", "local Compose API defaults to loopback");
+  requireIncludes("compose.yaml", compose, "${FORGETBASE_WEB_PORT:-127.0.0.1:5175}:4173", "local Compose web preview defaults to loopback");
   requireIncludes("compose.same-origin.yaml", composeSameOrigin, "proxy:", "same-origin proxy overlay exists");
+  requireIncludes("compose.same-origin.yaml", composeSameOrigin, "${FORGETBASE_PROXY_PORT:-127.0.0.1:8080}:8080", "same-origin proxy defaults to loopback");
   requireIncludes("infra/docker/nginx.same-origin.conf", sameOriginNginx, "location /api/", "same-origin proxy routes API under /api");
   requireIncludes("compose.tls.yaml", composeTls, "FORGETBASE_SESSION_COOKIE_SECURE: \"true\"", "TLS overlay enables secure browser cookies");
   requireIncludes("infra/docker/nginx.tls.conf", tlsNginx, "Strict-Transport-Security", "TLS proxy sets HSTS");
@@ -106,6 +114,15 @@ function checkTemplatePosture(): void {
   requireIncludes("docs/runbooks/DEPLOY_RAILWAY_PRIVATE_TEMPLATE.md", railwayRunbook, "FORGETBASE_SESSION_COOKIE_SECURE=true", "Railway public template requires secure cookies");
   requireIncludes("docs/runbooks/DEPLOY_RAILWAY_PRIVATE_TEMPLATE.md", railwayRunbook, "api` and `web` have no public domains", "Railway template keeps api/web private");
   requireIncludes("docs/runbooks/DEPLOY_DOCKER_COMPOSE.md", dockerRunbook, "security:check-deployment-defaults", "Docker runbook documents deployment-default gate");
+  requireIncludes("infra/docker/node.Dockerfile", nodeDockerfile, "pnpm install --frozen-lockfile", "Compose image uses the frozen lockfile");
+  requireIncludes("infra/docker/node.Dockerfile", nodeDockerfile, "USER node", "Compose application image runs as non-root");
+  requireIncludes("infra/docker/railway-api.Dockerfile", railwayApiDockerfile, "USER node", "Railway API image runs as non-root");
+  requireIncludes("infra/docker/railway-worker.Dockerfile", railwayWorkerDockerfile, "USER node", "Railway worker image runs as non-root");
+  requireIncludes("infra/docker/railway-web.Dockerfile", railwayWebDockerfile, "USER node", "Railway web image runs as non-root");
+  requireIncludes("infra/docker/railway-proxy.Dockerfile", railwayProxyDockerfile, "pnpm install --frozen-lockfile", "Railway proxy build uses the frozen lockfile");
+  requireIncludes("infra/docker/railway-proxy.Dockerfile", railwayProxyDockerfile, "USER nginx", "Railway proxy image runs as non-root");
+  requireIncludes("infra/docker/railway-proxy.Dockerfile", railwayProxyDockerfile, "pid /tmp/nginx.pid", "Railway proxy uses a non-root-writable PID path");
+  requireIncludes("apps/api/src/server.ts", server, "server.get(\"/ready\"", "API exposes a database-aware readiness route");
 
   const publicAuthBlockMatch = server.match(/function isPublicAuthenticationPath[\s\S]*?\n}/);
 

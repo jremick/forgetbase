@@ -2,13 +2,14 @@
 
 ## Summary
 
-ForgetBase should be built as a containerized, API-first, agent-native platform. The registry, permissions, retrieval, validation, telemetry, and connector surfaces are core. The managed agent orchestration layer is designed from day one but implemented after the MVP proves the foundation.
+ForgetBase should be built as a containerized knowledge system with a reader-first human surface and an API-first, agent-native governed core. The registry, permissions, retrieval, validation, telemetry, and connector surfaces are shared foundations. The managed agent orchestration layer is designed from day one but implemented after the MVP proves the foundation.
 
 ## Component Model
 
 ```mermaid
 flowchart LR
-  Admin["Operational Web UI"] --> API["API Service"]
+  Reader["Reader Web UI"] --> API["API Service"]
+  Admin["Admin Web UI"] --> API
   CLI["CLI"] --> API
   MCP["MCP Server"] --> API
   Apps["ChatGPT / Claude / Codex / Claude Code"] --> MCP
@@ -36,7 +37,7 @@ Owns auth, permissions, registry operations, retrieval, admin configuration, API
 
 ### Web UI
 
-Operational interface for admins, maintainers, and fallback readers. It should prioritize dense management workflows over a marketing or publishing experience.
+Two deliberately separated experiences over the same permission-aware API: a reader UI for browsing, reading, search, cited answers, and sources; and an operational admin UI for governance, access, content lifecycle, exports, and system health. Reader tasks prioritize clarity and accessibility, while admin tasks can use denser management patterns.
 
 ### CLI
 

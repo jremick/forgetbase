@@ -152,6 +152,42 @@ describe("API health route", () => {
     expect(response.headers["access-control-allow-credentials"]).toBeUndefined();
   });
 
+  it("separates liveness from dependency readiness", async () => {
+    server = buildServer({
+      logger: false,
+      readinessCheck: async () => {
+        throw new Error("database unavailable");
+      }
+    });
+
+    const liveness = await server.inject({ method: "GET", url: "/health" });
+    const readiness = await server.inject({ method: "GET", url: "/ready" });
+
+    expect(liveness.statusCode).toBe(200);
+    expect(readiness.statusCode).toBe(503);
+    expect(readiness.json()).toMatchObject({
+      status: "not-ready",
+      checks: {
+        database: "unavailable",
+        migrations: "unknown"
+      }
+    });
+  });
+
+  it("allows unauthenticated readiness probes when global authentication is required", async () => {
+    server = buildServer({
+      logger: false,
+      authRepository: new InMemoryAuthRepository(),
+      requireAuthentication: true,
+      readinessCheck: async () => undefined
+    });
+
+    const response = await server.inject({ method: "GET", url: "/ready" });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().status).toBe("ready");
+  });
+
   it("fails startup on invalid boolean environment values", async () => {
     const previousValue = process.env.FORGETBASE_REQUIRE_AUTHENTICATION;
     process.env.FORGETBASE_REQUIRE_AUTHENTICATION = "true ";
@@ -190,6 +226,76 @@ describe("API health route", () => {
     expect(response.statusCode).toBe(401);
     expect(response.json().error).toBe("authentication_required");
   });
+
+  it("serializes concurrent first-admin bootstrap attempts", async () => {
+    const authRepository = new InMemoryAuthRepository();
+    server = buildServer({ logger: false, authRepository });
+    const payload = {
+      tenantId: "tenant_concurrent_bootstrap",
+      email: "admin@example.test",
+      displayName: "Admin",
+      password: "bootstrap-password-123"
+    };
+    const responses = await Promise.all([
+      server.inject({ method: "POST", url: "/auth/bootstrap", payload }),
+      server.inject({ method: "POST", url: "/auth/bootstrap", payload })
+    ]);
+
+    expect(responses.map((response) => response.statusCode).sort()).toEqual([201, 409]);
+    expect(await authRepository.countUsers(payload.tenantId)).toBe(1);
+    expect((await authRepository.listApiKeys({ tenantId: payload.tenantId }))).toHaveLength(1);
+    expect((await authRepository.listAuditEvents({ tenantId: payload.tenantId })))
+      .toHaveLength(1);
+  });
+
+  it("throttles repeated password failures and records safe audit evidence", async () => {
+    const authRepository = new InMemoryAuthRepository();
+    server = buildServer({
+      logger: false,
+      authRepository,
+      loginThrottleMaxAttempts: 2,
+      loginThrottleWindowMs: 60_000,
+      loginThrottleBlockMs: 60_000,
+      loginThrottleMaxEntries: 10
+    });
+    await server.inject({
+      method: "POST",
+      url: "/auth/bootstrap",
+      payload: {
+        tenantId: "tenant_login_throttle",
+        email: "admin@example.test",
+        displayName: "Admin",
+        password: "correct-password-123"
+      }
+    });
+    const invalidLogin = {
+      tenantId: "tenant_login_throttle",
+      email: "admin@example.test",
+      password: "incorrect"
+    };
+    const first = await server.inject({ method: "POST", url: "/auth/login", payload: invalidLogin });
+    const second = await server.inject({ method: "POST", url: "/auth/login", payload: invalidLogin });
+    const blocked = await server.inject({ method: "POST", url: "/auth/login", payload: invalidLogin });
+
+    expect(first.statusCode).toBe(401);
+    expect(second.statusCode).toBe(429);
+    expect(blocked.statusCode).toBe(429);
+    expect(Number.parseInt(String(blocked.headers["retry-after"]), 10)).toBeGreaterThan(0);
+
+    const failedLogins = (await authRepository.listAuditEvents({ tenantId: "tenant_login_throttle" }))
+      .filter((event) => event.action === "auth.login" && event.outcome === "denied");
+    expect(failedLogins).toHaveLength(3);
+    expect(failedLogins.map((event) => event.reason)).toEqual(expect.arrayContaining([
+      "invalid_credentials",
+      "login_rate_limited"
+    ]));
+    expect(failedLogins[0]?.metadata).toMatchObject({
+      emailHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+      remoteAddressHash: expect.stringMatching(/^[a-f0-9]{64}$/)
+    });
+    expect(JSON.stringify(failedLogins)).not.toContain("admin@example.test");
+    expect(JSON.stringify(failedLogins)).not.toContain("incorrect");
+  });
 });
 
 describe("API asset registry routes", () => {
@@ -208,7 +314,8 @@ describe("API asset registry routes", () => {
         displayName: "Admin"
       }
     });
-    const apiKey = bootstrap.json().secret;
+    const bootstrapBody = bootstrap.json();
+    const apiKey = bootstrapBody.secret;
 
     const createResponse = await server.inject({
       method: "POST",
@@ -262,6 +369,87 @@ describe("API asset registry routes", () => {
 
     expect(fetchResponse.statusCode).toBe(200);
     expect(fetchResponse.json().instructionObjects[0].body).toContain("permitted");
+  });
+
+  it("does not trust a caller-declared surface and intersects admin access with asset surfaces", async () => {
+    const authRepository = new InMemoryAuthRepository();
+    server = buildServer({
+      logger: false,
+      registryRepository: new InMemoryRegistryRepository(),
+      authRepository
+    });
+    const bootstrap = await server.inject({
+      method: "POST",
+      url: "/auth/bootstrap",
+      payload: { email: "surface-admin@example.test", displayName: "Surface Admin" }
+    });
+    const bootstrapBody = bootstrap.json();
+    const apiKey = bootstrapBody.secret;
+    await server.inject({
+      method: "POST",
+      url: "/assets",
+      headers: { authorization: `Bearer ${apiKey}` },
+      payload: {
+        stableId: "guardrail.mcp-only",
+        type: "guardrail",
+        ownerId: "user_admin",
+        title: "MCP-only Guardrail",
+        lifecycleState: "active",
+        sensitivity: "internal",
+        audience: ["ai-team"],
+        status: "approved",
+        reviewDueAt: "2027-01-31",
+        allowedSurfaces: ["mcp"],
+        instruction: { instructionKind: "guardrail", body: "Only MCP may read this." }
+      }
+    });
+
+    const apiOnlyKeyResponse = await server.inject({
+      method: "POST",
+      url: "/auth/api-keys",
+      headers: { authorization: `Bearer ${apiKey}` },
+      payload: {
+        userId: bootstrapBody.user.id,
+        name: "api-only",
+        scopes: ["asset:read"],
+        allowedSurfaces: ["api"]
+      }
+    });
+    const apiOnlyKey = apiOnlyKeyResponse.json().secret;
+    const denied = await server.inject({
+      method: "GET",
+      url: "/assets/guardrail.mcp-only",
+      headers: {
+        authorization: `Bearer ${apiOnlyKey}`,
+        "x-forgetbase-surface": "mcp"
+      }
+    });
+
+    expect(denied.statusCode).toBe(403);
+    expect(denied.json().error).toBe("access_denied");
+
+    const mcpKeyResponse = await server.inject({
+      method: "POST",
+      url: "/auth/api-keys",
+      headers: { authorization: `Bearer ${apiKey}` },
+      payload: {
+        userId: bootstrapBody.user.id,
+        name: "mcp-bound",
+        scopes: ["asset:read"],
+        allowedSurfaces: ["mcp"]
+      }
+    });
+    const allowed = await server.inject({
+      method: "GET",
+      url: "/assets/guardrail.mcp-only",
+      headers: {
+        authorization: `Bearer ${mcpKeyResponse.json().secret}`,
+        "x-forgetbase-surface": "mcp"
+      }
+    });
+
+    expect(allowed.statusCode).toBe(200);
+    expect(allowed.json().asset.stableId).toBe("guardrail.mcp-only");
   });
 
   it("lists review queue items and marks assets reviewed", async () => {
@@ -342,7 +530,7 @@ describe("API asset registry routes", () => {
     expect(reviewed.statusCode).toBe(200);
     expect(reviewed.json().asset.status).toBe("approved");
     expect(reviewed.json().asset.reviewDueAt).toBe("2027-06-30");
-    expect(reviewed.json().versions).toHaveLength(1);
+    expect(reviewed.json().versions).toHaveLength(2);
 
     const nextQueue = await server.inject({
       method: "GET",
@@ -2086,7 +2274,7 @@ describe("API asset registry routes", () => {
 
     expect(versionSnapshot.statusCode).toBe(200);
     expect(versionSnapshot.json().version.versionNumber).toBe(1);
-    expect(versionSnapshot.json().asset.currentVersionId).toBe(updateResponse.json().asset.currentVersionId);
+    expect(versionSnapshot.json().asset.currentVersionId).toBe(versionSnapshot.json().version.id);
     expect(versionSnapshot.json().instructionObjects[0].body).toContain("Original rollback-safe instruction");
     expect(versionSnapshot.json().humanDocuments[0].body).toContain("Original rollback-safe document");
 
@@ -2206,7 +2394,7 @@ describe("API asset registry routes", () => {
     expect(publishResponse.json().asset.lifecycleState).toBe("active");
     expect(publishResponse.json().asset.status).toBe("approved");
     expect(publishResponse.json().asset.reviewDueAt).toBe("2027-06-30");
-    expect(publishResponse.json().versions).toHaveLength(1);
+    expect(publishResponse.json().versions).toHaveLength(2);
 
     const publicFetch = await server.inject({
       method: "GET",
@@ -6180,6 +6368,31 @@ describe("API asset registry routes", () => {
         authorization: `Bearer ${adminKey}`
       },
       payload: {
+        stableId: "policy.export-surface-denied",
+        type: "policy",
+        ownerId: "user_admin",
+        title: "API-only Public Policy",
+        lifecycleState: "active",
+        sensitivity: "public-demo",
+        audience: ["ai-team"],
+        status: "approved",
+        reviewDueAt: "2027-01-31",
+        allowedSurfaces: ["api"],
+        allowedExports: ["demo-agent-pack"],
+        instruction: {
+          instructionKind: "policy",
+          body: "This public asset does not permit the export surface."
+        }
+      }
+    });
+
+    await server.inject({
+      method: "POST",
+      url: "/assets",
+      headers: {
+        authorization: `Bearer ${adminKey}`
+      },
+      payload: {
         stableId: "policy.export-restricted",
         type: "policy",
         ownerId: "user_admin",
@@ -6259,7 +6472,7 @@ describe("API asset registry routes", () => {
     expect(exportResponse.statusCode).toBe(200);
     const exportPackage = aiExportPackageSchema.parse(exportResponse.json());
     expect(exportPackage.packageName).toBe("demo-agent-pack");
-    expect(exportPackage.deniedCount).toBe(1);
+    expect(exportPackage.deniedCount).toBe(2);
     expect(exportPackage.assets.map((asset) => asset.stableId)).toEqual(["policy.export-public"]);
     expect(exportPackage.assets[0]?.citations[0]?.stableId).toBe("policy.export-public");
     expect(exportPackage.assets[0]?.instructions[0]?.body).toContain("public export instruction");
@@ -6275,7 +6488,7 @@ describe("API asset registry routes", () => {
     expect(okfExportPackage.format).toBe("okf");
     expect(okfExportPackage.okfVersion).toBe("0.1");
     expect(okfExportPackage.assetCount).toBe(1);
-    expect(okfExportPackage.deniedCount).toBe(1);
+    expect(okfExportPackage.deniedCount).toBe(2);
     expect(okfExportPackage.files.map((file) => file.path)).toEqual(expect.arrayContaining([
       "index.md",
       "manifest.md",

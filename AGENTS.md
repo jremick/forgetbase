@@ -1,18 +1,19 @@
 # ForgetBase Project Instructions
 
-Version: 0.1.1
-Last updated: 2026-06-20
+Version: 0.1.2
+Last updated: 2026-07-10
 
 ## Project Purpose
 
-This project is an open-core, Apache 2.0, agent-native instruction management platform. It is not primarily a human CMS.
+This project is an open-core, Apache 2.0 knowledge system for people and AI tools. Its governed, agent-native data and retrieval layer is the product core; its reader-facing knowledge base is the primary human experience.
 
-The product manages AI instructions, policies, guardrails, playbooks, tool guidance, reusable skills, SOPs, templates, learning assets, and human-readable pages as governed assets. The primary consumers are agents, AI tools, harnesses, APIs, CLIs, and MCP clients. The human web UI is an operational surface for browsing, approval, debugging, and fallback reading.
+The product manages AI instructions, policies, guardrails, playbooks, tool guidance, reusable skills, SOPs, templates, learning assets, and human-readable pages as governed assets. Agents, AI tools, harnesses, APIs, CLIs, and MCP clients consume the governed machine surface. People browse, search, ask, and read through the knowledge-base UI; admins use its separate operational surface for governance and access control.
 
 ## Current Work Mode
 
 - Keep changes surgical and traceable to the current implementation lane.
-- Keep the project agent-native: APIs, CLIs, MCP clients, and AI harnesses are primary consumers; the web UI is operational.
+- Keep the governed core agent-native while treating the reader UI as a first-class product surface and the admin UI as a separate operational surface.
+- Keep the repository private during controlled live UAT. Do not change visibility, create a release, push a new tag, or announce public beta without explicit owner approval.
 - Keep public examples synthetic and reusable.
 
 ## Public Content Boundary
@@ -63,6 +64,7 @@ Before claiming a milestone is done, provide evidence for the relevant checks:
 - `docs/DECISIONS.md`: current decisions, tradeoffs, and review triggers.
 - `docs/MVP_SCOPE.md`: minimum useful release and acceptance checks.
 - `docs/BETA_PRIVATE_CONTRACT.md`: private beta frozen machine-consumer surface and preview boundaries.
+- `docs/PRIVATE_LIVE_UAT.md`: controlled live user-testing charter, evidence, and stop rules.
 - `docs/SECURITY_MODEL.md`: security posture, auth, permissions, telemetry, and PII handling.
 - `docs/DEVELOPMENT.md`: install, verification, and smoke-test commands.
 - `docs/SYNTHETIC_CORPUS_PLAN.md`: public demo corpus design.

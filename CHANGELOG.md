@@ -2,7 +2,7 @@
 
 All notable changes will be recorded here once public beta releases begin.
 
-## Unreleased
+## Unreleased - 0.1.0-beta.2 candidate
 
 ### Added
 
@@ -13,6 +13,12 @@ All notable changes will be recorded here once public beta releases begin.
 - Synthetic demo corpus, validation gates, restricted leakage verifier, backup/restore verifier, and Docker Compose runbooks.
 - Redaction, retention, cache, audit, provider, action execution, and session hardening foundations.
 
+### Release Boundary
+
+- The candidate is undergoing controlled live UAT while the repository remains private.
+- No `v0.1.0-beta.2` tag or GitHub release exists yet.
+- Public visibility, tagging, release creation, and announcement require explicit owner approval after the evidence gates pass.
+
 ### Not Yet Included
 
 - Public release tag.
@@ -22,6 +28,6 @@ All notable changes will be recorded here once public beta releases begin.
 - Hosted service packaging.
 - SCIM, MFA enforcement, remembered-device trust policy, and compliance certification process.
 
-## 0.1.0-beta.1
+## 0.1.0-beta.1 - 2026-06-19
 
-Not released yet. See [docs/PUBLIC_BETA_GOAL.md](docs/PUBLIC_BETA_GOAL.md).
+Private beta readiness snapshot at tag `v0.1.0-beta.1`. It was not a public beta release and must not be reused for the next candidate.

@@ -1,4 +1,4 @@
-import { createHash, randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes, scrypt, timingSafeEqual } from "node:crypto";
 import type { Pool, QueryResult, QueryResultRow } from "pg";
 import {
   apiKeyCreateInputSchema,
@@ -69,6 +69,18 @@ export interface AccessCheckInput {
   asset: AssetRecord;
   action: PermissionAction;
   surface: Surface;
+}
+
+export interface BootstrapAdminInput {
+  tenantId: string;
+  email: string;
+  displayName: string;
+  password?: string;
+  keyName: string;
+}
+
+export interface BootstrapAdminResult extends ApiKeyCreated {
+  user: LocalUser;
 }
 
 export interface AuditEventListOptions {
@@ -262,6 +274,7 @@ export interface GroupDeleteInput {
 }
 
 export interface AuthRepository {
+  bootstrapAdmin(input: BootstrapAdminInput): Promise<BootstrapAdminResult | null>;
   countUsers(tenantId?: string): Promise<number>;
   createUser(input: LocalUserCreateInput): Promise<LocalUser>;
   listUsers(options?: UserListOptions): Promise<LocalUser[]>;
@@ -306,6 +319,92 @@ export interface AuthRepository {
 export class PostgresAuthRepository implements AuthRepository {
   constructor(private readonly pool: Pool) {}
 
+  async bootstrapAdmin(input: BootstrapAdminInput): Promise<BootstrapAdminResult | null> {
+    const client = await this.pool.connect();
+    const passwordHash = input.password ? await hashPassword(input.password) : null;
+    const secret = generateApiKeySecret();
+
+    try {
+      await client.query("BEGIN");
+      await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [`forgetbase-bootstrap:${input.tenantId}`]);
+      await ensureTenant(client, input.tenantId);
+
+      const existing = await client.query<{ count: string }>(
+        "SELECT count(*)::text AS count FROM users WHERE tenant_id = $1",
+        [input.tenantId]
+      );
+
+      if (Number.parseInt(existing.rows[0]?.count ?? "0", 10) > 0) {
+        await client.query("ROLLBACK");
+        return null;
+      }
+
+      const userResult = await client.query<UserRow>(
+        `
+          INSERT INTO users (tenant_id, email, display_name, role, status, password_hash)
+          VALUES ($1, $2, $3, 'admin', 'active', $4)
+          RETURNING *
+        `,
+        [input.tenantId, input.email, input.displayName, passwordHash]
+      );
+      const user = mapUserRow(requireRow(userResult));
+      const keyResult = await client.query<ApiKeyRow>(
+        `
+          INSERT INTO api_keys (
+            tenant_id,
+            user_id,
+            service_account_id,
+            name,
+            secret_hash,
+            secret_preview,
+            scopes,
+            allowed_surfaces
+          )
+          VALUES ($1, $2, NULL, $3, $4, $5, $6, $7)
+          RETURNING *
+        `,
+        [
+          input.tenantId,
+          user.id,
+          input.keyName,
+          hashApiKeySecret(secret),
+          previewSecret(secret),
+          ["admin", "asset:read", "asset:write", "permission:write"],
+          ["api", "cli", "mcp", "web", "export"]
+        ]
+      );
+      const apiKey = mapApiKeyRow(requireRow(keyResult));
+
+      await client.query(
+        `
+          INSERT INTO audit_events (
+            tenant_id,
+            actor_user_id,
+            actor_api_key_id,
+            action,
+            target_type,
+            target_id,
+            outcome
+          )
+          VALUES ($1, $2::uuid, $3, 'auth.bootstrap', 'user', $2::text, 'success')
+        `,
+        [input.tenantId, user.id, apiKey.id]
+      );
+      await client.query("COMMIT");
+
+      return {
+        user,
+        apiKey,
+        secret
+      };
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   async countUsers(tenantId = "tenant_demo"): Promise<number> {
     const result = await this.pool.query<{ count: string }>(
       "SELECT count(*)::text AS count FROM users WHERE tenant_id = $1",
@@ -318,6 +417,7 @@ export class PostgresAuthRepository implements AuthRepository {
   async createUser(input: LocalUserCreateInput): Promise<LocalUser> {
     const parsed = localUserCreateInputSchema.parse(input);
     await ensureTenant(this.pool, parsed.tenantId);
+    const passwordHash = parsed.password ? await hashPassword(parsed.password) : null;
     const result = await this.pool.query<UserRow>(
       `
         INSERT INTO users (tenant_id, email, display_name, role, status, password_hash)
@@ -330,7 +430,7 @@ export class PostgresAuthRepository implements AuthRepository {
         parsed.displayName,
         parsed.role,
         parsed.status,
-        parsed.password ? hashPassword(parsed.password) : null
+        passwordHash
       ]
     );
 
@@ -453,6 +553,7 @@ export class PostgresAuthRepository implements AuthRepository {
 
   async updateUser(input: LocalUserUpdateInput): Promise<LocalUser | null> {
     const parsed = localUserUpdateInputSchema.parse(input);
+    const passwordHash = parsed.password ? await hashPassword(parsed.password) : null;
     const result = await this.pool.query<UserRow>(
       `
         UPDATE users
@@ -472,7 +573,7 @@ export class PostgresAuthRepository implements AuthRepository {
         parsed.displayName ?? null,
         parsed.role ?? null,
         parsed.status ?? null,
-        parsed.password ? hashPassword(parsed.password) : null
+        passwordHash
       ]
     );
     const row = result.rows[0];
@@ -966,6 +1067,7 @@ export class PostgresAuthRepository implements AuthRepository {
       hashApiKeySecret(secret),
       previewSecret(secret),
       parsed.scopes,
+      parsed.allowedSurfaces,
       expiresAt
     ];
     const result = parsed.userId
@@ -979,12 +1081,13 @@ export class PostgresAuthRepository implements AuthRepository {
             secret_hash,
             secret_preview,
             scopes,
+            allowed_surfaces,
             expires_at
           )
-          SELECT $1, users.id, NULL, $2, $3, $4, $5, $6::timestamptz
+          SELECT $1, users.id, NULL, $2, $3, $4, $5, $6, $7::timestamptz
           FROM users
           WHERE users.tenant_id = $1
-            AND users.id = $7
+            AND users.id = $8
           RETURNING *
         `,
         [...insertParameters, parsed.userId]
@@ -999,12 +1102,13 @@ export class PostgresAuthRepository implements AuthRepository {
             secret_hash,
             secret_preview,
             scopes,
+            allowed_surfaces,
             expires_at
           )
-          SELECT $1, NULL, service_accounts.id, $2, $3, $4, $5, $6::timestamptz
+          SELECT $1, NULL, service_accounts.id, $2, $3, $4, $5, $6, $7::timestamptz
           FROM service_accounts
           WHERE service_accounts.tenant_id = $1
-            AND service_accounts.id = $7
+            AND service_accounts.id = $8
           RETURNING *
         `,
         [...insertParameters, parsed.serviceAccountId]
@@ -1207,9 +1311,10 @@ export class PostgresAuthRepository implements AuthRepository {
             secret_hash,
             secret_preview,
             scopes,
+            allowed_surfaces,
             expires_at
           )
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8::timestamptz)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::timestamptz)
           RETURNING *
         `,
         [
@@ -1220,6 +1325,7 @@ export class PostgresAuthRepository implements AuthRepository {
           hashApiKeySecret(secret),
           previewSecret(secret),
           existingRow.scopes,
+          existingRow.allowed_surfaces,
           existingRow.expires_at
         ]
       );
@@ -1353,6 +1459,7 @@ export class PostgresAuthRepository implements AuthRepository {
             sessions.absolute_expires_at AS session_absolute_expires_at,
             keys.name AS old_api_key_name,
             keys.scopes AS old_api_key_scopes,
+            keys.allowed_surfaces AS old_api_key_allowed_surfaces,
             sessions.created_at AS session_created_at,
             sessions.expires_at AS session_expires_at,
             sessions.last_seen_at AS session_last_seen_at,
@@ -1395,9 +1502,10 @@ export class PostgresAuthRepository implements AuthRepository {
             secret_hash,
             secret_preview,
             scopes,
+            allowed_surfaces,
             expires_at
           )
-          VALUES ($1, $2, NULL, $3, $4, $5, $6, $7::timestamptz)
+          VALUES ($1, $2, NULL, $3, $4, $5, $6, $7, $8::timestamptz)
           RETURNING *
         `,
         [
@@ -1407,6 +1515,7 @@ export class PostgresAuthRepository implements AuthRepository {
           hashApiKeySecret(accessSecret),
           previewSecret(accessSecret),
           refreshableRow.old_api_key_scopes,
+          refreshableRow.old_api_key_allowed_surfaces,
           refreshableRow.session_absolute_expires_at
             ? minIso(input.expiresAt, toIso(refreshableRow.session_absolute_expires_at))
             : input.expiresAt
@@ -1644,6 +1753,7 @@ export class PostgresAuthRepository implements AuthRepository {
         displayName: row.service_account_name,
         role: row.service_account_role,
         scopes: row.scopes,
+        allowedSurfaces: row.allowed_surfaces,
         groupIds: []
       });
     }
@@ -1663,6 +1773,7 @@ export class PostgresAuthRepository implements AuthRepository {
       displayName: row.user_display_name,
       role: row.user_role,
       scopes: row.scopes,
+      allowedSurfaces: row.allowed_surfaces,
       groupIds: await this.getGroupIds(row.user_id)
     });
   }
@@ -1682,7 +1793,7 @@ export class PostgresAuthRepository implements AuthRepository {
     );
     const row = result.rows[0];
 
-    if (!row?.password_hash || !verifyPassword(password, row.password_hash)) {
+    if (!row?.password_hash || !(await verifyPassword(password, row.password_hash))) {
       return null;
     }
 
@@ -1732,6 +1843,14 @@ export class PostgresAuthRepository implements AuthRepository {
   }
 
   async canAccessAsset(input: AccessCheckInput): Promise<boolean> {
+    if (!input.asset.allowedSurfaces.includes(input.surface)) {
+      return false;
+    }
+
+    if (input.principal && !input.principal.allowedSurfaces.includes(input.surface)) {
+      return false;
+    }
+
     if (hasPublicReadAccess(input)) {
       return true;
     }
@@ -1875,6 +1994,75 @@ export class InMemoryAuthRepository implements AuthRepository {
   private readonly auditEvents: AuditEvent[] = [];
   private sequence = 0;
 
+  async bootstrapAdmin(input: BootstrapAdminInput): Promise<BootstrapAdminResult | null> {
+    const passwordHash = input.password ? await hashPassword(input.password) : null;
+
+    if (Array.from(this.users.values()).some((user) => user.tenantId === input.tenantId)) {
+      return null;
+    }
+
+    const now = new Date().toISOString();
+    const userSequence = this.sequence + 1;
+    const keySequence = this.sequence + 2;
+    const auditSequence = this.sequence + 3;
+    const user = localUserSchema.parse({
+      id: `user_${userSequence}`,
+      tenantId: input.tenantId,
+      email: input.email,
+      displayName: input.displayName,
+      role: "admin",
+      status: "active",
+      authProvider: "local",
+      externalProvider: null,
+      externalSubject: null,
+      externalIssuer: null,
+      createdAt: now,
+      updatedAt: now
+    });
+    const secret = generateApiKeySecret();
+    const apiKey = apiKeyRecordSchema.parse({
+      id: `api_key_${keySequence}`,
+      tenantId: input.tenantId,
+      userId: user.id,
+      serviceAccountId: null,
+      name: input.keyName,
+      secretPreview: previewSecret(secret),
+      scopes: ["admin", "asset:read", "asset:write", "permission:write"],
+      allowedSurfaces: ["api", "cli", "mcp", "web", "export"],
+      expiresAt: null,
+      lastUsedAt: null,
+      revokedAt: null,
+      createdAt: now
+    });
+    const auditEvent = auditEventSchema.parse({
+      id: `audit_${auditSequence}`,
+      tenantId: input.tenantId,
+      actorUserId: user.id,
+      actorServiceAccountId: null,
+      actorApiKeyId: apiKey.id,
+      action: "auth.bootstrap",
+      targetType: "user",
+      targetId: user.id,
+      outcome: "success",
+      reason: null,
+      metadata: {},
+      createdAt: now
+    });
+
+    this.sequence = auditSequence;
+    this.users.set(user.id, user);
+    if (passwordHash) {
+      this.passwordHashes.set(user.id, passwordHash);
+    }
+    this.apiKeys.set(hashApiKeySecret(secret), {
+      apiKey,
+      secretHash: hashApiKeySecret(secret)
+    });
+    this.auditEvents.unshift(auditEvent);
+
+    return { user, apiKey, secret };
+  }
+
   async countUsers(tenantId = "tenant_demo"): Promise<number> {
     return Array.from(this.users.values()).filter((user) => user.tenantId === tenantId).length;
   }
@@ -1901,7 +2089,7 @@ export class InMemoryAuthRepository implements AuthRepository {
     this.users.set(user.id, user);
 
     if (parsed.password) {
-      this.passwordHashes.set(user.id, hashPassword(parsed.password));
+      this.passwordHashes.set(user.id, await hashPassword(parsed.password));
     }
 
     return user;
@@ -2005,7 +2193,7 @@ export class InMemoryAuthRepository implements AuthRepository {
     this.users.set(updated.id, updated);
 
     if (parsed.password) {
-      this.passwordHashes.set(updated.id, hashPassword(parsed.password));
+      this.passwordHashes.set(updated.id, await hashPassword(parsed.password));
     }
 
     for (const [key, membership] of this.groupMemberships.entries()) {
@@ -2390,6 +2578,7 @@ export class InMemoryAuthRepository implements AuthRepository {
       name: parsed.name,
       secretPreview: previewSecret(secret),
       scopes: parsed.scopes,
+      allowedSurfaces: parsed.allowedSurfaces,
       expiresAt,
       lastUsedAt: null,
       revokedAt: null,
@@ -2514,6 +2703,7 @@ export class InMemoryAuthRepository implements AuthRepository {
       name: parsed.name ?? `${record.apiKey.name} rotation`,
       secretPreview: previewSecret(secret),
       scopes: record.apiKey.scopes,
+      allowedSurfaces: record.apiKey.allowedSurfaces,
       expiresAt: record.apiKey.expiresAt,
       lastUsedAt: null,
       revokedAt: null,
@@ -2677,6 +2867,7 @@ export class InMemoryAuthRepository implements AuthRepository {
       name: input.apiKeyName ?? `${oldApiKeyRecord.apiKey.name} refresh`,
       secretPreview: previewSecret(accessSecret),
       scopes: oldApiKeyRecord.apiKey.scopes,
+      allowedSurfaces: oldApiKeyRecord.apiKey.allowedSurfaces,
       expiresAt: replacementExpiresAt,
       lastUsedAt: null,
       revokedAt: null,
@@ -2832,6 +3023,7 @@ export class InMemoryAuthRepository implements AuthRepository {
         displayName: serviceAccount.name,
         role: serviceAccount.role,
         scopes: record.apiKey.scopes,
+        allowedSurfaces: record.apiKey.allowedSurfaces,
         groupIds: []
       });
     }
@@ -2853,6 +3045,7 @@ export class InMemoryAuthRepository implements AuthRepository {
       displayName: user.displayName,
       role: user.role,
       scopes: record.apiKey.scopes,
+      allowedSurfaces: record.apiKey.allowedSurfaces,
       groupIds: this.groupIdsForUser(user.id)
     });
   }
@@ -2871,7 +3064,7 @@ export class InMemoryAuthRepository implements AuthRepository {
 
     const passwordHash = this.passwordHashes.get(user.id);
 
-    if (!passwordHash || !verifyPassword(password, passwordHash)) {
+    if (!passwordHash || !(await verifyPassword(password, passwordHash))) {
       return null;
     }
 
@@ -2911,6 +3104,14 @@ export class InMemoryAuthRepository implements AuthRepository {
   }
 
   async canAccessAsset(input: AccessCheckInput): Promise<boolean> {
+    if (!input.asset.allowedSurfaces.includes(input.surface)) {
+      return false;
+    }
+
+    if (input.principal && !input.principal.allowedSurfaces.includes(input.surface)) {
+      return false;
+    }
+
     if (hasPublicReadAccess(input)) {
       return true;
     }
@@ -3026,13 +3227,13 @@ export function hashRefreshTokenSecret(secret: string): string {
   return `sha256:${createHash("sha256").update(secret).digest("hex")}`;
 }
 
-export function hashPassword(password: string): string {
+export async function hashPassword(password: string): Promise<string> {
   const salt = randomBytes(16).toString("base64url");
-  const derived = scryptSync(password, salt, 64).toString("base64url");
+  const derived = (await derivePasswordKey(password, salt, 64)).toString("base64url");
   return `scrypt:${salt}:${derived}`;
 }
 
-export function verifyPassword(password: string, passwordHash: string): boolean {
+export async function verifyPassword(password: string, passwordHash: string): Promise<boolean> {
   const [algorithm, salt, expected] = passwordHash.split(":");
 
   if (algorithm !== "scrypt" || !salt || !expected) {
@@ -3040,9 +3241,22 @@ export function verifyPassword(password: string, passwordHash: string): boolean 
   }
 
   const expectedBuffer = Buffer.from(expected, "base64url");
-  const actualBuffer = scryptSync(password, salt, expectedBuffer.length);
+  const actualBuffer = await derivePasswordKey(password, salt, expectedBuffer.length);
 
   return expectedBuffer.length === actualBuffer.length && timingSafeEqual(expectedBuffer, actualBuffer);
+}
+
+function derivePasswordKey(password: string, salt: string, keyLength: number): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    scrypt(password, salt, keyLength, (error, derivedKey) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+
+      resolve(derivedKey);
+    });
+  });
 }
 
 function generateApiKeySecret(): string {
@@ -3138,6 +3352,7 @@ function mapApiKeyRow(row: ApiKeyRow) {
     name: row.name,
     secretPreview: row.secret_preview,
     scopes: row.scopes,
+    allowedSurfaces: row.allowed_surfaces,
     expiresAt: row.expires_at ? toIso(row.expires_at) : null,
     lastUsedAt: row.last_used_at ? toIso(row.last_used_at) : null,
     revokedAt: row.revoked_at ? toIso(row.revoked_at) : null,
@@ -3383,6 +3598,7 @@ interface ApiKeyRow extends QueryResultRow {
   secret_hash: string;
   secret_preview: string;
   scopes: string[];
+  allowed_surfaces: Surface[];
   expires_at: Date | string | null;
   last_used_at: Date | string | null;
   revoked_at: Date | string | null;
@@ -3426,6 +3642,7 @@ interface LoginSessionRefreshJoinRow extends QueryResultRow {
   session_absolute_expires_at: Date | string | null;
   old_api_key_name: string;
   old_api_key_scopes: string[];
+  old_api_key_allowed_surfaces: Surface[];
   session_created_at: Date | string;
   session_expires_at: Date | string;
   session_last_seen_at: Date | string | null;

@@ -2,23 +2,23 @@
 
 ## Working Goal
 
-Build an open-core, Apache 2.0, agent-native instruction management platform for AI teams and power users.
+Build an open-core, Apache 2.0 knowledge system for people and AI tools, backed by an agent-native instruction and governance core.
 
-The system manages policies, prompts, playbooks, guardrails, tool instructions, reusable skills, templates, SOPs, learning assets, and human-readable knowledge as governed assets. It exposes those assets securely through API, CLI, MCP, ChatGPT, Claude, Codex, Claude Code, and an operational web UI.
+The system manages policies, prompts, playbooks, guardrails, tool instructions, reusable skills, templates, SOPs, learning assets, and human-readable knowledge as governed assets. People use a reader-first knowledge-base UI to browse, search, ask, and read. AI clients consume the same permission-aware corpus through API, CLI, MCP, ChatGPT, Claude, Codex, and Claude Code. Admins use a separate operational UI for governance and access control.
 
 The production product must support permission-aware retrieval, admin-controlled agent response behavior, telemetry, search, governance workflow, evals, caching, rollback, task-execution controls, PII mitigation, and a human-readable knowledge hub.
 
 ## Product Category
 
-ForgetBase is not primarily a wiki, intranet, or conventional CMS.
+ForgetBase is not a generic wiki, intranet, or conventional CMS.
 
-It is an instruction control plane for agentic systems:
+Its differentiating core is an instruction control plane for agentic systems, presented to people as a trustworthy knowledge base:
 
 - source of truth for instructions and policies
 - retrieval layer for trusted context
 - governance layer for content and agent behavior
-- operational surface for AI teams
-- fallback human reading surface
+- operational surface for AI teams and knowledge administrators
+- first-class human reading, search, and cited-answer surface
 
 ## Primary Users
 

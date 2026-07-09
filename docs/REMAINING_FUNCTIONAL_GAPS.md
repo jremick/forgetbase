@@ -17,6 +17,7 @@ This document records what is not actually complete after the early functional c
 - Real Microsoft Entra/OIDC tenant verification, group-claim mapping, allowed domains, and redirect settings.
 - Hosted-service tenant provisioning, billing, managed backups, hosted telemetry retention defaults, and support/SLA posture.
 - Public beta release choices: copyright holder/year, private vulnerability reporting confirmation, and tag-only versus GitHub prerelease.
+- Controlled private-live reader/admin UAT with named testers, captured observations, triaged findings, and exact deployed-commit proof.
 - Any non-synthetic corpus import or private/customer data use.
 
 ## Deferred: Product Or Architecture Work
@@ -32,12 +33,12 @@ This document records what is not actually complete after the early functional c
 
 - Generated OpenAPI or a stronger route/schema drift check beyond the current hand-authored OpenAPI inventory gate and beta-critical fixture tests.
 - Broader CLI/MCP contract coverage for the remaining long-tail commands beyond the first-run and fetch/search/export lane.
-- Compose smoke automation that boots an isolated CI stack, bootstraps an admin, imports corpus, searches, checks same-origin proxy health, and cleans up without relying on persistent Docker state.
-- Isolated CI automation for `smoke:compose`, `security:verify-restricted-leakage`, and `db:verify-backup-restore`; default CI currently covers deterministic static gates, static browser UAT, and focused contracts.
+- Route-level splitting and component decomposition for the still-monolithic web app; direct icon imports reduced the production JavaScript bundle from about 6.65 MB to about 1.63 MB, but the reader and admin surfaces still ship as one large chunk.
+- CI integration for the local `private-live:isolated-proof` harness; the harness now owns a unique Compose project, synthetic corpus seed, smoke/leakage, backup/restore, authenticated reader/admin browser UAT, evidence output, and cleanup, while default CI still covers deterministic static gates and focused contracts.
 - CI automation for authenticated release-mode browser UAT against a seeded same-origin stack; the local UAT script now covers reader/admin roles, restricted/no-access state, ask-with-sources, reviews, policies, access management, approvals, exports, and mobile reader screenshots.
 - Final release proof manifest populated with public HTTPS live-demo and GitHub settings evidence, then validated with `release-proof:check`; the local manifest is generated but intentionally fails until the public URL and repo settings pass.
 - Live GitHub settings still need public-beta read-back before release through `github:public-beta:check`: public visibility, reader-first description/topics, private vulnerability reporting, default-branch protection or rulesets, and current CI status.
 
 ## Current Boundary
 
-The current repo can be described as a public beta candidate for the self-hosted core only after the public beta gates in `docs/PUBLIC_BETA_GOAL.md` pass and the release proof manifest is validated. It should not be described as production-ready, hosted-service-ready, stable-API-compatible, enterprise-identity-complete, or full managed-agent orchestration.
+The current repo is a private candidate undergoing controlled live UAT. It can be described as a public beta candidate for the self-hosted core only after the gates in `docs/PUBLIC_BETA_GOAL.md` pass and the release proof manifest is validated. It should not be described as production-ready, hosted-service-ready, stable-API-compatible, enterprise-identity-complete, or full managed-agent orchestration.

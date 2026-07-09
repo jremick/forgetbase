@@ -1009,6 +1009,9 @@ async function handleAuth(args: string[]): Promise<number> {
 
     case "api-key-create": {
       const scopes = (readOption(args, "--scopes") ?? "asset:read").split(",").map((scope) => scope.trim());
+      const allowedSurfaces = (readOption(args, "--allowed-surfaces") ?? "api,cli,mcp,web,export")
+        .split(",")
+        .map((surface) => surface.trim());
       const userId = readOption(args, "--user-id");
       const serviceAccountId = readOption(args, "--service-account-id");
 
@@ -1020,7 +1023,8 @@ async function handleAuth(args: string[]): Promise<number> {
         userId,
         serviceAccountId,
         name: requireOption(args, "--name"),
-        scopes: scopes as Array<"admin" | "asset:read" | "asset:write" | "permission:write" | "agent:execute">
+        scopes: scopes as Array<"admin" | "asset:read" | "asset:write" | "permission:write" | "agent:execute">,
+        allowedSurfaces: allowedSurfaces as Array<"api" | "cli" | "mcp" | "web" | "export">
       });
       console.log(JSON.stringify(result, null, 2));
       return 0;
@@ -1337,7 +1341,7 @@ Usage:
   forgetbase auth group-member-add --group-id group_123 --user-id user_123 [--api-key ...]
   forgetbase auth group-member-remove --group-id group_123 --user-id user_123 [--api-key ...]
   forgetbase auth group-members --group-id group_123 [--limit 50] [--api-key ...]
-  forgetbase auth api-key-create (--user-id user_123 | --service-account-id service_account_123) --name cli --scopes asset:read|agent:execute [--api-key ...]
+  forgetbase auth api-key-create (--user-id user_123 | --service-account-id service_account_123) --name cli --scopes asset:read,agent:execute [--allowed-surfaces api,cli,mcp,web,export] [--api-key ...]
   forgetbase auth api-key-list [--limit 50] [--api-key ...]
   forgetbase auth api-key-rotation-due [--as-of 2026-06-16T00:00:00Z] [--due-within-days 14] [--include-user-keys true|false] [--include-revoked true|false] [--limit 50] [--api-key ...]
   forgetbase auth api-key-rotate --api-key-id api_key_123 [--name replacement] [--revoke-old] [--api-key ...]

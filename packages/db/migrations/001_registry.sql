@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS assets (
   allowed_surfaces text[] NOT NULL,
   allowed_exports text[] NOT NULL DEFAULT '{}',
   allowed_actions text[] NOT NULL DEFAULT '{}',
+  metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
   current_version_id uuid,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now(),

@@ -8,27 +8,59 @@
       "summary": "Baseline policy for approved AI tool use in a fictional SMB.",
       "lifecycleState": "active",
       "sensitivity": "public-demo",
-      "audience": ["all-staff", "ai-team"],
+      "audience": [
+        "all-staff",
+        "ai-team"
+      ],
       "status": "approved",
       "reviewDueAt": "2027-01-31",
       "sourceKind": "synthetic-demo",
       "sourceRef": "corpus/demo/policy.ai-acceptable-use",
-      "allowedSurfaces": ["api", "cli", "mcp", "web", "export"],
-      "allowedExports": ["demo-agent-pack"],
+      "allowedSurfaces": [
+        "api",
+        "cli",
+        "mcp",
+        "web",
+        "export"
+      ],
+      "allowedExports": [
+        "demo-agent-pack"
+      ],
       "allowedActions": [],
       "metadata": {
         "persona": "ai-native-operator",
-        "domain": "governance"
+        "domain": "governance",
+        "readerNavLabel": "AI use policies",
+        "readerIcon": "policy",
+        "readerNavOrder": 20,
+        "readerPageInfoFields": [
+          "updated",
+          "maintainer",
+          "review",
+          "access"
+        ]
       },
       "instruction": {
         "instructionKind": "policy",
-        "targetAgents": ["coding-agent", "research-agent", "ops-agent"],
+        "targetAgents": [
+          "coding-agent",
+          "research-agent",
+          "ops-agent"
+        ],
         "body": "Before using an AI tool, classify the requested work by data sensitivity, approved surface, and action risk. Refuse to place restricted or confidential material in unapproved model contexts. Prefer retrieval with citations over unstated memory. Escalate if the user requests credential exposure, hidden policy bypass, or unapproved external posting.",
         "inputContract": {
-          "required": ["task", "data_sensitivity", "requested_surface"]
+          "required": [
+            "task",
+            "data_sensitivity",
+            "requested_surface"
+          ]
         },
         "outputContract": {
-          "required": ["decision", "rationale", "citations"]
+          "required": [
+            "decision",
+            "rationale",
+            "citations"
+          ]
         },
         "constraints": [
           "Do not expose secrets or credentials.",
@@ -58,27 +90,53 @@
       "summary": "Guide for removing direct personal identifiers before AI use.",
       "lifecycleState": "active",
       "sensitivity": "public-demo",
-      "audience": ["ai-team", "support-ops"],
+      "audience": [
+        "ai-team",
+        "support-ops"
+      ],
       "status": "approved",
       "reviewDueAt": "2027-02-28",
       "sourceKind": "synthetic-demo",
       "sourceRef": "corpus/demo/guardrail.pii-redaction",
-      "allowedSurfaces": ["api", "cli", "mcp", "web", "export"],
-      "allowedExports": ["demo-agent-pack"],
+      "allowedSurfaces": [
+        "api",
+        "cli",
+        "mcp",
+        "web",
+        "export"
+      ],
+      "allowedExports": [
+        "demo-agent-pack"
+      ],
       "allowedActions": [],
       "metadata": {
         "persona": "support-automation-owner",
-        "domain": "privacy"
+        "domain": "privacy",
+        "readerParentId": "policy.model-context-boundaries",
+        "readerNavLabel": "PII redaction",
+        "readerIcon": "privacy",
+        "readerNavOrder": 10,
+        "readerPageInfoTitle": "Reader footer",
+        "readerPageInfoDescription": "This footer replaces the former page info side box."
       },
       "instruction": {
         "instructionKind": "guardrail",
-        "targetAgents": ["support-agent", "research-agent"],
+        "targetAgents": [
+          "support-agent",
+          "research-agent"
+        ],
         "body": "Remove or mask direct personal identifiers before including support records in an AI prompt. Replace names, emails, phone numbers, addresses, account IDs, and ticket IDs with stable placeholders. Preserve the operational meaning needed to complete the task.",
         "inputContract": {
-          "required": ["raw_text", "target_task"]
+          "required": [
+            "raw_text",
+            "target_task"
+          ]
         },
         "outputContract": {
-          "required": ["redacted_text", "redaction_summary"]
+          "required": [
+            "redacted_text",
+            "redaction_summary"
+          ]
         },
         "constraints": [
           "Do not drop facts required to solve the support task.",
@@ -111,27 +169,48 @@
       "summary": "Agent-first operational playbook for initial incident triage.",
       "lifecycleState": "draft",
       "sensitivity": "public-demo",
-      "audience": ["ops-team"],
+      "audience": [
+        "ops-team"
+      ],
       "status": "reviewing",
       "reviewDueAt": "2026-12-31",
       "sourceKind": "synthetic-demo",
       "sourceRef": "corpus/demo/playbook.incident-triage",
-      "allowedSurfaces": ["api", "cli", "mcp", "web"],
+      "allowedSurfaces": [
+        "api",
+        "cli",
+        "mcp",
+        "web"
+      ],
       "allowedExports": [],
-      "allowedActions": ["create-incident-summary"],
+      "allowedActions": [
+        "create-incident-summary"
+      ],
       "metadata": {
         "persona": "technical-operations-lead",
         "domain": "operations"
       },
       "instruction": {
         "instructionKind": "playbook",
-        "targetAgents": ["ops-agent", "coding-agent"],
+        "targetAgents": [
+          "ops-agent",
+          "coding-agent"
+        ],
         "body": "Classify the incident by customer impact, blast radius, reversibility, and evidence freshness. Build a concise timeline from observed facts only. Recommend the next diagnostic command or system read-back before proposing a fix.",
         "inputContract": {
-          "required": ["symptom", "affected_system", "available_evidence"]
+          "required": [
+            "symptom",
+            "affected_system",
+            "available_evidence"
+          ]
         },
         "outputContract": {
-          "required": ["severity", "timeline", "next_check", "risks"]
+          "required": [
+            "severity",
+            "timeline",
+            "next_check",
+            "risks"
+          ]
         },
         "constraints": [
           "Do not claim root cause before evidence supports it.",
@@ -160,13 +239,23 @@
       "summary": "Agent instruction for prioritizing code review findings.",
       "lifecycleState": "active",
       "sensitivity": "public-demo",
-      "audience": ["engineering"],
+      "audience": [
+        "engineering"
+      ],
       "status": "approved",
       "reviewDueAt": "2027-03-31",
       "sourceKind": "synthetic-demo",
       "sourceRef": "corpus/demo/skill.pr-review-agent",
-      "allowedSurfaces": ["api", "cli", "mcp", "web", "export"],
-      "allowedExports": ["demo-agent-pack"],
+      "allowedSurfaces": [
+        "api",
+        "cli",
+        "mcp",
+        "web",
+        "export"
+      ],
+      "allowedExports": [
+        "demo-agent-pack"
+      ],
       "allowedActions": [],
       "metadata": {
         "persona": "ai-native-engineer",
@@ -174,13 +263,22 @@
       },
       "instruction": {
         "instructionKind": "skill",
-        "targetAgents": ["coding-agent"],
+        "targetAgents": [
+          "coding-agent"
+        ],
         "body": "Review pull requests by leading with bugs, regressions, security issues, and missing tests. Ground each finding in a concrete file and line. Keep summaries secondary. Say clearly when no material issue is found.",
         "inputContract": {
-          "required": ["diff", "project_context"]
+          "required": [
+            "diff",
+            "project_context"
+          ]
         },
         "outputContract": {
-          "required": ["findings", "open_questions", "residual_risk"]
+          "required": [
+            "findings",
+            "open_questions",
+            "residual_risk"
+          ]
         },
         "constraints": [
           "Do not nitpick style without behavioral risk.",
@@ -208,13 +306,25 @@
       "summary": "Reusable structure for assigning work to an agentic system.",
       "lifecycleState": "active",
       "sensitivity": "public-demo",
-      "audience": ["ai-team", "power-users"],
+      "audience": [
+        "ai-team",
+        "power-users"
+      ],
       "status": "approved",
       "reviewDueAt": "2027-04-30",
       "sourceKind": "synthetic-demo",
       "sourceRef": "corpus/demo/template.agent-task-brief",
-      "allowedSurfaces": ["api", "cli", "mcp", "web", "export"],
-      "allowedExports": ["demo-agent-pack", "public-demo"],
+      "allowedSurfaces": [
+        "api",
+        "cli",
+        "mcp",
+        "web",
+        "export"
+      ],
+      "allowedExports": [
+        "demo-agent-pack",
+        "public-demo"
+      ],
       "allowedActions": [],
       "metadata": {
         "persona": "individual-power-user",
@@ -222,13 +332,23 @@
       },
       "instruction": {
         "instructionKind": "template",
-        "targetAgents": ["coding-agent", "research-agent", "ops-agent"],
+        "targetAgents": [
+          "coding-agent",
+          "research-agent",
+          "ops-agent"
+        ],
         "body": "When preparing an agent task brief, include goal, context, constraints, source of truth, non-goals, acceptance checks, stop conditions, and expected deliverables. Keep the brief short enough to be used directly in an agent harness.",
         "inputContract": {
-          "required": ["goal", "context", "constraints"]
+          "required": [
+            "goal",
+            "context",
+            "constraints"
+          ]
         },
         "outputContract": {
-          "required": ["brief"]
+          "required": [
+            "brief"
+          ]
         },
         "constraints": [
           "Do not include secrets.",
@@ -252,27 +372,53 @@
       "summary": "Plain-language guide for finding approved material in the reader interface.",
       "lifecycleState": "active",
       "sensitivity": "public-demo",
-      "audience": ["all-staff", "reader-users"],
+      "audience": [
+        "all-staff",
+        "reader-users"
+      ],
       "status": "approved",
       "reviewDueAt": "2027-06-30",
       "sourceKind": "synthetic-demo",
       "sourceRef": "corpus/demo/guideline.reader-navigation",
-      "allowedSurfaces": ["api", "cli", "mcp", "web", "export"],
-      "allowedExports": ["demo-agent-pack"],
+      "allowedSurfaces": [
+        "api",
+        "cli",
+        "mcp",
+        "web",
+        "export"
+      ],
+      "allowedExports": [
+        "demo-agent-pack"
+      ],
       "allowedActions": [],
       "metadata": {
         "persona": "reader-user",
-        "domain": "reader-experience"
+        "domain": "reader-experience",
+        "readerNavLabel": "Reader experience",
+        "readerIcon": "book",
+        "readerNavOrder": 10,
+        "readerPageInfoTitle": "Reading footer",
+        "readerPageInfoDescription": "Configured from page metadata for the reader footer."
       },
       "instruction": {
         "instructionKind": "guideline",
-        "targetAgents": ["support-agent", "research-agent"],
+        "targetAgents": [
+          "support-agent",
+          "research-agent"
+        ],
         "body": "When helping a reader find material, route them to the published reader library first. Use the page tree to narrow by asset type, then use header search when the reader knows a term but not the page location. Do not send reader users to management controls unless they are also responsible for editing or approving content.",
         "inputContract": {
-          "required": ["reader_goal", "known_terms"]
+          "required": [
+            "reader_goal",
+            "known_terms"
+          ]
         },
         "outputContract": {
-          "required": ["recommended_page", "reason", "fallback_search"]
+          "required": [
+            "recommended_page",
+            "reason",
+            "fallback_search"
+          ]
         },
         "constraints": [
           "Keep reader instructions separate from operator workflows.",
@@ -301,27 +447,52 @@
       "summary": "Reference page explaining draft, active, deprecated, archived, and restricted states.",
       "lifecycleState": "active",
       "sensitivity": "public-demo",
-      "audience": ["content-managers", "reader-users"],
+      "audience": [
+        "content-managers",
+        "reader-users"
+      ],
       "status": "approved",
       "reviewDueAt": "2027-07-31",
       "sourceKind": "synthetic-demo",
       "sourceRef": "corpus/demo/reference.asset-lifecycle-states",
-      "allowedSurfaces": ["api", "cli", "mcp", "web", "export"],
-      "allowedExports": ["demo-agent-pack"],
+      "allowedSurfaces": [
+        "api",
+        "cli",
+        "mcp",
+        "web",
+        "export"
+      ],
+      "allowedExports": [
+        "demo-agent-pack"
+      ],
       "allowedActions": [],
       "metadata": {
         "persona": "content-manager",
-        "domain": "governance"
+        "domain": "governance",
+        "readerParentId": "guideline.reader-navigation",
+        "readerNavLabel": "Lifecycle states",
+        "readerIcon": "guide",
+        "readerNavOrder": 10
       },
       "instruction": {
         "instructionKind": "reference",
-        "targetAgents": ["coding-agent", "research-agent", "ops-agent"],
+        "targetAgents": [
+          "coding-agent",
+          "research-agent",
+          "ops-agent"
+        ],
         "body": "Interpret lifecycle state as the primary publishing signal. Draft material is not ready for broad reader use. Active approved material may be shown on allowed surfaces. Deprecated material should be used only when no replacement exists. Archived material is retained for history. Restricted material requires explicit permission checks before retrieval, export, or display.",
         "inputContract": {
-          "required": ["asset_lifecycle_state", "requested_surface"]
+          "required": [
+            "asset_lifecycle_state",
+            "requested_surface"
+          ]
         },
         "outputContract": {
-          "required": ["availability_decision", "reason"]
+          "required": [
+            "availability_decision",
+            "reason"
+          ]
         },
         "constraints": [
           "Do not treat approved status alone as sufficient for reader publication.",
@@ -349,27 +520,52 @@
       "summary": "Checklist for turning a support thread into a safe summary.",
       "lifecycleState": "active",
       "sensitivity": "public-demo",
-      "audience": ["support-ops", "ai-team"],
+      "audience": [
+        "support-ops",
+        "ai-team"
+      ],
       "status": "approved",
       "reviewDueAt": "2027-08-31",
       "sourceKind": "synthetic-demo",
       "sourceRef": "corpus/demo/sop.support-summary-intake",
-      "allowedSurfaces": ["api", "cli", "mcp", "web", "export"],
-      "allowedExports": ["demo-agent-pack"],
-      "allowedActions": ["create-support-summary"],
+      "allowedSurfaces": [
+        "api",
+        "cli",
+        "mcp",
+        "web",
+        "export"
+      ],
+      "allowedExports": [
+        "demo-agent-pack"
+      ],
+      "allowedActions": [
+        "create-support-summary"
+      ],
       "metadata": {
         "persona": "support-automation-owner",
         "domain": "support"
       },
       "instruction": {
         "instructionKind": "sop",
-        "targetAgents": ["support-agent", "research-agent"],
+        "targetAgents": [
+          "support-agent",
+          "research-agent"
+        ],
         "body": "Convert support threads into short summaries by separating customer claim, observed evidence, product area, account impact, prior troubleshooting, and requested next step. Remove personal data before AI use and cite the source ticket or transcript identifier only when the view allows it.",
         "inputContract": {
-          "required": ["support_thread", "target_surface", "redaction_status"]
+          "required": [
+            "support_thread",
+            "target_surface",
+            "redaction_status"
+          ]
         },
         "outputContract": {
-          "required": ["summary", "evidence", "open_questions", "next_step"]
+          "required": [
+            "summary",
+            "evidence",
+            "open_questions",
+            "next_step"
+          ]
         },
         "constraints": [
           "Do not include raw contact details.",
@@ -399,27 +595,54 @@
       "summary": "Playbook for producing a concise, factual escalation brief from governed source material.",
       "lifecycleState": "active",
       "sensitivity": "public-demo",
-      "audience": ["support-ops", "customer-success"],
+      "audience": [
+        "support-ops",
+        "customer-success"
+      ],
       "status": "approved",
       "reviewDueAt": "2027-09-30",
       "sourceKind": "synthetic-demo",
       "sourceRef": "corpus/demo/playbook.customer-escalation-brief",
-      "allowedSurfaces": ["api", "cli", "mcp", "web", "export"],
-      "allowedExports": ["demo-agent-pack"],
-      "allowedActions": ["create-escalation-brief"],
+      "allowedSurfaces": [
+        "api",
+        "cli",
+        "mcp",
+        "web",
+        "export"
+      ],
+      "allowedExports": [
+        "demo-agent-pack"
+      ],
+      "allowedActions": [
+        "create-escalation-brief"
+      ],
       "metadata": {
         "persona": "customer-success-manager",
         "domain": "customer-operations"
       },
       "instruction": {
         "instructionKind": "playbook",
-        "targetAgents": ["support-agent", "ops-agent"],
+        "targetAgents": [
+          "support-agent",
+          "ops-agent"
+        ],
         "body": "Build an escalation brief from verified facts only. Start with current customer impact, then timeline, evidence, owner, next decision, and risk. Distinguish confirmed facts from assumptions. Include citations or source references for claims that drive the escalation.",
         "inputContract": {
-          "required": ["customer_impact", "timeline_evidence", "requested_decision"]
+          "required": [
+            "customer_impact",
+            "timeline_evidence",
+            "requested_decision"
+          ]
         },
         "outputContract": {
-          "required": ["impact", "timeline", "evidence", "owner", "next_decision", "risks"]
+          "required": [
+            "impact",
+            "timeline",
+            "evidence",
+            "owner",
+            "next_decision",
+            "risks"
+          ]
         },
         "constraints": [
           "Do not assign blame.",
@@ -449,27 +672,56 @@
       "summary": "Policy for deciding what company information AI tools may use.",
       "lifecycleState": "active",
       "sensitivity": "public-demo",
-      "audience": ["all-staff", "ai-team"],
+      "audience": [
+        "all-staff",
+        "ai-team"
+      ],
       "status": "approved",
       "reviewDueAt": "2027-10-31",
       "sourceKind": "synthetic-demo",
       "sourceRef": "corpus/demo/policy.model-context-boundaries",
-      "allowedSurfaces": ["api", "cli", "mcp", "web", "export"],
-      "allowedExports": ["demo-agent-pack"],
+      "allowedSurfaces": [
+        "api",
+        "cli",
+        "mcp",
+        "web",
+        "export"
+      ],
+      "allowedExports": [
+        "demo-agent-pack"
+      ],
       "allowedActions": [],
       "metadata": {
         "persona": "ai-governance-lead",
-        "domain": "privacy"
+        "domain": "privacy",
+        "readerParentId": "policy.ai-acceptable-use",
+        "readerNavLabel": "Context boundaries",
+        "readerIcon": "privacy",
+        "readerNavOrder": 10
       },
       "instruction": {
         "instructionKind": "policy",
-        "targetAgents": ["coding-agent", "research-agent", "ops-agent", "support-agent"],
+        "targetAgents": [
+          "coding-agent",
+          "research-agent",
+          "ops-agent",
+          "support-agent"
+        ],
         "body": "Before using company information with AI, verify sensitivity, approved location, user permission, purpose, and whether export is requested. Demo material may be used broadly. Internal material requires a signed-in business purpose. Restricted, confidential, and secret material require explicit permission and the smallest useful excerpt.",
         "inputContract": {
-          "required": ["material_sensitivity", "requested_surface", "user_permission", "purpose"]
+          "required": [
+            "material_sensitivity",
+            "requested_surface",
+            "user_permission",
+            "purpose"
+          ]
         },
         "outputContract": {
-          "required": ["allow_or_deny", "scope", "rationale"]
+          "required": [
+            "allow_or_deny",
+            "scope",
+            "rationale"
+          ]
         },
         "constraints": [
           "Use the smallest context that can answer the request.",
@@ -499,27 +751,55 @@
       "summary": "Reusable answer format for AI responses that need citations and uncertainty handling.",
       "lifecycleState": "active",
       "sensitivity": "public-demo",
-      "audience": ["ai-team", "support-ops", "reader-users"],
+      "audience": [
+        "ai-team",
+        "support-ops",
+        "reader-users"
+      ],
       "status": "approved",
       "reviewDueAt": "2027-11-30",
       "sourceKind": "synthetic-demo",
       "sourceRef": "corpus/demo/template.grounded-answer",
-      "allowedSurfaces": ["api", "cli", "mcp", "web", "export"],
-      "allowedExports": ["demo-agent-pack", "public-demo"],
+      "allowedSurfaces": [
+        "api",
+        "cli",
+        "mcp",
+        "web",
+        "export"
+      ],
+      "allowedExports": [
+        "demo-agent-pack",
+        "public-demo"
+      ],
       "allowedActions": [],
       "metadata": {
         "persona": "research-agent-owner",
-        "domain": "answer-quality"
+        "domain": "answer-quality",
+        "readerParentId": "policy.ai-acceptable-use",
+        "readerNavLabel": "Grounded answers",
+        "readerIcon": "search",
+        "readerNavOrder": 20
       },
       "instruction": {
         "instructionKind": "template",
-        "targetAgents": ["research-agent", "support-agent"],
+        "targetAgents": [
+          "research-agent",
+          "support-agent"
+        ],
         "body": "Answer with a short conclusion, supporting evidence, cited sources, and uncertainty. If the source set is insufficient, say what is missing instead of guessing. Keep recommendations separate from verified facts.",
         "inputContract": {
-          "required": ["question", "retrieved_sources"]
+          "required": [
+            "question",
+            "retrieved_sources"
+          ]
         },
         "outputContract": {
-          "required": ["answer", "evidence", "citations", "uncertainty"]
+          "required": [
+            "answer",
+            "evidence",
+            "citations",
+            "uncertainty"
+          ]
         },
         "constraints": [
           "Do not invent citations.",
@@ -551,13 +831,24 @@
       "summary": "Quality bar for citations in reader-facing and agent-facing answers.",
       "lifecycleState": "active",
       "sensitivity": "public-demo",
-      "audience": ["ai-team", "content-managers"],
+      "audience": [
+        "ai-team",
+        "content-managers"
+      ],
       "status": "approved",
       "reviewDueAt": "2027-12-31",
       "sourceKind": "synthetic-demo",
       "sourceRef": "corpus/demo/guideline.citation-quality-standard",
-      "allowedSurfaces": ["api", "cli", "mcp", "web", "export"],
-      "allowedExports": ["demo-agent-pack"],
+      "allowedSurfaces": [
+        "api",
+        "cli",
+        "mcp",
+        "web",
+        "export"
+      ],
+      "allowedExports": [
+        "demo-agent-pack"
+      ],
       "allowedActions": [],
       "metadata": {
         "persona": "ai-quality-reviewer",
@@ -565,13 +856,23 @@
       },
       "instruction": {
         "instructionKind": "guideline",
-        "targetAgents": ["research-agent", "support-agent"],
+        "targetAgents": [
+          "research-agent",
+          "support-agent"
+        ],
         "body": "Use citations that point to the smallest source unit needed to verify a claim. Prefer current active approved assets. Mark stale, deprecated, or restricted sources clearly. Do not cite a source that only loosely resembles the claim.",
         "inputContract": {
-          "required": ["claim", "candidate_sources"]
+          "required": [
+            "claim",
+            "candidate_sources"
+          ]
         },
         "outputContract": {
-          "required": ["selected_citations", "fit_reason", "limitations"]
+          "required": [
+            "selected_citations",
+            "fit_reason",
+            "limitations"
+          ]
         },
         "constraints": [
           "Citations must support the exact claim.",
@@ -600,27 +901,51 @@
       "summary": "Human-readable overview of the synthetic release readiness process.",
       "lifecycleState": "active",
       "sensitivity": "public-demo",
-      "audience": ["all-staff", "release-ops"],
+      "audience": [
+        "all-staff",
+        "release-ops"
+      ],
       "status": "approved",
       "reviewDueAt": "2028-01-31",
       "sourceKind": "synthetic-demo",
       "sourceRef": "corpus/demo/human-document.release-readiness-overview",
-      "allowedSurfaces": ["api", "cli", "mcp", "web", "export"],
-      "allowedExports": ["demo-agent-pack"],
+      "allowedSurfaces": [
+        "api",
+        "cli",
+        "mcp",
+        "web",
+        "export"
+      ],
+      "allowedExports": [
+        "demo-agent-pack"
+      ],
       "allowedActions": [],
       "metadata": {
         "persona": "release-owner",
-        "domain": "release-management"
+        "domain": "release-management",
+        "readerNavLabel": "Release operations",
+        "readerIcon": "checklist",
+        "readerNavOrder": 30
       },
       "instruction": {
         "instructionKind": "human-document",
-        "targetAgents": ["ops-agent", "coding-agent"],
+        "targetAgents": [
+          "ops-agent",
+          "coding-agent"
+        ],
         "body": "Use the release readiness overview as human-readable context only. When deciding whether a release can proceed, require evidence for tests, permissions, rollback, telemetry, and owner approval. Do not treat this overview as a substitute for the release checklist.",
         "inputContract": {
-          "required": ["release_candidate", "evidence_links"]
+          "required": [
+            "release_candidate",
+            "evidence_links"
+          ]
         },
         "outputContract": {
-          "required": ["readiness_summary", "missing_evidence", "go_no_go"]
+          "required": [
+            "readiness_summary",
+            "missing_evidence",
+            "go_no_go"
+          ]
         },
         "constraints": [
           "Do not approve a release based on narrative alone.",
@@ -649,27 +974,54 @@
       "summary": "Instruction for forming narrow search queries against governed assets.",
       "lifecycleState": "active",
       "sensitivity": "public-demo",
-      "audience": ["ai-team", "support-ops"],
+      "audience": [
+        "ai-team",
+        "support-ops"
+      ],
       "status": "approved",
       "reviewDueAt": "2028-02-29",
       "sourceKind": "synthetic-demo",
       "sourceRef": "corpus/demo/tool-instruction.search-query-planning",
-      "allowedSurfaces": ["api", "cli", "mcp", "web", "export"],
-      "allowedExports": ["demo-agent-pack"],
-      "allowedActions": ["run-managed-search"],
+      "allowedSurfaces": [
+        "api",
+        "cli",
+        "mcp",
+        "web",
+        "export"
+      ],
+      "allowedExports": [
+        "demo-agent-pack"
+      ],
+      "allowedActions": [
+        "run-managed-search"
+      ],
       "metadata": {
         "persona": "agent-toolsmith",
-        "domain": "retrieval"
+        "domain": "retrieval",
+        "readerNavLabel": "Search planning",
+        "readerIcon": "search",
+        "readerNavOrder": 40
       },
       "instruction": {
         "instructionKind": "tool-instruction",
-        "targetAgents": ["research-agent", "support-agent", "coding-agent"],
+        "targetAgents": [
+          "research-agent",
+          "support-agent",
+          "coding-agent"
+        ],
         "body": "Before calling search, convert the user need into two or three focused queries. Use asset names, known policy terms, and required action words. Avoid broad single-word searches. After results return, compare source type, lifecycle state, and citation fit before answering.",
         "inputContract": {
-          "required": ["user_question", "known_context"]
+          "required": [
+            "user_question",
+            "known_context"
+          ]
         },
         "outputContract": {
-          "required": ["queries", "selection_reason", "answer_plan"]
+          "required": [
+            "queries",
+            "selection_reason",
+            "answer_plan"
+          ]
         },
         "constraints": [
           "Do not over-retrieve when one precise query is enough.",
@@ -697,13 +1049,24 @@
       "summary": "Internal-only release checklist for promoting fictional agent instructions.",
       "lifecycleState": "active",
       "sensitivity": "internal",
-      "audience": ["ai-team", "release-ops"],
+      "audience": [
+        "ai-team",
+        "release-ops"
+      ],
       "status": "approved",
       "reviewDueAt": "2027-05-31",
       "sourceKind": "synthetic-demo",
       "sourceRef": "corpus/demo/sop.internal-agent-release",
-      "allowedSurfaces": ["api", "cli", "mcp", "web", "export"],
-      "allowedExports": ["internal-ops-pack"],
+      "allowedSurfaces": [
+        "api",
+        "cli",
+        "mcp",
+        "web",
+        "export"
+      ],
+      "allowedExports": [
+        "internal-ops-pack"
+      ],
       "allowedActions": [],
       "metadata": {
         "persona": "release-operator",
@@ -711,13 +1074,24 @@
       },
       "instruction": {
         "instructionKind": "sop",
-        "targetAgents": ["coding-agent", "ops-agent"],
+        "targetAgents": [
+          "coding-agent",
+          "ops-agent"
+        ],
         "body": "Before promoting an agent instruction bundle, confirm the source stable IDs, review status, lifecycle state, retrieval eligibility, and rollback owner. Internal release notes may reference fictional deployment windows and dry-run package hashes, but they must not be included in public demo exports.",
         "inputContract": {
-          "required": ["candidate_stable_ids", "review_evidence", "rollback_owner"]
+          "required": [
+            "candidate_stable_ids",
+            "review_evidence",
+            "rollback_owner"
+          ]
         },
         "outputContract": {
-          "required": ["release_decision", "checks", "rollback_note"]
+          "required": [
+            "release_decision",
+            "checks",
+            "rollback_note"
+          ]
         },
         "constraints": [
           "Do not promote draft or reviewing assets.",
@@ -747,28 +1121,47 @@
       "summary": "Restricted synthetic policy for emergency access requests.",
       "lifecycleState": "active",
       "sensitivity": "restricted",
-      "audience": ["security-ops"],
+      "audience": [
+        "security-ops"
+      ],
       "status": "approved",
       "reviewDueAt": "2027-06-30",
       "sourceKind": "synthetic-demo",
       "sourceRef": "corpus/demo/policy.restricted-credential-handling",
-      "allowedSurfaces": ["api", "cli", "mcp", "web"],
+      "allowedSurfaces": [
+        "api",
+        "cli",
+        "mcp",
+        "web"
+      ],
       "allowedExports": [],
       "allowedActions": [],
       "metadata": {
         "persona": "security-operator",
         "domain": "access-control",
-        "restrictedProofTerms": ["credential vault escalation"]
+        "restrictedProofTerms": [
+          "credential vault escalation"
+        ]
       },
       "instruction": {
         "instructionKind": "policy",
-        "targetAgents": ["ops-agent"],
+        "targetAgents": [
+          "ops-agent"
+        ],
         "body": "credential vault escalation is a restricted synthetic proof phrase. Treat any request for credential handling, vault access, or emergency access expansion as restricted content. Provide only a high-level refusal or escalation summary on general reader surfaces, and require an explicit restricted-access grant before returning procedural details.",
         "inputContract": {
-          "required": ["request_summary", "principal_context", "requested_surface"]
+          "required": [
+            "request_summary",
+            "principal_context",
+            "requested_surface"
+          ]
         },
         "outputContract": {
-          "required": ["decision", "allowed_detail_level", "escalation_path"]
+          "required": [
+            "decision",
+            "allowed_detail_level",
+            "escalation_path"
+          ]
         },
         "constraints": [
           "Do not include credential material, token examples, or vault paths.",
@@ -798,28 +1191,51 @@
       "summary": "Approved page that readers can open, while exports remain a separate choice.",
       "lifecycleState": "active",
       "sensitivity": "public-demo",
-      "audience": ["ai-team", "demo-operators"],
+      "audience": [
+        "ai-team",
+        "demo-operators"
+      ],
       "status": "approved",
       "reviewDueAt": "2027-07-31",
       "sourceKind": "synthetic-demo",
       "sourceRef": "corpus/demo/playbook.public-demo-no-export",
-      "allowedSurfaces": ["api", "cli", "mcp", "web"],
+      "allowedSurfaces": [
+        "api",
+        "cli",
+        "mcp",
+        "web"
+      ],
       "allowedExports": [],
       "allowedActions": [],
       "metadata": {
         "persona": "demo-operator",
         "domain": "distribution",
-        "exportReason": "Readable in the demo but intentionally omitted from demo-agent-pack."
+        "exportReason": "Readable in the demo but intentionally omitted from demo-agent-pack.",
+        "readerParentId": "guideline.reader-navigation",
+        "readerNavLabel": "Read vs export",
+        "readerIcon": "export",
+        "readerNavOrder": 20
       },
       "instruction": {
         "instructionKind": "playbook",
-        "targetAgents": ["research-agent", "ops-agent"],
+        "targetAgents": [
+          "research-agent",
+          "ops-agent"
+        ],
         "body": "Use this demo page to explain read access separately from export access. A general reader query for emergency password access may use this asset only to verify that restricted page IDs are omitted; it must not include restricted procedures or export-blocked content in demo-agent-pack.",
         "inputContract": {
-          "required": ["query", "surface", "package_name"]
+          "required": [
+            "query",
+            "surface",
+            "package_name"
+          ]
         },
         "outputContract": {
-          "required": ["read_access", "export_access", "omission_reason"]
+          "required": [
+            "read_access",
+            "export_access",
+            "omission_reason"
+          ]
         },
         "constraints": [
           "Do not add this asset to demo-agent-pack.",
@@ -848,29 +1264,48 @@
       "summary": "Restricted synthetic runbook for blocked escalation proof paths.",
       "lifecycleState": "active",
       "sensitivity": "restricted",
-      "audience": ["security-ops"],
+      "audience": [
+        "security-ops"
+      ],
       "status": "approved",
       "reviewDueAt": "2027-08-31",
       "sourceKind": "synthetic-demo",
       "sourceRef": "corpus/demo/runbook.restricted-security-escalation",
-      "allowedSurfaces": ["api", "cli", "mcp", "web"],
+      "allowedSurfaces": [
+        "api",
+        "cli",
+        "mcp",
+        "web"
+      ],
       "allowedExports": [],
       "allowedActions": [],
       "metadata": {
         "persona": "security-operator",
         "domain": "incident-response",
-        "restrictedProofTerms": ["credential vault escalation"],
+        "restrictedProofTerms": [
+          "credential vault escalation"
+        ],
         "exportBlocked": true
       },
       "instruction": {
         "instructionKind": "sop",
-        "targetAgents": ["ops-agent"],
+        "targetAgents": [
+          "ops-agent"
+        ],
         "body": "credential vault escalation requests must be handled as restricted synthetic incidents. Confirm the caller has a restricted security grant before returning operational details. If the caller has only general reader or demo access, state that the runbook is restricted and provide no procedural steps.",
         "inputContract": {
-          "required": ["caller_context", "incident_summary", "requested_detail_level"]
+          "required": [
+            "caller_context",
+            "incident_summary",
+            "requested_detail_level"
+          ]
         },
         "outputContract": {
-          "required": ["access_decision", "safe_summary", "next_owner"]
+          "required": [
+            "access_decision",
+            "safe_summary",
+            "next_owner"
+          ]
         },
         "constraints": [
           "Do not export this runbook to demo-agent-pack or demo packages.",
@@ -891,6 +1326,162 @@
         }
       },
       "changeNote": "Add restricted export-blocked synthetic runbook."
+    },
+    {
+      "stableId": "guideline.reader-depth-example",
+      "type": "guideline",
+      "ownerId": "user_admin",
+      "title": "Reader Nested Navigation Example",
+      "summary": "Sample grandchild page used to validate deeper reader page navigation.",
+      "lifecycleState": "active",
+      "sensitivity": "public-demo",
+      "audience": [
+        "reader-users",
+        "content-managers"
+      ],
+      "status": "approved",
+      "reviewDueAt": "2028-03-31",
+      "sourceKind": "synthetic-demo",
+      "sourceRef": "corpus/demo/guideline.reader-depth-example",
+      "allowedSurfaces": [
+        "api",
+        "cli",
+        "mcp",
+        "web",
+        "export"
+      ],
+      "allowedExports": [
+        "demo-agent-pack"
+      ],
+      "allowedActions": [],
+      "metadata": {
+        "persona": "reader-user",
+        "domain": "reader-experience",
+        "readerParentId": "reference.asset-lifecycle-states",
+        "readerNavLabel": "Nested page sample",
+        "readerIcon": "book",
+        "readerNavOrder": 10,
+        "readerPageInfoTitle": "Reader footer",
+        "readerPageInfoDescription": "Footer fields and nav placement are configured on the page record."
+      },
+      "instruction": {
+        "instructionKind": "guideline",
+        "targetAgents": [
+          "research-agent",
+          "support-agent"
+        ],
+        "body": "Use this page as synthetic evidence that reader navigation supports parent, child, and grandchild pages without showing generated letter badges. Preserve the same page selection and search behavior at every depth.",
+        "inputContract": {
+          "required": [
+            "reader_goal",
+            "current_page"
+          ]
+        },
+        "outputContract": {
+          "required": [
+            "navigation_hint",
+            "selected_page"
+          ]
+        },
+        "constraints": [
+          "Do not expose admin-only controls in reader navigation.",
+          "Use configured icon keys instead of generated letter badges."
+        ],
+        "failureModes": [
+          "Flattening all pages into one list after adding hierarchy.",
+          "Making parent pages unselectable when they have children."
+        ],
+        "escalation": "Ask a content manager when the configured parent page is missing."
+      },
+      "humanDocument": {
+        "format": "markdown",
+        "body": "# Reader Nested Navigation Example\n\nThis sample page validates that a reader can browse more than one level under a parent page. It is synthetic content for navigation testing, not operating policy.\n\n## Parent page behavior\n\nA parent page remains a readable page. Opening it should select the page and keep the child branch available in the left navigation. The parent uses a configured icon key instead of generated letters.\n\n## Child page behavior\n\nA child page can also have its own children. The navigation should keep the selected branch open so the reader does not lose context while moving between related pages.\n\n## Grandchild page behavior\n\nThis page is intentionally placed two levels under the Reader experience parent. It proves that deeper sample pages render with the same typography, section links, and footer details as top-level pages.\n\n## Reader footer behavior\n\nPage details belong below the article as a footer. The footer should show the configured title, description, and field order for this page.\n\n## Admin configuration note\n\nAdmins can set reader navigation metadata on page records, including the parent page, label, icon key, sort order, and footer fields.",
+        "renderOptions": {
+          "audience": "reader-users"
+        }
+      },
+      "changeNote": "Added nested reader navigation demo content."
+    },
+    {
+      "stableId": "guideline.reader-footer-configuration",
+      "type": "guideline",
+      "ownerId": "user_admin",
+      "title": "Reader Footer Configuration Guide",
+      "summary": "Sample grandchild page showing configurable reader footer fields.",
+      "lifecycleState": "active",
+      "sensitivity": "public-demo",
+      "audience": [
+        "content-managers",
+        "reader-users"
+      ],
+      "status": "approved",
+      "reviewDueAt": "2028-04-30",
+      "sourceKind": "synthetic-demo",
+      "sourceRef": "corpus/demo/guideline.reader-footer-configuration",
+      "allowedSurfaces": [
+        "api",
+        "cli",
+        "mcp",
+        "web",
+        "export"
+      ],
+      "allowedExports": [
+        "demo-agent-pack"
+      ],
+      "allowedActions": [],
+      "metadata": {
+        "persona": "content-manager",
+        "domain": "reader-experience",
+        "readerParentId": "policy.model-context-boundaries",
+        "readerNavLabel": "Footer configuration",
+        "readerIcon": "guide",
+        "readerNavOrder": 20,
+        "readerPageInfoTitle": "Configured footer",
+        "readerPageInfoDescription": "The field order comes from readerPageInfoFields metadata.",
+        "readerPageInfoFields": [
+          "maintainer",
+          "updated",
+          "access",
+          "review"
+        ]
+      },
+      "instruction": {
+        "instructionKind": "guideline",
+        "targetAgents": [
+          "research-agent",
+          "ops-agent"
+        ],
+        "body": "Use readerPageInfoFields metadata to decide which safe page details appear in the reader footer and in what order. Keep footer content factual and avoid duplicating admin review controls.",
+        "inputContract": {
+          "required": [
+            "asset_metadata",
+            "reader_surface"
+          ]
+        },
+        "outputContract": {
+          "required": [
+            "footer_fields",
+            "omitted_admin_controls"
+          ]
+        },
+        "constraints": [
+          "Do not show edit, review, export, or access-management controls in the reader footer.",
+          "Only expose safe metadata fields already available to the reader."
+        ],
+        "failureModes": [
+          "Duplicating the old page info box in a side rail.",
+          "Hard-coding footer fields that should be configured per page."
+        ],
+        "escalation": "Ask an admin to adjust metadata when a footer needs a different field order."
+      },
+      "humanDocument": {
+        "format": "markdown",
+        "body": "# Reader Footer Configuration Guide\n\nThis sample page shows how page details can move from a side box into a reading footer while still being configurable by an admin.\n\n## Footer title\n\nThe footer title can come from page metadata. If no custom title is configured, the reader uses the default page details title.\n\n## Footer description\n\nA short description helps explain why the details are shown. It should describe the footer, not the application feature.\n\n## Field order\n\nAdmins can choose a safe field order such as maintainer, last updated, access, and review. Fields that are not configured fall back to the default set.\n\n## Reader-only boundary\n\nThe footer is informational. It should not expose admin controls, review queue actions, export buttons, API keys, or settings.\n\n## Verification\n\nA reader should be able to open this nested page, read the article, and see page details below the content without a separate ask box or side rail.",
+        "renderOptions": {
+          "audience": "content-managers"
+        }
+      },
+      "changeNote": "Added nested reader navigation demo content."
     }
   ]
 }

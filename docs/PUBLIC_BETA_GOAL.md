@@ -3,11 +3,15 @@
 Status: active implementation target
 Date: 2026-06-29
 
+## Current Phase
+
+The repository remains private while the candidate is hardened and tested on a controlled live instance. This phase follows [Private Live UAT](PRIVATE_LIVE_UAT.md). It does not authorize changing repository visibility, creating a release, pushing a new tag, or announcing public beta.
+
 ## Goal
 
-Ship ForgetBase as a public beta that a technical team can try as a small company knowledge base.
+Ship ForgetBase as a public beta that a technical team can try as a small company knowledge base for people and AI tools.
 
-People should be able to browse, read, search, and ask questions from human-friendly pages. Admins should be able to manage content, reviews, access, users, exports, and system settings in a clearly separate admin area.
+People should be able to browse, read, search, and ask questions from human-friendly pages. AI clients should be able to retrieve the same governed, permission-appropriate knowledge through the documented machine surfaces. Admins should be able to manage content, reviews, access, users, exports, and system settings in a clearly separate admin area.
 
 Public beta means useful, polished, and verifiably safe for trial use. It does not mean production support, long-term API stability, hosted-service readiness, or advanced sign-in controls.
 
@@ -105,7 +109,7 @@ npx -y pnpm@11.7.0 release-proof:check work/public-beta-proof/public-beta-releas
 
 Capture screenshots or recordings for:
 
-- public reader home
+- public login entry
 - page browse tree
 - page read view
 - search results

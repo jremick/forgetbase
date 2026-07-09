@@ -8,7 +8,9 @@ import {
   healthResponseSchema,
   managedQueryEvalInputSchema,
   managedQueryInputSchema,
-  modelProviderConfigInputSchema
+  modelProviderConfigInputSchema,
+  readerNavigationFallbacks,
+  readerNavigationMetadataSchema
 } from "./index.js";
 
 describe("schema package", () => {
@@ -67,6 +69,41 @@ describe("schema package", () => {
     expect(asset.tenantId).toBe("tenant_demo");
     expect(asset.instruction?.targetAgents).toEqual([]);
     expect(asset.humanDocument?.linkedInstructionIds).toEqual([]);
+  });
+
+  it("types reader navigation metadata while retaining safe omission fallbacks", () => {
+    expect(readerNavigationMetadataSchema.parse({
+      domain: "reader-experience",
+      readerParentId: "policy.parent",
+      readerNavLabel: "Child page",
+      readerIcon: "guide",
+      readerNavOrder: 20,
+      readerPageInfoFields: ["updated", "maintainer"]
+    })).toMatchObject({
+      domain: "reader-experience",
+      readerParentId: "policy.parent",
+      readerIcon: "guide",
+      readerNavOrder: 20
+    });
+    expect(readerNavigationMetadataSchema.parse({ domain: "reader-experience" })).toEqual({
+      domain: "reader-experience"
+    });
+    expect(readerNavigationFallbacks).toMatchObject({
+      parentId: null,
+      label: null,
+      icon: null,
+      order: Number.MAX_SAFE_INTEGER,
+      pageInfoFields: ["version", "updated", "access", "maintainer", "review"]
+    });
+  });
+
+  it("rejects invalid reader navigation icons, orders, and footer fields", () => {
+    expect(readerNavigationMetadataSchema.safeParse({ readerIcon: "made-up" }).success).toBe(false);
+    expect(readerNavigationMetadataSchema.safeParse({ readerNavOrder: -1 }).success).toBe(false);
+    expect(readerNavigationMetadataSchema.safeParse({ readerNavOrder: "10" }).success).toBe(false);
+    expect(readerNavigationMetadataSchema.safeParse({
+      readerPageInfoFields: ["updated", "updated"]
+    }).success).toBe(false);
   });
 
   it("validates deterministic managed query eval cases", () => {

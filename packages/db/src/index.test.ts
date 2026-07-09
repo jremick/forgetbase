@@ -196,11 +196,30 @@ describe("InMemoryRegistryRepository", () => {
     expect(fetched?.humanDocuments[0]?.format).toBe("markdown");
   });
 
-  it("creates new asset versions and restores prior content", async () => {
+  it("creates complete governed snapshots and restores prior state and content", async () => {
     const repository: RegistryRepository = new InMemoryRegistryRepository();
-    await repository.createAsset(sampleAsset);
+    await repository.createAsset({
+      ...sampleAsset,
+      summary: "Original summary",
+      sourceRef: "source://original",
+      allowedExports: ["internal-pack"],
+      allowedActions: ["original-action"],
+      metadata: { readerIcon: "policy", readerNavOrder: 10 }
+    });
 
     const updated = await repository.updateAsset(sampleAsset.stableId, {
+      title: "Updated Context Boundary Guardrail",
+      summary: "Updated summary",
+      lifecycleState: "deprecated",
+      sensitivity: "restricted",
+      audience: ["security-team"],
+      status: "reviewing",
+      reviewDueAt: "2028-02-28",
+      sourceRef: "source://updated",
+      allowedSurfaces: ["api", "web"],
+      allowedExports: [],
+      allowedActions: ["updated-action"],
+      metadata: { readerIcon: "privacy", readerNavOrder: 30 },
       instruction: {
         instructionKind: "guardrail",
         body: "Updated context boundary instruction."
@@ -221,8 +240,37 @@ describe("InMemoryRegistryRepository", () => {
     });
 
     expect(versionOne?.instructionObjects[0]?.body).toContain("Keep model context");
+    expect(versionOne?.asset).toMatchObject({
+      title: "Context Boundary Guardrail",
+      summary: "Original summary",
+      lifecycleState: "active",
+      sensitivity: "internal",
+      audience: ["ai-team"],
+      status: "approved",
+      reviewDueAt: "2027-01-31",
+      sourceKind: "synthetic-demo",
+      sourceRef: "source://original",
+      allowedSurfaces: ["api", "cli", "mcp", "web"],
+      allowedExports: ["internal-pack"],
+      allowedActions: ["original-action"],
+      metadata: { readerIcon: "policy", readerNavOrder: 10 }
+    });
     expect(versionTwo?.instructionObjects[0]?.body).toContain("Updated context");
     expect(versionTwo?.humanDocuments[0]?.body).toContain("tenant and asset permissions");
+    expect(versionTwo?.asset).toMatchObject({
+      title: "Updated Context Boundary Guardrail",
+      summary: "Updated summary",
+      lifecycleState: "deprecated",
+      sensitivity: "restricted",
+      audience: ["security-team"],
+      status: "reviewing",
+      reviewDueAt: "2028-02-28",
+      sourceRef: "source://updated",
+      allowedSurfaces: ["api", "web"],
+      allowedExports: [],
+      allowedActions: ["updated-action"],
+      metadata: { readerIcon: "privacy", readerNavOrder: 30 }
+    });
 
     const restored = await repository.restoreAssetVersion(sampleAsset.stableId, {
       versionNumber: 1
@@ -230,9 +278,48 @@ describe("InMemoryRegistryRepository", () => {
 
     expect(restored?.asset.currentVersionId).toBe(restored?.versions.find((version) => version.versionNumber === 1)?.id);
     expect(restored?.instructionObjects[0]?.body).toContain("Keep model context");
+    expect(restored?.asset).toMatchObject({
+      title: "Context Boundary Guardrail",
+      summary: "Original summary",
+      lifecycleState: "active",
+      sensitivity: "internal",
+      audience: ["ai-team"],
+      status: "approved",
+      reviewDueAt: "2027-01-31",
+      sourceRef: "source://original",
+      allowedSurfaces: ["api", "cli", "mcp", "web"],
+      allowedExports: ["internal-pack"],
+      allowedActions: ["original-action"],
+      metadata: { readerIcon: "policy", readerNavOrder: 10 }
+    });
   });
 
-  it("publishes draft assets without creating a new content version", async () => {
+  it("hashes canonical resolved snapshots and excludes change notes", async () => {
+    const repository: RegistryRepository = new InMemoryRegistryRepository();
+    const created = await repository.createAsset({
+      ...sampleAsset,
+      metadata: { nested: { beta: 2, alpha: 1 } },
+      changeNote: "First note"
+    });
+    const same = await repository.updateAsset(sampleAsset.stableId, {
+      metadata: { nested: { alpha: 1, beta: 2 } },
+      instruction: sampleAsset.instruction,
+      humanDocument: sampleAsset.humanDocument,
+      changeNote: "A completely different note"
+    });
+    const changed = await repository.updateAsset(sampleAsset.stableId, {
+      title: "Materially changed title",
+      instruction: sampleAsset.instruction,
+      humanDocument: sampleAsset.humanDocument,
+      changeNote: "Same content fields except title"
+    });
+
+    expect(same?.versions[0]?.contentHash).toBe(created.versions[0]?.contentHash);
+    expect(same?.versions[0]?.changeNote).not.toBe(created.versions[0]?.changeNote);
+    expect(changed?.versions[0]?.contentHash).not.toBe(same?.versions[0]?.contentHash);
+  });
+
+  it("versions publish and review transitions as governed state", async () => {
     const repository: RegistryRepository = new InMemoryRegistryRepository();
     await repository.createAsset({
       ...sampleAsset,
@@ -249,7 +336,7 @@ describe("InMemoryRegistryRepository", () => {
     expect(published?.asset.lifecycleState).toBe("active");
     expect(published?.asset.status).toBe("approved");
     expect(published?.asset.reviewDueAt).toBe("2027-06-30");
-    expect(published?.versions).toHaveLength(1);
+    expect(published?.versions).toHaveLength(2);
 
     const reviewStableId = `guardrail.review-${Date.now()}`;
     await repository.createAsset({
@@ -276,11 +363,11 @@ describe("InMemoryRegistryRepository", () => {
     expect(reviewQueue.assets.map((asset) => asset.stableId)).toContain(reviewStableId);
     expect(reviewed?.asset.status).toBe("approved");
     expect(reviewed?.asset.reviewDueAt).toBe("2027-07-31");
-    expect(reviewed?.versions).toHaveLength(1);
+    expect(reviewed?.versions).toHaveLength(2);
     expect(nextReviewQueue.assets.map((asset) => asset.stableId)).not.toContain(reviewStableId);
   });
 
-  it("lists assets needing review and completes review without creating a new content version", async () => {
+  it("lists assets needing review and versions the completed review", async () => {
     const repository: RegistryRepository = new InMemoryRegistryRepository();
     await repository.createAsset({
       ...sampleAsset,
@@ -306,7 +393,7 @@ describe("InMemoryRegistryRepository", () => {
 
     expect(reviewed?.asset.status).toBe("approved");
     expect(reviewed?.asset.reviewDueAt).toBe("2027-06-30");
-    expect(reviewed?.versions).toHaveLength(1);
+    expect(reviewed?.versions).toHaveLength(2);
     expect(nextQueue.assets).toHaveLength(0);
   });
 });
@@ -1535,6 +1622,10 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("PostgresRegistryRepository", ()
 
     const updated = await repository.updateAsset(stableId, {
       tenantId: "tenant_test",
+      title: "Updated Integration Guardrail",
+      lifecycleState: "deprecated",
+      sensitivity: "restricted",
+      metadata: { readerIcon: "privacy", readerNavOrder: 20 },
       instruction: {
         instructionKind: "guardrail",
         body: "Updated integration instruction."
@@ -1555,7 +1646,19 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("PostgresRegistryRepository", ()
     });
 
     expect(versionOne?.instructionObjects[0]?.body).toContain("Keep model context");
+    expect(versionOne?.asset).toMatchObject({
+      title: "Context Boundary Guardrail",
+      lifecycleState: "active",
+      sensitivity: "internal",
+      metadata: {}
+    });
     expect(versionTwo?.instructionObjects[0]?.body).toContain("Updated integration");
+    expect(versionTwo?.asset).toMatchObject({
+      title: "Updated Integration Guardrail",
+      lifecycleState: "deprecated",
+      sensitivity: "restricted",
+      metadata: { readerIcon: "privacy", readerNavOrder: 20 }
+    });
 
     const restored = await repository.restoreAssetVersion(stableId, {
       tenantId: "tenant_test",
@@ -1564,6 +1667,12 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("PostgresRegistryRepository", ()
 
     expect(restored?.asset.currentVersionId).toBe(restored?.versions.find((version) => version.versionNumber === 1)?.id);
     expect(restored?.instructionObjects[0]?.body).toContain("Keep model context");
+    expect(restored?.asset).toMatchObject({
+      title: "Context Boundary Guardrail",
+      lifecycleState: "active",
+      sensitivity: "internal",
+      metadata: {}
+    });
 
     await repository.createAsset({
       ...sampleAsset,
@@ -1580,7 +1689,33 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("PostgresRegistryRepository", ()
     expect(published?.asset.lifecycleState).toBe("active");
     expect(published?.asset.status).toBe("approved");
     expect(published?.asset.reviewDueAt).toBe("2027-06-30");
-    expect(published?.versions).toHaveLength(1);
+    expect(published?.versions).toHaveLength(2);
+  });
+
+  it("atomically bootstraps one Postgres admin under concurrent attempts", async () => {
+    const authRepository = new PostgresAuthRepository(pool);
+    const tenantId = `tenant_bootstrap_${Date.now()}_${Math.floor(Math.random() * 1_000_000)}`;
+    const input = {
+      tenantId,
+      email: "bootstrap-admin@example.test",
+      displayName: "Bootstrap Admin",
+      password: "bootstrap-password-123",
+      keyName: "bootstrap-admin"
+    };
+    const results = await Promise.all([
+      authRepository.bootstrapAdmin(input),
+      authRepository.bootstrapAdmin(input)
+    ]);
+    const created = results.filter((result) => result !== null);
+
+    expect(created).toHaveLength(1);
+    expect(await authRepository.countUsers(tenantId)).toBe(1);
+    expect(await authRepository.listApiKeys({ tenantId })).toHaveLength(1);
+    expect((await authRepository.listAuditEvents({ tenantId })).filter(
+      (event) => event.action === "auth.bootstrap"
+    )).toHaveLength(1);
+    expect(created[0]?.apiKey.allowedSurfaces).toEqual(["api", "cli", "mcp", "web", "export"]);
+    expect((await authRepository.authenticateApiKey(created[0]?.secret ?? ""))?.role).toBe("admin");
   });
 
   it("persists users, scoped API keys, grants, and audit events", async () => {
@@ -2134,6 +2269,45 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("PostgresRegistryRepository", ()
     });
     expect(results[0]?.rank).toBeCloseTo(results[0]?.ranking.finalScore ?? 0);
     expect((await retrievalRepository.listRetrievalEvents({ tenantId }))[0]?.id).toBe(event.id);
+  });
+
+  it("never returns chunks from a non-current asset version", async () => {
+    const registryRepository = new PostgresRegistryRepository(pool);
+    const retrievalRepository = new PostgresRetrievalRepository(pool);
+    const tenantId = `tenant_retrieval_version_${Date.now()}`;
+    const stableId = `guardrail.retrieval-version-${Date.now()}`;
+    const oldToken = `oldversiontoken${Date.now()}`;
+    const newToken = `newversiontoken${Date.now()}`;
+    const versionOne = await registryRepository.createAsset({
+      ...sampleAsset,
+      tenantId,
+      stableId,
+      instruction: {
+        instructionKind: "guardrail",
+        body: oldToken
+      },
+      humanDocument: undefined
+    });
+
+    await retrievalRepository.indexAsset(versionOne);
+    expect((await retrievalRepository.search({ tenantId, query: oldToken })).map((result) => result.asset.stableId))
+      .toContain(stableId);
+
+    const versionTwo = await registryRepository.updateAsset(stableId, {
+      tenantId,
+      instruction: {
+        instructionKind: "guardrail",
+        body: newToken
+      }
+    });
+
+    expect(versionTwo).not.toBeNull();
+    expect(await retrievalRepository.search({ tenantId, query: oldToken })).toEqual([]);
+    await expect(retrievalRepository.indexAsset(versionOne)).rejects.toThrow("Refusing to index stale asset detail");
+    await retrievalRepository.indexAsset(versionTwo!);
+    expect(await retrievalRepository.search({ tenantId, query: oldToken })).toEqual([]);
+    expect((await retrievalRepository.search({ tenantId, query: newToken })).map((result) => result.asset.stableId))
+      .toContain(stableId);
   });
 
   it("persists weighted ranking metadata for Postgres search results", async () => {

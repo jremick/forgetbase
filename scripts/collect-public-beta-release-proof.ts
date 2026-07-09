@@ -217,13 +217,12 @@ const manifest = {
     }
   ],
   browserProof: [
-    browserEvidence("public-reader-home", "desktop", "Public entry", "public-uat/public-desktop.png"),
+    browserEvidence("login-gate", "desktop", "Public login entry", "public-uat/login-desktop.png"),
     browserEvidence("page-browse-tree", "desktop", "Signed-in reader browse tree", "release-reader/page-browse-tree.png"),
     browserEvidence("page-read-view", "desktop", "Signed-in reader page view", "release-reader/page-read-view.png"),
     browserEvidence("search-results", "desktop", "Signed-in reader search", "release-reader/search-results.png"),
     browserEvidence("ask-with-sources", "desktop", "Ask with sources", "release-reader/ask-with-sources.png"),
     browserEvidence("no-access-restricted-state", "desktop", "Reader restricted-content boundary", "release-reader/no-access-restricted-state.png"),
-    browserEvidence("login-gate", "desktop", "Login gate", "public-uat/public-desktop.png"),
     browserEvidence("admin-overview", "desktop", "Admin console", "release-admin/admin-desktop.png"),
     browserEvidence("reviews", "desktop", "Admin reviews", "release-admin/reviews.png"),
     browserEvidence("policies", "desktop", "Admin policies", "release-admin/policies.png"),

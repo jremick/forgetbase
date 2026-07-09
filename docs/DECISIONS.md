@@ -2882,3 +2882,33 @@ Add initial CLI and MCP contract tests that exercise command/tool contracts with
 ### Follow-Ups / Review
 
 Review when adding per-tenant embedding profiles, additional embedding providers, variable vector dimensions, background reindex jobs, semantic reranking, eval-driven search optimization, hosted secret-manager adapters, or exhaustive CLI/MCP contract coverage.
+
+## 0095: Use A Reader-First Beta Wedge Over An Agent-Native Governed Core
+
+### Context
+
+The durable product direction described ForgetBase as an agent-native instruction control plane, while the public-beta goal and implemented web experience described a small-company knowledge base. Treating either description as the whole product made the intended user experience, machine-consumer contracts, and release claims contradict one another. The candidate also needs real user testing before the repository or release becomes public.
+
+### Options Considered
+
+- return the web UI to an operational fallback and lead only with machine consumers
+- reposition the product as a generic human CMS or wiki
+- maintain separate human and machine products
+- use a reader-first beta wedge backed by the same governed, agent-native core
+
+### Decision And Rationale
+
+Use a reader-first knowledge-base experience as the public-beta wedge while keeping the permission-aware, agent-native asset, instruction, retrieval, API, CLI, and MCP layer as the differentiating core. People and AI tools consume the same governed source of truth through surfaces designed for their needs; the admin UI remains separate from the reader experience.
+
+Before public promotion, run controlled live UAT on an exact private deployment. Keep the GitHub repository private, do not publish a release, and do not push a new tag without explicit owner approval. The next candidate is `v0.1.0-beta.2` because `v0.1.0-beta.1` already identifies the historical private-beta snapshot.
+
+### Consequences
+
+- Reader navigation, search, cited answers, mobile use, accessibility, and plain-language state are release-critical rather than optional fallback polish.
+- Machine-consumer permissions and contracts remain first-class release gates.
+- Product copy can say "knowledge base for people and AI tools" without claiming to be a generic CMS.
+- Private-live evidence is distinct from later public GitHub and release evidence.
+
+### Follow-Ups / Review
+
+Review after private live UAT, before changing repository visibility, before creating `v0.1.0-beta.2`, and when deciding whether later releases should lead with human knowledge management, agent governance, or both.

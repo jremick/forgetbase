@@ -224,6 +224,10 @@ const DEFAULT_LOGIN_REFRESH_TOKEN_MAX_AGE_SECONDS = 60 * 60 * 24 * 7;
 const MIN_LOGIN_REFRESH_TOKEN_MAX_AGE_SECONDS = 60;
 const MAX_LOGIN_REFRESH_TOKEN_MAX_AGE_SECONDS = 60 * 60 * 24 * 30;
 const MAX_LOGIN_SESSION_CLIENT_USER_AGENT_LENGTH = 500;
+const DEFAULT_LOGIN_THROTTLE_MAX_ATTEMPTS = 5;
+const DEFAULT_LOGIN_THROTTLE_WINDOW_MS = 60_000;
+const DEFAULT_LOGIN_THROTTLE_BLOCK_MS = 60_000;
+const DEFAULT_LOGIN_THROTTLE_MAX_ENTRIES = 10_000;
 const DEFAULT_CORS_ALLOWED_ORIGINS = ["http://127.0.0.1:5175", "http://localhost:5175"];
 
 export interface BuildServerOptions extends FastifyServerOptions {
@@ -254,7 +258,12 @@ export interface BuildServerOptions extends FastifyServerOptions {
   loginSessionIdleTimeoutSeconds?: number | null;
   loginSessionAbsoluteMaxAgeSeconds?: number | null;
   loginRefreshTokenMaxAgeSeconds?: number | null;
+  loginThrottleMaxAttempts?: number;
+  loginThrottleWindowMs?: number;
+  loginThrottleBlockMs?: number;
+  loginThrottleMaxEntries?: number;
   requireAuthentication?: boolean;
+  readinessCheck?: () => Promise<void>;
 }
 
 export interface OidcDiscoveryDocument {
@@ -375,6 +384,32 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
   const loginSessionIdleTimeoutSeconds = readLoginSessionIdleTimeoutSeconds(options.loginSessionIdleTimeoutSeconds);
   const loginSessionAbsoluteMaxAgeSeconds = readLoginSessionAbsoluteMaxAgeSeconds(options.loginSessionAbsoluteMaxAgeSeconds);
   const loginRefreshTokenMaxAgeSeconds = readLoginRefreshTokenMaxAgeSeconds(options.loginRefreshTokenMaxAgeSeconds);
+  const loginThrottle = new LoginThrottle({
+    maxAttempts: readPositiveIntegerOption(
+      options.loginThrottleMaxAttempts,
+      process.env.FORGETBASE_LOGIN_THROTTLE_MAX_ATTEMPTS,
+      DEFAULT_LOGIN_THROTTLE_MAX_ATTEMPTS,
+      "FORGETBASE_LOGIN_THROTTLE_MAX_ATTEMPTS"
+    ),
+    windowMs: readPositiveIntegerOption(
+      options.loginThrottleWindowMs,
+      process.env.FORGETBASE_LOGIN_THROTTLE_WINDOW_MS,
+      DEFAULT_LOGIN_THROTTLE_WINDOW_MS,
+      "FORGETBASE_LOGIN_THROTTLE_WINDOW_MS"
+    ),
+    blockMs: readPositiveIntegerOption(
+      options.loginThrottleBlockMs,
+      process.env.FORGETBASE_LOGIN_THROTTLE_BLOCK_MS,
+      DEFAULT_LOGIN_THROTTLE_BLOCK_MS,
+      "FORGETBASE_LOGIN_THROTTLE_BLOCK_MS"
+    ),
+    maxEntries: readPositiveIntegerOption(
+      options.loginThrottleMaxEntries,
+      process.env.FORGETBASE_LOGIN_THROTTLE_MAX_ENTRIES,
+      DEFAULT_LOGIN_THROTTLE_MAX_ENTRIES,
+      "FORGETBASE_LOGIN_THROTTLE_MAX_ENTRIES"
+    )
+  });
   const requireAuthentication = options.requireAuthentication ??
     readOptionalEnvBoolean(process.env.FORGETBASE_REQUIRE_AUTHENTICATION) ??
     false;
@@ -425,6 +460,20 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
     server.addHook("onReady", async () => {
       if (options.autoMigrate ?? true) {
         await runMigrations(pool);
+      } else {
+        const readiness = await pool.query<{ ready: boolean }>(
+          `
+            SELECT
+              to_regclass('public.schema_migrations') IS NOT NULL
+              AND to_regclass('public.assets') IS NOT NULL
+              AND to_regclass('public.users') IS NOT NULL
+              AND to_regclass('public.api_keys') IS NOT NULL AS ready
+          `
+        );
+
+        if (!readiness.rows[0]?.ready) {
+          throw new Error("Database migrations are not ready");
+        }
       }
     });
 
@@ -435,6 +484,48 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
 
   server.get("/health", async () => {
     return healthResponseSchema.parse(createHealthResponse("forgetbase-api"));
+  });
+
+  server.get("/ready", async (_request, reply) => {
+    try {
+      if (options.readinessCheck) {
+        await options.readinessCheck();
+      } else if (pool) {
+        const readiness = await pool.query<{ ready: boolean }>(
+          `
+            SELECT
+              to_regclass('public.schema_migrations') IS NOT NULL
+              AND to_regclass('public.assets') IS NOT NULL
+              AND to_regclass('public.users') IS NOT NULL
+              AND to_regclass('public.api_keys') IS NOT NULL
+              AND EXISTS (SELECT 1 FROM schema_migrations) AS ready
+          `
+        );
+
+        if (!readiness.rows[0]?.ready) {
+          throw new Error("Database migrations are not ready");
+        }
+      }
+
+      return {
+        status: "ready",
+        service: "forgetbase-api",
+        checks: {
+          database: pool || options.readinessCheck ? "ok" : "not-configured",
+          migrations: pool ? "ok" : "not-configured"
+        }
+      };
+    } catch (error) {
+      server.log.error(error, "ForgetBase API readiness check failed");
+      return reply.code(503).send({
+        status: "not-ready",
+        service: "forgetbase-api",
+        checks: {
+          database: "unavailable",
+          migrations: "unknown"
+        }
+      });
+    }
   });
 
   server.get("/", async () => {
@@ -507,42 +598,19 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
       return sendValidationError(reply, parsed.error.issues);
     }
 
-    const existingUsers = await authRepository.countUsers(parsed.data.tenantId);
-
-    if (existingUsers > 0) {
-      return reply.code(409).send({ error: "bootstrap_already_completed" });
-    }
-
-    const user = await authRepository.createUser({
+    const bootstrap = await authRepository.bootstrapAdmin({
       tenantId: parsed.data.tenantId,
       email: parsed.data.email,
       displayName: parsed.data.displayName,
-      role: "admin",
-      status: "active",
-      password: parsed.data.password
-    });
-    const apiKey = await authRepository.createApiKey({
-      tenantId: parsed.data.tenantId,
-      userId: user.id,
-      name: parsed.data.keyName,
-      scopes: ["admin", "asset:read", "asset:write", "permission:write"]
+      password: parsed.data.password,
+      keyName: parsed.data.keyName
     });
 
-    if (!apiKey) {
-      throw new Error("Bootstrap API key owner was not created");
+    if (!bootstrap) {
+      return reply.code(409).send({ error: "bootstrap_already_completed" });
     }
 
-    await authRepository.recordAuditEvent({
-      tenantId: user.tenantId,
-      actorUserId: user.id,
-      actorApiKeyId: apiKey.apiKey.id,
-      action: "auth.bootstrap",
-      targetType: "user",
-      targetId: user.id,
-      outcome: "success"
-    });
-
-    return reply.code(201).send({ user, ...apiKey });
+    return reply.code(201).send(bootstrap);
   });
 
   server.post("/auth/login", async (request, reply) => {
@@ -556,6 +624,17 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
       return sendValidationError(reply, parsed.error.issues);
     }
 
+    const throttleKey = buildLoginThrottleKey(request, parsed.data.tenantId, parsed.data.email);
+    const throttleState = loginThrottle.check(throttleKey);
+
+    if (throttleState.blocked) {
+      await recordFailedLoginEvidence(authRepository, request, parsed.data.tenantId, parsed.data.email, "login_rate_limited", {
+        retryAfterSeconds: throttleState.retryAfterSeconds
+      });
+      reply.header("retry-after", String(throttleState.retryAfterSeconds));
+      return reply.code(429).send({ error: "login_rate_limited" });
+    }
+
     const user = await authRepository.authenticateLocalUser(
       parsed.data.tenantId,
       parsed.data.email,
@@ -563,8 +642,21 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
     );
 
     if (!user) {
+      const failedState = loginThrottle.recordFailure(throttleKey);
+      await recordFailedLoginEvidence(authRepository, request, parsed.data.tenantId, parsed.data.email, "invalid_credentials", {
+        attemptCount: failedState.attemptCount,
+        limited: failedState.blocked
+      });
+
+      if (failedState.blocked) {
+        reply.header("retry-after", String(failedState.retryAfterSeconds));
+        return reply.code(429).send({ error: "login_rate_limited" });
+      }
+
       return reply.code(401).send({ error: "invalid_credentials" });
     }
+
+    loginThrottle.clear(throttleKey);
 
     const sessionAbsoluteExpiresAt = buildLoginSessionAbsoluteExpiresAt(loginSessionAbsoluteMaxAgeSeconds);
     const sessionClientMetadata = readLoginSessionClientMetadata(request, parsed.data.deviceLabel);
@@ -578,6 +670,7 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
       userId: user.id,
       name: parsed.data.keyName,
       scopes: scopesForRole(user.role),
+      allowedSurfaces: ["api", "cli", "mcp", "web", "export"],
       expiresAt: sessionExpiry.expiresAt
     });
 
@@ -967,6 +1060,7 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
         userId: user.id,
         name: parsed.data.keyName,
         scopes: scopesForRole(user.role),
+        allowedSurfaces: ["api", "cli", "mcp", "web", "export"],
         expiresAt: sessionExpiry.expiresAt
       });
 
@@ -1778,7 +1872,8 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
       metadata: {
         targetUserId: apiKey.apiKey.userId,
         targetServiceAccountId: apiKey.apiKey.serviceAccountId,
-        secretPreview: apiKey.apiKey.secretPreview
+        secretPreview: apiKey.apiKey.secretPreview,
+        allowedSurfaces: apiKey.apiKey.allowedSurfaces
       }
     });
 
@@ -1932,12 +2027,13 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
 
     const query = request.query as { limit?: string };
     const limit = query.limit ? Number.parseInt(query.limit, 10) : undefined;
-    const surface = readSurface(request);
     const principal = await authenticateOptionalPrincipal(request, reply, authRepository, loginSessionIdleTimeoutSeconds);
 
     if (principal === undefined) {
       return;
     }
+
+    const surface = readSurface(request, principal);
 
     const assets = await registryRepository.listAssets({
       tenantId: principal?.tenantId,
@@ -2007,7 +2103,7 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
     }
 
     if (authRepository) {
-      const surface = readSurface(request);
+      const surface = readSurface(request, principal);
       const allowed = await authRepository.canAccessAsset({
         principal,
         asset: detail.asset,
@@ -2462,12 +2558,13 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
       tenantId?: string;
       strategy?: string;
     };
-    const surface = readSurface(request);
     const principal = await authenticateOptionalPrincipal(request, reply, authRepository, loginSessionIdleTimeoutSeconds);
 
     if (principal === undefined) {
       return;
     }
+
+    const surface = readSurface(request, principal);
 
     const parsed = searchInputSchema.safeParse({
       tenantId: principal?.tenantId ?? query.tenantId,
@@ -2502,12 +2599,13 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
       return reply.code(503).send({ error: "retrieval_unavailable" });
     }
 
-    const surface = readSurface(request);
     const principal = await authenticateOptionalPrincipal(request, reply, authRepository, loginSessionIdleTimeoutSeconds);
 
     if (principal === undefined) {
       return;
     }
+
+    const surface = readSurface(request, principal);
 
     const parsed = managedQueryInputSchema.safeParse({
       ...(request.body as Record<string, unknown>),
@@ -4318,7 +4416,7 @@ async function sendAssetVersionSnapshot(
   }
 
   if (authRepository) {
-    const surface = readSurface(request);
+    const surface = readSurface(request, principal);
     const allowed = await authRepository.canAccessAsset({
       principal,
       asset: snapshot.asset,
@@ -4350,6 +4448,7 @@ async function canExportAsset(
   if (
     isPublishedAsset(detail) &&
     detail.asset.sensitivity === "public-demo" &&
+    detail.asset.allowedSurfaces.includes(surface) &&
     detail.asset.allowedExports.includes(packageName)
   ) {
     return true;
@@ -7518,6 +7617,7 @@ function isPublicAuthenticationPath(requestUrl: string): boolean {
   const pathname = new URL(requestUrl, "http://forgetbase.local").pathname;
 
   return pathname === "/health" ||
+    pathname === "/ready" ||
     pathname === "/auth/login" ||
     pathname === "/auth/oidc/authorize" ||
     pathname === "/auth/oidc/callback" ||
@@ -7692,6 +7792,183 @@ function readIntegerEnv(name: string): number | undefined {
   return Number.parseInt(value.trim(), 10);
 }
 
+function readPositiveIntegerOption(
+  configuredValue: number | undefined,
+  environmentValue: string | undefined,
+  defaultValue: number,
+  name: string
+): number {
+  if (configuredValue !== undefined) {
+    if (!Number.isInteger(configuredValue) || configuredValue <= 0) {
+      throw new Error(`${name} must be a positive integer.`);
+    }
+
+    return configuredValue;
+  }
+
+  if (environmentValue === undefined || environmentValue.trim() === "") {
+    return defaultValue;
+  }
+
+  if (!/^\d+$/.test(environmentValue.trim())) {
+    throw new Error(`${name} must be a positive integer.`);
+  }
+
+  const parsed = Number.parseInt(environmentValue.trim(), 10);
+
+  if (parsed <= 0) {
+    throw new Error(`${name} must be a positive integer.`);
+  }
+
+  return parsed;
+}
+
+interface LoginThrottleOptions {
+  maxAttempts: number;
+  windowMs: number;
+  blockMs: number;
+  maxEntries: number;
+}
+
+interface LoginThrottleEntry {
+  attemptCount: number;
+  windowStartedAt: number;
+  blockedUntil: number | null;
+  lastTouchedAt: number;
+}
+
+interface LoginThrottleState {
+  blocked: boolean;
+  attemptCount: number;
+  retryAfterSeconds: number;
+}
+
+class LoginThrottle {
+  private readonly entries = new Map<string, LoginThrottleEntry>();
+
+  constructor(private readonly options: LoginThrottleOptions) {}
+
+  check(key: string, now = Date.now()): LoginThrottleState {
+    const entry = this.entries.get(key);
+
+    if (!entry) {
+      return { blocked: false, attemptCount: 0, retryAfterSeconds: 0 };
+    }
+
+    if (entry.blockedUntil && entry.blockedUntil > now) {
+      entry.lastTouchedAt = now;
+      return {
+        blocked: true,
+        attemptCount: entry.attemptCount,
+        retryAfterSeconds: Math.max(1, Math.ceil((entry.blockedUntil - now) / 1000))
+      };
+    }
+
+    if (now - entry.windowStartedAt >= this.options.windowMs) {
+      this.entries.delete(key);
+      return { blocked: false, attemptCount: 0, retryAfterSeconds: 0 };
+    }
+
+    entry.blockedUntil = null;
+    entry.lastTouchedAt = now;
+    return { blocked: false, attemptCount: entry.attemptCount, retryAfterSeconds: 0 };
+  }
+
+  recordFailure(key: string, now = Date.now()): LoginThrottleState {
+    const current = this.entries.get(key);
+    const entry = !current || now - current.windowStartedAt >= this.options.windowMs
+      ? {
+          attemptCount: 0,
+          windowStartedAt: now,
+          blockedUntil: null,
+          lastTouchedAt: now
+        }
+      : current;
+
+    entry.attemptCount += 1;
+    entry.lastTouchedAt = now;
+
+    if (entry.attemptCount >= this.options.maxAttempts) {
+      entry.blockedUntil = now + this.options.blockMs;
+    }
+
+    this.ensureCapacity(key, now);
+    this.entries.set(key, entry);
+
+    return {
+      blocked: entry.blockedUntil !== null && entry.blockedUntil > now,
+      attemptCount: entry.attemptCount,
+      retryAfterSeconds: entry.blockedUntil
+        ? Math.max(1, Math.ceil((entry.blockedUntil - now) / 1000))
+        : 0
+    };
+  }
+
+  clear(key: string): void {
+    this.entries.delete(key);
+  }
+
+  private ensureCapacity(incomingKey: string, now: number): void {
+    for (const [key, entry] of this.entries) {
+      const blockExpired = entry.blockedUntil === null || entry.blockedUntil <= now;
+
+      if (blockExpired && now - entry.windowStartedAt >= this.options.windowMs) {
+        this.entries.delete(key);
+      }
+    }
+
+    if (this.entries.has(incomingKey) || this.entries.size < this.options.maxEntries) {
+      return;
+    }
+
+    let oldestKey: string | undefined;
+    let oldestTouchedAt = Number.POSITIVE_INFINITY;
+
+    for (const [key, entry] of this.entries) {
+      if (entry.lastTouchedAt < oldestTouchedAt) {
+        oldestKey = key;
+        oldestTouchedAt = entry.lastTouchedAt;
+      }
+    }
+
+    if (oldestKey) {
+      this.entries.delete(oldestKey);
+    }
+  }
+}
+
+function buildLoginThrottleKey(request: FastifyRequest, tenantId: string, email: string): string {
+  return createHash("sha256")
+    .update(`${tenantId}\0${email.trim().toLowerCase()}\0${request.ip}`)
+    .digest("hex");
+}
+
+async function recordFailedLoginEvidence(
+  authRepository: AuthRepository,
+  request: FastifyRequest,
+  tenantId: string,
+  email: string,
+  reason: "invalid_credentials" | "login_rate_limited",
+  metadata: Record<string, unknown>
+): Promise<void> {
+  try {
+    await authRepository.recordAuditEvent({
+      tenantId,
+      action: "auth.login",
+      targetType: "user",
+      outcome: "denied",
+      reason,
+      metadata: {
+        ...metadata,
+        emailHash: createHash("sha256").update(email.trim().toLowerCase()).digest("hex"),
+        remoteAddressHash: createHash("sha256").update(request.ip).digest("hex")
+      }
+    });
+  } catch (error) {
+    request.log.warn({ err: error, tenantId, reason }, "Could not persist failed-login audit evidence");
+  }
+}
+
 function buildLoginSessionExpiry(
   requestedExpiresInSeconds: number,
   maxAgeSeconds: number,
@@ -7810,10 +8087,21 @@ function readOptionalBooleanQuery(value: string | undefined): boolean | string |
   return value;
 }
 
-function readSurface(request: FastifyRequest): Surface {
+function readSurface(request: FastifyRequest, principal: AuthPrincipal | null): Surface {
+  if (!readBearerToken(request) && readSessionCookieToken(request)) {
+    return "web";
+  }
+
   const value = request.headers["x-forgetbase-surface"];
 
-  if (typeof value === "string" && ["api", "cli", "mcp", "web", "export"].includes(value)) {
+  if (
+    principal &&
+    readBearerToken(request) &&
+    typeof value === "string" &&
+    ["api", "cli", "mcp", "web"].includes(value)
+  ) {
+    // The repository intersects this assertion with the authenticated API key's
+    // allowedSurfaces binding before it evaluates asset/grant permissions.
     return value as Surface;
   }
 

@@ -86,6 +86,40 @@ export const piiRedactionRuleKindSchema = z.enum([
 ]);
 
 export const jsonObjectSchema = z.record(z.string(), z.unknown());
+export const readerIconSchema = z.enum([
+  "book",
+  "checklist",
+  "export",
+  "guide",
+  "policy",
+  "privacy",
+  "search",
+  "system"
+]);
+export const readerPageInfoFieldSchema = z.enum(["version", "updated", "access", "maintainer", "review"]);
+export const readerNavigationMetadataSchema = z.object({
+  readerParentId: z.string().trim().min(1).max(250).optional(),
+  readerNavLabel: z.string().trim().min(1).max(120).optional(),
+  readerIcon: readerIconSchema.optional(),
+  readerNavOrder: z.number().int().min(0).max(1_000_000).optional(),
+  readerPageInfoTitle: z.string().trim().min(1).max(120).optional(),
+  readerPageInfoDescription: z.string().trim().min(1).max(500).optional(),
+  readerPageInfoFields: z.array(readerPageInfoFieldSchema)
+    .min(1)
+    .max(readerPageInfoFieldSchema.options.length)
+    .refine((fields) => new Set(fields).size === fields.length, "Reader page info fields must be unique")
+    .optional()
+}).loose();
+export const readerNavigationFallbacks = Object.freeze({
+  parentId: null,
+  label: null,
+  icon: null,
+  order: Number.MAX_SAFE_INTEGER,
+  pageInfoTitle: null,
+  pageInfoDescription: null,
+  pageInfoFields: ["version", "updated", "access", "maintainer", "review"] as const
+});
+export const assetMetadataSchema = jsonObjectSchema.pipe(readerNavigationMetadataSchema);
 const secretEnvVarNameSchema = z.string().regex(/^[A-Z_][A-Z0-9_]*$/);
 const secretEnvVarPrefixSchema = z.string().regex(/^[A-Z_][A-Z0-9_]*$/);
 
@@ -111,6 +145,7 @@ export const assetRecordSchema = assetSchema.extend({
   sourceKind: z.string().nullable(),
   sourceRef: z.string().nullable(),
   currentVersionId: z.string().nullable(),
+  metadata: assetMetadataSchema.default({}),
   createdAt: z.string().min(1),
   updatedAt: z.string().min(1)
 });
@@ -151,7 +186,7 @@ export const assetCreateInputSchema = z.object({
   allowedSurfaces: z.array(surfaceSchema).min(1),
   allowedExports: z.array(z.string().min(1)).default([]),
   allowedActions: z.array(z.string().min(1)).default([]),
-  metadata: jsonObjectSchema.default({}),
+  metadata: assetMetadataSchema.default({}),
   instruction: agentInstructionInputSchema.optional(),
   humanDocument: humanDocumentInputSchema.optional(),
   changeNote: z.string().optional()
@@ -173,7 +208,7 @@ export const assetUpdateInputSchema = z.object({
   allowedSurfaces: z.array(surfaceSchema).min(1).optional(),
   allowedExports: z.array(z.string().min(1)).optional(),
   allowedActions: z.array(z.string().min(1)).optional(),
-  metadata: jsonObjectSchema.default({}),
+  metadata: assetMetadataSchema.default({}),
   instruction: agentInstructionInputSchema.optional(),
   humanDocument: humanDocumentInputSchema.optional(),
   changeNote: z.string().optional()
@@ -213,12 +248,32 @@ export const assetReviewQueueInputSchema = z.object({
   limit: z.number().int().positive().max(200).default(50)
 });
 
+export const assetVersionAssetSnapshotSchema = z.object({
+  stableId: z.string().min(1),
+  type: assetTypeSchema,
+  ownerId: z.string().min(1),
+  title: z.string().min(1),
+  summary: z.string().nullable(),
+  lifecycleState: lifecycleStateSchema,
+  sensitivity: sensitivitySchema,
+  audience: z.array(z.string().min(1)).min(1),
+  status: z.string().min(1),
+  reviewDueAt: z.string().min(1),
+  sourceKind: z.string().nullable(),
+  sourceRef: z.string().nullable(),
+  allowedSurfaces: z.array(surfaceSchema).min(1),
+  allowedExports: z.array(z.string().min(1)),
+  allowedActions: z.array(z.string().min(1)),
+  metadata: assetMetadataSchema
+});
+
 export const assetVersionSchema = z.object({
   id: z.string().min(1),
   assetId: z.string().min(1),
   versionNumber: z.number().int().positive(),
   contentHash: z.string().min(1),
   metadata: jsonObjectSchema,
+  assetSnapshot: assetVersionAssetSnapshotSchema.nullable().optional(),
   createdBy: z.string().min(1).nullable(),
   createdAt: z.string().min(1),
   changeNote: z.string().nullable()
@@ -453,6 +508,7 @@ export const apiKeyCreateInputSchema = z.object({
   serviceAccountId: z.string().min(1).optional(),
   name: z.string().min(1),
   scopes: z.array(apiKeyScopeSchema).min(1).default(["asset:read"]),
+  allowedSurfaces: z.array(surfaceSchema).min(1).default(["api", "cli", "mcp", "web", "export"]),
   expiresAt: z.string().optional()
 }).refine(
   (input) => Boolean(input.userId) !== Boolean(input.serviceAccountId),
@@ -467,6 +523,7 @@ export const apiKeyRecordSchema = z.object({
   name: z.string().min(1),
   secretPreview: z.string().min(1),
   scopes: z.array(apiKeyScopeSchema).min(1),
+  allowedSurfaces: z.array(surfaceSchema).min(1),
   expiresAt: z.string().nullable(),
   lastUsedAt: z.string().nullable(),
   revokedAt: z.string().nullable(),
@@ -599,6 +656,7 @@ export const authPrincipalSchema = z.object({
   displayName: z.string().min(1),
   role: userRoleSchema,
   scopes: z.array(apiKeyScopeSchema),
+  allowedSurfaces: z.array(surfaceSchema).min(1),
   groupIds: z.array(z.string().min(1)).default([])
 });
 
@@ -2004,6 +2062,7 @@ export type AssetRestoreInput = z.input<typeof assetRestoreInputSchema>;
 export type AssetRecord = z.infer<typeof assetRecordSchema>;
 export type AssetUpdateInput = z.input<typeof assetUpdateInputSchema>;
 export type AssetVersion = z.infer<typeof assetVersionSchema>;
+export type AssetVersionAssetSnapshot = z.infer<typeof assetVersionAssetSnapshotSchema>;
 export type AssetVersionSnapshot = z.infer<typeof assetVersionSnapshotSchema>;
 export type AssetVersionSnapshotInput = z.input<typeof assetVersionSnapshotInputSchema>;
 export type AssetType = z.infer<typeof assetTypeSchema>;
@@ -2155,6 +2214,9 @@ export type AgentActionType = z.infer<typeof agentActionTypeSchema>;
 export type ExportPackageAsset = z.infer<typeof exportPackageAssetSchema>;
 export type Sensitivity = z.infer<typeof sensitivitySchema>;
 export type Surface = z.infer<typeof surfaceSchema>;
+export type ReaderIcon = z.infer<typeof readerIconSchema>;
+export type ReaderNavigationMetadata = z.infer<typeof readerNavigationMetadataSchema>;
+export type ReaderPageInfoField = z.infer<typeof readerPageInfoFieldSchema>;
 export type UserRole = z.infer<typeof userRoleSchema>;
 export type UserStatus = z.infer<typeof userStatusSchema>;
 export type UserAuthProvider = z.infer<typeof userAuthProviderSchema>;

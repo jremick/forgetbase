@@ -45,7 +45,8 @@ function asset(overrides: Partial<AssetRecord> = {}): AssetRecord {
     currentVersionId: "version_1",
     createdAt: "2026-06-19T00:00:00.000Z",
     updatedAt: "2026-06-19T00:00:00.000Z",
-    ...overrides
+    ...overrides,
+    metadata: overrides.metadata ?? {}
   };
 }
 

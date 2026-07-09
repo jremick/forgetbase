@@ -23,6 +23,7 @@
     "release-proof:collect": "tsx scripts/collect-public-beta-release-proof.ts",
     "release-proof:check": "tsx scripts/check-public-beta-release-proof.ts",
     "public-beta:proof-gates": "tsx scripts/run-public-beta-proof-gates.ts",
+    "private-live:isolated-proof": "tsx scripts/run-private-live-isolated-proof.ts",
     "test:uat": "tsx scripts/uat-public-beta.ts",
     "smoke:compose": "tsx scripts/smoke-compose.ts",
     "security:check-deployment-defaults": "tsx scripts/check-deployment-security.ts",

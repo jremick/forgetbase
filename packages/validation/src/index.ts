@@ -157,6 +157,7 @@ export function validateAssetCollection(input: unknown, options: Partial<AssetVa
 
   validateStableIdUniqueness(parsedAssets, issues);
   validateInternalReferences(parsedAssets, issues);
+  validateReaderNavigation(parsedAssets, issues);
 
   const errorCount = issues.filter((issue) => issue.severity === "error").length;
   const warningCount = issues.filter((issue) => issue.severity === "warning").length;
@@ -436,6 +437,90 @@ function validateInternalReferences(assets: ParsedAssetCreateInput[], issues: Va
         }
       });
     }
+  });
+}
+
+function validateReaderNavigation(assets: ParsedAssetCreateInput[], issues: ValidationIssue[]): void {
+  const assetIndexes = new Map<string, number>();
+  const parents = new Map<string, string>();
+
+  assets.forEach((asset, index) => {
+    if (!assetIndexes.has(asset.stableId)) {
+      assetIndexes.set(asset.stableId, index);
+    }
+
+    const parentId = asset.metadata.readerParentId;
+
+    if (typeof parentId === "string") {
+      parents.set(asset.stableId, parentId);
+    }
+  });
+
+  parents.forEach((parentId, stableId) => {
+    const index = assetIndexes.get(stableId);
+
+    if (index === undefined) {
+      return;
+    }
+
+    if (parentId === stableId) {
+      issues.push({
+        severity: "error",
+        code: "reader.parent_self",
+        path: `assets.${index}.metadata.readerParentId`,
+        message: "Reader navigation parent must not reference the asset itself",
+        stableId
+      });
+      return;
+    }
+
+    if (!assetIndexes.has(parentId)) {
+      issues.push({
+        severity: "error",
+        code: "reader.parent_missing",
+        path: `assets.${index}.metadata.readerParentId`,
+        message: `Reader navigation parent ${parentId} is not present in this validation set`,
+        stableId
+      });
+    }
+  });
+
+  const cycleMembers = new Set<string>();
+
+  for (const asset of assets) {
+    const path: string[] = [];
+    const positions = new Map<string, number>();
+    let current: string | undefined = asset.stableId;
+
+    while (current && assetIndexes.has(current)) {
+      const existingPosition = positions.get(current);
+
+      if (existingPosition !== undefined) {
+        path.slice(existingPosition).forEach((stableId) => cycleMembers.add(stableId));
+        break;
+      }
+
+      positions.set(current, path.length);
+      path.push(current);
+      const parentId = parents.get(current);
+      current = parentId === current ? undefined : parentId;
+    }
+  }
+
+  cycleMembers.forEach((stableId) => {
+    const index = assetIndexes.get(stableId);
+
+    if (index === undefined) {
+      return;
+    }
+
+    issues.push({
+      severity: "error",
+      code: "reader.parent_cycle",
+      path: `assets.${index}.metadata.readerParentId`,
+      message: "Reader navigation parent relationships must not contain a cycle",
+      stableId
+    });
   });
 }
 

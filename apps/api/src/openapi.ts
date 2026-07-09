@@ -21,10 +21,20 @@ export function buildOpenApiDocument() {
     paths: {
       "/health": {
         get: {
-          summary: "Health check",
+          summary: "Liveness check",
           security: [],
           responses: {
             "200": jsonResponse("Service health response")
+          }
+        }
+      },
+      "/ready": {
+        get: {
+          summary: "Database and migration readiness check",
+          security: [],
+          responses: {
+            "200": jsonResponse("Service and dependencies are ready"),
+            "503": jsonResponse("Service dependencies are not ready")
           }
         }
       },

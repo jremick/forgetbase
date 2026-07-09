@@ -67,7 +67,6 @@ const requiredCheckNames = [
 ];
 
 const requiredBrowserLabels = [
-  "public-reader-home",
   "page-browse-tree",
   "page-read-view",
   "search-results",
@@ -205,7 +204,7 @@ function validateChecks(value: unknown): void {
     if (check.name === "public-uat") {
       requireUatReportEvidence(check.evidence, "checks.public-uat.evidence", {
         mode: "public",
-        screenshots: ["public-desktop.png", "public-mobile.png"],
+        screenshots: ["login-desktop.png", "login-mobile.png"],
         commitSha: releaseCommitSha,
         checkNameIncludes: ["clipped text"]
       });

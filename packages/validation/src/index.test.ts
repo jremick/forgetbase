@@ -210,4 +210,78 @@ describe("validateAssetCollection", () => {
     expect(linkedWithoutInstruction.ok).toBe(false);
     expect(linkedWithoutInstruction.issues.map((issue) => issue.code)).toContain("document.linked_instruction_missing");
   });
+
+  it("rejects invalid reader navigation icon and order metadata", () => {
+    const result = validateAssetCollection({
+      assets: [{
+        ...validAsset,
+        metadata: {
+          readerIcon: "unknown-icon",
+          readerNavOrder: "first"
+        }
+      }]
+    }, { asOf: "2026-06-16" });
+
+    expect(result.ok).toBe(false);
+    expect(result.issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: "schema.invalid", path: "assets.0.metadata.readerIcon" }),
+      expect.objectContaining({ code: "schema.invalid", path: "assets.0.metadata.readerNavOrder" })
+    ]));
+  });
+
+  it("rejects missing, self-referencing, and cyclic reader parents", () => {
+    const result = validateAssetCollection({
+      assets: [
+        {
+          ...validAsset,
+          stableId: "guideline.missing-parent",
+          metadata: { readerParentId: "guideline.not-present" }
+        },
+        {
+          ...validAsset,
+          stableId: "guideline.self-parent",
+          metadata: { readerParentId: "guideline.self-parent" }
+        },
+        {
+          ...validAsset,
+          stableId: "guideline.cycle-a",
+          metadata: { readerParentId: "guideline.cycle-b" }
+        },
+        {
+          ...validAsset,
+          stableId: "guideline.cycle-b",
+          metadata: { readerParentId: "guideline.cycle-a" }
+        }
+      ]
+    }, { asOf: "2026-06-16" });
+
+    expect(result.ok).toBe(false);
+    expect(result.issues.map((issue) => issue.code)).toEqual(expect.arrayContaining([
+      "reader.parent_missing",
+      "reader.parent_self",
+      "reader.parent_cycle"
+    ]));
+    expect(result.issues.filter((issue) => issue.code === "reader.parent_cycle")).toHaveLength(2);
+  });
+
+  it("accepts reader metadata omissions and a valid multi-level hierarchy", () => {
+    const result = validateAssetCollection({
+      assets: [
+        { ...validAsset, stableId: "guideline.root", metadata: {} },
+        {
+          ...validAsset,
+          stableId: "guideline.child",
+          metadata: { readerParentId: "guideline.root", readerIcon: "book", readerNavOrder: 10 }
+        },
+        {
+          ...validAsset,
+          stableId: "guideline.grandchild",
+          metadata: { readerParentId: "guideline.child" }
+        }
+      ]
+    }, { asOf: "2026-06-16" });
+
+    expect(result.ok).toBe(true);
+    expect(result.errorCount).toBe(0);
+  });
 });
