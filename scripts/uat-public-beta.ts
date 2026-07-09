@@ -783,10 +783,15 @@ async function selectReaderPageForUat(page: Page, title: string): Promise<void> 
 
   if (await mobilePicker.isVisible()) {
     await mobilePicker.locator("select").selectOption({ label: title });
-    return;
+  } else {
+    await clickFirstVisible(page, "button", title === "Reader Access and Export Rules" ? "Read vs export" : title);
   }
 
-  await clickFirstVisible(page, "button", title === "Reader Access and Export Rules" ? "Read vs export" : title);
+  await page.waitForFunction(
+    (expectedTitle) => document.querySelector(".reader-article-header h1")?.textContent?.replace(/\s+/g, " ").trim() === expectedTitle,
+    title,
+    { timeout: 15000 }
+  );
 }
 
 async function assertElementInViewport(page: Page, selector: string, name: string): Promise<void> {
