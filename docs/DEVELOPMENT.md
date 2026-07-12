@@ -32,6 +32,7 @@ The preflight script is the local, non-Docker public beta gate. The broader loca
 npx -y pnpm@11.7.0 typecheck
 npx -y pnpm@11.7.0 test
 npx -y pnpm@11.7.0 build
+npx -y pnpm@11.7.0 web:bundle-budget
 npx -y pnpm@11.7.0 --filter @forgetbase/cli start -- validate --file corpus/demo/assets.json --as-of 2026-06-16 --fail-on-warnings
 npx -y pnpm@11.7.0 openapi:check
 npx -y pnpm@11.7.0 claims:lint
@@ -94,11 +95,13 @@ The collector writes a draft manifest from current repo facts and expected evide
 
 The GitHub Actions workflow at `.github/workflows/ci.yml` runs on pushes to `main` and pull requests.
 
-It uses official GitHub actions for checkout and Node setup, installs with the repo-pinned `pnpm@11.7.0`, then runs deterministic, secret-free beta gates: typecheck, build, `public-beta:check`, static public browser UAT with screenshot artifact upload, strict demo corpus validation, static Compose config parsing for the base, same-origin, and TLS overlays, `openapi:check`, `claims:lint`, `contracts:check`, `security:check-deployment-defaults`, and the test suite against a `pgvector/pgvector:pg17` Postgres service through `TEST_DATABASE_URL`.
+It uses official GitHub actions pinned to immutable commit SHAs, installs with the repo-pinned `pnpm@11.7.0`, then runs deterministic, secret-free beta gates: typecheck with unused-code enforcement, build, `web:bundle-budget`, `public-beta:check`, static public browser UAT with screenshot artifact upload, strict demo corpus validation, static Compose config parsing for the base, same-origin, and TLS overlays, `openapi:check`, `claims:lint`, `contracts:check`, `security:check-deployment-defaults`, and the test suite against a digest-pinned `pgvector/pgvector:pg17` Postgres service through `TEST_DATABASE_URL`.
+
+The separate `.github/workflows/private-live-proof.yml` workflow runs on pushes to `main` or manual dispatch. It owns an isolated Compose project and runs `private-live:isolated-proof`, then uploads the non-secret proof bundle for 14 days. It does not run for pull requests and does not publish or deploy the repository.
 
 The older API, CLI, SDK, and MCP contract is documented in [ForgetBase Private Beta Contract](BETA_PRIVATE_CONTRACT.md). That contract is narrower than the full route surface; broader admin/provider/telemetry/action routes remain preview unless a later contract update moves them into scope.
 
-Default CI intentionally does not run `smoke:compose`, `security:verify-restricted-leakage`, `db:verify-backup-restore`, `auth:verify-oidc-login`, provider smoke checks, or release-mode browser UAT. Those checks require a running API lifecycle, Docker runtime state, release data, fake/real identity setup, provider secrets, or authenticated walkthrough state. Keep them as local release/manual gates until a CI wrapper owns setup, health waiting, evidence capture, and cleanup.
+Default CI intentionally does not run `auth:verify-oidc-login`, real-provider smoke checks, or authenticated UAT against the externally deployed live instance. The isolated private-live workflow covers the disposable local-stack smoke, restricted-leakage, backup/restore, and authenticated reader/admin paths without using customer data or provider secrets; exact deployed-commit proof and human UAT remain release gates.
 
 ## API Smoke Check
 
@@ -156,7 +159,7 @@ npx -y pnpm@11.7.0 --filter @forgetbase/cli start -- assets publish <stable-id> 
 npx -y pnpm@11.7.0 --filter @forgetbase/cli start -- assets restore <stable-id> --version-number 1
 ```
 
-Version inspection returns historical instruction/document content without changing the current asset pointer. Review queue listing returns stale, not approved, or not active assets for maintainers/admins. Review completion updates review metadata without creating a content version. Update, review, publish, and restore operations write audit events and reindex retrieval chunks for the asset.
+Version inspection returns historical instruction/document content without changing the current asset pointer. Review queue listing returns stale, not approved, or not active assets for maintainers/admins. Update, review, and publish each create an immutable governed snapshot; restore moves the current pointer to an existing snapshot. All four operations write audit events and reindex retrieval chunks for the asset.
 
 ## Auth And Permission Smoke Check
 

@@ -208,6 +208,42 @@ export interface ForgetBaseClientOptions {
   fetchImpl?: typeof fetch;
 }
 
+const MAX_ERROR_BODY_BYTES = 4_096;
+const MAX_ERROR_METADATA_LENGTH = 256;
+const SAFE_ERROR_CODE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+
+interface ForgetBaseHttpErrorOptions {
+  statusText: string | null;
+  code: string | null;
+  responseBody: string | null;
+  responseBodyTruncated: boolean;
+  responseContentType: string | null;
+  responseRequestId: string | null;
+}
+
+/** A bounded, structured representation of a non-successful ForgetBase HTTP response. */
+export class ForgetBaseHttpError extends Error {
+  readonly status: number;
+  readonly statusText: string | null;
+  readonly code: string | null;
+  readonly responseBody: string | null;
+  readonly responseBodyTruncated: boolean;
+  readonly responseContentType: string | null;
+  readonly responseRequestId: string | null;
+
+  constructor(status: number, options: ForgetBaseHttpErrorOptions) {
+    super(`ForgetBase request failed with HTTP ${status}${options.code ? ` (${options.code})` : ""}`);
+    this.name = "ForgetBaseHttpError";
+    this.status = status;
+    this.statusText = options.statusText;
+    this.code = options.code;
+    this.responseBody = options.responseBody;
+    this.responseBodyTruncated = options.responseBodyTruncated;
+    this.responseContentType = options.responseContentType;
+    this.responseRequestId = options.responseRequestId;
+  }
+}
+
 export interface ExportAiPackageOptions {
   format?: AiExportFormat;
   okfVersion?: OkfVersion;
@@ -250,19 +286,15 @@ export class ForgetBaseClient {
   }
 
   async getAsset(stableId: string): Promise<AssetDetail | null> {
-    const response = await this.fetchImpl(`${this.baseUrl}/assets/${encodeURIComponent(stableId)}`, {
-      headers: this.authHeaders()
-    });
+    try {
+      return await this.request(`/assets/${encodeURIComponent(stableId)}`, assetDetailSchema);
+    } catch (error) {
+      if (error instanceof ForgetBaseHttpError && error.status === 404) {
+        return null;
+      }
 
-    if (response.status === 404) {
-      return null;
+      throw error;
     }
-
-    if (!response.ok) {
-      throw new Error(`Asset fetch failed with HTTP ${response.status}: ${await response.text()}`);
-    }
-
-    return assetDetailSchema.parse(await response.json());
   }
 
   async createAsset(input: AssetCreateInput): Promise<AssetDetail> {
@@ -931,7 +963,7 @@ export class ForgetBaseClient {
     });
 
     if (!response.ok) {
-      throw new Error(`Request failed with HTTP ${response.status}: ${await response.text()}`);
+      throw await createHttpError(response);
     }
 
     return schema.parse(await response.json());
@@ -947,4 +979,95 @@ export class ForgetBaseClient {
 
     return headers;
   }
+}
+
+async function createHttpError(response: Response): Promise<ForgetBaseHttpError> {
+  const { body, truncated } = await readBoundedResponseBody(response);
+
+  return new ForgetBaseHttpError(response.status, {
+    statusText: boundMetadata(response.statusText),
+    code: parseSafeErrorCode(body),
+    responseBody: body,
+    responseBodyTruncated: truncated,
+    responseContentType: boundMetadata(response.headers.get("content-type")),
+    responseRequestId: boundMetadata(response.headers.get("x-request-id"))
+  });
+}
+
+async function readBoundedResponseBody(response: Response): Promise<{ body: string | null; truncated: boolean }> {
+  if (!response.body) {
+    return { body: null, truncated: false };
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let body = "";
+  let bytesRead = 0;
+  let truncated = false;
+
+  try {
+    while (bytesRead < MAX_ERROR_BODY_BYTES) {
+      const result = await reader.read();
+
+      if (result.done) {
+        break;
+      }
+
+      const remaining = MAX_ERROR_BODY_BYTES - bytesRead;
+      const chunk = result.value.subarray(0, remaining);
+      body += decoder.decode(chunk, { stream: true });
+      bytesRead += chunk.byteLength;
+
+      if (result.value.byteLength > remaining) {
+        truncated = true;
+        break;
+      }
+    }
+
+    if (!truncated && bytesRead === MAX_ERROR_BODY_BYTES) {
+      const result = await reader.read();
+      truncated = !result.done;
+    }
+  } catch {
+    truncated = true;
+  } finally {
+    if (truncated) {
+      await reader.cancel().catch(() => undefined);
+    }
+  }
+
+  body += decoder.decode();
+  return { body: body.length > 0 ? body : null, truncated };
+}
+
+function parseSafeErrorCode(body: string | null): string | null {
+  if (!body) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(body) as unknown;
+
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return null;
+    }
+
+    const value = "error" in parsed
+      ? parsed.error
+      : "code" in parsed
+        ? parsed.code
+        : null;
+
+    return typeof value === "string" && SAFE_ERROR_CODE_PATTERN.test(value) ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function boundMetadata(value: string | null): string | null {
+  if (!value) {
+    return null;
+  }
+
+  return value.slice(0, MAX_ERROR_METADATA_LENGTH);
 }

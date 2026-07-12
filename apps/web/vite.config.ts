@@ -8,6 +8,9 @@ const allowedHosts = (process.env.FORGETBASE_WEB_ALLOWED_HOSTS ?? "")
 
 export default defineConfig({
   plugins: [react()],
+  build: {
+    manifest: true
+  },
   resolve: {
     alias: {
       "@": new URL("./src", import.meta.url).pathname

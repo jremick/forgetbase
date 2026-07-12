@@ -2,26 +2,33 @@
 import { mkdir, readFile } from "node:fs/promises";
 import { writeFile } from "node:fs/promises";
 import { dirname, resolve, sep } from "node:path";
-	import {
-	  agentActionExecutionPolicyInputSchema,
-	  agentActionTypeSchema,
+import {
+  accountLinkingModeSchema,
+  agentActionExecutionPolicyInputSchema,
+  agentActionTypeSchema,
   aiExportFormatSchema,
-	  assetCreateInputSchema,
+  apiKeyScopeSchema,
+  assetCreateInputSchema,
   assetPublishInputSchema,
   assetReviewInputSchema,
   assetUpdateInputSchema,
-	  assetTypeSchema,
-	  externalAuthProviderSchema,
-	  managedQueryEvalInputSchema,
+  assetTypeSchema,
+  externalAuthProviderSchema,
+  managedQueryEvalInputSchema,
   managedQueryEvalScheduleInputSchema,
-	  managedQueryFeedbackOutcomeSchema,
+  managedQueryFeedbackOutcomeSchema,
   managedQueryModeSchema,
   managedQueryRetentionCaptureModeSchema,
   modelProviderSchema,
   okfVersionSchema,
   piiRedactionRuleKindSchema,
-	  type AssetCreateInput,
-	  type AgentActionType,
+  permissionActionSchema,
+  permissionPrincipalTypeSchema,
+  surfaceSchema,
+  userRoleSchema,
+  userStatusSchema,
+  type AgentActionType,
+  type AssetCreateInput,
   type OkfExportPackage,
   type AssetPublishInput,
   type AssetReviewInput,
@@ -40,6 +47,7 @@ import { ForgetBaseClient } from "@forgetbase/sdk";
 import { validateAssetCollection } from "@forgetbase/validation";
 
 const DEFAULT_API_URL = "http://127.0.0.1:3000";
+const SEARCH_STRATEGIES = ["lexical", "vector", "hybrid"] as const;
 
 export async function main(argv = process.argv.slice(2)): Promise<number> {
   const normalizedArgv = argv[0] === "--" ? argv.slice(1) : argv;
@@ -107,10 +115,9 @@ async function handleAudit(args: string[]): Promise<number> {
 
   switch (subcommand) {
     case "events": {
-      const limitOption = readOption(rest, "--limit");
       const client = createClient(rest, "cli");
       console.log(JSON.stringify({
-        events: await client.listAuditEvents(limitOption ? Number.parseInt(limitOption, 10) : undefined)
+        events: await client.listAuditEvents(readPositiveIntegerOption(rest, "--limit"))
       }, null, 2));
       return 0;
     }
@@ -125,12 +132,11 @@ async function handleTelemetry(args: string[]): Promise<number> {
 
   switch (subcommand) {
     case "summary": {
-      const limitOption = readOption(rest, "--limit");
       const client = createClient(rest, "cli");
       console.log(JSON.stringify(await client.telemetrySummary({
         since: readOption(rest, "--since"),
         until: readOption(rest, "--until"),
-        limit: limitOption ? Number.parseInt(limitOption, 10) : undefined
+        limit: readPositiveIntegerOption(rest, "--limit")
       }), null, 2));
       return 0;
     }
@@ -184,9 +190,8 @@ async function handleAdmin(args: string[]): Promise<number> {
     }
 
     case "managed-query-cache": {
-      const limit = readOption(rest, "--limit");
       console.log(JSON.stringify({
-        entries: await client.listManagedQueryCacheEntries(limit ? Number.parseInt(limit, 10) : undefined)
+        entries: await client.listManagedQueryCacheEntries(readPositiveIntegerOption(rest, "--limit"))
       }, null, 2));
       return 0;
     }
@@ -200,7 +205,7 @@ async function handleAdmin(args: string[]): Promise<number> {
 	      console.log(JSON.stringify(await client.updateManagedQueryPolicy({
 	        defaultMode: readManagedQueryModeOption(rest, "--default-mode"),
 	        allowedModes: readManagedQueryModeListOption(rest, "--allowed-modes"),
-	        minimumCitationCount: readNumberOption(rest, "--minimum-citation-count"),
+	        minimumCitationCount: readIntegerOption(rest, "--minimum-citation-count", { minimum: 0, maximum: 10 }),
 	        requireGrounded: readBooleanOption(rest, "--require-grounded")
 	      }), null, 2));
 	      return 0;
@@ -213,10 +218,10 @@ async function handleAdmin(args: string[]): Promise<number> {
 
     case "retrieval-ranking-policy-set": {
       console.log(JSON.stringify(await client.updateRetrievalRankingPolicy({
-        agentInstructionWeight: readNumberOption(rest, "--agent-instruction-weight"),
-        assetSummaryWeight: readNumberOption(rest, "--asset-summary-weight"),
-        humanDocumentWeight: readNumberOption(rest, "--human-document-weight"),
-        exactPhraseBoost: readNumberOption(rest, "--exact-phrase-boost")
+        agentInstructionWeight: readNumberInRangeOption(rest, "--agent-instruction-weight", 0, 10, true),
+        assetSummaryWeight: readNumberInRangeOption(rest, "--asset-summary-weight", 0, 10, true),
+        humanDocumentWeight: readNumberInRangeOption(rest, "--human-document-weight", 0, 10, true),
+        exactPhraseBoost: readNumberInRangeOption(rest, "--exact-phrase-boost", 0, 10)
       }), null, 2));
       return 0;
     }
@@ -236,7 +241,7 @@ async function handleAdmin(args: string[]): Promise<number> {
 
       console.log(JSON.stringify(await client.updateManagedQueryEvalSchedulePolicy({
         enabled: readBooleanOption(rest, "--enabled"),
-        intervalMinutes: readNumberOption(rest, "--interval-minutes"),
+        intervalMinutes: readIntegerOption(rest, "--interval-minutes", { minimum: 1, maximum: 43_200 }),
         evalInput
       }), null, 2));
       return 0;
@@ -255,8 +260,11 @@ async function handleAdmin(args: string[]): Promise<number> {
           requireApproval: readBooleanOption(rest, "--require-approval"),
           dryRunDefault: readBooleanOption(rest, "--dry-run-default"),
           killSwitch: readBooleanOption(rest, "--kill-switch"),
-          maxRequestsPerHour: readNumberOption(rest, "--max-requests-per-hour"),
-          approvalExpiresInMinutes: readNumberOption(rest, "--approval-expires-in-minutes")
+          maxRequestsPerHour: readIntegerOption(rest, "--max-requests-per-hour", { minimum: 1, maximum: 10_000 }),
+          approvalExpiresInMinutes: readIntegerOption(rest, "--approval-expires-in-minutes", {
+            minimum: 1,
+            maximum: 10_080
+          })
         })
       ), null, 2));
       return 0;
@@ -270,7 +278,7 @@ async function handleAdmin(args: string[]): Promise<number> {
     case "managed-query-cache-policy-set": {
       console.log(JSON.stringify(await client.updateManagedQueryCachePolicy({
         cacheEnabled: readBooleanOption(rest, "--cache-enabled"),
-        maxCacheTtlSeconds: readNullablePositiveIntegerOption(rest, "--max-cache-ttl-seconds")
+        maxCacheTtlSeconds: readNullablePositiveIntegerOption(rest, "--max-cache-ttl-seconds", 86_400)
       }), null, 2));
       return 0;
     }
@@ -336,34 +344,39 @@ async function handleAdmin(args: string[]): Promise<number> {
 
     case "service-account-policy-set": {
       console.log(JSON.stringify(await client.updateServiceAccountPolicy({
-        maxServiceAccounts: readNullablePositiveIntegerOption(rest, "--max-service-accounts"),
-        maxActiveApiKeysPerServiceAccount: readNullablePositiveIntegerOption(rest, "--max-active-api-keys"),
-        defaultApiKeyExpiresInDays: readNullablePositiveIntegerOption(rest, "--default-key-expires-in-days")
+        maxServiceAccounts: readNullablePositiveIntegerOption(rest, "--max-service-accounts", 10_000),
+        maxActiveApiKeysPerServiceAccount: readNullablePositiveIntegerOption(rest, "--max-active-api-keys", 1_000),
+        defaultApiKeyExpiresInDays: readNullablePositiveIntegerOption(rest, "--default-key-expires-in-days", 3_650)
       }), null, 2));
       return 0;
     }
 
     case "model-provider-set": {
-      const provider = modelProviderSchema.parse(requireOption(rest, "--provider")) satisfies ModelProvider;
+      const provider = requireChoiceOption(rest, "--provider", modelProviderSchema.options) satisfies ModelProvider;
       const availableModels = (readOption(rest, "--models") ?? "")
         .split(",")
         .map((model) => model.trim())
         .filter(Boolean);
-      const priority = readOption(rest, "--priority");
       const cacheEnabled = readBooleanOption(rest, "--cache-enabled");
       const metadata = {
         ...compactMetadata({
-        maxOutputTokens: readNumberOption(rest, "--max-output-tokens"),
-        temperature: readNumberOption(rest, "--temperature"),
-        timeoutMs: readNumberOption(rest, "--timeout-ms"),
-        maxRetries: readNumberOption(rest, "--max-retries"),
-        retryBackoffMs: readNumberOption(rest, "--retry-backoff-ms"),
-        inputCostPerMillionTokens: readNumberOption(rest, "--input-cost-per-million-tokens"),
-        outputCostPerMillionTokens: readNumberOption(rest, "--output-cost-per-million-tokens"),
-        maxEstimatedInputTokensPerQuery: readNumberOption(rest, "--max-estimated-input-tokens-per-query"),
-        maxEstimatedTotalTokensPerQuery: readNumberOption(rest, "--max-estimated-total-tokens-per-query"),
-        maxEstimatedCostUsdPerQuery: readNumberOption(rest, "--max-estimated-cost-usd-per-query"),
-        cacheTtlSeconds: readNumberOption(rest, "--cache-ttl-seconds")
+        maxOutputTokens: readIntegerOption(rest, "--max-output-tokens", { minimum: 128, maximum: 4_000 }),
+        temperature: readNumberInRangeOption(rest, "--temperature", 0, 2),
+        timeoutMs: readIntegerOption(rest, "--timeout-ms", { minimum: 1_000, maximum: 60_000 }),
+        maxRetries: readIntegerOption(rest, "--max-retries", { minimum: 0, maximum: 3 }),
+        retryBackoffMs: readIntegerOption(rest, "--retry-backoff-ms", { minimum: 0, maximum: 10_000 }),
+        inputCostPerMillionTokens: readNumberInRangeOption(rest, "--input-cost-per-million-tokens", 0, 1_000),
+        outputCostPerMillionTokens: readNumberInRangeOption(rest, "--output-cost-per-million-tokens", 0, 1_000),
+        maxEstimatedInputTokensPerQuery: readIntegerOption(rest, "--max-estimated-input-tokens-per-query", {
+          minimum: 1,
+          maximum: 1_000_000
+        }),
+        maxEstimatedTotalTokensPerQuery: readIntegerOption(rest, "--max-estimated-total-tokens-per-query", {
+          minimum: 1,
+          maximum: 1_000_000
+        }),
+        maxEstimatedCostUsdPerQuery: readNumberInRangeOption(rest, "--max-estimated-cost-usd-per-query", 0, 10_000),
+        cacheTtlSeconds: readIntegerOption(rest, "--cache-ttl-seconds", { minimum: 1, maximum: 86_400 })
         }),
         ...(cacheEnabled === undefined ? {} : { cacheEnabled })
       };
@@ -374,7 +387,7 @@ async function handleAdmin(args: string[]): Promise<number> {
         apiKeyEnvVar: readOption(rest, "--api-key-env-var"),
         defaultModel: readOption(rest, "--default-model"),
         availableModels,
-        priority: priority ? Number.parseInt(priority, 10) : undefined,
+        priority: readIntegerOption(rest, "--priority", { minimum: 1, maximum: 1_000 }),
         metadata
       } satisfies Omit<ModelProviderConfigInput, "provider">;
 
@@ -390,7 +403,11 @@ async function handleAdmin(args: string[]): Promise<number> {
     }
 
     case "auth-provider-set": {
-      const provider = externalAuthProviderSchema.parse(requireOption(rest, "--provider")) satisfies ExternalAuthProvider;
+      const provider = requireChoiceOption(
+        rest,
+        "--provider",
+        externalAuthProviderSchema.options
+      ) satisfies ExternalAuthProvider;
       const scopes = (readOption(rest, "--scopes") ?? "")
         .split(",")
         .map((scope) => scope.trim())
@@ -399,7 +416,6 @@ async function handleAdmin(args: string[]): Promise<number> {
         .split(",")
         .map((domain) => domain.trim())
         .filter(Boolean);
-      const priority = readOption(rest, "--priority");
       const input = {
         enabled: readBooleanOption(rest, "--enabled") ?? false,
         displayName: readOption(rest, "--display-name"),
@@ -412,13 +428,13 @@ async function handleAdmin(args: string[]): Promise<number> {
         displayNameClaim: readOption(rest, "--display-name-claim"),
         groupClaim: readOption(rest, "--group-claim"),
 	        roleClaim: readOption(rest, "--role-claim"),
-	        defaultRole: readOption(rest, "--default-role") as AuthProviderConfigInput["defaultRole"] | undefined,
+	        defaultRole: readChoiceOption(rest, "--default-role", userRoleSchema.options),
 	        autoProvisionUsers: readBooleanOption(rest, "--auto-provision-users") ?? false,
-	        accountLinkingMode: readOption(rest, "--account-linking-mode") as AuthProviderConfigInput["accountLinkingMode"] | undefined,
+	        accountLinkingMode: readChoiceOption(rest, "--account-linking-mode", accountLinkingModeSchema.options),
 	        groupSyncEnabled: readBooleanOption(rest, "--group-sync-enabled") ?? false,
 	        allowedDomains,
         pkceRequired: readBooleanOption(rest, "--pkce-required") ?? true,
-        priority: priority ? Number.parseInt(priority, 10) : undefined
+        priority: readIntegerOption(rest, "--priority", { minimum: 1, maximum: 1_000 })
       } satisfies Omit<AuthProviderConfigInput, "provider">;
 
       console.log(JSON.stringify(await client.upsertAuthProviderConfig(provider, input), null, 2));
@@ -439,8 +455,8 @@ async function handleExports(args: string[]): Promise<number> {
 
   const client = createClient(args, "cli");
   const packageName = readOption(args, "--package") ?? "demo-agent-pack";
-  const format = aiExportFormatSchema.parse(readOption(args, "--format") ?? "json");
-  const okfVersion = okfVersionSchema.parse(readOption(args, "--okf-version") ?? "0.1");
+  const format = readChoiceOption(args, "--format", aiExportFormatSchema.options) ?? "json";
+  const okfVersion = readChoiceOption(args, "--okf-version", okfVersionSchema.options) ?? "0.1";
   const output = readOption(args, "--output");
   const outputDir = readOption(args, "--output-dir");
   const result = format === "okf"
@@ -517,13 +533,11 @@ async function handleSearch(args: string[]): Promise<number> {
     throw new Error("Search query is required: forgetbase search --query \"PII redaction\"");
   }
 
-  const limitOption = readOption(args, "--limit");
-  const strategy = readOption(args, "--strategy");
   const client = createClient(args, "cli");
   console.log(JSON.stringify(await client.search({
     query,
-    limit: limitOption ? Number.parseInt(limitOption, 10) : undefined,
-    strategy: strategy as "lexical" | "vector" | "hybrid" | undefined
+    limit: readIntegerOption(args, "--limit", { minimum: 1, maximum: 50 }),
+    strategy: readChoiceOption(args, "--strategy", SEARCH_STRATEGIES)
   }), null, 2));
   return 0;
 }
@@ -539,7 +553,6 @@ async function handleAgent(args: string[]): Promise<number> {
         throw new Error("Managed query is required: forgetbase agent query --query \"PII redaction\"");
       }
 
-      const limitOption = readOption(rest, "--limit");
       const modeOption = readOption(rest, "--mode");
       const providerOption = readOption(rest, "--provider");
       const modelOption = readOption(rest, "--model");
@@ -547,9 +560,9 @@ async function handleAgent(args: string[]): Promise<number> {
       const client = createClient(rest, "cli");
       console.log(JSON.stringify(await client.managedQuery({
         query,
-        limit: limitOption ? Number.parseInt(limitOption, 10) : undefined,
-        mode: modeOption ? managedQueryModeSchema.parse(modeOption) : undefined,
-        provider: providerOption ? modelProviderSchema.parse(providerOption) : undefined,
+        limit: readIntegerOption(rest, "--limit", { minimum: 1, maximum: 10 }),
+        mode: modeOption ? parseChoice(modeOption, "--mode", managedQueryModeSchema.options) : undefined,
+        provider: providerOption ? parseChoice(providerOption, "--provider", modelProviderSchema.options) : undefined,
         model: modelOption,
         cache: cacheOption
       }), null, 2));
@@ -557,7 +570,7 @@ async function handleAgent(args: string[]): Promise<number> {
     }
 
     case "feedback": {
-      const outcome = managedQueryFeedbackOutcomeSchema.parse(requireOption(rest, "--outcome"));
+      const outcome = requireChoiceOption(rest, "--outcome", managedQueryFeedbackOutcomeSchema.options);
       const input = {
         telemetryEventId: requireOption(rest, "--telemetry-event-id"),
         query: requireOption(rest, "--query"),
@@ -575,10 +588,9 @@ async function handleAgent(args: string[]): Promise<number> {
     }
 
     case "feedback-list": {
-      const limitOption = readOption(rest, "--limit");
       const client = createClient(rest, "cli");
       console.log(JSON.stringify({
-        feedback: await client.listManagedQueryFeedback(limitOption ? Number.parseInt(limitOption, 10) : undefined)
+        feedback: await client.listManagedQueryFeedback(readPositiveIntegerOption(rest, "--limit"))
       }, null, 2));
       return 0;
     }
@@ -586,14 +598,13 @@ async function handleAgent(args: string[]): Promise<number> {
     case "eval": {
       const file = requireOption(rest, "--file");
       const input = managedQueryEvalInputSchema.parse(await readJsonFile(file));
-      const limitOption = readOption(rest, "--limit");
       const minimumPassRate = readPassRateOption(rest, "--minimum-pass-rate");
       const tagMinimumPassRates = readTagPassRatesOption(rest, "--tag-minimum-pass-rates");
       const failOnThreshold = readBooleanOption(rest, "--fail-on-threshold") ?? false;
       const client = createClient(rest, "cli");
       const report = await client.runManagedQueryEval({
         ...input,
-        limit: limitOption ? Number.parseInt(limitOption, 10) : input.limit,
+        limit: readIntegerOption(rest, "--limit", { minimum: 1, maximum: 10 }) ?? input.limit,
         minimumPassRate: minimumPassRate ?? input.minimumPassRate,
         tagMinimumPassRates: tagMinimumPassRates ?? input.tagMinimumPassRates
       });
@@ -602,21 +613,19 @@ async function handleAgent(args: string[]): Promise<number> {
     }
 
     case "eval-runs": {
-      const limitOption = readOption(rest, "--limit");
       const client = createClient(rest, "cli");
       console.log(JSON.stringify({
-        runs: await client.listManagedQueryEvalRuns(limitOption ? Number.parseInt(limitOption, 10) : undefined)
+        runs: await client.listManagedQueryEvalRuns(readPositiveIntegerOption(rest, "--limit"))
       }, null, 2));
       return 0;
     }
 
     case "eval-summary": {
-      const limitOption = readOption(rest, "--limit");
       const client = createClient(rest, "cli");
       console.log(JSON.stringify(await client.managedQueryEvalSummary({
         since: readOption(rest, "--since"),
         until: readOption(rest, "--until"),
-        limit: limitOption ? Number.parseInt(limitOption, 10) : undefined
+        limit: readPositiveIntegerOption(rest, "--limit")
       }), null, 2));
       return 0;
     }
@@ -626,7 +635,7 @@ async function handleAgent(args: string[]): Promise<number> {
       const metadataFile = readOption(rest, "--metadata-file");
       const client = createClient(rest, "cli");
       console.log(JSON.stringify(await client.executeAgentAction({
-        actionType: agentActionTypeSchema.parse(requireOption(rest, "--action-type")),
+        actionType: requireChoiceOption(rest, "--action-type", agentActionTypeSchema.options),
         title: requireOption(rest, "--title"),
         description: readOption(rest, "--description"),
         target: readOption(rest, "--target"),
@@ -639,10 +648,9 @@ async function handleAgent(args: string[]): Promise<number> {
     }
 
     case "action-list": {
-      const limitOption = readOption(rest, "--limit");
       const client = createClient(rest, "cli");
       console.log(JSON.stringify({
-        actions: await client.listAgentActions(limitOption ? Number.parseInt(limitOption, 10) : undefined)
+        actions: await client.listAgentActions(readPositiveIntegerOption(rest, "--limit"))
       }, null, 2));
       return 0;
     }
@@ -673,11 +681,10 @@ async function handleAssets(args: string[]): Promise<number> {
     }
 
     case "review-queue": {
-      const limitOption = readOption(args, "--limit");
       console.log(JSON.stringify(await client.listAssetsNeedingReview({
         asOf: readOption(args, "--as-of"),
         includeApproved: readBooleanOption(args, "--include-approved") ?? false,
-        limit: limitOption ? Number.parseInt(limitOption, 10) : undefined
+        limit: readIntegerOption(args, "--limit", { minimum: 1, maximum: 200 })
       }), null, 2));
       return 0;
     }
@@ -721,11 +728,10 @@ async function handleAssets(args: string[]): Promise<number> {
         throw new Error("Stable ID is required: forgetbase assets restore <stable-id> --version-number 1");
       }
 
-      const versionNumberOption = readOption(args, "--version-number");
       const versionId = readOption(args, "--version-id");
       console.log(JSON.stringify(await client.restoreAssetVersion(stableId, {
         versionId,
-        versionNumber: versionNumberOption ? Number.parseInt(versionNumberOption, 10) : undefined,
+        versionNumber: readPositiveIntegerOption(args, "--version-number"),
         changeNote: readOption(args, "--change-note")
       }), null, 2));
       return 0;
@@ -736,11 +742,10 @@ async function handleAssets(args: string[]): Promise<number> {
         throw new Error("Stable ID is required: forgetbase assets version <stable-id> --version-number 1");
       }
 
-      const versionNumberOption = readOption(args, "--version-number");
       const versionId = readOption(args, "--version-id");
       console.log(JSON.stringify(await client.getAssetVersionSnapshot(stableId, {
         versionId,
-        versionNumber: versionNumberOption ? Number.parseInt(versionNumberOption, 10) : undefined
+        versionNumber: readPositiveIntegerOption(args, "--version-number")
       }), null, 2));
       return 0;
     }
@@ -825,14 +830,16 @@ async function handleAuth(args: string[]): Promise<number> {
     }
 
     case "login": {
-      const expiresInSeconds = readOption(args, "--expires-in-seconds");
       const result = await client.login({
         tenantId: readOption(args, "--tenant-id") ?? "tenant_demo",
         email: requireOption(args, "--email"),
         password: readOption(args, "--password") ?? process.env.FORGETBASE_PASSWORD ?? "",
         keyName: readOption(args, "--key-name") ?? "local-login",
         deviceLabel: readOption(args, "--device-label") ?? "CLI login",
-        expiresInSeconds: expiresInSeconds ? Number.parseInt(expiresInSeconds, 10) : undefined
+        expiresInSeconds: readIntegerOption(args, "--expires-in-seconds", {
+          minimum: 1,
+          maximum: 60 * 60 * 24 * 30
+        })
       });
       console.log(JSON.stringify(result, null, 2));
       return 0;
@@ -841,7 +848,7 @@ async function handleAuth(args: string[]): Promise<number> {
     case "oidc-start": {
       const result = await client.startOidcLogin({
         tenantId: readOption(args, "--tenant-id") ?? "tenant_demo",
-        provider: externalAuthProviderSchema.parse(readOption(args, "--provider") ?? "oidc"),
+        provider: readChoiceOption(args, "--provider", externalAuthProviderSchema.options) ?? "oidc",
         redirectUri: readOption(args, "--redirect-uri")
       });
       console.log(JSON.stringify(result, null, 2));
@@ -849,10 +856,9 @@ async function handleAuth(args: string[]): Promise<number> {
     }
 
     case "oidc-callback": {
-      const expiresInSeconds = readOption(args, "--expires-in-seconds");
       const result = await client.completeOidcLogin({
         tenantId: readOption(args, "--tenant-id") ?? "tenant_demo",
-        provider: externalAuthProviderSchema.parse(readOption(args, "--provider") ?? "oidc"),
+        provider: readChoiceOption(args, "--provider", externalAuthProviderSchema.options) ?? "oidc",
         code: requireOption(args, "--code"),
         state: requireOption(args, "--state"),
         nonce: requireOption(args, "--nonce"),
@@ -860,7 +866,10 @@ async function handleAuth(args: string[]): Promise<number> {
         redirectUri: readOption(args, "--redirect-uri"),
         keyName: readOption(args, "--key-name") ?? "oidc-login",
         deviceLabel: readOption(args, "--device-label") ?? "CLI OIDC login",
-        expiresInSeconds: expiresInSeconds ? Number.parseInt(expiresInSeconds, 10) : undefined
+        expiresInSeconds: readIntegerOption(args, "--expires-in-seconds", {
+          minimum: 1,
+          maximum: 60 * 60 * 24 * 30
+        })
       });
       console.log(JSON.stringify(result, null, 2));
       return 0;
@@ -877,12 +886,11 @@ async function handleAuth(args: string[]): Promise<number> {
     }
 
     case "sessions": {
-      const limitOption = readOption(args, "--limit");
       console.log(JSON.stringify({
         sessions: await client.listLoginSessions({
           userId: readOption(args, "--user-id"),
           includeRevoked: readBooleanOption(args, "--include-revoked"),
-          limit: limitOption ? Number.parseInt(limitOption, 10) : undefined
+          limit: readPositiveIntegerOption(args, "--limit")
         })
       }, null, 2));
       return 0;
@@ -897,7 +905,7 @@ async function handleAuth(args: string[]): Promise<number> {
       const result = await client.createUser({
         email: requireOption(args, "--email"),
         displayName: requireOption(args, "--display-name"),
-        role: readOption(args, "--role") as "admin" | "maintainer" | "reader" | undefined,
+        role: readChoiceOption(args, "--role", userRoleSchema.options),
         password: readOption(args, "--password") ?? process.env.FORGETBASE_PASSWORD
       });
       console.log(JSON.stringify(result, null, 2));
@@ -905,9 +913,8 @@ async function handleAuth(args: string[]): Promise<number> {
     }
 
     case "user-list": {
-      const limitOption = readOption(args, "--limit");
       console.log(JSON.stringify({
-        users: await client.listUsers(limitOption ? Number.parseInt(limitOption, 10) : undefined)
+        users: await client.listUsers(readPositiveIntegerOption(args, "--limit"))
       }, null, 2));
       return 0;
     }
@@ -916,8 +923,8 @@ async function handleAuth(args: string[]): Promise<number> {
       const result = await client.updateUser({
         userId: requireOption(args, "--user-id"),
         displayName: readOption(args, "--display-name"),
-        role: readOption(args, "--role") as "admin" | "maintainer" | "reader" | undefined,
-        status: readOption(args, "--status") as "active" | "disabled" | undefined,
+        role: readChoiceOption(args, "--role", userRoleSchema.options),
+        status: readChoiceOption(args, "--status", userStatusSchema.options),
         password: readOption(args, "--password") ?? process.env.FORGETBASE_PASSWORD
       });
       console.log(JSON.stringify(result, null, 2));
@@ -929,17 +936,16 @@ async function handleAuth(args: string[]): Promise<number> {
         slug: requireOption(args, "--slug"),
         name: requireOption(args, "--name"),
         description: readOption(args, "--description"),
-        role: readOption(args, "--role") as "admin" | "maintainer" | "reader" | undefined,
-        status: readOption(args, "--status") as "active" | "disabled" | undefined
+        role: readChoiceOption(args, "--role", userRoleSchema.options),
+        status: readChoiceOption(args, "--status", userStatusSchema.options)
       });
       console.log(JSON.stringify(result, null, 2));
       return 0;
     }
 
     case "service-account-list": {
-      const limitOption = readOption(args, "--limit");
       console.log(JSON.stringify({
-        serviceAccounts: await client.listServiceAccounts(limitOption ? Number.parseInt(limitOption, 10) : undefined)
+        serviceAccounts: await client.listServiceAccounts(readPositiveIntegerOption(args, "--limit"))
       }, null, 2));
       return 0;
     }
@@ -949,8 +955,8 @@ async function handleAuth(args: string[]): Promise<number> {
         serviceAccountId: requireOption(args, "--service-account-id"),
         name: readOption(args, "--name"),
         description: readOption(args, "--description"),
-        role: readOption(args, "--role") as "admin" | "maintainer" | "reader" | undefined,
-        status: readOption(args, "--status") as "active" | "disabled" | undefined
+        role: readChoiceOption(args, "--role", userRoleSchema.options),
+        status: readChoiceOption(args, "--status", userStatusSchema.options)
       });
       console.log(JSON.stringify(result, null, 2));
       return 0;
@@ -967,9 +973,8 @@ async function handleAuth(args: string[]): Promise<number> {
     }
 
     case "group-list": {
-      const limitOption = readOption(args, "--limit");
       console.log(JSON.stringify({
-        groups: await client.listGroups(limitOption ? Number.parseInt(limitOption, 10) : undefined)
+        groups: await client.listGroups(readPositiveIntegerOption(args, "--limit"))
       }, null, 2));
       return 0;
     }
@@ -989,11 +994,10 @@ async function handleAuth(args: string[]): Promise<number> {
     }
 
     case "group-members": {
-      const limitOption = readOption(args, "--limit");
       console.log(JSON.stringify({
         members: await client.listGroupMembers(
           requireOption(args, "--group-id"),
-          limitOption ? Number.parseInt(limitOption, 10) : undefined
+          readPositiveIntegerOption(args, "--limit")
         )
       }, null, 2));
       return 0;
@@ -1008,10 +1012,9 @@ async function handleAuth(args: string[]): Promise<number> {
     }
 
     case "api-key-create": {
-      const scopes = (readOption(args, "--scopes") ?? "asset:read").split(",").map((scope) => scope.trim());
-      const allowedSurfaces = (readOption(args, "--allowed-surfaces") ?? "api,cli,mcp,web,export")
-        .split(",")
-        .map((surface) => surface.trim());
+      const scopes = readCsvChoiceOption(args, "--scopes", apiKeyScopeSchema.options) ?? ["asset:read"];
+      const allowedSurfaces = readCsvChoiceOption(args, "--allowed-surfaces", surfaceSchema.options)
+        ?? ["api", "cli", "mcp", "web", "export"];
       const userId = readOption(args, "--user-id");
       const serviceAccountId = readOption(args, "--service-account-id");
 
@@ -1023,30 +1026,27 @@ async function handleAuth(args: string[]): Promise<number> {
         userId,
         serviceAccountId,
         name: requireOption(args, "--name"),
-        scopes: scopes as Array<"admin" | "asset:read" | "asset:write" | "permission:write" | "agent:execute">,
-        allowedSurfaces: allowedSurfaces as Array<"api" | "cli" | "mcp" | "web" | "export">
+        scopes,
+        allowedSurfaces
       });
       console.log(JSON.stringify(result, null, 2));
       return 0;
     }
 
     case "api-key-list": {
-      const limitOption = readOption(args, "--limit");
       console.log(JSON.stringify({
-        apiKeys: await client.listApiKeys(limitOption ? Number.parseInt(limitOption, 10) : undefined)
+        apiKeys: await client.listApiKeys(readPositiveIntegerOption(args, "--limit"))
       }, null, 2));
       return 0;
     }
 
     case "api-key-rotation-due": {
-      const dueWithinDays = readOption(args, "--due-within-days");
-      const limitOption = readOption(args, "--limit");
       console.log(JSON.stringify(await client.getApiKeyRotationReport({
         asOf: readOption(args, "--as-of"),
-        dueWithinDays: dueWithinDays ? Number.parseInt(dueWithinDays, 10) : undefined,
+        dueWithinDays: readIntegerOption(args, "--due-within-days", { minimum: 0, maximum: 3_650 }),
         includeUserKeys: readBooleanOption(args, "--include-user-keys") ?? false,
         includeRevoked: readBooleanOption(args, "--include-revoked") ?? false,
-        limit: limitOption ? Number.parseInt(limitOption, 10) : undefined
+        limit: readPositiveIntegerOption(args, "--limit")
       }), null, 2));
       return 0;
     }
@@ -1065,13 +1065,13 @@ async function handleAuth(args: string[]): Promise<number> {
     }
 
     case "grant": {
-      const surfaces = (readOption(args, "--surfaces") ?? "api,cli,mcp,web").split(",").map((surface) => surface.trim());
+      const surfaces = readCsvChoiceOption(args, "--surfaces", surfaceSchema.options) ?? ["api", "cli", "mcp", "web"];
       const result = await client.grantAssetPermission({
         stableId: requireOption(args, "--stable-id"),
-        principalType: (readOption(args, "--principal-type") ?? "user") as "user" | "group" | "service-account",
+        principalType: readChoiceOption(args, "--principal-type", permissionPrincipalTypeSchema.options) ?? "user",
         principalId: requireOption(args, "--principal-id"),
-        action: (readOption(args, "--action") ?? "read") as "read" | "write" | "admin" | "export" | "execute",
-        surfaces: surfaces as Surface[]
+        action: readChoiceOption(args, "--action", permissionActionSchema.options) ?? "read",
+        surfaces
       });
       console.log(JSON.stringify(result, null, 2));
       return 0;
@@ -1113,13 +1113,37 @@ function createClient(args: string[], defaultSurface: Surface): ForgetBaseClient
   return new ForgetBaseClient({
     baseUrl: readOption(args, "--api-url") ?? process.env.FORGETBASE_API_URL ?? DEFAULT_API_URL,
     apiKey: readOption(args, "--api-key") ?? process.env.FORGETBASE_API_KEY,
-    surface: (readOption(args, "--surface") as Surface | undefined) ?? defaultSurface
+    surface: readChoiceOption(args, "--surface", surfaceSchema.options) ?? defaultSurface
   });
 }
 
 function readOption(args: string[], name: string): string | undefined {
+  const inlinePrefix = `${name}=`;
+  const inline = args.find((argument) => argument.startsWith(inlinePrefix));
+
+  if (inline !== undefined) {
+    const value = inline.slice(inlinePrefix.length);
+
+    if (!value) {
+      throw new Error(`Missing value for option: ${name}`);
+    }
+
+    return value;
+  }
+
   const index = args.indexOf(name);
-  return index >= 0 ? args[index + 1] : undefined;
+
+  if (index < 0) {
+    return undefined;
+  }
+
+  const value = args[index + 1];
+
+  if (value === undefined || value.startsWith("--")) {
+    throw new Error(`Missing value for option: ${name}`);
+  }
+
+  return value;
 }
 
 function hasFlag(args: string[], name: string): boolean {
@@ -1127,19 +1151,126 @@ function hasFlag(args: string[], name: string): boolean {
 }
 
 function readScoreOption(args: string[], name: string): number | undefined {
-  const value = readOption(args, name);
-  return value ? Number.parseInt(value, 10) : undefined;
+  return readIntegerOption(args, name, { minimum: 1, maximum: 5 });
 }
 
-function readNumberOption(args: string[], name: string): number | undefined {
+function readNumberInRangeOption(
+  args: string[],
+  name: string,
+  minimum: number,
+  maximum: number,
+  minimumExclusive = false
+): number | undefined {
   const value = readOption(args, name);
 
   if (value === undefined) {
     return undefined;
   }
 
-  const parsed = Number.parseFloat(value);
-  return Number.isFinite(parsed) ? parsed : undefined;
+  const parsed = parseFiniteNumber(value, name);
+  const belowMinimum = minimumExclusive ? parsed <= minimum : parsed < minimum;
+
+  if (belowMinimum || parsed > maximum) {
+    const lowerBound = minimumExclusive ? `greater than ${minimum}` : `at least ${minimum}`;
+    throw new Error(`Invalid numeric value for ${name}: ${value} (expected ${lowerBound} and at most ${maximum})`);
+  }
+
+  return parsed;
+}
+
+function readPositiveIntegerOption(args: string[], name: string): number | undefined {
+  return readIntegerOption(args, name, { minimum: 1 });
+}
+
+function readIntegerOption(
+  args: string[],
+  name: string,
+  bounds: { minimum?: number; maximum?: number } = {}
+): number | undefined {
+  const value = readOption(args, name);
+
+  if (value === undefined) {
+    return undefined;
+  }
+
+  const parsed = parseFiniteNumber(value, name);
+  const minimum = bounds.minimum ?? Number.MIN_SAFE_INTEGER;
+  const maximum = bounds.maximum ?? Number.MAX_SAFE_INTEGER;
+
+  if (!Number.isSafeInteger(parsed) || parsed < minimum || parsed > maximum) {
+    const range = minimum === Number.MIN_SAFE_INTEGER
+      ? `at most ${maximum}`
+      : maximum === Number.MAX_SAFE_INTEGER
+        ? `at least ${minimum}`
+        : `between ${minimum} and ${maximum}`;
+    throw new Error(`Invalid integer value for ${name}: ${value} (expected ${range})`);
+  }
+
+  return parsed;
+}
+
+function parseFiniteNumber(value: string, name: string): number {
+  const trimmed = value.trim();
+
+  if (!/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i.test(trimmed)) {
+    throw new Error(`Invalid numeric value for ${name}: ${value}`);
+  }
+
+  const parsed = Number(trimmed);
+
+  if (!Number.isFinite(parsed)) {
+    throw new Error(`Invalid numeric value for ${name}: ${value}`);
+  }
+
+  return parsed;
+}
+
+function readChoiceOption<const T extends string>(
+  args: string[],
+  name: string,
+  choices: readonly T[]
+): T | undefined {
+  const value = readOption(args, name);
+
+  if (value === undefined) {
+    return undefined;
+  }
+
+  return parseChoice(value, name, choices);
+}
+
+function requireChoiceOption<const T extends string>(
+  args: string[],
+  name: string,
+  choices: readonly T[]
+): T {
+  return parseChoice(requireOption(args, name), name, choices);
+}
+
+function parseChoice<const T extends string>(value: string, name: string, choices: readonly T[]): T {
+  if (!choices.includes(value as T)) {
+    throw new Error(`Invalid value for ${name}: ${value} (expected ${choices.join(", ")})`);
+  }
+
+  return value as T;
+}
+
+function readCsvChoiceOption<const T extends string>(
+  args: string[],
+  name: string,
+  choices: readonly T[]
+): T[] | undefined {
+  const values = readCsvOption(args, name);
+
+  if (values === undefined) {
+    return undefined;
+  }
+
+  if (values.length === 0) {
+    throw new Error(`Invalid value for ${name}: expected one or more of ${choices.join(", ")}`);
+  }
+
+  return values.map((value) => parseChoice(value, name, choices));
 }
 
 function compactMetadata(values: Record<string, number | undefined>): Record<string, number> {
@@ -1180,8 +1311,8 @@ function readTagPassRatesOption(args: string[], name: string): Record<string, nu
 function parsePassRate(value: string, name: string): number {
   const trimmed = value.trim();
   const parsed = trimmed.endsWith("%")
-    ? Number.parseFloat(trimmed.slice(0, -1)) / 100
-    : Number.parseFloat(trimmed);
+    ? parseFiniteNumber(trimmed.slice(0, -1), name) / 100
+    : parseFiniteNumber(trimmed, name);
 
   if (!Number.isFinite(parsed) || parsed < 0 || parsed > 1) {
     throw new Error(`Invalid pass-rate value for ${name}: ${value}`);
@@ -1229,20 +1360,18 @@ function readRetentionDaysOption(args: string[], name: string): number | null | 
     return null;
   }
 
-  return Number.parseInt(value, 10);
+  return parseBoundedPositiveInteger(value, name, 3650);
 }
 
 function readManagedQueryRetentionCaptureModeOption(
   args: string[],
   name: string
 ): ManagedQueryRetentionCaptureMode | undefined {
-  const value = readOption(args, name);
-  return value === undefined ? undefined : managedQueryRetentionCaptureModeSchema.parse(value);
+  return readChoiceOption(args, name, managedQueryRetentionCaptureModeSchema.options);
 }
 
 function readManagedQueryModeOption(args: string[], name: string): ManagedQueryMode | undefined {
-  const value = readOption(args, name);
-  return value === undefined ? undefined : managedQueryModeSchema.parse(value);
+  return readChoiceOption(args, name, managedQueryModeSchema.options);
 }
 
 function readManagedQueryModeListOption(args: string[], name: string): ManagedQueryMode[] | undefined {
@@ -1252,7 +1381,7 @@ function readManagedQueryModeListOption(args: string[], name: string): ManagedQu
     return undefined;
   }
 
-  return values.map((value) => managedQueryModeSchema.parse(value));
+  return values.map((value) => parseChoice(value, name, managedQueryModeSchema.options));
 }
 
 function readAgentActionTypeListOption(args: string[], name: string): AgentActionType[] | undefined {
@@ -1262,7 +1391,7 @@ function readAgentActionTypeListOption(args: string[], name: string): AgentActio
     return undefined;
   }
 
-  return values.map((value) => agentActionTypeSchema.parse(value));
+  return values.map((value) => parseChoice(value, name, agentActionTypeSchema.options));
 }
 
 function readActionDecisionOption(args: string[], name: string): "approve" | "deny" {
@@ -1282,10 +1411,14 @@ function readPiiRedactionRuleKindsOption(args: string[], name: string): PiiRedac
     return undefined;
   }
 
-  return values.map((value) => piiRedactionRuleKindSchema.parse(value));
+  return values.map((value) => parseChoice(value, name, piiRedactionRuleKindSchema.options));
 }
 
-function readNullablePositiveIntegerOption(args: string[], name: string): number | null | undefined {
+function readNullablePositiveIntegerOption(
+  args: string[],
+  name: string,
+  maximum = Number.MAX_SAFE_INTEGER
+): number | null | undefined {
   const value = readOption(args, name);
 
   if (value === undefined) {
@@ -1296,10 +1429,15 @@ function readNullablePositiveIntegerOption(args: string[], name: string): number
     return null;
   }
 
-  const parsed = Number.parseInt(value, 10);
+  return parseBoundedPositiveInteger(value, name, maximum);
+}
 
-  if (!Number.isSafeInteger(parsed) || parsed <= 0) {
-    throw new Error(`Invalid positive integer value for ${name}: ${value}`);
+function parseBoundedPositiveInteger(value: string, name: string, maximum = Number.MAX_SAFE_INTEGER): number {
+  const parsed = parseFiniteNumber(value, name);
+
+  if (!Number.isSafeInteger(parsed) || parsed <= 0 || parsed > maximum) {
+    const range = maximum === Number.MAX_SAFE_INTEGER ? "a positive integer" : `an integer between 1 and ${maximum}`;
+    throw new Error(`Invalid integer value for ${name}: ${value} (expected ${range})`);
   }
 
   return parsed;

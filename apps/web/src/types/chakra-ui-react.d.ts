@@ -86,3 +86,24 @@ declare module "@chakra-ui/react" {
     select: React.ElementType;
   };
 }
+
+declare module "@chakra-ui/react/preset" {
+  export const defaultConfig: Record<string, unknown>;
+}
+
+declare module "@chakra-ui/react/styled-system" {
+  import type * as React from "react";
+
+  type SystemConfig = Record<string, unknown>;
+  type SystemContext = Record<string, unknown>;
+
+  export const ChakraProvider: React.ElementType<{
+    value: SystemContext;
+    children: React.ReactNode;
+  }>;
+  export const chakra: {
+    select: React.ElementType;
+  };
+  export const createSystem: (...configs: SystemConfig[]) => SystemContext;
+  export const defineConfig: (config: SystemConfig) => SystemConfig;
+}

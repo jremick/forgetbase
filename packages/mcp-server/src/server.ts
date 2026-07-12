@@ -7,7 +7,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
   modelProviderSchema,
   piiRedactionRuleKindSchema
 } from "@forgetbase/schema";
-import { ForgetBaseClient } from "@forgetbase/sdk";
+import { ForgetBaseClient, ForgetBaseHttpError } from "@forgetbase/sdk";
 import { z } from "zod";
 
 const DEFAULT_API_URL = "http://127.0.0.1:3000";
@@ -1487,6 +1487,10 @@ export function createMcpServer(options: CreateMcpServerOptions = {}): McpServer
       try {
         const asset = await client.getAsset(stableId);
 
+        if (!asset) {
+          return hiddenAssetAccessResult(stableId);
+        }
+
         return {
           content: [
             {
@@ -1494,37 +1498,21 @@ export function createMcpServer(options: CreateMcpServerOptions = {}): McpServer
               text: JSON.stringify({
                 stableId,
                 surface: "mcp",
-                allowed: Boolean(asset),
-                reason: asset ? "asset_fetch_allowed" : "asset_not_found_or_not_visible",
-                asset: asset
-                  ? {
-                    stableId: asset.asset.stableId,
-                    sensitivity: asset.asset.sensitivity,
-                    lifecycleState: asset.asset.lifecycleState,
-                    status: asset.asset.status
-                  }
-                  : null
+                allowed: true,
+                reason: "asset_fetch_allowed",
+                asset: {
+                  stableId: asset.asset.stableId,
+                  sensitivity: asset.asset.sensitivity,
+                  lifecycleState: asset.asset.lifecycleState,
+                  status: asset.asset.status
+                }
               }, null, 2)
             }
           ]
         };
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-
-        if (message.includes("HTTP 401") || message.includes("HTTP 403") || message.includes("HTTP 404")) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: JSON.stringify({
-                  stableId,
-                  surface: "mcp",
-                  allowed: false,
-                  reason: "asset_not_found_or_not_visible"
-                }, null, 2)
-              }
-            ]
-          };
+        if (isHiddenAssetAccessError(error)) {
+          return hiddenAssetAccessResult(stableId);
         }
 
         throw error;
@@ -1571,4 +1559,26 @@ export function createMcpServer(options: CreateMcpServerOptions = {}): McpServer
   );
 
   return server;
+}
+
+const HIDDEN_ASSET_HTTP_STATUSES = new Set([401, 403, 404]);
+
+function isHiddenAssetAccessError(error: unknown): boolean {
+  return error instanceof ForgetBaseHttpError && HIDDEN_ASSET_HTTP_STATUSES.has(error.status);
+}
+
+function hiddenAssetAccessResult(stableId: string): { content: Array<{ type: "text"; text: string }> } {
+  return {
+    content: [
+      {
+        type: "text",
+        text: JSON.stringify({
+          stableId,
+          surface: "mcp",
+          allowed: false,
+          reason: "asset_not_found_or_not_visible"
+        }, null, 2)
+      }
+    ]
+  };
 }

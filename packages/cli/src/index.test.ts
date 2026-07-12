@@ -165,6 +165,265 @@ describe("ForgetBase CLI contract", () => {
     });
   });
 
+  it.each([
+    {
+      label: "trailing characters in an integer",
+      argv: ["search", "--query", "policy", "--limit", "3items"],
+      error: "Invalid numeric value for --limit: 3items"
+    },
+    {
+      label: "fractional integer",
+      argv: ["search", "--query", "policy", "--limit", "1.5"],
+      error: "Invalid integer value for --limit: 1.5"
+    },
+    {
+      label: "zero positive integer",
+      argv: ["search", "--query", "policy", "--limit", "0"],
+      error: "Invalid integer value for --limit: 0"
+    },
+    {
+      label: "integer above the command boundary",
+      argv: ["search", "--query", "policy", "--limit", "51"],
+      error: "Invalid integer value for --limit: 51"
+    },
+    {
+      label: "unsafe integer",
+      argv: ["audit", "events", "--limit", "9007199254740992"],
+      error: "Invalid integer value for --limit: 9007199254740992"
+    },
+    {
+      label: "negative non-negative integer",
+      argv: ["auth", "api-key-rotation-due", "--due-within-days", "-1"],
+      error: "Invalid integer value for --due-within-days: -1"
+    },
+    {
+      label: "out-of-range feedback score",
+      argv: [
+        "agent",
+        "feedback",
+        "--telemetry-event-id",
+        "retrieval_1",
+        "--query",
+        "policy",
+        "--outcome",
+        "accepted",
+        "--policy-compliance",
+        "6"
+      ],
+      error: "Invalid integer value for --policy-compliance: 6"
+    },
+    {
+      label: "invalid retention suffix",
+      argv: ["telemetry", "retention-set", "--retrieval-event-days", "30days"],
+      error: "Invalid numeric value for --retrieval-event-days: 30days"
+    },
+    {
+      label: "fractional retry count",
+      argv: ["admin", "model-provider-set", "--provider", "openai", "--max-retries", "1.5"],
+      error: "Invalid integer value for --max-retries: 1.5"
+    },
+    {
+      label: "temperature above the supported boundary",
+      argv: ["admin", "model-provider-set", "--provider", "openai", "--temperature", "2.1"],
+      error: "Invalid numeric value for --temperature: 2.1"
+    },
+    {
+      label: "missing explicit option value",
+      argv: ["search", "--query", "policy", "--limit"],
+      error: "Missing value for option: --limit"
+    }
+  ])("rejects $label before issuing a request", async ({ argv, error }) => {
+    const fetchMock = vi.fn<typeof fetch>();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(main(argv)).rejects.toThrow(error);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it.each(["1", "50"])("preserves the valid search limit boundary %s", async (limit) => {
+    const { fetchMock, calls } = mockFetch(() => searchResponseFixture("policy"));
+    captureStdout();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(main(["search", "--query", "policy", "--limit", limit])).resolves.toBe(0);
+    expect(calls[0]?.url.searchParams.get("limit")).toBe(limit);
+  });
+
+  it("preserves opaque option values that begin with dashes", async () => {
+    const { fetchMock, calls } = mockFetch(() => authBootstrapFixture());
+    captureStdout();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(main([
+      "auth",
+      "login",
+      "--email",
+      "admin@example.test",
+      "--password=--local-secret",
+      "--api-url",
+      "http://forgetbase.test"
+    ])).resolves.toBe(0);
+
+    expect(calls[0]?.body).toMatchObject({ password: "--local-secret" });
+  });
+
+  it("rejects a missing value followed by another known option", async () => {
+    const fetchMock = vi.fn<typeof fetch>();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(main([
+      "auth",
+      "login",
+      "--email",
+      "admin@example.test",
+      "--password",
+      "--api-key",
+      "real-key"
+    ])).rejects.toThrow("Missing value for option: --password");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {
+      label: "search strategy",
+      argv: ["search", "--query", "policy", "--strategy", "semantic"],
+      error: "Invalid value for --strategy: semantic"
+    },
+    {
+      label: "request surface",
+      argv: ["search", "--query", "policy", "--surface", "mobile"],
+      error: "Invalid value for --surface: mobile"
+    },
+    {
+      label: "user role",
+      argv: ["auth", "user-create", "--email", "reader@example.test", "--display-name", "Reader", "--role", "owner"],
+      error: "Invalid value for --role: owner"
+    },
+    {
+      label: "user status",
+      argv: ["auth", "user-update", "--user-id", "user_1", "--status", "pending"],
+      error: "Invalid value for --status: pending"
+    },
+    {
+      label: "API-key scope",
+      argv: ["auth", "api-key-create", "--user-id", "user_1", "--name", "cli", "--scopes", "asset:read,root"],
+      error: "Invalid value for --scopes: root"
+    },
+    {
+      label: "API-key surface",
+      argv: ["auth", "api-key-create", "--user-id", "user_1", "--name", "cli", "--allowed-surfaces", "cli,mobile"],
+      error: "Invalid value for --allowed-surfaces: mobile"
+    },
+    {
+      label: "permission principal type",
+      argv: ["auth", "grant", "--stable-id", "policy.example", "--principal-id", "team_1", "--principal-type", "organization"],
+      error: "Invalid value for --principal-type: organization"
+    },
+    {
+      label: "permission action",
+      argv: ["auth", "grant", "--stable-id", "policy.example", "--principal-id", "user_1", "--action", "delete"],
+      error: "Invalid value for --action: delete"
+    },
+    {
+      label: "permission surface",
+      argv: ["auth", "grant", "--stable-id", "policy.example", "--principal-id", "user_1", "--surfaces", "api,mobile"],
+      error: "Invalid value for --surfaces: mobile"
+    },
+    {
+      label: "auth-provider default role",
+      argv: [
+        "admin",
+        "auth-provider-set",
+        "--provider",
+        "oidc",
+        "--issuer-url",
+        "https://idp.example.test",
+        "--client-id",
+        "forgetbase",
+        "--default-role",
+        "owner"
+      ],
+      error: "Invalid value for --default-role: owner"
+    },
+    {
+      label: "auth-provider account linking mode",
+      argv: [
+        "admin",
+        "auth-provider-set",
+        "--provider",
+        "oidc",
+        "--issuer-url",
+        "https://idp.example.test",
+        "--client-id",
+        "forgetbase",
+        "--account-linking-mode",
+        "automatic"
+      ],
+      error: "Invalid value for --account-linking-mode: automatic"
+    }
+  ])("rejects an invalid $label before issuing a request", async ({ argv, error }) => {
+    const fetchMock = vi.fn<typeof fetch>();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(main(argv)).rejects.toThrow(error);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("preserves valid role, scope, surface, principal, and action values", async () => {
+    const { fetchMock, calls } = mockFetch((call) => {
+      if (call.url.pathname === "/auth/api-keys") {
+        return apiKeyCreatedFixture();
+      }
+
+      if (call.url.pathname === "/assets/policy.example/grants") {
+        return permissionGrantFixture();
+      }
+
+      throw new Error(`Unexpected request ${call.method} ${call.url.pathname}`);
+    });
+    captureStdout();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(main([
+      "auth",
+      "api-key-create",
+      "--user-id",
+      "user_1",
+      "--name",
+      "cli",
+      "--scopes",
+      "asset:read,agent:execute",
+      "--allowed-surfaces",
+      "cli,mcp"
+    ])).resolves.toBe(0);
+    await expect(main([
+      "auth",
+      "grant",
+      "--stable-id",
+      "policy.example",
+      "--principal-type",
+      "group",
+      "--principal-id",
+      "group_1",
+      "--action",
+      "write",
+      "--surfaces",
+      "api,web"
+    ])).resolves.toBe(0);
+
+    expect(calls[0]?.body).toMatchObject({
+      userId: "user_1",
+      scopes: ["asset:read", "agent:execute"],
+      allowedSurfaces: ["cli", "mcp"]
+    });
+    expect(calls[1]?.body).toMatchObject({
+      principalType: "group",
+      principalId: "group_1",
+      action: "write",
+      surfaces: ["api", "web"]
+    });
+  });
+
   it("maps managed-query flags to a provider-routed POST body", async () => {
     const { fetchMock, calls } = mockFetch(() => managedQueryResponseFixture("PII redaction"));
     captureStdout();
@@ -427,6 +686,41 @@ function authBootstrapFixture(): Record<string, unknown> {
       lastUsedAt: null
     },
     secret: "fb_test_secret"
+  };
+}
+
+function apiKeyCreatedFixture(): Record<string, unknown> {
+  return {
+    apiKey: {
+      id: "api_key_1",
+      tenantId: "tenant_demo",
+      userId: "user_1",
+      serviceAccountId: null,
+      name: "cli",
+      secretPreview: "fb_test...",
+      scopes: ["asset:read", "agent:execute"],
+      allowedSurfaces: ["cli", "mcp"],
+      expiresAt: null,
+      lastUsedAt: null,
+      revokedAt: null,
+      createdAt: "2026-06-19T00:00:00.000Z"
+    },
+    secret: "fb_test_secret"
+  };
+}
+
+function permissionGrantFixture(): Record<string, unknown> {
+  return {
+    id: "grant_1",
+    tenantId: "tenant_demo",
+    assetId: "asset_1",
+    stableId: "policy.example",
+    principalType: "group",
+    principalId: "group_1",
+    action: "write",
+    surfaces: ["api", "web"],
+    createdBy: null,
+    createdAt: "2026-06-19T00:00:00.000Z"
   };
 }
 

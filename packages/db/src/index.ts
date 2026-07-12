@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { Pool, type PoolClient, type QueryResult, type QueryResultRow } from "pg";
+import { Pool, type QueryResult, type QueryResultRow } from "pg";
 import {
   assetCreateInputSchema,
   assetDetailSchema,

@@ -2912,3 +2912,94 @@ Before public promotion, run controlled live UAT on an exact private deployment.
 ### Follow-Ups / Review
 
 Review after private live UAT, before changing repository visibility, before creating `v0.1.0-beta.2`, and when deciding whether later releases should lead with human knowledge management, agent governance, or both.
+
+## 0096: Snapshot Governance Transitions As Immutable Versions
+
+### Context
+
+Earlier decisions treated review completion and publishing as metadata-only transitions that did not create versions. Once asset versions became complete governed snapshots, that behavior left material status, review-date, source-reference, and publication transitions outside the immutable history even though those fields control reader visibility, retrieval, and export eligibility.
+
+### Options Considered
+
+- keep review and publish metadata-only and rely on audit events
+- mutate the current version snapshot in place
+- create a complete immutable governed version for update, review, and publish transitions
+- create a new version for restore as well as moving the current pointer
+
+### Decision And Rationale
+
+Create a complete immutable governed version whenever an asset is updated, marked reviewed, or published. Each version contains the full asset snapshot and copies the active instruction and human-document content so historical reads remain internally consistent. Restore selects an existing immutable version and moves `current_version_id` back to it instead of duplicating that historical snapshot.
+
+This supersedes the metadata-only review and publish behavior in Decisions 0017 and 0051. Audit events remain required because they record actor and operation evidence; version history and audit history serve different purposes.
+
+### Consequences
+
+- Review and publish transitions increment the asset version number even when document text is unchanged.
+- Historical snapshots preserve the governance fields that determined reader, search, and export eligibility at that point in time.
+- Restore is pointer movement to an existing snapshot and does not create a duplicate version.
+- Retrieval chunks and managed-query caches are refreshed or invalidated after update, review, publish, and restore.
+- Consumers must not assume that every new version contains changed document text.
+
+### Follow-Ups / Review
+
+Review when adding draft branches, scheduled publication, multi-party approvals, signed review evidence, or version-history compaction.
+
+## 0097: Gate The Admin Runtime And Private-Live Proof Independently
+
+### Context
+
+The reader-first candidate still delivered the full operational console in its initial JavaScript graph, and the strongest disposable-stack proof was local-only. That made reader performance regressions and drift between routine CI and the private-live release harness easy to miss.
+
+### Options Considered
+
+- keep a single web entry and rely on minification
+- split the admin code without an authorization guard
+- lazy-load the admin surface only after role/scope authorization and enforce measured bundle/static-graph budgets
+- add the isolated proof to pull-request CI
+- run the isolated proof only on private `main` pushes or manual dispatch
+
+### Decision And Rationale
+
+Keep authentication and the reader surface in the initial web graph, reject unauthorized admin routes before importing the lazy admin chunk, and enforce raw/gzip ceilings plus admin-marker exclusion through `web:bundle-budget`. Run the full isolated private-live proof on pushes to `main` and manual dispatch, not on untrusted pull requests, and retain its non-secret evidence artifact for 14 days.
+
+Pin third-party GitHub Actions to immutable commit SHAs. Keep the repository private and keep deployment, tagging, release publication, and visibility changes outside both workflows.
+
+### Consequences
+
+- Reader sessions no longer download the operational console during initial load.
+- Bundle growth and accidental reader-to-admin static coupling fail CI with concrete measurements.
+- The private-live harness has repeatable hosted proof without exposing secrets to pull-request workflows.
+- Human UAT and exact externally deployed-commit verification remain separate release gates.
+
+### Follow-Ups / Review
+
+Review when decomposing the remaining admin monolith, adding a trusted preview-deployment workflow, changing artifact retention, or making the repository public.
+
+## 0098: Issue Login Credentials As One Atomic Security Operation
+
+### Context
+
+Password and OIDC login each created an API key, browser session, optional refresh token, and success audit through separate repository calls. A failure between calls could leave an active credential or session without the complete lifecycle record, and the duplicated route logic could drift.
+
+### Options Considered
+
+- add route-level cleanup after each failure
+- accept partial issuance and reconcile asynchronously
+- issue the complete credential set and success audit in one repository transaction
+
+### Decision And Rationale
+
+Expose one repository operation that verifies the active user and creates the login API key, session, optional refresh token, and success audit atomically. PostgreSQL owns the transaction; the in-memory implementation provides equivalent all-or-nothing behavior for deterministic tests. Password and OIDC routes share one issuance helper while preserving their response and audit metadata contracts.
+
+Authenticate each request once, defer browser-session activity updates until CSRF validation succeeds, and reuse the request-scoped result across the global gate and route authorization.
+
+### Consequences
+
+- Failed login issuance cannot orphan active keys, sessions, refresh tokens, or misleading success audits.
+- Rejected unsafe cookie requests do not extend the idle timeout.
+- Protected routes avoid duplicate credential lookups and session touches.
+- Repository transaction and request-auth cache behavior are security-critical regression contracts.
+
+### Follow-Ups / Review
+
+Review when adding MFA steps, remembered-device trust, transaction outbox events, tenant-wide session controls, or a distributed authentication cache.

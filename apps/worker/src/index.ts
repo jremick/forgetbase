@@ -14,7 +14,6 @@ import {
   type TelemetryRetentionPurgeResult
 } from "@forgetbase/schema";
 import {
-  createPool,
   createEmbeddingProviderFromEnv,
   defaultPiiRedactionPolicy,
   PostgresAuthRepository,
@@ -27,10 +26,16 @@ import {
   PostgresRetrievalRepository,
   PostgresTelemetryRetentionPolicyRepository,
   purgeTelemetryForRetentionPolicy,
-  runMigrations,
   type ManagedQueryCacheTenantPurgeResult
 } from "@forgetbase/db";
 import { redactText } from "@forgetbase/validation";
+import {
+  createWorkerRuntime,
+  startScheduledJobs,
+  withWorkerRuntime,
+  type ScheduledJobDefinition,
+  type WorkerRuntime
+} from "./runtime.js";
 
 interface RetentionMaintenanceResult {
   dryRun: boolean;
@@ -175,7 +180,7 @@ interface ApiKeyRotationReminderMaintenanceInput {
   notificationSender?: ApiKeyRotationReminderNotificationSender;
 }
 
-export async function runOnce(): Promise<void> {
+export async function runOnce(runtime?: WorkerRuntime): Promise<void> {
   const supportedTypes = assetTypeSchema.options.join(", ");
   console.log(`ForgetBase worker ready. Supported asset types: ${supportedTypes}`);
 
@@ -184,10 +189,7 @@ export async function runOnce(): Promise<void> {
     return;
   }
 
-  const pool = createPool();
-
-  try {
-    await runMigrations(pool);
+  await withWorkerRuntime(runtime, async (activeRuntime, pool) => {
     const retrievalRepository = new PostgresRetrievalRepository(pool, undefined, createEmbeddingProviderFromEnv());
     const result = await retrievalRepository.indexAllAssets();
     console.log(`Indexed ${result.assetsIndexed} assets into ${result.chunksIndexed} retrieval chunks.`);
@@ -195,14 +197,14 @@ export async function runOnce(): Promise<void> {
     if (readBooleanEnv("FORGETBASE_RETENTION_PURGE_RUN_ONCE", false)) {
       const retention = await runRetentionMaintenance({
         dryRun: readBooleanEnv("FORGETBASE_RETENTION_PURGE_DRY_RUN", true)
-      });
+      }, activeRuntime);
       logRetentionMaintenance(retention);
     }
 
     if (readBooleanEnv("FORGETBASE_CACHE_PURGE_RUN_ONCE", false)) {
       const cache = await runCacheMaintenance({
         dryRun: readBooleanEnv("FORGETBASE_CACHE_PURGE_DRY_RUN", true)
-      });
+      }, activeRuntime);
       logCacheMaintenance(cache);
     }
 
@@ -222,7 +224,7 @@ export async function runOnce(): Promise<void> {
           "FORGETBASE_API_KEY_ROTATION_REMINDERS_WEBHOOK_TIMEOUT_MS",
           5000
         )
-      });
+      }, activeRuntime);
       logApiKeyRotationReminderMaintenance(reminders);
     }
 
@@ -230,7 +232,7 @@ export async function runOnce(): Promise<void> {
       const evals = await runManagedQueryEvalScheduleMaintenance({
         dryRun: readBooleanEnv("FORGETBASE_MANAGED_QUERY_EVALS_DRY_RUN", true),
         limit: readPositiveIntegerEnv("FORGETBASE_MANAGED_QUERY_EVALS_LIMIT", 100)
-      });
+      }, activeRuntime);
       logManagedQueryEvalScheduleMaintenance(evals);
     }
 
@@ -238,15 +240,16 @@ export async function runOnce(): Promise<void> {
       const actionExpiry = await runActionApprovalExpiryMaintenance({
         dryRun: readBooleanEnv("FORGETBASE_ACTION_APPROVAL_EXPIRY_DRY_RUN", true),
         limit: readPositiveIntegerEnv("FORGETBASE_ACTION_APPROVAL_EXPIRY_LIMIT", 500)
-      });
+      }, activeRuntime);
       logActionApprovalExpiryMaintenance(actionExpiry);
     }
-  } finally {
-    await pool.end();
-  }
+  });
 }
 
-export async function runRetentionMaintenance(input: { dryRun?: boolean } = {}): Promise<RetentionMaintenanceResult> {
+export async function runRetentionMaintenance(
+  input: { dryRun?: boolean } = {},
+  runtime?: WorkerRuntime
+): Promise<RetentionMaintenanceResult> {
   if (!process.env.DATABASE_URL) {
     console.log("DATABASE_URL is not set; skipping retention maintenance.");
     return {
@@ -261,10 +264,7 @@ export async function runRetentionMaintenance(input: { dryRun?: boolean } = {}):
     };
   }
 
-  const pool = createPool();
-
-  try {
-    await runMigrations(pool);
+  return withWorkerRuntime(runtime, async (_activeRuntime, pool) => {
     const authRepository = new PostgresAuthRepository(pool);
     const retrievalRepository = new PostgresRetrievalRepository(pool, undefined, createEmbeddingProviderFromEnv());
     const feedbackRepository = new PostgresManagedQueryFeedbackRepository(pool);
@@ -297,13 +297,12 @@ export async function runRetentionMaintenance(input: { dryRun?: boolean } = {}):
       },
       results
     };
-  } finally {
-    await pool.end();
-  }
+  });
 }
 
 export async function runCacheMaintenance(
-  input: { dryRun?: boolean; expiredBefore?: Date } = {}
+  input: { dryRun?: boolean; expiredBefore?: Date } = {},
+  runtime?: WorkerRuntime
 ): Promise<CacheMaintenanceResult> {
   const expiredBefore = input.expiredBefore ?? new Date();
 
@@ -318,10 +317,7 @@ export async function runCacheMaintenance(
     };
   }
 
-  const pool = createPool();
-
-  try {
-    await runMigrations(pool);
+  return withWorkerRuntime(runtime, async (_activeRuntime, pool) => {
     const cacheRepository = new PostgresManagedQueryCacheRepository(pool);
     const dryRun = input.dryRun ?? true;
     const results = await cacheRepository.purgeExpiredForAllTenants({
@@ -336,13 +332,12 @@ export async function runCacheMaintenance(
       deletedCount: results.reduce((total, result) => total + result.deletedCount, 0),
       results
     };
-  } finally {
-    await pool.end();
-  }
+  });
 }
 
 export async function runApiKeyRotationReminderMaintenance(
-  input: ApiKeyRotationReminderMaintenanceInput = {}
+  input: ApiKeyRotationReminderMaintenanceInput = {},
+  runtime?: WorkerRuntime
 ): Promise<ApiKeyRotationReminderMaintenanceResult> {
   const asOf = toIsoDateTime(input.asOf ?? new Date());
   const dueWithinDays = input.dueWithinDays ?? 14;
@@ -375,10 +370,7 @@ export async function runApiKeyRotationReminderMaintenance(
     };
   }
 
-  const pool = createPool();
-
-  try {
-    await runMigrations(pool);
+  return withWorkerRuntime(runtime, async (_activeRuntime, pool) => {
     const authRepository = new PostgresAuthRepository(pool);
     const reports = await authRepository.listApiKeyRotationReports({
       asOf,
@@ -477,9 +469,7 @@ export async function runApiKeyRotationReminderMaintenance(
       notificationDelivery,
       reports
     };
-  } finally {
-    await pool.end();
-  }
+  });
 }
 
 export async function runManagedQueryEvalScheduleMaintenance(
@@ -488,7 +478,8 @@ export async function runManagedQueryEvalScheduleMaintenance(
     now?: Date | string;
     tenantIds?: string[];
     limit?: number;
-  } = {}
+  } = {},
+  runtime?: WorkerRuntime
 ): Promise<ManagedQueryEvalScheduleMaintenanceResult> {
   const asOf = toIsoDateTime(input.now ?? new Date());
   const dryRun = input.dryRun ?? true;
@@ -508,10 +499,7 @@ export async function runManagedQueryEvalScheduleMaintenance(
     };
   }
 
-  const pool = createPool();
-
-  try {
-    await runMigrations(pool);
+  return withWorkerRuntime(runtime, async (_activeRuntime, pool) => {
     const policyRepository = new PostgresManagedQueryEvalSchedulePolicyRepository(pool);
     const policies = input.tenantIds?.length
       ? (await policyRepository.listPolicies({ tenantIds: input.tenantIds }))
@@ -640,9 +628,7 @@ export async function runManagedQueryEvalScheduleMaintenance(
       errorRunCount: results.filter((result) => result.status === "error").length,
       results
     };
-  } finally {
-    await pool.end();
-  }
+  });
 }
 
 export async function runActionApprovalExpiryMaintenance(
@@ -651,7 +637,8 @@ export async function runActionApprovalExpiryMaintenance(
     now?: Date | string;
     tenantIds?: string[];
     limit?: number;
-  } = {}
+  } = {},
+  runtime?: WorkerRuntime
 ): Promise<ActionApprovalExpiryMaintenanceResult> {
   const asOf = toIsoDateTime(input.now ?? new Date());
   const dryRun = input.dryRun ?? true;
@@ -669,10 +656,7 @@ export async function runActionApprovalExpiryMaintenance(
     };
   }
 
-  const pool = createPool();
-
-  try {
-    await runMigrations(pool);
+  return withWorkerRuntime(runtime, async (_activeRuntime, pool) => {
     const authRepository = new PostgresAuthRepository(pool);
     const actionExecutionRepository = new PostgresAgentActionExecutionRepository(pool);
     const candidates = await actionExecutionRepository.listExpiredApprovalRequests({
@@ -737,15 +721,10 @@ export async function runActionApprovalExpiryMaintenance(
       expiredCount,
       results
     };
-  } finally {
-    await pool.end();
-  }
+  });
 }
 
-export async function startWorker(): Promise<void> {
-  await runOnce();
-  console.log("ForgetBase worker idle loop started.");
-
+export function buildMaintenanceJobDefinitions(runtime: WorkerRuntime): ScheduledJobDefinition[] {
   const retentionEnabled = readBooleanEnv("FORGETBASE_RETENTION_PURGE_ENABLED", false);
   const retentionDryRun = readBooleanEnv("FORGETBASE_RETENTION_PURGE_DRY_RUN", true);
   const retentionIntervalMs = readPositiveIntegerEnv(
@@ -794,215 +773,132 @@ export async function startWorker(): Promise<void> {
     60 * 60 * 1000
   );
   const actionApprovalExpiryLimit = readPositiveIntegerEnv("FORGETBASE_ACTION_APPROVAL_EXPIRY_LIMIT", 500);
-  let retentionRunning = false;
-  let cacheRunning = false;
-  let apiKeyRotationRemindersRunning = false;
-  let managedQueryEvalsRunning = false;
-  let actionApprovalExpiryRunning = false;
-
-  const runScheduledRetention = async () => {
-    if (retentionRunning) {
-      console.log("Retention maintenance already running; skipping overlapping tick.");
-      return;
-    }
-
-    retentionRunning = true;
-
-    try {
-      const result = await runRetentionMaintenance({ dryRun: retentionDryRun });
-      logRetentionMaintenance(result);
-    } catch (error) {
-      console.error("Retention maintenance failed.", error);
-    } finally {
-      retentionRunning = false;
-    }
-  };
-
-  const runScheduledCacheMaintenance = async () => {
-    if (cacheRunning) {
-      console.log("Managed-query cache maintenance already running; skipping overlapping tick.");
-      return;
-    }
-
-    cacheRunning = true;
-
-    try {
-      const result = await runCacheMaintenance({ dryRun: cacheDryRun });
-      logCacheMaintenance(result);
-    } catch (error) {
-      console.error("Managed-query cache maintenance failed.", error);
-    } finally {
-      cacheRunning = false;
-    }
-  };
-
-  const runScheduledApiKeyRotationReminders = async () => {
-    if (apiKeyRotationRemindersRunning) {
-      console.log("API key rotation reminder maintenance already running; skipping overlapping tick.");
-      return;
-    }
-
-    apiKeyRotationRemindersRunning = true;
-
-    try {
-      const result = await runApiKeyRotationReminderMaintenance({
-        dryRun: apiKeyRotationRemindersDryRun,
-        dueWithinDays: apiKeyRotationRemindersDueWithinDays,
-        dedupeWindowHours: apiKeyRotationRemindersDedupeWindowHours,
-        notificationWebhookUrl: apiKeyRotationRemindersWebhookUrl,
-        notificationWebhookSigningSecret: apiKeyRotationRemindersWebhookSigningSecret,
-        notificationWebhookTimeoutMs: apiKeyRotationRemindersWebhookTimeoutMs
-      });
-      logApiKeyRotationReminderMaintenance(result);
-    } catch (error) {
-      console.error("API key rotation reminder maintenance failed.", error);
-    } finally {
-      apiKeyRotationRemindersRunning = false;
-    }
-  };
-
-  const runScheduledManagedQueryEvals = async () => {
-    if (managedQueryEvalsRunning) {
-      console.log("Managed-query eval schedule maintenance already running; skipping overlapping tick.");
-      return;
-    }
-
-    managedQueryEvalsRunning = true;
-
-    try {
-      const result = await runManagedQueryEvalScheduleMaintenance({
-        dryRun: managedQueryEvalsDryRun,
-        limit: managedQueryEvalsLimit
-      });
-      logManagedQueryEvalScheduleMaintenance(result);
-    } catch (error) {
-      console.error("Managed-query eval schedule maintenance failed.", error);
-    } finally {
-      managedQueryEvalsRunning = false;
-    }
-  };
-
-  const runScheduledActionApprovalExpiry = async () => {
-    if (actionApprovalExpiryRunning) {
-      console.log("Action approval expiry maintenance already running; skipping overlapping tick.");
-      return;
-    }
-
-    actionApprovalExpiryRunning = true;
-
-    try {
-      const result = await runActionApprovalExpiryMaintenance({
-        dryRun: actionApprovalExpiryDryRun,
-        limit: actionApprovalExpiryLimit
-      });
-      logActionApprovalExpiryMaintenance(result);
-    } catch (error) {
-      console.error("Action approval expiry maintenance failed.", error);
-    } finally {
-      actionApprovalExpiryRunning = false;
-    }
-  };
-
-  let retentionTimer: ReturnType<typeof setInterval> | undefined;
-  let cacheTimer: ReturnType<typeof setInterval> | undefined;
-  let apiKeyRotationRemindersTimer: ReturnType<typeof setInterval> | undefined;
-  let managedQueryEvalsTimer: ReturnType<typeof setInterval> | undefined;
-  let actionApprovalExpiryTimer: ReturnType<typeof setInterval> | undefined;
+  const definitions: ScheduledJobDefinition[] = [];
 
   if (retentionEnabled) {
-    console.log(`Retention maintenance scheduled every ${retentionIntervalMs}ms. dryRun=${retentionDryRun}`);
-    retentionTimer = setInterval(() => {
-      void runScheduledRetention();
-    }, retentionIntervalMs);
-
-    if (readBooleanEnv("FORGETBASE_RETENTION_PURGE_ON_START", false)) {
-      void runScheduledRetention();
-    }
+    definitions.push({
+      name: "telemetry-retention",
+      intervalMs: retentionIntervalMs,
+      runOnStart: readBooleanEnv("FORGETBASE_RETENTION_PURGE_ON_START", false),
+      scheduleMessage: `Retention maintenance scheduled every ${retentionIntervalMs}ms. dryRun=${retentionDryRun}`,
+      overlapMessage: "Retention maintenance already running; skipping overlapping tick.",
+      failureMessage: "Retention maintenance failed.",
+      async run() {
+        logRetentionMaintenance(await runRetentionMaintenance({ dryRun: retentionDryRun }, runtime));
+      }
+    });
   }
 
   if (cacheEnabled) {
-    console.log(`Managed-query cache maintenance scheduled every ${cacheIntervalMs}ms. dryRun=${cacheDryRun}`);
-    cacheTimer = setInterval(() => {
-      void runScheduledCacheMaintenance();
-    }, cacheIntervalMs);
-
-    if (readBooleanEnv("FORGETBASE_CACHE_PURGE_ON_START", false)) {
-      void runScheduledCacheMaintenance();
-    }
+    definitions.push({
+      name: "managed-query-cache-purge",
+      intervalMs: cacheIntervalMs,
+      runOnStart: readBooleanEnv("FORGETBASE_CACHE_PURGE_ON_START", false),
+      scheduleMessage: `Managed-query cache maintenance scheduled every ${cacheIntervalMs}ms. dryRun=${cacheDryRun}`,
+      overlapMessage: "Managed-query cache maintenance already running; skipping overlapping tick.",
+      failureMessage: "Managed-query cache maintenance failed.",
+      async run() {
+        logCacheMaintenance(await runCacheMaintenance({ dryRun: cacheDryRun }, runtime));
+      }
+    });
   }
 
   if (apiKeyRotationRemindersEnabled) {
-    console.log(
-      `API key rotation reminder maintenance scheduled every ${apiKeyRotationRemindersIntervalMs}ms. ` +
-      `dryRun=${apiKeyRotationRemindersDryRun} dueWithinDays=${apiKeyRotationRemindersDueWithinDays} ` +
-      `dedupeWindowHours=${apiKeyRotationRemindersDedupeWindowHours} ` +
-      `notificationWebhook=${apiKeyRotationRemindersWebhookUrl ? "configured" : "disabled"}`
-    );
-    apiKeyRotationRemindersTimer = setInterval(() => {
-      void runScheduledApiKeyRotationReminders();
-    }, apiKeyRotationRemindersIntervalMs);
-
-    if (readBooleanEnv("FORGETBASE_API_KEY_ROTATION_REMINDERS_ON_START", false)) {
-      void runScheduledApiKeyRotationReminders();
-    }
+    definitions.push({
+      name: "api-key-rotation-reminders",
+      intervalMs: apiKeyRotationRemindersIntervalMs,
+      runOnStart: readBooleanEnv("FORGETBASE_API_KEY_ROTATION_REMINDERS_ON_START", false),
+      scheduleMessage: `API key rotation reminder maintenance scheduled every ${apiKeyRotationRemindersIntervalMs}ms. ` +
+        `dryRun=${apiKeyRotationRemindersDryRun} dueWithinDays=${apiKeyRotationRemindersDueWithinDays} ` +
+        `dedupeWindowHours=${apiKeyRotationRemindersDedupeWindowHours} ` +
+        `notificationWebhook=${apiKeyRotationRemindersWebhookUrl ? "configured" : "disabled"}`,
+      overlapMessage: "API key rotation reminder maintenance already running; skipping overlapping tick.",
+      failureMessage: "API key rotation reminder maintenance failed.",
+      async run() {
+        logApiKeyRotationReminderMaintenance(await runApiKeyRotationReminderMaintenance({
+          dryRun: apiKeyRotationRemindersDryRun,
+          dueWithinDays: apiKeyRotationRemindersDueWithinDays,
+          dedupeWindowHours: apiKeyRotationRemindersDedupeWindowHours,
+          notificationWebhookUrl: apiKeyRotationRemindersWebhookUrl,
+          notificationWebhookSigningSecret: apiKeyRotationRemindersWebhookSigningSecret,
+          notificationWebhookTimeoutMs: apiKeyRotationRemindersWebhookTimeoutMs
+        }, runtime));
+      }
+    });
   }
 
   if (managedQueryEvalsEnabled) {
-    console.log(
-      `Managed-query eval schedule maintenance scheduled every ${managedQueryEvalsIntervalMs}ms. ` +
-      `dryRun=${managedQueryEvalsDryRun} limit=${managedQueryEvalsLimit}`
-    );
-    managedQueryEvalsTimer = setInterval(() => {
-      void runScheduledManagedQueryEvals();
-    }, managedQueryEvalsIntervalMs);
-
-    if (readBooleanEnv("FORGETBASE_MANAGED_QUERY_EVALS_ON_START", false)) {
-      void runScheduledManagedQueryEvals();
-    }
+    definitions.push({
+      name: "managed-query-eval-schedule",
+      intervalMs: managedQueryEvalsIntervalMs,
+      runOnStart: readBooleanEnv("FORGETBASE_MANAGED_QUERY_EVALS_ON_START", false),
+      scheduleMessage: `Managed-query eval schedule maintenance scheduled every ${managedQueryEvalsIntervalMs}ms. ` +
+        `dryRun=${managedQueryEvalsDryRun} limit=${managedQueryEvalsLimit}`,
+      overlapMessage: "Managed-query eval schedule maintenance already running; skipping overlapping tick.",
+      failureMessage: "Managed-query eval schedule maintenance failed.",
+      async run() {
+        logManagedQueryEvalScheduleMaintenance(await runManagedQueryEvalScheduleMaintenance({
+          dryRun: managedQueryEvalsDryRun,
+          limit: managedQueryEvalsLimit
+        }, runtime));
+      }
+    });
   }
 
   if (actionApprovalExpiryEnabled) {
-    console.log(
-      `Action approval expiry maintenance scheduled every ${actionApprovalExpiryIntervalMs}ms. ` +
-      `dryRun=${actionApprovalExpiryDryRun} limit=${actionApprovalExpiryLimit}`
-    );
-    actionApprovalExpiryTimer = setInterval(() => {
-      void runScheduledActionApprovalExpiry();
-    }, actionApprovalExpiryIntervalMs);
-
-    if (readBooleanEnv("FORGETBASE_ACTION_APPROVAL_EXPIRY_ON_START", false)) {
-      void runScheduledActionApprovalExpiry();
-    }
+    definitions.push({
+      name: "action-approval-expiry",
+      intervalMs: actionApprovalExpiryIntervalMs,
+      runOnStart: readBooleanEnv("FORGETBASE_ACTION_APPROVAL_EXPIRY_ON_START", false),
+      scheduleMessage: `Action approval expiry maintenance scheduled every ${actionApprovalExpiryIntervalMs}ms. ` +
+        `dryRun=${actionApprovalExpiryDryRun} limit=${actionApprovalExpiryLimit}`,
+      overlapMessage: "Action approval expiry maintenance already running; skipping overlapping tick.",
+      failureMessage: "Action approval expiry maintenance failed.",
+      async run() {
+        logActionApprovalExpiryMaintenance(await runActionApprovalExpiryMaintenance({
+          dryRun: actionApprovalExpiryDryRun,
+          limit: actionApprovalExpiryLimit
+        }, runtime));
+      }
+    });
   }
+
+  return definitions;
+}
+
+export async function startWorker(): Promise<void> {
+  const runtime = createWorkerRuntime();
+
+  try {
+    await runOnce(runtime);
+  } catch (error) {
+    await runtime.close();
+    throw error;
+  }
+
+  console.log("ForgetBase worker idle loop started.");
+  const scheduler = startScheduledJobs(buildMaintenanceJobDefinitions(runtime));
 
   const heartbeat = setInterval(() => {
     // Placeholder until queued ingestion, export, and richer telemetry jobs are implemented.
   }, 60_000);
+  let shuttingDown = false;
 
   const shutdown = () => {
-    if (retentionTimer) {
-      clearInterval(retentionTimer);
+    if (shuttingDown) {
+      return;
     }
 
-    if (cacheTimer) {
-      clearInterval(cacheTimer);
-    }
-
-    if (apiKeyRotationRemindersTimer) {
-      clearInterval(apiKeyRotationRemindersTimer);
-    }
-
-    if (managedQueryEvalsTimer) {
-      clearInterval(managedQueryEvalsTimer);
-    }
-
-    if (actionApprovalExpiryTimer) {
-      clearInterval(actionApprovalExpiryTimer);
-    }
-
+    shuttingDown = true;
     clearInterval(heartbeat);
     console.log("ForgetBase worker shutting down.");
     process.exitCode = 0;
+    void scheduler.stop()
+      .then(() => runtime.close())
+      .catch((error: unknown) => {
+        console.error("ForgetBase worker shutdown failed.", error);
+        process.exitCode = 1;
+      });
   };
 
   process.once("SIGINT", shutdown);

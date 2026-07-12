@@ -66,13 +66,14 @@ npx -y pnpm@11.7.0 install --frozen-lockfile
 npx -y pnpm@11.7.0 public-beta:preflight
 ```
 
-`public-beta:preflight` is the local, non-Docker gate. It runs typecheck, build, public UI checks, browser UAT, OpenAPI checks, contract checks, claims lint, deployment-default checks, demo corpus validation, and `git diff --check`.
+`public-beta:preflight` is the local, non-Docker gate. It runs typecheck with unused-code enforcement, build, the raw/gzip web bundle budget and reader/admin static-graph check, public UI checks, browser UAT, OpenAPI checks, contract checks, claims lint, deployment-default checks, demo corpus validation, and `git diff --check`.
 
 The broader release-readiness check set is:
 
 ```bash
 npx -y pnpm@11.7.0 typecheck
 npx -y pnpm@11.7.0 build
+npx -y pnpm@11.7.0 web:bundle-budget
 npx -y pnpm@11.7.0 test
 npx -y pnpm@11.7.0 claims:lint
 npx -y pnpm@11.7.0 public-beta:check

@@ -573,6 +573,8 @@ describe("InMemoryAuthRepository", () => {
       idleTimeoutSeconds: 0
     })).toBeNull();
     expect(await authRepository.findActiveLoginSessionByApiKeyId({ apiKeyId: apiKey.apiKey.id }))
+      .toMatchObject({ id: session?.id, lastSeenAt: null });
+    expect(await authRepository.touchLoginSession({ sessionId: session?.id ?? "" }))
       .toMatchObject({ id: session?.id, lastSeenAt: expect.any(String) });
 
     const refreshToken = requireTestValue(await authRepository.createLoginSessionRefreshToken({
@@ -634,6 +636,159 @@ describe("InMemoryAuthRepository", () => {
       loginSessionId: expiredSession.id,
       expiresAt: new Date(Date.now() + 60_000).toISOString()
     })).toBeNull();
+  });
+
+  it.each(["api-key", "session", "refresh-token", "audit"] as const)(
+    "rolls back in-memory login credentials after a %s-stage failure",
+    async (failureStage) => {
+      const authRepository = new InMemoryAuthRepository({
+        afterLoginCredentialIssueStage(stage) {
+          if (stage === failureStage) {
+            throw new Error(`injected-${stage}-failure`);
+          }
+        }
+      });
+      const user = await authRepository.createUser({
+        email: `${failureStage}@example.test`,
+        displayName: `Failure ${failureStage}`,
+        role: "reader",
+        password: "failure-test-password"
+      });
+      await expect(authRepository.issueLoginCredentials({
+        userId: user.id,
+        keyName: `${failureStage}-login`,
+        scopes: ["asset:read"],
+        allowedSurfaces: ["api", "web"],
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+        source: "password",
+        refreshTokenExpiresAt: new Date(Date.now() + 120_000).toISOString(),
+        auditAction: "auth.login",
+        auditMetadata: { failureStage }
+      })).rejects.toThrow(`injected-${failureStage}-failure`);
+
+      expect(await authRepository.listApiKeys()).toHaveLength(0);
+      expect(await authRepository.listLoginSessions()).toHaveLength(0);
+      expect(await authRepository.listAuditEvents()).toHaveLength(0);
+      expect(Reflect.get(authRepository, "loginSessionRefreshTokens")).toHaveProperty("size", 0);
+    }
+  );
+
+  it("keeps in-memory IDs monotonic when failed and successful login issuance overlap", async () => {
+    let apiKeyStageCalls = 0;
+    const authRepository = new InMemoryAuthRepository({
+      async afterLoginCredentialIssueStage(stage) {
+        if (stage === "api-key" && ++apiKeyStageCalls === 1) {
+          await Promise.resolve();
+          throw new Error("injected-overlap-failure");
+        }
+      }
+    });
+    const failedUser = await authRepository.createUser({
+      email: "overlap-failed@example.test",
+      displayName: "Overlap Failed",
+      role: "reader"
+    });
+    const successfulUser = await authRepository.createUser({
+      email: "overlap-success@example.test",
+      displayName: "Overlap Success",
+      role: "reader"
+    });
+    const issue = (userId: string, keyName: string) => authRepository.issueLoginCredentials({
+      userId,
+      keyName,
+      scopes: ["asset:read"],
+      allowedSurfaces: ["api", "web"],
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      source: "password" as const,
+      refreshTokenExpiresAt: new Date(Date.now() + 120_000).toISOString(),
+      auditAction: "auth.login"
+    });
+    const attempts = await Promise.allSettled([
+      issue(failedUser.id, "overlap-failed"),
+      issue(successfulUser.id, "overlap-success")
+    ]);
+
+    expect(attempts.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    expect(attempts.filter((result) => result.status === "rejected")).toHaveLength(1);
+    expect(await authRepository.listApiKeys()).toHaveLength(1);
+    expect(await authRepository.listLoginSessions()).toHaveLength(1);
+    expect(await authRepository.listAuditEvents()).toHaveLength(1);
+    expect(Reflect.get(authRepository, "loginSessionRefreshTokens")).toHaveProperty("size", 1);
+    const persistedIds = [
+      ...(await authRepository.listApiKeys()).map((apiKey) => apiKey.id),
+      ...(await authRepository.listLoginSessions()).map((session) => session.id),
+      ...(await authRepository.listAuditEvents()).map((event) => event.id)
+    ];
+    expect(new Set(persistedIds.map((id) => /_(\d+)$/.exec(id)?.[1])).size).toBe(3);
+  });
+
+  it("issues password and OIDC login credentials with the same governed key and session contract", async () => {
+    const authRepository = new InMemoryAuthRepository();
+    const passwordUser = await authRepository.createUser({
+      email: "password-parity@example.test",
+      displayName: "Password Parity",
+      role: "maintainer",
+      password: "password-parity-secret"
+    });
+    const oidcUser = await authRepository.createExternalUser({
+      email: "oidc-parity@example.test",
+      displayName: "OIDC Parity",
+      role: "maintainer",
+      authProvider: "oidc",
+      externalIssuer: "https://issuer.example.test",
+      externalSubject: "oidc-parity-subject"
+    });
+    const expiresAt = new Date(Date.now() + 60_000).toISOString();
+    const refreshTokenExpiresAt = new Date(Date.now() + 120_000).toISOString();
+    const common = {
+      keyName: "parity-login",
+      scopes: ["asset:read", "asset:write"] as const,
+      allowedSurfaces: ["api", "cli", "mcp", "web", "export"] as const,
+      expiresAt,
+      refreshTokenExpiresAt,
+      auditMetadata: { contract: "parity" }
+    };
+    const password = requireTestValue(await authRepository.issueLoginCredentials({
+      ...common,
+      scopes: [...common.scopes],
+      allowedSurfaces: [...common.allowedSurfaces],
+      userId: passwordUser.id,
+      source: "password",
+      auditAction: "auth.login"
+    }));
+    const oidc = requireTestValue(await authRepository.issueLoginCredentials({
+      ...common,
+      scopes: [...common.scopes],
+      allowedSurfaces: [...common.allowedSurfaces],
+      userId: oidcUser.id,
+      source: "oidc",
+      auditAction: "auth.login.oidc",
+      auditMetadata: { ...common.auditMetadata, provider: "oidc" }
+    }));
+
+    expect(password.apiKey).toMatchObject({
+      scopes: oidc.apiKey.scopes,
+      allowedSurfaces: oidc.apiKey.allowedSurfaces,
+      expiresAt: oidc.apiKey.expiresAt
+    });
+    expect(password.session).toMatchObject({ source: "password", expiresAt });
+    expect(oidc.session).toMatchObject({ source: "oidc", expiresAt });
+    expect(password.refreshToken?.token).toMatch(/^fbase_refresh_/);
+    expect(oidc.refreshToken?.token).toMatch(/^fbase_refresh_/);
+    expect(password.auditEvent).toMatchObject({
+      action: "auth.login",
+      actorApiKeyId: password.apiKey.id,
+      metadata: expect.objectContaining({ apiKeyId: password.apiKey.id, sessionId: password.session.id })
+    });
+    expect(oidc.auditEvent).toMatchObject({
+      action: "auth.login.oidc",
+      actorApiKeyId: oidc.apiKey.id,
+      metadata: expect.objectContaining({
+        provider: "oidc",
+        apiKeyId: oidc.apiKey.id,
+        sessionId: oidc.session.id
+      })
+    });
   });
 
   it("authenticates service account API keys and enforces direct service account grants", async () => {
@@ -776,6 +931,121 @@ describe("InMemoryAuthRepository", () => {
       tenantId,
       serviceAccountId: serviceAccount.id
     });
+  });
+
+  it("serializes concurrent in-memory service-account and service-key policy checks", async () => {
+    const authRepository = new InMemoryAuthRepository();
+    const tenantId = "tenant_service_policy_concurrent_memory";
+    await authRepository.upsertServiceAccountPolicy({
+      tenantId,
+      maxServiceAccounts: 1,
+      maxActiveApiKeysPerServiceAccount: 1,
+      defaultApiKeyExpiresInDays: 30
+    });
+
+    const accountAttempts = await Promise.allSettled([
+      authRepository.createServiceAccount({ tenantId, slug: "concurrent-a", name: "Concurrent A", role: "reader" }),
+      authRepository.createServiceAccount({ tenantId, slug: "concurrent-b", name: "Concurrent B", role: "reader" })
+    ]);
+    const createdAccount = accountAttempts.find((result) => result.status === "fulfilled");
+    const rejectedAccount = accountAttempts.find((result) => result.status === "rejected");
+
+    expect(accountAttempts.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    expect(rejectedAccount).toMatchObject({
+      status: "rejected",
+      reason: expect.objectContaining({ code: "max_service_accounts_exceeded", limit: 1, tenantId })
+    });
+    expect(await authRepository.listServiceAccounts({ tenantId })).toHaveLength(1);
+
+    if (!createdAccount || createdAccount.status !== "fulfilled") {
+      throw new Error("Expected one concurrent service account creation to succeed");
+    }
+
+    const keyAttempts = await Promise.allSettled([
+      authRepository.createApiKey({
+        tenantId,
+        serviceAccountId: createdAccount.value.id,
+        name: "concurrent-key-a",
+        scopes: ["asset:read"]
+      }),
+      authRepository.createApiKey({
+        tenantId,
+        serviceAccountId: createdAccount.value.id,
+        name: "concurrent-key-b",
+        scopes: ["asset:read"]
+      })
+    ]);
+    const rejectedKey = keyAttempts.find((result) => result.status === "rejected");
+
+    expect(keyAttempts.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    expect(rejectedKey).toMatchObject({
+      status: "rejected",
+      reason: expect.objectContaining({
+        code: "max_active_api_keys_per_service_account_exceeded",
+        limit: 1,
+        tenantId,
+        serviceAccountId: createdAccount.value.id
+      })
+    });
+    expect(await authRepository.listApiKeys({ tenantId })).toHaveLength(1);
+    expect(await authRepository.listAuditEvents({ tenantId })).toHaveLength(0);
+  });
+
+  it("enforces service-key limits across sequential and concurrent in-memory rotations", async () => {
+    const authRepository = new InMemoryAuthRepository();
+    const tenantId = "tenant_service_rotation_concurrent_memory";
+    await authRepository.upsertServiceAccountPolicy({
+      tenantId,
+      maxServiceAccounts: 1,
+      maxActiveApiKeysPerServiceAccount: 2,
+      defaultApiKeyExpiresInDays: 30
+    });
+    const serviceAccount = await authRepository.createServiceAccount({
+      tenantId,
+      slug: "rotation-concurrency",
+      name: "Rotation Concurrency",
+      role: "reader"
+    });
+    const original = requireTestValue(await authRepository.createApiKey({
+      tenantId,
+      serviceAccountId: serviceAccount.id,
+      name: "rotation-original",
+      scopes: ["asset:read"]
+    }));
+    const concurrent = await Promise.allSettled([
+      authRepository.rotateApiKey({ tenantId, apiKeyId: original.apiKey.id, name: "rotation-a" }),
+      authRepository.rotateApiKey({ tenantId, apiKeyId: original.apiKey.id, name: "rotation-b" })
+    ]);
+
+    expect(concurrent.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    expect(concurrent.find((result) => result.status === "rejected")).toMatchObject({
+      status: "rejected",
+      reason: expect.objectContaining({
+        code: "max_active_api_keys_per_service_account_exceeded",
+        limit: 2,
+        serviceAccountId: serviceAccount.id
+      })
+    });
+    const activeBeforeNetZero = (await authRepository.listApiKeys({ tenantId }))
+      .filter((apiKey) => apiKey.revokedAt === null);
+    expect(activeBeforeNetZero).toHaveLength(2);
+    await expect(authRepository.rotateApiKey({
+      tenantId,
+      apiKeyId: activeBeforeNetZero[1]?.id ?? "",
+      name: "blocked-net-new"
+    })).rejects.toMatchObject({ code: "max_active_api_keys_per_service_account_exceeded", limit: 2 });
+
+    const netZero = requireTestValue(await authRepository.rotateApiKey({
+      tenantId,
+      apiKeyId: activeBeforeNetZero[0]?.id ?? "",
+      name: "allowed-net-zero",
+      revokeOld: true
+    }));
+    const keys = await authRepository.listApiKeys({ tenantId });
+
+    expect(netZero.revokedApiKey?.id).toBe(activeBeforeNetZero[0]?.id);
+    expect(keys.filter((apiKey) => apiKey.revokedAt === null)).toHaveLength(2);
+    expect(await authRepository.listAuditEvents({ tenantId })).toHaveLength(0);
   });
 
   it("reports service API keys due for rotation without including user keys by default", async () => {
@@ -1995,6 +2265,8 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("PostgresRegistryRepository", ()
       idleTimeoutSeconds: 0
     })).toBeNull();
     expect(await authRepository.findActiveLoginSessionByApiKeyId({ tenantId, apiKeyId: apiKey.apiKey.id }))
+      .toMatchObject({ id: session.id, lastSeenAt: null });
+    expect(await authRepository.touchLoginSession({ tenantId, sessionId: session.id }))
       .toMatchObject({ id: session.id, lastSeenAt: expect.any(String) });
 
     const refreshToken = requireTestValue(await authRepository.createLoginSessionRefreshToken({
@@ -2071,6 +2343,58 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("PostgresRegistryRepository", ()
       expiresAt: new Date(Date.now() + 60_000).toISOString()
     })).toBeNull();
   });
+
+  it.each(["api-key", "session", "refresh-token", "audit"] as const)(
+    "rolls back Postgres login credentials after a %s-stage failure",
+    async (failureStage) => {
+      const tenantId = `tenant_login_issue_${failureStage.replace("-", "_")}_${Date.now()}`;
+      const authRepository = new PostgresAuthRepository(pool, {
+        afterLoginCredentialIssueStage(stage) {
+          if (stage === failureStage) {
+            throw new Error(`injected-${stage}-failure`);
+          }
+        }
+      });
+      const user = await authRepository.createUser({
+        tenantId,
+        email: `${failureStage}-${Date.now()}@example.test`,
+        displayName: `Postgres Failure ${failureStage}`,
+        role: "reader",
+        password: "postgres-failure-password"
+      });
+
+      await expect(authRepository.issueLoginCredentials({
+        tenantId,
+        userId: user.id,
+        keyName: `${failureStage}-login`,
+        scopes: ["asset:read"],
+        allowedSurfaces: ["api", "web"],
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+        source: "password",
+        refreshTokenExpiresAt: new Date(Date.now() + 120_000).toISOString(),
+        auditAction: "auth.login",
+        auditMetadata: { failureStage }
+      })).rejects.toThrow(`injected-${failureStage}-failure`);
+
+      const counts = await pool.query<{
+        api_keys: string;
+        sessions: string;
+        refresh_tokens: string;
+        audits: string;
+      }>(
+        `
+          SELECT
+            (SELECT count(*)::text FROM api_keys WHERE tenant_id = $1) AS api_keys,
+            (SELECT count(*)::text FROM login_sessions WHERE tenant_id = $1) AS sessions,
+            (SELECT count(*)::text FROM login_session_refresh_tokens WHERE tenant_id = $1) AS refresh_tokens,
+            (SELECT count(*)::text FROM audit_events WHERE tenant_id = $1) AS audits
+        `,
+        [tenantId]
+      );
+
+      expect(counts.rows[0]).toEqual({ api_keys: "0", sessions: "0", refresh_tokens: "0", audits: "0" });
+    }
+  );
 
   it("persists service accounts, service-owned API keys, grants, and audit actor attribution", async () => {
     const registryRepository = new PostgresRegistryRepository(pool);
@@ -2231,6 +2555,132 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("PostgresRegistryRepository", ()
       tenantId,
       serviceAccountId: serviceAccount.id
     });
+  });
+
+  it("serializes concurrent Postgres service-account and service-key policy checks", async () => {
+    const authRepository = new PostgresAuthRepository(pool);
+    const tenantId = `tenant_service_policy_concurrent_${Date.now()}`;
+    await authRepository.upsertServiceAccountPolicy({
+      tenantId,
+      maxServiceAccounts: 1,
+      maxActiveApiKeysPerServiceAccount: 1,
+      defaultApiKeyExpiresInDays: 30
+    });
+
+    const accountAttempts = await Promise.allSettled([
+      authRepository.createServiceAccount({ tenantId, slug: "concurrent-a", name: "Concurrent A", role: "reader" }),
+      authRepository.createServiceAccount({ tenantId, slug: "concurrent-b", name: "Concurrent B", role: "reader" })
+    ]);
+    const createdAccount = accountAttempts.find((result) => result.status === "fulfilled");
+    const rejectedAccount = accountAttempts.find((result) => result.status === "rejected");
+
+    expect(accountAttempts.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    expect(rejectedAccount).toMatchObject({
+      status: "rejected",
+      reason: expect.objectContaining({ code: "max_service_accounts_exceeded", limit: 1, tenantId })
+    });
+    expect(await authRepository.listServiceAccounts({ tenantId })).toHaveLength(1);
+
+    if (!createdAccount || createdAccount.status !== "fulfilled") {
+      throw new Error("Expected one concurrent Postgres service account creation to succeed");
+    }
+
+    const keyAttempts = await Promise.allSettled([
+      authRepository.createApiKey({
+        tenantId,
+        serviceAccountId: createdAccount.value.id,
+        name: "concurrent-key-a",
+        scopes: ["asset:read"]
+      }),
+      authRepository.createApiKey({
+        tenantId,
+        serviceAccountId: createdAccount.value.id,
+        name: "concurrent-key-b",
+        scopes: ["asset:read"]
+      })
+    ]);
+    const rejectedKey = keyAttempts.find((result) => result.status === "rejected");
+
+    expect(keyAttempts.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    expect(rejectedKey).toMatchObject({
+      status: "rejected",
+      reason: expect.objectContaining({
+        code: "max_active_api_keys_per_service_account_exceeded",
+        limit: 1,
+        tenantId,
+        serviceAccountId: createdAccount.value.id
+      })
+    });
+    expect(await authRepository.listApiKeys({ tenantId })).toHaveLength(1);
+    expect(await authRepository.listAuditEvents({ tenantId })).toHaveLength(0);
+
+    const orphanCounts = await pool.query<{ service_accounts: string; api_keys: string; audits: string }>(
+      `
+        SELECT
+          (SELECT count(*)::text FROM service_accounts WHERE tenant_id = $1) AS service_accounts,
+          (SELECT count(*)::text FROM api_keys WHERE tenant_id = $1) AS api_keys,
+          (SELECT count(*)::text FROM audit_events WHERE tenant_id = $1) AS audits
+      `,
+      [tenantId]
+    );
+    expect(orphanCounts.rows[0]).toEqual({ service_accounts: "1", api_keys: "1", audits: "0" });
+  });
+
+  it("enforces service-key limits across sequential and concurrent Postgres rotations", async () => {
+    const authRepository = new PostgresAuthRepository(pool);
+    const tenantId = `tenant_service_rotation_concurrent_${Date.now()}`;
+    await authRepository.upsertServiceAccountPolicy({
+      tenantId,
+      maxServiceAccounts: 1,
+      maxActiveApiKeysPerServiceAccount: 2,
+      defaultApiKeyExpiresInDays: 30
+    });
+    const serviceAccount = await authRepository.createServiceAccount({
+      tenantId,
+      slug: "rotation-concurrency",
+      name: "Rotation Concurrency",
+      role: "reader"
+    });
+    const original = requireTestValue(await authRepository.createApiKey({
+      tenantId,
+      serviceAccountId: serviceAccount.id,
+      name: "rotation-original",
+      scopes: ["asset:read"]
+    }));
+    const concurrent = await Promise.allSettled([
+      authRepository.rotateApiKey({ tenantId, apiKeyId: original.apiKey.id, name: "rotation-a" }),
+      authRepository.rotateApiKey({ tenantId, apiKeyId: original.apiKey.id, name: "rotation-b" })
+    ]);
+
+    expect(concurrent.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    expect(concurrent.find((result) => result.status === "rejected")).toMatchObject({
+      status: "rejected",
+      reason: expect.objectContaining({
+        code: "max_active_api_keys_per_service_account_exceeded",
+        limit: 2,
+        serviceAccountId: serviceAccount.id
+      })
+    });
+    const activeBeforeNetZero = (await authRepository.listApiKeys({ tenantId }))
+      .filter((apiKey) => apiKey.revokedAt === null);
+    expect(activeBeforeNetZero).toHaveLength(2);
+    await expect(authRepository.rotateApiKey({
+      tenantId,
+      apiKeyId: activeBeforeNetZero[1]?.id ?? "",
+      name: "blocked-net-new"
+    })).rejects.toMatchObject({ code: "max_active_api_keys_per_service_account_exceeded", limit: 2 });
+
+    const netZero = requireTestValue(await authRepository.rotateApiKey({
+      tenantId,
+      apiKeyId: activeBeforeNetZero[0]?.id ?? "",
+      name: "allowed-net-zero",
+      revokeOld: true
+    }));
+    const keys = await authRepository.listApiKeys({ tenantId });
+
+    expect(netZero.revokedApiKey?.id).toBe(activeBeforeNetZero[0]?.id);
+    expect(keys.filter((apiKey) => apiKey.revokedAt === null)).toHaveLength(2);
+    expect(await authRepository.listAuditEvents({ tenantId })).toHaveLength(0);
   });
 
   it("indexes and searches chunks in Postgres full-text search", async () => {

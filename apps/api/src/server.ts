@@ -120,9 +120,11 @@ import {
 	  type AuditEvent,
   type AuthProviderConfig,
   type AuthPrincipal,
+  type LocalUser,
   type AssetDetail,
   type ExternalAuthProvider,
   type LoginSessionRecord,
+  type LoginSessionSource,
   type ManagedQueryCache,
   type ManagedQueryCachePolicy,
   type ManagedQueryPolicy,
@@ -138,7 +140,6 @@ import {
   type ModelProvider,
   type ModelProviderConfig,
   type ModelProviderHealth,
-  type PermissionAction,
   type PiiRedactionPolicy,
   type RetrievalEvent,
   type SearchInput,
@@ -147,7 +148,6 @@ import {
   type Surface,
   type TelemetryAnalyticsInput,
   type TelemetryAnalyticsSummary,
-  type TelemetryRetentionPolicy
 } from "@forgetbase/schema";
 	import {
 	  PostgresAgentActionExecutionRepository,
@@ -186,6 +186,7 @@ import {
   ManagedQueryEvalSchedulePolicyError,
 		  type AuthProviderConfigRepository,
 	  type AuthRepository,
+	  type LoginCredentialIssueResult,
 	  type AgentActionExecutionRepository,
   type ManagedQueryCachePolicyRepository,
   type ManagedQueryCacheRepository,
@@ -657,75 +658,29 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
     }
 
     loginThrottle.clear(throttleKey);
-
-    const sessionAbsoluteExpiresAt = buildLoginSessionAbsoluteExpiresAt(loginSessionAbsoluteMaxAgeSeconds);
-    const sessionClientMetadata = readLoginSessionClientMetadata(request, parsed.data.deviceLabel);
-    const sessionExpiry = buildLoginSessionExpiry(
-      parsed.data.expiresInSeconds,
-      loginSessionMaxAgeSeconds,
-      sessionAbsoluteExpiresAt
-    );
-    const apiKey = await authRepository.createApiKey({
-      tenantId: user.tenantId,
-      userId: user.id,
-      name: parsed.data.keyName,
-      scopes: scopesForRole(user.role),
-      allowedSurfaces: ["api", "cli", "mcp", "web", "export"],
-      expiresAt: sessionExpiry.expiresAt
-    });
-
-    if (!apiKey) {
-      throw new Error("Login API key owner was not found");
-    }
-
-    const loginSession = await authRepository.createLoginSession({
-      tenantId: user.tenantId,
-      userId: user.id,
-      apiKeyId: apiKey.apiKey.id,
-      source: "password",
-      ...sessionClientMetadata,
-      expiresAt: sessionExpiry.expiresAt,
-      absoluteExpiresAt: sessionAbsoluteExpiresAt
-    });
-
-    if (!loginSession) {
-      throw new Error("Login session could not be created");
-    }
-
-    const refreshCookie = await createLoginRefreshCookie(
+    const issued = await issueLoginSession({
+      request,
+      reply,
       authRepository,
-      loginSession,
+      user,
+      keyName: parsed.data.keyName,
+      requestedExpiresInSeconds: parsed.data.expiresInSeconds,
+      source: "password",
+      deviceLabel: parsed.data.deviceLabel,
+      auditAction: "auth.login",
+      safeAuditMetadata: {},
+      loginSessionMaxAgeSeconds,
+      loginSessionIdleTimeoutSeconds,
+      loginSessionAbsoluteMaxAgeSeconds,
       loginRefreshTokenMaxAgeSeconds,
-      sessionAbsoluteExpiresAt
-    );
-
-    await authRepository.recordAuditEvent({
-      tenantId: user.tenantId,
-      actorUserId: user.id,
-      actorApiKeyId: apiKey.apiKey.id,
-      action: "auth.login",
-      targetType: "user",
-      targetId: user.id,
-      outcome: "success",
-      metadata: {
-        apiKeyId: apiKey.apiKey.id,
-        sessionId: loginSession.id,
-        expiresAt: sessionExpiry.expiresAt,
-        requestedExpiresInSeconds: sessionExpiry.requestedExpiresInSeconds,
-        effectiveExpiresInSeconds: sessionExpiry.effectiveExpiresInSeconds,
-        sessionMaxAgeSeconds: sessionExpiry.maxAgeSeconds,
-        sessionIdleTimeoutSeconds: loginSessionIdleTimeoutSeconds,
-        sessionAbsoluteExpiresAt,
-        sessionAbsoluteMaxAgeSeconds: loginSessionAbsoluteMaxAgeSeconds,
-        deviceLabel: sessionClientMetadata.deviceLabel,
-        clientUserAgentPresent: Boolean(sessionClientMetadata.clientUserAgent),
-        refreshTokenMaxAgeSeconds: loginRefreshTokenMaxAgeSeconds
-      }
+      errorLabel: "Login"
     });
 
-    setSessionCookies(reply, apiKey.secret, apiKey.apiKey.expiresAt, refreshCookie);
-
-    return reply.code(201).send(authLoginResponseSchema.parse({ user, ...apiKey }));
+    return reply.code(201).send(authLoginResponseSchema.parse({
+      user,
+      apiKey: issued.apiKey,
+      secret: issued.secret
+    }));
   });
 
   server.post("/auth/oidc/authorize", async (request, reply) => {
@@ -1048,88 +1003,41 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
           externalGroupIds
         })
         : null;
-      const sessionAbsoluteExpiresAt = buildLoginSessionAbsoluteExpiresAt(loginSessionAbsoluteMaxAgeSeconds);
-      const sessionClientMetadata = readLoginSessionClientMetadata(request, parsed.data.deviceLabel);
-      const sessionExpiry = buildLoginSessionExpiry(
-        parsed.data.expiresInSeconds,
-        loginSessionMaxAgeSeconds,
-        sessionAbsoluteExpiresAt
-      );
-      const apiKey = await authRepository.createApiKey({
-        tenantId: user.tenantId,
-        userId: user.id,
-        name: parsed.data.keyName,
-        scopes: scopesForRole(user.role),
-        allowedSurfaces: ["api", "cli", "mcp", "web", "export"],
-        expiresAt: sessionExpiry.expiresAt
-      });
-
-      if (!apiKey) {
-        throw new Error("OIDC login API key owner was not found");
-      }
-
-      const loginSession = await authRepository.createLoginSession({
-        tenantId: user.tenantId,
-        userId: user.id,
-        apiKeyId: apiKey.apiKey.id,
-        source: "oidc",
-        ...sessionClientMetadata,
-        expiresAt: sessionExpiry.expiresAt,
-        absoluteExpiresAt: sessionAbsoluteExpiresAt
-      });
-
-      if (!loginSession) {
-        throw new Error("OIDC login session could not be created");
-      }
-
-      const refreshCookie = await createLoginRefreshCookie(
+      const issued = await issueLoginSession({
+        request,
+        reply,
         authRepository,
-        loginSession,
-        loginRefreshTokenMaxAgeSeconds,
-        sessionAbsoluteExpiresAt
-      );
-
-      await authRepository.recordAuditEvent({
-        tenantId: user.tenantId,
-        actorUserId: user.id,
-        actorApiKeyId: apiKey.apiKey.id,
-        action: "auth.login.oidc",
-        targetType: "user",
-        targetId: user.id,
-        outcome: "success",
-        metadata: {
+        user,
+        keyName: parsed.data.keyName,
+        requestedExpiresInSeconds: parsed.data.expiresInSeconds,
+        source: "oidc",
+        deviceLabel: parsed.data.deviceLabel,
+        auditAction: "auth.login.oidc",
+        safeAuditMetadata: {
           provider: config.provider,
           issuer: discovery.issuer,
           subject,
-          apiKeyId: apiKey.apiKey.id,
-          sessionId: loginSession.id,
-          expiresAt: sessionExpiry.expiresAt,
-          requestedExpiresInSeconds: sessionExpiry.requestedExpiresInSeconds,
-          effectiveExpiresInSeconds: sessionExpiry.effectiveExpiresInSeconds,
-          sessionMaxAgeSeconds: sessionExpiry.maxAgeSeconds,
-          sessionIdleTimeoutSeconds: loginSessionIdleTimeoutSeconds,
-          sessionAbsoluteExpiresAt,
-          sessionAbsoluteMaxAgeSeconds: loginSessionAbsoluteMaxAgeSeconds,
-          deviceLabel: sessionClientMetadata.deviceLabel,
-          clientUserAgentPresent: Boolean(sessionClientMetadata.clientUserAgent),
-          refreshTokenMaxAgeSeconds: loginRefreshTokenMaxAgeSeconds,
           accountLinkingMode: config.accountLinkingMode,
           accountLinkingOutcome,
           emailVerified,
           syncedGroupCount: groupSyncResult?.groups.length ?? 0,
           addedGroupMembershipCount: groupSyncResult?.addedMembershipCount ?? 0,
           removedGroupMembershipCount: groupSyncResult?.removedMembershipCount ?? 0
-        }
+        },
+        loginSessionMaxAgeSeconds,
+        loginSessionIdleTimeoutSeconds,
+        loginSessionAbsoluteMaxAgeSeconds,
+        loginRefreshTokenMaxAgeSeconds,
+        errorLabel: "OIDC login"
       });
-
-      setSessionCookies(reply, apiKey.secret, apiKey.apiKey.expiresAt, refreshCookie);
 
       return reply.code(201).send(authOidcLoginResponseSchema.parse({
         user,
         provider: config.provider,
         subject,
         issuer: discovery.issuer,
-        ...apiKey
+        apiKey: issued.apiKey,
+        secret: issued.secret
       }));
     } catch (error) {
       return sendOidcError(reply, error);
@@ -1952,11 +1860,24 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
       return sendValidationError(reply, parsed.error.issues);
     }
 
-    const rotation = await authRepository.rotateApiKey({
-      tenantId: principal.tenantId,
-      apiKeyId: params.apiKeyId,
-      ...parsed.data
-    });
+    let rotation;
+
+    try {
+      rotation = await authRepository.rotateApiKey({
+        tenantId: principal.tenantId,
+        apiKeyId: params.apiKeyId,
+        ...parsed.data
+      });
+    } catch (error) {
+      if (error instanceof ServiceAccountPolicyViolationError) {
+        return reply.code(409).send({
+          error: error.code,
+          limit: error.limit
+        });
+      }
+
+      throw error;
+    }
 
     if (!rotation) {
       return reply.code(404).send({ error: "api_key_not_found" });
@@ -7251,6 +7172,11 @@ interface AuthenticatedRequest {
   loginSession: LoginSessionRecord | null;
 }
 
+// WeakMaps keep authentication state request-scoped without mutating Fastify's
+// request shape or requiring a process-wide cache with explicit eviction.
+const authenticationByRequest = new WeakMap<FastifyRequest, Promise<AuthenticatedRequest | null>>();
+const sessionTouchByRequest = new WeakMap<FastifyRequest, Promise<AuthenticatedRequest | null>>();
+
 interface RefreshCookie {
   token: string;
   expiresAt: string;
@@ -7260,32 +7186,72 @@ function normalizeSnippet(snippet: string): string {
   return snippet.replace(/\s+/g, " ").trim();
 }
 
-async function createLoginRefreshCookie(
-  authRepository: AuthRepository,
-  loginSession: LoginSessionRecord,
-  loginRefreshTokenMaxAgeSeconds: number | null,
-  sessionAbsoluteExpiresAt?: string | null
-): Promise<RefreshCookie | undefined> {
-  if (loginRefreshTokenMaxAgeSeconds === null) {
-    return undefined;
-  }
-
-  const expiresAt = capExpiresAt(buildExpiresAt(loginRefreshTokenMaxAgeSeconds), sessionAbsoluteExpiresAt ?? null);
-
-  const refreshToken = await authRepository.createLoginSessionRefreshToken({
-    tenantId: loginSession.tenantId,
-    loginSessionId: loginSession.id,
-    expiresAt
+async function issueLoginSession(input: {
+  request: FastifyRequest;
+  reply: FastifyReply;
+  authRepository: AuthRepository;
+  user: LocalUser;
+  keyName: string;
+  requestedExpiresInSeconds: number;
+  source: LoginSessionSource;
+  deviceLabel?: string;
+  auditAction: string;
+  safeAuditMetadata: Record<string, unknown>;
+  loginSessionMaxAgeSeconds: number;
+  loginSessionIdleTimeoutSeconds: number | null;
+  loginSessionAbsoluteMaxAgeSeconds: number | null;
+  loginRefreshTokenMaxAgeSeconds: number | null;
+  errorLabel: string;
+}): Promise<LoginCredentialIssueResult> {
+  const sessionAbsoluteExpiresAt = buildLoginSessionAbsoluteExpiresAt(
+    input.loginSessionAbsoluteMaxAgeSeconds
+  );
+  const sessionClientMetadata = readLoginSessionClientMetadata(input.request, input.deviceLabel);
+  const sessionExpiry = buildLoginSessionExpiry(
+    input.requestedExpiresInSeconds,
+    input.loginSessionMaxAgeSeconds,
+    sessionAbsoluteExpiresAt
+  );
+  const refreshTokenExpiresAt = input.loginRefreshTokenMaxAgeSeconds === null
+    ? null
+    : capExpiresAt(buildExpiresAt(input.loginRefreshTokenMaxAgeSeconds), sessionAbsoluteExpiresAt);
+  const issued = await input.authRepository.issueLoginCredentials({
+    tenantId: input.user.tenantId,
+    userId: input.user.id,
+    keyName: input.keyName,
+    scopes: scopesForRole(input.user.role),
+    allowedSurfaces: ["api", "cli", "mcp", "web", "export"],
+    expiresAt: sessionExpiry.expiresAt,
+    source: input.source,
+    ...sessionClientMetadata,
+    absoluteExpiresAt: sessionAbsoluteExpiresAt,
+    refreshTokenExpiresAt,
+    auditAction: input.auditAction,
+    auditMetadata: {
+      ...input.safeAuditMetadata,
+      expiresAt: sessionExpiry.expiresAt,
+      requestedExpiresInSeconds: sessionExpiry.requestedExpiresInSeconds,
+      effectiveExpiresInSeconds: sessionExpiry.effectiveExpiresInSeconds,
+      sessionMaxAgeSeconds: sessionExpiry.maxAgeSeconds,
+      sessionIdleTimeoutSeconds: input.loginSessionIdleTimeoutSeconds,
+      sessionAbsoluteExpiresAt,
+      sessionAbsoluteMaxAgeSeconds: input.loginSessionAbsoluteMaxAgeSeconds,
+      deviceLabel: sessionClientMetadata.deviceLabel,
+      clientUserAgentPresent: Boolean(sessionClientMetadata.clientUserAgent),
+      refreshTokenMaxAgeSeconds: input.loginRefreshTokenMaxAgeSeconds
+    }
   });
 
-  if (!refreshToken) {
-    throw new Error("Login refresh token could not be created");
+  if (!issued) {
+    throw new Error(`${input.errorLabel} credentials could not be issued`);
   }
 
-  return {
-    token: refreshToken.token,
-    expiresAt: refreshToken.expiresAt
-  };
+  const refreshCookie: RefreshCookie | undefined = issued.refreshToken
+    ? { token: issued.refreshToken.token, expiresAt: issued.refreshToken.expiresAt }
+    : undefined;
+  setSessionCookies(input.reply, issued.secret, issued.apiKey.expiresAt, refreshCookie);
+
+  return issued;
 }
 
 async function requirePrincipal(
@@ -7379,7 +7345,16 @@ async function authenticateOptionalRequest(
     }
   }
 
-  return authenticatedRequest;
+  if (authenticatedRequest.source !== "session-cookie" || !authenticatedRequest.loginSession || !authRepository) {
+    return authenticatedRequest;
+  }
+
+  return touchAuthenticatedLoginSession(
+    request,
+    authRepository,
+    authenticatedRequest,
+    loginSessionIdleTimeoutSeconds
+  );
 }
 
 async function requireAdminPrincipal(
@@ -7429,6 +7404,28 @@ async function authenticate(
   authRepository?: AuthRepository,
   loginSessionIdleTimeoutSeconds?: number | null
 ): Promise<AuthenticatedRequest | null> {
+  const cached = authenticationByRequest.get(request);
+
+  if (cached) {
+    return cached;
+  }
+
+  const pending = authenticateUncached(request, authRepository, loginSessionIdleTimeoutSeconds);
+  authenticationByRequest.set(request, pending);
+
+  try {
+    return await pending;
+  } catch (error) {
+    authenticationByRequest.delete(request);
+    throw error;
+  }
+}
+
+async function authenticateUncached(
+  request: FastifyRequest,
+  authRepository?: AuthRepository,
+  loginSessionIdleTimeoutSeconds?: number | null
+): Promise<AuthenticatedRequest | null> {
   if (!authRepository) {
     return null;
   }
@@ -7459,6 +7456,35 @@ async function authenticate(
   });
 
   return loginSession ? { principal, source: "session-cookie", loginSession } : null;
+}
+
+async function touchAuthenticatedLoginSession(
+  request: FastifyRequest,
+  authRepository: AuthRepository,
+  authenticatedRequest: AuthenticatedRequest,
+  loginSessionIdleTimeoutSeconds?: number | null
+): Promise<AuthenticatedRequest | null> {
+  const cached = sessionTouchByRequest.get(request);
+
+  if (cached) {
+    return cached;
+  }
+
+  const pending = authRepository.touchLoginSession({
+    tenantId: authenticatedRequest.principal.tenantId,
+    sessionId: authenticatedRequest.loginSession?.id ?? "",
+    idleTimeoutSeconds: loginSessionIdleTimeoutSeconds
+  }).then((loginSession) => loginSession
+    ? { ...authenticatedRequest, loginSession }
+    : null);
+  sessionTouchByRequest.set(request, pending);
+
+  try {
+    return await pending;
+  } catch (error) {
+    sessionTouchByRequest.delete(request);
+    throw error;
+  }
 }
 
 function readBearerToken(request: FastifyRequest): string | undefined {

@@ -10,6 +10,8 @@ This document records what is not actually complete after the early functional c
 - REST/OpenAPI, SDK, CLI, MCP, worker, operational web UI, AI export, and OKF v0.1 export projection, with a documented early contract for the first-run and fetch/search/export lane plus focused CLI and MCP contract-test automation.
 - Telemetry, redaction, retention, cache controls, provider-routed managed-query foundation, deterministic evals, and disabled-by-default action-request governance.
 - Docker Compose runbooks, backup/restore verification helpers, restricted leakage verifier, Railway deployment template, and public-prototype hardening.
+- Reader/admin runtime splitting with an authorization guard before the lazy admin import, compiler-enforced unused-code checks, and a measured raw/gzip bundle budget.
+- A push/manual GitHub Actions workflow for the isolated private-live proof, including synthetic seed data, smoke/leakage checks, backup/restore, authenticated reader/admin UAT, evidence upload, and cleanup.
 
 ## Deferred: External Decisions Or Credentials Required
 
@@ -33,11 +35,10 @@ This document records what is not actually complete after the early functional c
 
 - Generated OpenAPI or a stronger route/schema drift check beyond the current hand-authored OpenAPI inventory gate and beta-critical fixture tests.
 - Broader CLI/MCP contract coverage for the remaining long-tail commands beyond the first-run and fetch/search/export lane.
-- Route-level splitting and component decomposition for the still-monolithic web app; direct icon imports reduced the production JavaScript bundle from about 6.65 MB to about 1.63 MB, but the reader and admin surfaces still ship as one large chunk.
-- CI integration for the local `private-live:isolated-proof` harness; the harness now owns a unique Compose project, synthetic corpus seed, smoke/leakage, backup/restore, authenticated reader/admin browser UAT, evidence output, and cleanup, while default CI still covers deterministic static gates and focused contracts.
-- CI automation for authenticated release-mode browser UAT against a seeded same-origin stack; the local UAT script now covers reader/admin roles, restricted/no-access state, ask-with-sources, reviews, policies, access management, approvals, exports, and mobile reader screenshots.
+- Decompose the lazy admin surface into domain modules with shared session ownership. The current split keeps the reader entry near 613 kB raw / 175 kB gzip and moves about 226 kB raw / 55 kB gzip into an authorization-gated admin chunk, but `AdminSurface.tsx` remains a large legacy component.
+- Reduce the remaining initial reader graph where changes produce a measured interaction or load benefit. CI now enforces raw and gzip ceilings and rejects admin-only markers in the reader's static import graph.
 - Final release proof manifest populated with public HTTPS live-demo and GitHub settings evidence, then validated with `release-proof:check`; the local manifest is generated but intentionally fails until the public URL and repo settings pass.
-- Live GitHub settings still need public-beta read-back before release through `github:public-beta:check`: public visibility, reader-first description/topics, private vulnerability reporting, default-branch protection or rulesets, and current CI status.
+- Live GitHub settings still need public-beta read-back before release through `github:public-beta:check`: owner-approved public visibility, reader-first description/topics, a confirmed private vulnerability-reporting route, default-branch protection or rulesets when the plan supports them, and current CI status. Dependabot alerts and security updates are enabled while the repo remains private.
 
 ## Current Boundary
 

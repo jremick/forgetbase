@@ -181,8 +181,12 @@ describe("ForgetBase MCP server contract", () => {
     }
   });
 
-  it("converts hidden or unauthorized asset access into a denied context result", async () => {
-    const { fetchMock, calls } = mockFetch(() => ({ error: "forbidden" }), 403);
+  it.each([
+    { status: 401, code: "authentication_required" },
+    { status: 403, code: "access_denied" },
+    { status: 404, code: "asset_not_found" }
+  ])("converts hidden asset access ($status/$code) into the same denied context result", async ({ status, code }) => {
+    const { fetchMock, calls } = mockFetch(() => ({ error: code }), status);
     const { client, server } = await connectMcp(fetchMock);
 
     try {
@@ -203,6 +207,26 @@ describe("ForgetBase MCP server contract", () => {
         allowed: false,
         reason: "asset_not_found_or_not_visible"
       });
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+
+  it("propagates server failures even when their response reuses an access-denied code", async () => {
+    const { fetchMock } = mockFetch(() => ({ error: "access_denied" }), 500);
+    const { client, server } = await connectMcp(fetchMock);
+
+    try {
+      const result = await client.callTool({
+        name: "validate_context_access",
+        arguments: { stableId: "guardrail.hidden" }
+      });
+      const content = (result as { content?: Array<{ text?: string }>; isError?: boolean }).content?.[0];
+
+      expect(result.isError).toBe(true);
+      expect(content?.text).toContain("HTTP 500");
+      expect(content?.text).not.toContain("asset_not_found_or_not_visible");
     } finally {
       await client.close();
       await server.close();

@@ -92,7 +92,7 @@ Included now:
 - REST/OpenAPI, CLI, MCP server, worker, and Docker Compose setup
 - synthetic demo corpus and validation checks
 - restricted-content leakage checks and backup/restore verification helpers
-- GitHub Actions CI with typecheck, build, public beta UI checks, browser screenshot UAT, API contract checks, claims lint, and Postgres-backed tests
+- GitHub Actions CI with strict typecheck, measured web bundle budgets, public beta UI checks, browser screenshot UAT, API contract checks, claims lint, Postgres-backed tests, and a separate isolated private-live proof workflow
 
 Still future work:
 

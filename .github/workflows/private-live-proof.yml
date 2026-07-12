@@ -1,0 +1,62 @@
+name: Private live isolated proof
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: private-live-isolated-proof-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  proof:
+    name: Isolated full-stack proof
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+        with:
+          version: 11.7.0
+          run_install: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Playwright Chromium
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Run private live isolated proof
+        run: pnpm private-live:isolated-proof
+        env:
+          PRIVATE_LIVE_PROOF_DIR: ${{ runner.temp }}/private-live-proof
+          PRIVATE_LIVE_REQUIRE_CLEAN: "1"
+          KEEP_PRIVATE_LIVE_STACK: "0"
+
+      - name: Upload private live proof evidence
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: private-live-proof-${{ github.run_id }}
+          path: ${{ runner.temp }}/private-live-proof
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0

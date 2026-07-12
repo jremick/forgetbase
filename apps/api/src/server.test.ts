@@ -227,6 +227,146 @@ describe("API health route", () => {
     expect(response.json().error).toBe("authentication_required");
   });
 
+  it("reuses bearer authentication between the global guard and protected handler", async () => {
+    const authRepository = new InMemoryAuthRepository();
+    server = buildServer({ logger: false, authRepository });
+    const bootstrap = await server.inject({
+      method: "POST",
+      url: "/auth/bootstrap",
+      payload: { email: "cached-admin@example.test", displayName: "Cached Admin" }
+    });
+    const authenticateApiKey = vi.spyOn(authRepository, "authenticateApiKey");
+
+    await server.close();
+    server = buildServer({ logger: false, authRepository, requireAuthentication: true });
+    const response = await server.inject({
+      method: "GET",
+      url: "/auth/me",
+      headers: { authorization: `Bearer ${bootstrap.json().secret}` }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().email).toBe("cached-admin@example.test");
+    expect(authenticateApiKey).toHaveBeenCalledTimes(1);
+  });
+
+  it("looks up and touches a cookie session once per accepted protected request", async () => {
+    const authRepository = new InMemoryAuthRepository();
+    server = buildServer({ logger: false, authRepository });
+    await server.inject({
+      method: "POST",
+      url: "/auth/bootstrap",
+      payload: {
+        email: "cached-session@example.test",
+        displayName: "Cached Session",
+        password: "cached-session-password"
+      }
+    });
+    const login = await server.inject({
+      method: "POST",
+      url: "/auth/login",
+      payload: { email: "cached-session@example.test", password: "cached-session-password" }
+    });
+    const sessionCookie = findSetCookie(login.headers["set-cookie"], "forgetbase_session");
+    const authenticateApiKey = vi.spyOn(authRepository, "authenticateApiKey");
+    const findSession = vi.spyOn(authRepository, "findActiveLoginSessionByApiKeyId");
+    const touchSession = vi.spyOn(authRepository, "touchLoginSession");
+
+    await server.close();
+    server = buildServer({ logger: false, authRepository, requireAuthentication: true });
+    const response = await server.inject({
+      method: "GET",
+      url: "/auth/me",
+      headers: { cookie: readCookiePair(sessionCookie) }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(authenticateApiKey).toHaveBeenCalledTimes(1);
+    expect(findSession).toHaveBeenCalledTimes(1);
+    expect(touchSession).toHaveBeenCalledTimes(1);
+    expect((await authRepository.listLoginSessions())[0]?.lastSeenAt).toEqual(expect.any(String));
+  });
+
+  it("does not extend a cookie session when CSRF validation rejects the request", async () => {
+    const authRepository = new InMemoryAuthRepository();
+    server = buildServer({ logger: false, authRepository });
+    await server.inject({
+      method: "POST",
+      url: "/auth/bootstrap",
+      payload: {
+        email: "csrf-session@example.test",
+        displayName: "CSRF Session",
+        password: "csrf-session-password"
+      }
+    });
+    const login = await server.inject({
+      method: "POST",
+      url: "/auth/login",
+      payload: { email: "csrf-session@example.test", password: "csrf-session-password" }
+    });
+    const sessionCookie = findSetCookie(login.headers["set-cookie"], "forgetbase_session");
+    const authenticateApiKey = vi.spyOn(authRepository, "authenticateApiKey");
+    const findSession = vi.spyOn(authRepository, "findActiveLoginSessionByApiKeyId");
+    const touchSession = vi.spyOn(authRepository, "touchLoginSession");
+
+    expect((await authRepository.listLoginSessions())[0]?.lastSeenAt).toBeNull();
+    await server.close();
+    server = buildServer({ logger: false, authRepository, requireAuthentication: true });
+    const response = await server.inject({
+      method: "POST",
+      url: "/auth/logout",
+      headers: { cookie: readCookiePair(sessionCookie) }
+    });
+
+    expect(response.statusCode).toBe(403);
+    expect(response.json().error).toBe("csrf_required");
+    expect(authenticateApiKey).toHaveBeenCalledTimes(1);
+    expect(findSession).toHaveBeenCalledTimes(1);
+    expect(touchSession).not.toHaveBeenCalled();
+    expect((await authRepository.listLoginSessions())[0]?.lastSeenAt).toBeNull();
+  });
+
+  it("preserves role denial and audit identity with cached authentication", async () => {
+    const authRepository = new InMemoryAuthRepository();
+    server = buildServer({ logger: false, authRepository });
+    const bootstrap = await server.inject({
+      method: "POST",
+      url: "/auth/bootstrap",
+      payload: { email: "role-admin@example.test", displayName: "Role Admin" }
+    });
+    const adminKey = bootstrap.json().secret;
+    const readerResponse = await server.inject({
+      method: "POST",
+      url: "/auth/users",
+      headers: { authorization: `Bearer ${adminKey}` },
+      payload: { email: "role-reader@example.test", displayName: "Role Reader", role: "reader" }
+    });
+    const readerKeyResponse = await server.inject({
+      method: "POST",
+      url: "/auth/api-keys",
+      headers: { authorization: `Bearer ${adminKey}` },
+      payload: { userId: readerResponse.json().id, name: "role-reader", scopes: ["asset:read"] }
+    });
+    const authenticateApiKey = vi.spyOn(authRepository, "authenticateApiKey");
+
+    await server.close();
+    server = buildServer({ logger: false, authRepository, requireAuthentication: true });
+    const response = await server.inject({
+      method: "GET",
+      url: "/admin/service-account-policy",
+      headers: { authorization: `Bearer ${readerKeyResponse.json().secret}` }
+    });
+
+    expect(response.statusCode).toBe(403);
+    expect(response.json().error).toBe("access_denied");
+    expect(authenticateApiKey).toHaveBeenCalledTimes(1);
+    expect((await authRepository.listAuditEvents()).find((event) => event.action === "auth.admin")).toMatchObject({
+      actorUserId: readerResponse.json().id,
+      action: "auth.admin",
+      outcome: "denied"
+    });
+  });
+
   it("serializes concurrent first-admin bootstrap attempts", async () => {
     const authRepository = new InMemoryAuthRepository();
     server = buildServer({ logger: false, authRepository });
@@ -1906,6 +2046,37 @@ describe("API asset registry routes", () => {
       error: "max_active_api_keys_per_service_account_exceeded",
       limit: 1
     });
+    const blockedRotation = await server.inject({
+      method: "POST",
+      url: `/auth/api-keys/${serviceKeyResponse.json().apiKey.id}/rotate`,
+      headers: { authorization: `Bearer ${adminKey}` },
+      payload: { name: "blocked-policy-rotation", revokeOld: false }
+    });
+
+    expect(blockedRotation.statusCode).toBe(409);
+    expect(blockedRotation.json()).toMatchObject({
+      error: "max_active_api_keys_per_service_account_exceeded",
+      limit: 1
+    });
+    expect((await authRepository.listAuditEvents()).map((event) => event.action)).not.toContain(
+      "auth.api_key.rotate"
+    );
+
+    const allowedRotation = await server.inject({
+      method: "POST",
+      url: `/auth/api-keys/${serviceKeyResponse.json().apiKey.id}/rotate`,
+      headers: { authorization: `Bearer ${adminKey}` },
+      payload: { name: "allowed-policy-rotation", revokeOld: true }
+    });
+
+    expect(allowedRotation.statusCode).toBe(201);
+    expect(allowedRotation.json().revokedApiKey.id).toBe(serviceKeyResponse.json().apiKey.id);
+    expect((await authRepository.listApiKeys()).filter((apiKey) =>
+      apiKey.serviceAccountId === serviceAccount.id && apiKey.revokedAt === null
+    )).toHaveLength(1);
+    expect((await authRepository.listAuditEvents()).map((event) => event.action)).toContain(
+      "auth.api_key.rotate"
+    );
     expect((await authRepository.listAuditEvents()).map((event) => event.action)).toContain(
       "auth.service_account_policy.update"
     );
@@ -5973,9 +6144,19 @@ describe("API asset registry routes", () => {
 	      externalSubject: "external-subject-1"
 	    });
 	    expect(callback.json().secret).toMatch(/^fbase_/);
+	    expect(callback.json().apiKey).toMatchObject({
+	      scopes: ["asset:read", "asset:write"],
+	      allowedSurfaces: ["api", "cli", "mcp", "web", "export"]
+	    });
 	    expect(Date.parse(callback.json().apiKey.expiresAt) - beforeCallback).toBeLessThanOrEqual(65_000);
-	    expect(readCookieMaxAge(findSetCookie(callback.headers["set-cookie"], "forgetbase_session"))).toBeLessThanOrEqual(60);
-	    expect(readCookieMaxAge(findSetCookie(callback.headers["set-cookie"], "forgetbase_csrf"))).toBeLessThanOrEqual(60);
+	    const oidcSessionCookie = findSetCookie(callback.headers["set-cookie"], "forgetbase_session");
+	    const oidcCsrfCookie = findSetCookie(callback.headers["set-cookie"], "forgetbase_csrf");
+	    const oidcRefreshCookie = findSetCookie(callback.headers["set-cookie"], "forgetbase_refresh");
+	    expect(readCookieMaxAge(oidcSessionCookie)).toBeLessThanOrEqual(60);
+	    expect(readCookieMaxAge(oidcCsrfCookie)).toBeLessThanOrEqual(60);
+	    expect(oidcRefreshCookie).toContain("HttpOnly");
+	    expect(oidcRefreshCookie).toContain("SameSite=Lax");
+	    expect(readCookieMaxAge(oidcRefreshCookie)).toBeGreaterThan(0);
 	    expect((await authRepository.listLoginSessions({ tenantId: "tenant_oidc", userId: callback.json().user.id }))[0])
 	      .toMatchObject({
 	        source: "oidc",
@@ -6038,8 +6219,37 @@ describe("API asset registry routes", () => {
 	    });
 
 	    expect(groupAllowed.statusCode).toBe(200);
-	    expect((await authRepository.listAuditEvents({ tenantId: "tenant_oidc" })).map((event) => event.action))
-	      .toContain("auth.login.oidc");
+	    const oidcLoginAudit = (await authRepository.listAuditEvents({ tenantId: "tenant_oidc" }))
+	      .find((event) => event.action === "auth.login.oidc");
+	    expect(oidcLoginAudit).toMatchObject({
+	      actorUserId: callback.json().user.id,
+	      actorApiKeyId: callback.json().apiKey.id,
+	      outcome: "success",
+	      metadata: expect.objectContaining({
+	        provider: "oidc",
+	        issuer: "https://idp.example.test",
+	        subject: "external-subject-1",
+	        apiKeyId: callback.json().apiKey.id,
+	        sessionId: expect.any(String),
+	        sessionIdleTimeoutSeconds: 60 * 60 * 4,
+	        accountLinkingOutcome: "provisioned_external_user"
+	      })
+	    });
+
+	    const refreshed = await server.inject({
+	      method: "POST",
+	      url: "/auth/session/refresh",
+	      headers: { cookie: readCookiePair(oidcRefreshCookie) }
+	    });
+	    const reusedRefresh = await server.inject({
+	      method: "POST",
+	      url: "/auth/session/refresh",
+	      headers: { cookie: readCookiePair(oidcRefreshCookie) }
+	    });
+
+	    expect(refreshed.statusCode).toBe(200);
+	    expect(refreshed.json().session.source).toBe("oidc");
+	    expect(reusedRefresh.statusCode).toBe(401);
   });
 
 	  it("rejects OIDC callback inputs that do not match the signed state", async () => {

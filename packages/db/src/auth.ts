@@ -168,6 +168,58 @@ export interface LoginSessionRefreshTokenCreated {
   expiresAt: string;
 }
 
+export interface LoginCredentialIssueInput {
+  tenantId?: string;
+  userId: string;
+  keyName: string;
+  scopes: ApiKeyScope[];
+  allowedSurfaces: Surface[];
+  expiresAt: string;
+  source: LoginSessionSource;
+  deviceLabel?: string | null;
+  clientUserAgent?: string | null;
+  absoluteExpiresAt?: string | null;
+  refreshTokenExpiresAt?: string | null;
+  auditAction: string;
+  auditMetadata?: Record<string, unknown>;
+}
+
+export interface LoginCredentialIssueResult extends ApiKeyCreated {
+  session: LoginSessionRecord;
+  refreshToken: LoginSessionRefreshTokenCreated | null;
+  auditEvent: AuditEvent;
+}
+
+type LoginCredentialIssueStage = "api-key" | "session" | "refresh-token" | "audit";
+
+interface AuthRepositoryTestHooks {
+  afterLoginCredentialIssueStage?: (stage: LoginCredentialIssueStage) => void | Promise<void>;
+}
+
+class KeyedSerialExecutor {
+  private readonly tails = new Map<string, Promise<void>>();
+
+  async run<T>(key: string, operation: () => Promise<T>): Promise<T> {
+    const previous = this.tails.get(key) ?? Promise.resolve();
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const tail = previous.then(() => gate);
+    this.tails.set(key, tail);
+    await previous;
+
+    try {
+      return await operation();
+    } finally {
+      release();
+      if (this.tails.get(key) === tail) {
+        this.tails.delete(key);
+      }
+    }
+  }
+}
+
 export interface LoginSessionRefreshInput {
   tenantId?: string;
   refreshToken: string;
@@ -191,6 +243,12 @@ export interface LoginSessionRefreshResult {
 export interface LoginSessionLookupInput {
   tenantId?: string;
   apiKeyId: string;
+  idleTimeoutSeconds?: number | null;
+}
+
+export interface LoginSessionTouchInput {
+  tenantId?: string;
+  sessionId: string;
   idleTimeoutSeconds?: number | null;
 }
 
@@ -303,8 +361,10 @@ export interface AuthRepository {
   rotateApiKey(input: ApiKeyRotateRepositoryInput): Promise<ApiKeyRotateResponse | null>;
   createLoginSession(input: LoginSessionCreateInput): Promise<LoginSessionRecord | null>;
   createLoginSessionRefreshToken(input: LoginSessionRefreshTokenCreateInput): Promise<LoginSessionRefreshTokenCreated | null>;
+  issueLoginCredentials(input: LoginCredentialIssueInput): Promise<LoginCredentialIssueResult | null>;
   refreshLoginSession(input: LoginSessionRefreshInput): Promise<LoginSessionRefreshResult | null>;
   findActiveLoginSessionByApiKeyId(input: LoginSessionLookupInput): Promise<LoginSessionRecord | null>;
+  touchLoginSession(input: LoginSessionTouchInput): Promise<LoginSessionRecord | null>;
   listLoginSessions(options?: LoginSessionListOptions): Promise<LoginSessionRecord[]>;
   revokeLoginSession(input: LoginSessionRevokeInput): Promise<LoginSessionRevokeResponse | null>;
   authenticateApiKey(secret: string): Promise<AuthPrincipal | null>;
@@ -317,7 +377,10 @@ export interface AuthRepository {
 }
 
 export class PostgresAuthRepository implements AuthRepository {
-  constructor(private readonly pool: Pool) {}
+  constructor(
+    private readonly pool: Pool,
+    private readonly testHooks: AuthRepositoryTestHooks = {}
+  ) {}
 
   async bootstrapAdmin(input: BootstrapAdminInput): Promise<BootstrapAdminResult | null> {
     const client = await this.pool.connect();
@@ -583,42 +646,55 @@ export class PostgresAuthRepository implements AuthRepository {
 
   async createServiceAccount(input: ServiceAccountCreateInput): Promise<ServiceAccount> {
     const parsed = serviceAccountCreateInputSchema.parse(input);
-    await ensureTenant(this.pool, parsed.tenantId);
-    const policy = await this.getServiceAccountPolicy(parsed.tenantId);
+    const client = await this.pool.connect();
 
-    if (policy.maxServiceAccounts !== null) {
-      const result = await this.pool.query<{ count: string }>(
-        "SELECT count(*)::text AS count FROM service_accounts WHERE tenant_id = $1",
-        [parsed.tenantId]
-      );
-      const count = Number.parseInt(result.rows[0]?.count ?? "0", 10);
+    try {
+      await client.query("BEGIN");
+      await ensureTenant(client, parsed.tenantId);
+      await client.query("SELECT id FROM tenants WHERE id = $1 FOR UPDATE", [parsed.tenantId]);
+      const policy = await readServiceAccountPolicy(client, parsed.tenantId);
 
-      if (count >= policy.maxServiceAccounts) {
-        throw new ServiceAccountPolicyViolationError(
-          "max_service_accounts_exceeded",
-          policy.maxServiceAccounts,
-          parsed.tenantId
+      if (policy.maxServiceAccounts !== null) {
+        const countResult = await client.query<{ count: string }>(
+          "SELECT count(*)::text AS count FROM service_accounts WHERE tenant_id = $1",
+          [parsed.tenantId]
         );
+        const count = Number.parseInt(countResult.rows[0]?.count ?? "0", 10);
+
+        if (count >= policy.maxServiceAccounts) {
+          throw new ServiceAccountPolicyViolationError(
+            "max_service_accounts_exceeded",
+            policy.maxServiceAccounts,
+            parsed.tenantId
+          );
+        }
       }
+
+      const result = await client.query<ServiceAccountRow>(
+        `
+          INSERT INTO service_accounts (tenant_id, slug, name, description, role, status)
+          VALUES ($1, $2, $3, $4, $5, $6)
+          RETURNING *
+        `,
+        [
+          parsed.tenantId,
+          parsed.slug,
+          parsed.name,
+          parsed.description ?? null,
+          parsed.role,
+          parsed.status
+        ]
+      );
+      const serviceAccount = mapServiceAccountRow(requireRow(result));
+      await client.query("COMMIT");
+
+      return serviceAccount;
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
     }
-
-    const result = await this.pool.query<ServiceAccountRow>(
-      `
-        INSERT INTO service_accounts (tenant_id, slug, name, description, role, status)
-        VALUES ($1, $2, $3, $4, $5, $6)
-        RETURNING *
-      `,
-      [
-        parsed.tenantId,
-        parsed.slug,
-        parsed.name,
-        parsed.description ?? null,
-        parsed.role,
-        parsed.status
-      ]
-    );
-
-    return mapServiceAccountRow(requireRow(result));
   }
 
   async listServiceAccounts(options: ServiceAccountListOptions = {}): Promise<ServiceAccount[]> {
@@ -669,13 +745,7 @@ export class PostgresAuthRepository implements AuthRepository {
   }
 
   async getServiceAccountPolicy(tenantId = "tenant_demo"): Promise<ServiceAccountPolicy> {
-    const result = await this.pool.query<ServiceAccountPolicyRow>(
-      "SELECT * FROM service_account_policies WHERE tenant_id = $1",
-      [tenantId]
-    );
-    const row = result.rows[0];
-
-    return row ? mapServiceAccountPolicyRow(row) : defaultServiceAccountPolicy(tenantId);
+    return readServiceAccountPolicy(this.pool, tenantId);
   }
 
   async upsertServiceAccountPolicy(input: ServiceAccountPolicyRepositoryInput): Promise<ServiceAccountPolicy> {
@@ -1026,52 +1096,100 @@ export class PostgresAuthRepository implements AuthRepository {
 
   async createApiKey(input: ApiKeyCreateInput): Promise<ApiKeyCreated | null> {
     const parsed = apiKeyCreateInputSchema.parse(input);
-    let expiresAt = parsed.expiresAt ?? null;
+    const secret = generateApiKeySecret();
 
     if (parsed.serviceAccountId) {
-      const policy = await this.getServiceAccountPolicy(parsed.tenantId);
+      const client = await this.pool.connect();
 
-      if (policy.defaultApiKeyExpiresInDays !== null && parsed.expiresAt === undefined) {
-        expiresAt = apiKeyExpiryFromDays(policy.defaultApiKeyExpiresInDays);
-      }
-
-      if (policy.maxActiveApiKeysPerServiceAccount !== null) {
-        const activeKeys = await this.pool.query<{ count: string }>(
+      try {
+        await client.query("BEGIN");
+        const owner = await client.query<{ id: string }>(
           `
-            SELECT count(*)::text AS count
-            FROM api_keys
-            WHERE tenant_id = $1
-              AND service_account_id = $2
-              AND revoked_at IS NULL
-              AND (expires_at IS NULL OR expires_at > now())
+            SELECT id
+            FROM service_accounts
+            WHERE tenant_id = $1 AND id = $2
+            FOR UPDATE
           `,
           [parsed.tenantId, parsed.serviceAccountId]
         );
-        const activeKeyCount = Number.parseInt(activeKeys.rows[0]?.count ?? "0", 10);
 
-        if (activeKeyCount >= policy.maxActiveApiKeysPerServiceAccount) {
-          throw new ServiceAccountPolicyViolationError(
-            "max_active_api_keys_per_service_account_exceeded",
-            policy.maxActiveApiKeysPerServiceAccount,
-            parsed.tenantId,
-            parsed.serviceAccountId
-          );
+        if (!owner.rows[0]) {
+          await client.query("ROLLBACK");
+          return null;
         }
+
+        const policy = await readServiceAccountPolicy(client, parsed.tenantId);
+        const expiresAt = policy.defaultApiKeyExpiresInDays !== null && parsed.expiresAt === undefined
+          ? apiKeyExpiryFromDays(policy.defaultApiKeyExpiresInDays)
+          : parsed.expiresAt ?? null;
+
+        if (policy.maxActiveApiKeysPerServiceAccount !== null) {
+          const activeKeys = await client.query<{ count: string }>(
+            `
+              SELECT count(*)::text AS count
+              FROM api_keys
+              WHERE tenant_id = $1
+                AND service_account_id = $2
+                AND revoked_at IS NULL
+                AND (expires_at IS NULL OR expires_at > now())
+            `,
+            [parsed.tenantId, parsed.serviceAccountId]
+          );
+          const activeKeyCount = Number.parseInt(activeKeys.rows[0]?.count ?? "0", 10);
+
+          if (activeKeyCount >= policy.maxActiveApiKeysPerServiceAccount) {
+            throw new ServiceAccountPolicyViolationError(
+              "max_active_api_keys_per_service_account_exceeded",
+              policy.maxActiveApiKeysPerServiceAccount,
+              parsed.tenantId,
+              parsed.serviceAccountId
+            );
+          }
+        }
+
+        const result = await client.query<ApiKeyRow>(
+          `
+            INSERT INTO api_keys (
+              tenant_id,
+              user_id,
+              service_account_id,
+              name,
+              secret_hash,
+              secret_preview,
+              scopes,
+              allowed_surfaces,
+              expires_at
+            )
+            VALUES ($1, NULL, $2, $3, $4, $5, $6, $7, $8::timestamptz)
+            RETURNING *
+          `,
+          [
+            parsed.tenantId,
+            parsed.serviceAccountId,
+            parsed.name,
+            hashApiKeySecret(secret),
+            previewSecret(secret),
+            parsed.scopes,
+            parsed.allowedSurfaces,
+            expiresAt
+          ]
+        );
+        const apiKey = apiKeyCreatedSchema.parse({
+          apiKey: mapApiKeyRow(requireRow(result)),
+          secret
+        });
+        await client.query("COMMIT");
+
+        return apiKey;
+      } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+      } finally {
+        client.release();
       }
     }
 
-    const secret = generateApiKeySecret();
-    const insertParameters = [
-      parsed.tenantId,
-      parsed.name,
-      hashApiKeySecret(secret),
-      previewSecret(secret),
-      parsed.scopes,
-      parsed.allowedSurfaces,
-      expiresAt
-    ];
-    const result = parsed.userId
-      ? await this.pool.query<ApiKeyRow>(
+    const result = await this.pool.query<ApiKeyRow>(
         `
           INSERT INTO api_keys (
             tenant_id,
@@ -1090,28 +1208,16 @@ export class PostgresAuthRepository implements AuthRepository {
             AND users.id = $8
           RETURNING *
         `,
-        [...insertParameters, parsed.userId]
-      )
-      : await this.pool.query<ApiKeyRow>(
-        `
-          INSERT INTO api_keys (
-            tenant_id,
-            user_id,
-            service_account_id,
-            name,
-            secret_hash,
-            secret_preview,
-            scopes,
-            allowed_surfaces,
-            expires_at
-          )
-          SELECT $1, NULL, service_accounts.id, $2, $3, $4, $5, $6, $7::timestamptz
-          FROM service_accounts
-          WHERE service_accounts.tenant_id = $1
-            AND service_accounts.id = $8
-          RETURNING *
-        `,
-        [...insertParameters, parsed.serviceAccountId]
+        [
+          parsed.tenantId,
+          parsed.name,
+          hashApiKeySecret(secret),
+          previewSecret(secret),
+          parsed.scopes,
+          parsed.allowedSurfaces,
+          parsed.expiresAt ?? null,
+          parsed.userId
+        ]
       );
     const row = result.rows[0];
 
@@ -1301,6 +1407,38 @@ export class PostgresAuthRepository implements AuthRepository {
         return null;
       }
 
+      if (existingRow.service_account_id) {
+        await client.query(
+          "SELECT id FROM service_accounts WHERE tenant_id = $1 AND id = $2 FOR UPDATE",
+          [tenantId, existingRow.service_account_id]
+        );
+        const policy = await readServiceAccountPolicy(client, tenantId);
+
+        if (!parsed.revokeOld && policy.maxActiveApiKeysPerServiceAccount !== null) {
+          const activeKeys = await client.query<{ count: string }>(
+            `
+              SELECT count(*)::text AS count
+              FROM api_keys
+              WHERE tenant_id = $1
+                AND service_account_id = $2
+                AND revoked_at IS NULL
+                AND (expires_at IS NULL OR expires_at > now())
+            `,
+            [tenantId, existingRow.service_account_id]
+          );
+          const activeKeyCount = Number.parseInt(activeKeys.rows[0]?.count ?? "0", 10);
+
+          if (activeKeyCount >= policy.maxActiveApiKeysPerServiceAccount) {
+            throw new ServiceAccountPolicyViolationError(
+              "max_active_api_keys_per_service_account_exceeded",
+              policy.maxActiveApiKeysPerServiceAccount,
+              tenantId,
+              existingRow.service_account_id
+            );
+          }
+        }
+      }
+
       const replacement = await client.query<ApiKeyRow>(
         `
           INSERT INTO api_keys (
@@ -1362,8 +1500,201 @@ export class PostgresAuthRepository implements AuthRepository {
     }
   }
 
-  async createLoginSession(input: LoginSessionCreateInput): Promise<LoginSessionRecord | null> {
+  async issueLoginCredentials(input: LoginCredentialIssueInput): Promise<LoginCredentialIssueResult | null> {
     const tenantId = input.tenantId ?? "tenant_demo";
+    const apiKeyInput = apiKeyCreateInputSchema.parse({
+      tenantId,
+      userId: input.userId,
+      name: input.keyName,
+      scopes: input.scopes,
+      allowedSurfaces: input.allowedSurfaces,
+      expiresAt: input.expiresAt
+    });
+    const sessionInput = normalizeLoginSessionCreateInput({
+      tenantId,
+      userId: input.userId,
+      apiKeyId: "pending-login-api-key",
+      source: input.source,
+      deviceLabel: input.deviceLabel,
+      clientUserAgent: input.clientUserAgent,
+      expiresAt: input.expiresAt,
+      absoluteExpiresAt: input.absoluteExpiresAt
+    });
+    const refreshInput = input.refreshTokenExpiresAt
+      ? normalizeLoginSessionRefreshTokenCreateInput({
+        tenantId,
+        loginSessionId: "pending-login-session",
+        expiresAt: input.refreshTokenExpiresAt
+      })
+      : null;
+    const client = await this.pool.connect();
+    const secret = generateApiKeySecret();
+    const refreshTokenSecret = refreshInput ? generateRefreshTokenSecret() : null;
+
+    try {
+      await client.query("BEGIN");
+      const apiKeyResult = await client.query<ApiKeyRow>(
+        `
+          INSERT INTO api_keys (
+            tenant_id,
+            user_id,
+            service_account_id,
+            name,
+            secret_hash,
+            secret_preview,
+            scopes,
+            allowed_surfaces,
+            expires_at
+          )
+          SELECT $1, users.id, NULL, $2, $3, $4, $5, $6, $7::timestamptz
+          FROM users
+          WHERE users.tenant_id = $1
+            AND users.id = $8
+            AND users.status = 'active'
+          RETURNING *
+        `,
+        [
+          apiKeyInput.tenantId,
+          apiKeyInput.name,
+          hashApiKeySecret(secret),
+          previewSecret(secret),
+          apiKeyInput.scopes,
+          apiKeyInput.allowedSurfaces,
+          apiKeyInput.expiresAt,
+          apiKeyInput.userId
+        ]
+      );
+      const apiKeyRow = apiKeyResult.rows[0];
+
+      if (!apiKeyRow) {
+        await client.query("ROLLBACK");
+        return null;
+      }
+
+      await this.testHooks.afterLoginCredentialIssueStage?.("api-key");
+      const sessionResult = await client.query<LoginSessionRow>(
+        `
+          INSERT INTO login_sessions (
+            tenant_id,
+            user_id,
+            api_key_id,
+            source,
+            device_label,
+            client_user_agent,
+            expires_at,
+            absolute_expires_at
+          )
+          VALUES ($1, $2, $3, $4, $5, $6, $7::timestamptz, $8::timestamptz)
+          RETURNING *
+        `,
+        [
+          tenantId,
+          sessionInput.userId,
+          apiKeyRow.id,
+          sessionInput.source,
+          sessionInput.deviceLabel,
+          sessionInput.clientUserAgent,
+          sessionInput.expiresAt,
+          sessionInput.absoluteExpiresAt
+        ]
+      );
+      const sessionRow = requireRow(sessionResult);
+      await this.testHooks.afterLoginCredentialIssueStage?.("session");
+
+      let refreshToken: LoginSessionRefreshTokenCreated | null = null;
+
+      if (refreshTokenSecret && refreshInput) {
+        const refreshResult = await client.query<LoginSessionRefreshTokenRow>(
+          `
+            INSERT INTO login_session_refresh_tokens (tenant_id, login_session_id, token_hash, expires_at)
+            VALUES (
+              $1,
+              $2,
+              $3,
+              LEAST($4::timestamptz, COALESCE($5::timestamptz, $4::timestamptz))
+            )
+            RETURNING *
+          `,
+          [
+            tenantId,
+            sessionRow.id,
+            hashRefreshTokenSecret(refreshTokenSecret),
+            refreshInput.expiresAt,
+            sessionInput.absoluteExpiresAt
+          ]
+        );
+        const refreshRow = requireRow(refreshResult);
+        refreshToken = {
+          id: refreshRow.id,
+          token: refreshTokenSecret,
+          expiresAt: toIso(refreshRow.expires_at)
+        };
+        await this.testHooks.afterLoginCredentialIssueStage?.("refresh-token");
+      }
+
+      const auditInput = auditEventCreateInputSchema.parse({
+        tenantId,
+        actorUserId: input.userId,
+        actorApiKeyId: apiKeyRow.id,
+        action: input.auditAction,
+        targetType: "user",
+        targetId: input.userId,
+        outcome: "success",
+        metadata: {
+          ...input.auditMetadata,
+          apiKeyId: apiKeyRow.id,
+          sessionId: sessionRow.id
+        }
+      });
+      const auditResult = await client.query<AuditEventRow>(
+        `
+          INSERT INTO audit_events (
+            tenant_id,
+            actor_user_id,
+            actor_service_account_id,
+            actor_api_key_id,
+            action,
+            target_type,
+            target_id,
+            outcome,
+            reason,
+            metadata
+          )
+          VALUES ($1, $2, NULL, $3, $4, $5, $6, $7, NULL, $8::jsonb)
+          RETURNING *
+        `,
+        [
+          auditInput.tenantId,
+          auditInput.actorUserId,
+          auditInput.actorApiKeyId,
+          auditInput.action,
+          auditInput.targetType,
+          auditInput.targetId,
+          auditInput.outcome,
+          JSON.stringify(auditInput.metadata)
+        ]
+      );
+      const auditRow = requireRow(auditResult);
+      await this.testHooks.afterLoginCredentialIssueStage?.("audit");
+      await client.query("COMMIT");
+
+      return {
+        apiKey: mapApiKeyRow(apiKeyRow),
+        secret,
+        session: mapLoginSessionRow(sessionRow),
+        refreshToken,
+        auditEvent: mapAuditEventRow(auditRow)
+      };
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async createLoginSession(input: LoginSessionCreateInput): Promise<LoginSessionRecord | null> {
+    const parsed = normalizeLoginSessionCreateInput(input);
     const result = await this.pool.query<LoginSessionRow>(
       `
         INSERT INTO login_sessions (
@@ -1387,14 +1718,14 @@ export class PostgresAuthRepository implements AuthRepository {
         RETURNING *
       `,
       [
-        tenantId,
-        input.userId,
-        input.apiKeyId,
-        input.source,
-        input.deviceLabel ?? null,
-        input.clientUserAgent ?? null,
-        input.expiresAt,
-        input.absoluteExpiresAt ?? null
+        parsed.tenantId,
+        parsed.userId,
+        parsed.apiKeyId,
+        parsed.source,
+        parsed.deviceLabel,
+        parsed.clientUserAgent,
+        parsed.expiresAt,
+        parsed.absoluteExpiresAt
       ]
     );
     const row = result.rows[0];
@@ -1405,7 +1736,7 @@ export class PostgresAuthRepository implements AuthRepository {
   async createLoginSessionRefreshToken(
     input: LoginSessionRefreshTokenCreateInput
   ): Promise<LoginSessionRefreshTokenCreated | null> {
-    const tenantId = input.tenantId ?? "tenant_demo";
+    const parsed = normalizeLoginSessionRefreshTokenCreateInput(input);
     const token = generateRefreshTokenSecret();
     const result = await this.pool.query<LoginSessionRefreshTokenRow>(
       `
@@ -1423,10 +1754,10 @@ export class PostgresAuthRepository implements AuthRepository {
         RETURNING *
       `,
       [
-        tenantId,
-        input.loginSessionId,
+        parsed.tenantId,
+        parsed.loginSessionId,
         hashRefreshTokenSecret(token),
-        input.expiresAt
+        parsed.expiresAt
       ]
     );
     const row = result.rows[0];
@@ -1598,8 +1929,8 @@ export class PostgresAuthRepository implements AuthRepository {
     const tenantId = input.tenantId ?? "tenant_demo";
     const result = await this.pool.query<LoginSessionRow>(
       `
-        UPDATE login_sessions
-        SET last_seen_at = now()
+        SELECT *
+        FROM login_sessions
         WHERE tenant_id = $1
           AND api_key_id = $2
           AND revoked_at IS NULL
@@ -1609,9 +1940,32 @@ export class PostgresAuthRepository implements AuthRepository {
             $3::integer IS NULL
             OR COALESCE(last_seen_at, created_at) > now() - ($3::integer * interval '1 second')
           )
-        RETURNING *
       `,
       [tenantId, input.apiKeyId, input.idleTimeoutSeconds ?? null]
+    );
+    const row = result.rows[0];
+
+    return row ? mapLoginSessionRow(row) : null;
+  }
+
+  async touchLoginSession(input: LoginSessionTouchInput): Promise<LoginSessionRecord | null> {
+    const tenantId = input.tenantId ?? "tenant_demo";
+    const result = await this.pool.query<LoginSessionRow>(
+      `
+        UPDATE login_sessions
+        SET last_seen_at = now()
+        WHERE tenant_id = $1
+          AND id = $2
+          AND revoked_at IS NULL
+          AND expires_at > now()
+          AND (absolute_expires_at IS NULL OR absolute_expires_at > now())
+          AND (
+            $3::integer IS NULL
+            OR COALESCE(last_seen_at, created_at) > now() - ($3::integer * interval '1 second')
+          )
+        RETURNING *
+      `,
+      [tenantId, input.sessionId, input.idleTimeoutSeconds ?? null]
     );
     const row = result.rows[0];
 
@@ -1992,7 +2346,10 @@ export class InMemoryAuthRepository implements AuthRepository {
   private readonly loginSessionRefreshTokens = new Map<string, LoginSessionRefreshTokenMemoryRecord>();
   private readonly grants: PermissionGrant[] = [];
   private readonly auditEvents: AuditEvent[] = [];
+  private readonly policyMutationExecutor = new KeyedSerialExecutor();
   private sequence = 0;
+
+  constructor(private readonly testHooks: AuthRepositoryTestHooks = {}) {}
 
   async bootstrapAdmin(input: BootstrapAdminInput): Promise<BootstrapAdminResult | null> {
     const passwordHash = input.password ? await hashPassword(input.password) : null;
@@ -2211,38 +2568,40 @@ export class InMemoryAuthRepository implements AuthRepository {
 
   async createServiceAccount(input: ServiceAccountCreateInput): Promise<ServiceAccount> {
     const parsed = serviceAccountCreateInputSchema.parse(input);
-    const policy = await this.getServiceAccountPolicy(parsed.tenantId);
+    return this.policyMutationExecutor.run(`service-accounts:${parsed.tenantId}`, async () => {
+      const policy = await this.getServiceAccountPolicy(parsed.tenantId);
 
-    if (policy.maxServiceAccounts !== null) {
-      const count = Array.from(this.serviceAccounts.values()).filter((serviceAccount) =>
-        serviceAccount.tenantId === parsed.tenantId
-      ).length;
+      if (policy.maxServiceAccounts !== null) {
+        const count = Array.from(this.serviceAccounts.values()).filter((serviceAccount) =>
+          serviceAccount.tenantId === parsed.tenantId
+        ).length;
 
-      if (count >= policy.maxServiceAccounts) {
-        throw new ServiceAccountPolicyViolationError(
-          "max_service_accounts_exceeded",
-          policy.maxServiceAccounts,
-          parsed.tenantId
-        );
+        if (count >= policy.maxServiceAccounts) {
+          throw new ServiceAccountPolicyViolationError(
+            "max_service_accounts_exceeded",
+            policy.maxServiceAccounts,
+            parsed.tenantId
+          );
+        }
       }
-    }
 
-    this.sequence += 1;
-    const now = new Date().toISOString();
-    const serviceAccount = serviceAccountSchema.parse({
-      id: `service_account_${this.sequence}`,
-      tenantId: parsed.tenantId,
-      slug: parsed.slug,
-      name: parsed.name,
-      description: parsed.description ?? null,
-      role: parsed.role,
-      status: parsed.status,
-      createdAt: now,
-      updatedAt: now
+      this.sequence += 1;
+      const now = new Date().toISOString();
+      const serviceAccount = serviceAccountSchema.parse({
+        id: `service_account_${this.sequence}`,
+        tenantId: parsed.tenantId,
+        slug: parsed.slug,
+        name: parsed.name,
+        description: parsed.description ?? null,
+        role: parsed.role,
+        status: parsed.status,
+        createdAt: now,
+        updatedAt: now
+      });
+
+      this.serviceAccounts.set(serviceAccount.id, serviceAccount);
+      return serviceAccount;
     });
-
-    this.serviceAccounts.set(serviceAccount.id, serviceAccount);
-    return serviceAccount;
   }
 
   async listServiceAccounts(options: ServiceAccountListOptions = {}): Promise<ServiceAccount[]> {
@@ -2525,7 +2884,32 @@ export class InMemoryAuthRepository implements AuthRepository {
 
   async createApiKey(input: ApiKeyCreateInput): Promise<ApiKeyCreated | null> {
     const parsed = apiKeyCreateInputSchema.parse(input);
-    let expiresAt = parsed.expiresAt ?? null;
+    const insertApiKey = (expiresAt: string | null): ApiKeyCreated => {
+      const secret = generateApiKeySecret();
+      this.sequence += 1;
+      const now = new Date().toISOString();
+      const apiKey = apiKeyRecordSchema.parse({
+        id: `api_key_${this.sequence}`,
+        tenantId: parsed.tenantId,
+        userId: parsed.userId ?? null,
+        serviceAccountId: parsed.serviceAccountId ?? null,
+        name: parsed.name,
+        secretPreview: previewSecret(secret),
+        scopes: parsed.scopes,
+        allowedSurfaces: parsed.allowedSurfaces,
+        expiresAt,
+        lastUsedAt: null,
+        revokedAt: null,
+        createdAt: now
+      });
+
+      this.apiKeys.set(hashApiKeySecret(secret), {
+        apiKey,
+        secretHash: hashApiKeySecret(secret)
+      });
+
+      return apiKeyCreatedSchema.parse({ apiKey, secret });
+    };
 
     if (parsed.userId) {
       const user = this.users.get(parsed.userId);
@@ -2533,64 +2917,46 @@ export class InMemoryAuthRepository implements AuthRepository {
       if (!user || user.tenantId !== parsed.tenantId) {
         return null;
       }
+
+      return insertApiKey(parsed.expiresAt ?? null);
     }
 
     if (parsed.serviceAccountId) {
-      const serviceAccount = this.serviceAccounts.get(parsed.serviceAccountId);
+      return this.policyMutationExecutor.run(`service-account-keys:${parsed.serviceAccountId}`, async () => {
+        const serviceAccount = this.serviceAccounts.get(parsed.serviceAccountId ?? "");
 
-      if (!serviceAccount || serviceAccount.tenantId !== parsed.tenantId) {
-        return null;
-      }
-
-      const policy = await this.getServiceAccountPolicy(parsed.tenantId);
-
-      if (policy.defaultApiKeyExpiresInDays !== null && parsed.expiresAt === undefined) {
-        expiresAt = apiKeyExpiryFromDays(policy.defaultApiKeyExpiresInDays);
-      }
-
-      if (policy.maxActiveApiKeysPerServiceAccount !== null) {
-        const activeKeyCount = Array.from(this.apiKeys.values()).filter((record) =>
-          record.apiKey.tenantId === parsed.tenantId &&
-          record.apiKey.serviceAccountId === parsed.serviceAccountId &&
-          record.apiKey.revokedAt === null &&
-          (!record.apiKey.expiresAt || Date.parse(record.apiKey.expiresAt) > Date.now())
-        ).length;
-
-        if (activeKeyCount >= policy.maxActiveApiKeysPerServiceAccount) {
-          throw new ServiceAccountPolicyViolationError(
-            "max_active_api_keys_per_service_account_exceeded",
-            policy.maxActiveApiKeysPerServiceAccount,
-            parsed.tenantId,
-            parsed.serviceAccountId
-          );
+        if (!serviceAccount || serviceAccount.tenantId !== parsed.tenantId) {
+          return null;
         }
-      }
+
+        const policy = await this.getServiceAccountPolicy(parsed.tenantId);
+        const expiresAt = policy.defaultApiKeyExpiresInDays !== null && parsed.expiresAt === undefined
+          ? apiKeyExpiryFromDays(policy.defaultApiKeyExpiresInDays)
+          : parsed.expiresAt ?? null;
+
+        if (policy.maxActiveApiKeysPerServiceAccount !== null) {
+          const activeKeyCount = Array.from(this.apiKeys.values()).filter((record) =>
+            record.apiKey.tenantId === parsed.tenantId &&
+            record.apiKey.serviceAccountId === parsed.serviceAccountId &&
+            record.apiKey.revokedAt === null &&
+            (!record.apiKey.expiresAt || Date.parse(record.apiKey.expiresAt) > Date.now())
+          ).length;
+
+          if (activeKeyCount >= policy.maxActiveApiKeysPerServiceAccount) {
+            throw new ServiceAccountPolicyViolationError(
+              "max_active_api_keys_per_service_account_exceeded",
+              policy.maxActiveApiKeysPerServiceAccount,
+              parsed.tenantId,
+              parsed.serviceAccountId
+            );
+          }
+        }
+
+        return insertApiKey(expiresAt);
+      });
     }
 
-    const secret = generateApiKeySecret();
-    this.sequence += 1;
-    const now = new Date().toISOString();
-    const apiKey = apiKeyRecordSchema.parse({
-      id: `api_key_${this.sequence}`,
-      tenantId: parsed.tenantId,
-      userId: parsed.userId ?? null,
-      serviceAccountId: parsed.serviceAccountId ?? null,
-      name: parsed.name,
-      secretPreview: previewSecret(secret),
-      scopes: parsed.scopes,
-      allowedSurfaces: parsed.allowedSurfaces,
-      expiresAt,
-      lastUsedAt: null,
-      revokedAt: null,
-      createdAt: now
-    });
-
-    this.apiKeys.set(hashApiKeySecret(secret), {
-      apiKey,
-      secretHash: hashApiKeySecret(secret)
-    });
-
-    return apiKeyCreatedSchema.parse({ apiKey, secret });
+    return null;
   }
 
   async listApiKeys(options: ApiKeyListOptions = {}): Promise<ApiKeyRecord[]> {
@@ -2682,68 +3048,205 @@ export class InMemoryAuthRepository implements AuthRepository {
   async rotateApiKey(input: ApiKeyRotateRepositoryInput): Promise<ApiKeyRotateResponse | null> {
     const parsed = apiKeyRotateInputSchema.parse(input);
     const tenantId = input.tenantId ?? "tenant_demo";
-    const record = Array.from(this.apiKeys.values()).find((apiKeyRecord) =>
-      apiKeyRecord.apiKey.tenantId === tenantId &&
-      apiKeyRecord.apiKey.id === input.apiKeyId &&
-      !apiKeyRecord.apiKey.revokedAt
-    );
+    const findActiveRecord = () => Array.from(this.apiKeys.values()).find((apiKeyRecord) =>
+        apiKeyRecord.apiKey.tenantId === tenantId &&
+        apiKeyRecord.apiKey.id === input.apiKeyId &&
+        !apiKeyRecord.apiKey.revokedAt
+      );
+    const rotateRecord = (record: ApiKeyMemoryRecord): ApiKeyRotateResponse => {
+      const secret = generateApiKeySecret();
+      this.sequence += 1;
+      const now = new Date().toISOString();
+      const replacement = apiKeyRecordSchema.parse({
+        id: `api_key_${this.sequence}`,
+        tenantId,
+        userId: record.apiKey.userId,
+        serviceAccountId: record.apiKey.serviceAccountId,
+        name: parsed.name ?? `${record.apiKey.name} rotation`,
+        secretPreview: previewSecret(secret),
+        scopes: record.apiKey.scopes,
+        allowedSurfaces: record.apiKey.allowedSurfaces,
+        expiresAt: record.apiKey.expiresAt,
+        lastUsedAt: null,
+        revokedAt: null,
+        createdAt: now
+      });
+
+      this.apiKeys.set(hashApiKeySecret(secret), {
+        apiKey: replacement,
+        secretHash: hashApiKeySecret(secret)
+      });
+
+      let revokedApiKey: ApiKeyRecord | null = null;
+
+      if (parsed.revokeOld) {
+        record.apiKey = apiKeyRecordSchema.parse({
+          ...record.apiKey,
+          revokedAt: record.apiKey.revokedAt ?? now
+        });
+        revokedApiKey = record.apiKey;
+      }
+
+      return apiKeyRotateResponseSchema.parse({
+        apiKey: replacement,
+        secret,
+        rotatedFrom: record.apiKey,
+        revokedApiKey
+      });
+    };
+    const record = findActiveRecord();
 
     if (!record) {
       return null;
     }
 
-    const secret = generateApiKeySecret();
-    this.sequence += 1;
-    const now = new Date().toISOString();
-    const replacement = apiKeyRecordSchema.parse({
-      id: `api_key_${this.sequence}`,
-      tenantId,
-      userId: record.apiKey.userId,
-      serviceAccountId: record.apiKey.serviceAccountId,
-      name: parsed.name ?? `${record.apiKey.name} rotation`,
-      secretPreview: previewSecret(secret),
-      scopes: record.apiKey.scopes,
-      allowedSurfaces: record.apiKey.allowedSurfaces,
-      expiresAt: record.apiKey.expiresAt,
-      lastUsedAt: null,
-      revokedAt: null,
-      createdAt: now
-    });
-
-    this.apiKeys.set(hashApiKeySecret(secret), {
-      apiKey: replacement,
-      secretHash: hashApiKeySecret(secret)
-    });
-
-    let revokedApiKey: ApiKeyRecord | null = null;
-
-    if (parsed.revokeOld) {
-      record.apiKey = apiKeyRecordSchema.parse({
-        ...record.apiKey,
-        revokedAt: record.apiKey.revokedAt ?? now
-      });
-      revokedApiKey = record.apiKey;
+    if (!record.apiKey.serviceAccountId) {
+      return rotateRecord(record);
     }
 
-    return apiKeyRotateResponseSchema.parse({
-      apiKey: replacement,
-      secret,
-      rotatedFrom: record.apiKey,
-      revokedApiKey
+    return this.policyMutationExecutor.run(`service-account-keys:${record.apiKey.serviceAccountId}`, async () => {
+      const lockedRecord = findActiveRecord();
+
+      if (!lockedRecord) {
+        return null;
+      }
+
+      const policy = await this.getServiceAccountPolicy(tenantId);
+
+      if (!parsed.revokeOld && policy.maxActiveApiKeysPerServiceAccount !== null) {
+        const activeKeyCount = Array.from(this.apiKeys.values()).filter((candidate) =>
+          candidate.apiKey.tenantId === tenantId &&
+          candidate.apiKey.serviceAccountId === lockedRecord.apiKey.serviceAccountId &&
+          candidate.apiKey.revokedAt === null &&
+          (!candidate.apiKey.expiresAt || Date.parse(candidate.apiKey.expiresAt) > Date.now())
+        ).length;
+
+        if (activeKeyCount >= policy.maxActiveApiKeysPerServiceAccount) {
+          throw new ServiceAccountPolicyViolationError(
+            "max_active_api_keys_per_service_account_exceeded",
+            policy.maxActiveApiKeysPerServiceAccount,
+            tenantId,
+            lockedRecord.apiKey.serviceAccountId ?? undefined
+          );
+        }
+      }
+
+      return rotateRecord(lockedRecord);
     });
   }
 
-  async createLoginSession(input: LoginSessionCreateInput): Promise<LoginSessionRecord | null> {
+  async issueLoginCredentials(input: LoginCredentialIssueInput): Promise<LoginCredentialIssueResult | null> {
     const tenantId = input.tenantId ?? "tenant_demo";
-    const user = this.users.get(input.userId);
+    let apiKey: ApiKeyCreated | null = null;
+    let session: LoginSessionRecord | null = null;
+    let refreshToken: LoginSessionRefreshTokenCreated | null = null;
+    let auditEvent: AuditEvent | null = null;
+
+    const rollback = () => {
+      if (apiKey) {
+        this.apiKeys.delete(hashApiKeySecret(apiKey.secret));
+      }
+      if (session) {
+        this.loginSessions.delete(session.id);
+      }
+      if (refreshToken) {
+        this.loginSessionRefreshTokens.delete(refreshToken.id);
+      }
+      if (auditEvent) {
+        const auditIndex = this.auditEvents.findIndex((event) => event.id === auditEvent?.id);
+        if (auditIndex !== -1) {
+          this.auditEvents.splice(auditIndex, 1);
+        }
+      }
+    };
+
+    try {
+      apiKey = await this.createApiKey({
+        tenantId,
+        userId: input.userId,
+        name: input.keyName,
+        scopes: input.scopes,
+        allowedSurfaces: input.allowedSurfaces,
+        expiresAt: input.expiresAt
+      });
+
+      if (!apiKey) {
+        return null;
+      }
+
+      await this.testHooks.afterLoginCredentialIssueStage?.("api-key");
+      session = await this.createLoginSession({
+        tenantId,
+        userId: input.userId,
+        apiKeyId: apiKey.apiKey.id,
+        source: input.source,
+        deviceLabel: input.deviceLabel,
+        clientUserAgent: input.clientUserAgent,
+        expiresAt: input.expiresAt,
+        absoluteExpiresAt: input.absoluteExpiresAt
+      });
+
+      if (!session) {
+        rollback();
+        return null;
+      }
+
+      await this.testHooks.afterLoginCredentialIssueStage?.("session");
+
+      if (input.refreshTokenExpiresAt) {
+        refreshToken = await this.createLoginSessionRefreshToken({
+          tenantId,
+          loginSessionId: session.id,
+          expiresAt: input.refreshTokenExpiresAt
+        });
+
+        if (!refreshToken) {
+          rollback();
+          return null;
+        }
+
+        await this.testHooks.afterLoginCredentialIssueStage?.("refresh-token");
+      }
+
+      auditEvent = await this.recordAuditEvent({
+        tenantId,
+        actorUserId: input.userId,
+        actorApiKeyId: apiKey.apiKey.id,
+        action: input.auditAction,
+        targetType: "user",
+        targetId: input.userId,
+        outcome: "success",
+        metadata: {
+          ...input.auditMetadata,
+          apiKeyId: apiKey.apiKey.id,
+          sessionId: session.id
+        }
+      });
+      await this.testHooks.afterLoginCredentialIssueStage?.("audit");
+
+      return {
+        ...apiKey,
+        session,
+        refreshToken,
+        auditEvent
+      };
+    } catch (error) {
+      rollback();
+      throw error;
+    }
+  }
+
+  async createLoginSession(input: LoginSessionCreateInput): Promise<LoginSessionRecord | null> {
+    const parsed = normalizeLoginSessionCreateInput(input);
+    const user = this.users.get(parsed.userId);
     const apiKeyRecord = Array.from(this.apiKeys.values()).find((record) =>
-      record.apiKey.tenantId === tenantId &&
-      record.apiKey.id === input.apiKeyId &&
-      record.apiKey.userId === input.userId &&
+      record.apiKey.tenantId === parsed.tenantId &&
+      record.apiKey.id === parsed.apiKeyId &&
+      record.apiKey.userId === parsed.userId &&
       record.apiKey.revokedAt === null
     );
 
-    if (!user || user.tenantId !== tenantId || !apiKeyRecord) {
+    if (!user || user.tenantId !== parsed.tenantId || !apiKeyRecord) {
       return null;
     }
 
@@ -2751,15 +3254,15 @@ export class InMemoryAuthRepository implements AuthRepository {
     const now = new Date().toISOString();
     const session = loginSessionRecordSchema.parse({
       id: `login_session_${this.sequence}`,
-      tenantId,
-      userId: input.userId,
-      apiKeyId: input.apiKeyId,
-      source: input.source,
-      deviceLabel: input.deviceLabel ?? null,
-      clientUserAgent: input.clientUserAgent ?? null,
+      tenantId: parsed.tenantId,
+      userId: parsed.userId,
+      apiKeyId: parsed.apiKeyId,
+      source: parsed.source,
+      deviceLabel: parsed.deviceLabel,
+      clientUserAgent: parsed.clientUserAgent,
       createdAt: now,
-      expiresAt: input.expiresAt,
-      absoluteExpiresAt: input.absoluteExpiresAt ?? null,
+      expiresAt: parsed.expiresAt,
+      absoluteExpiresAt: parsed.absoluteExpiresAt,
       lastSeenAt: null,
       revokedAt: null
     });
@@ -2771,12 +3274,12 @@ export class InMemoryAuthRepository implements AuthRepository {
   async createLoginSessionRefreshToken(
     input: LoginSessionRefreshTokenCreateInput
   ): Promise<LoginSessionRefreshTokenCreated | null> {
-    const tenantId = input.tenantId ?? "tenant_demo";
-    const session = this.loginSessions.get(input.loginSessionId);
+    const parsed = normalizeLoginSessionRefreshTokenCreateInput(input);
+    const session = this.loginSessions.get(parsed.loginSessionId);
 
     if (
       !session ||
-      session.tenantId !== tenantId ||
+      session.tenantId !== parsed.tenantId ||
       session.revokedAt !== null ||
       (session.absoluteExpiresAt !== null && Date.parse(session.absoluteExpiresAt) <= Date.now())
     ) {
@@ -2787,10 +3290,10 @@ export class InMemoryAuthRepository implements AuthRepository {
     const token = generateRefreshTokenSecret();
     const record: LoginSessionRefreshTokenMemoryRecord = {
       id: `login_refresh_${this.sequence}`,
-      tenantId,
+      tenantId: parsed.tenantId,
       loginSessionId: session.id,
       tokenHash: hashRefreshTokenSecret(token),
-      expiresAt: session.absoluteExpiresAt ? minIso(input.expiresAt, session.absoluteExpiresAt) : input.expiresAt,
+      expiresAt: session.absoluteExpiresAt ? minIso(parsed.expiresAt, session.absoluteExpiresAt) : parsed.expiresAt,
       createdAt: new Date().toISOString(),
       usedAt: null,
       revokedAt: null,
@@ -2946,9 +3449,35 @@ export class InMemoryAuthRepository implements AuthRepository {
       }
     }
 
+    return session;
+  }
+
+  async touchLoginSession(input: LoginSessionTouchInput): Promise<LoginSessionRecord | null> {
+    const tenantId = input.tenantId ?? "tenant_demo";
+    const nowMs = Date.now();
+    const session = this.loginSessions.get(input.sessionId);
+
+    if (
+      !session ||
+      session.tenantId !== tenantId ||
+      session.revokedAt !== null ||
+      Date.parse(session.expiresAt) <= nowMs ||
+      (session.absoluteExpiresAt !== null && Date.parse(session.absoluteExpiresAt) <= nowMs)
+    ) {
+      return null;
+    }
+
+    if (input.idleTimeoutSeconds !== undefined && input.idleTimeoutSeconds !== null) {
+      const lastActivityAt = session.lastSeenAt ?? session.createdAt;
+
+      if (Date.parse(lastActivityAt) + input.idleTimeoutSeconds * 1000 <= nowMs) {
+        return null;
+      }
+    }
+
     const updated = loginSessionRecordSchema.parse({
       ...session,
-      lastSeenAt: new Date().toISOString()
+      lastSeenAt: new Date(nowMs).toISOString()
     });
     this.loginSessions.set(updated.id, updated);
 
@@ -3314,6 +3843,63 @@ async function ensureTenant(client: Queryable, tenantId: string): Promise<void> 
     `,
     [tenantId]
   );
+}
+
+async function readServiceAccountPolicy(client: Queryable, tenantId: string): Promise<ServiceAccountPolicy> {
+  const result = await client.query<ServiceAccountPolicyRow>(
+    "SELECT * FROM service_account_policies WHERE tenant_id = $1",
+    [tenantId]
+  );
+  const row = result.rows[0];
+
+  return row ? mapServiceAccountPolicyRow(row) : defaultServiceAccountPolicy(tenantId);
+}
+
+function normalizeLoginSessionCreateInput(input: LoginSessionCreateInput): Required<LoginSessionCreateInput> {
+  const tenantId = input.tenantId ?? "tenant_demo";
+  const parsed = loginSessionRecordSchema.parse({
+    id: "pending-login-session",
+    tenantId,
+    userId: input.userId,
+    apiKeyId: input.apiKeyId,
+    source: input.source,
+    deviceLabel: input.deviceLabel ?? null,
+    clientUserAgent: input.clientUserAgent ?? null,
+    createdAt: new Date().toISOString(),
+    expiresAt: input.expiresAt,
+    absoluteExpiresAt: input.absoluteExpiresAt ?? null,
+    lastSeenAt: null,
+    revokedAt: null
+  });
+
+  return {
+    tenantId: parsed.tenantId,
+    userId: parsed.userId,
+    apiKeyId: parsed.apiKeyId,
+    source: parsed.source,
+    deviceLabel: parsed.deviceLabel,
+    clientUserAgent: parsed.clientUserAgent,
+    expiresAt: parsed.expiresAt,
+    absoluteExpiresAt: parsed.absoluteExpiresAt
+  };
+}
+
+function normalizeLoginSessionRefreshTokenCreateInput(
+  input: LoginSessionRefreshTokenCreateInput
+): Required<LoginSessionRefreshTokenCreateInput> {
+  const normalizedExpiry = normalizeLoginSessionCreateInput({
+    tenantId: input.tenantId,
+    userId: "pending-refresh-user",
+    apiKeyId: "pending-refresh-api-key",
+    source: "password",
+    expiresAt: input.expiresAt
+  });
+
+  return {
+    tenantId: normalizedExpiry.tenantId,
+    loginSessionId: input.loginSessionId,
+    expiresAt: normalizedExpiry.expiresAt
+  };
 }
 
 function requireRow<T extends QueryResultRow>(result: QueryResult<T>): T {

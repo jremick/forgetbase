@@ -36,6 +36,10 @@ function sliceBetween(source: string, start: string, end: string, label: string)
 }
 
 const app = read("apps/web/src/App.tsx");
+const reader = read("apps/web/src/ReaderSurface.tsx");
+const admin = read("apps/web/src/AdminSurface.tsx");
+const routing = read("apps/web/src/lib/app-routing.ts");
+const productUi = [app, reader, admin, routing].join("\n");
 const css = read("apps/web/src/styles.css");
 const html = read("apps/web/index.html");
 const readme = read("README.md");
@@ -45,46 +49,48 @@ assertIncludes(goal, "ForgetBase is a knowledge base for people and AI tools.", 
 assertIncludes(goal, "Pages, Search, Ask, Sources, Review, Publish, Access, Admin, Exports, Settings", "Public beta goal");
 assertIncludes(readme, "Public Beta Goal", "README docs list");
 
-assertIncludes(app, 'return pageRoutes.has(aliasedRoute) ? aliasedRoute : "reader";', "default route");
+assertIncludes(routing, 'return pageRoutes.has(aliasedRoute) ? aliasedRoute as AppRoute : "reader";', "default route");
 assertIncludes(app, 'className="public-entry-main login-entry-main"', "login entry");
 assertIncludes(app, "Log in to ForgetBase", "login entry");
 assertIncludes(app, "Use your account to read pages or manage the knowledge base.", "login entry");
 assertIncludes(app, "public-login-form", "login form");
-assertNotIncludes(app, "showLoginPanel", "login modal removed");
-assertNotIncludes(app, "openLoginPanel", "login modal removed");
-assertNotIncludes(app, "A knowledge base for people and AI tools.", "marketing public page removed");
-assertNotIncludes(app, "Write and organize company knowledge once.", "marketing public page removed");
-assertNotIncludes(app, "People get a clean wiki-style reading view.", "marketing public page removed");
-assertNotIncludes(app, "Separate reader and admin views", "marketing public page removed");
-assertNotIncludes(app, "Read pages</h3>", "marketing public page removed");
-assertNotIncludes(app, "Manage content</h3>", "marketing public page removed");
+assertNotIncludes(productUi, "showLoginPanel", "login modal removed");
+assertNotIncludes(productUi, "openLoginPanel", "login modal removed");
+assertNotIncludes(productUi, "A knowledge base for people and AI tools.", "marketing public page removed");
+assertNotIncludes(productUi, "Write and organize company knowledge once.", "marketing public page removed");
+assertNotIncludes(productUi, "People get a clean wiki-style reading view.", "marketing public page removed");
+assertNotIncludes(productUi, "Separate reader and admin views", "marketing public page removed");
+assertNotIncludes(productUi, "Read pages</h3>", "marketing public page removed");
+assertNotIncludes(productUi, "Manage content</h3>", "marketing public page removed");
 assertIncludes(html, "Knowledge Base for People and AI Tools", "HTML metadata");
 assertIncludes(html, "knowledge base for people and AI tools", "HTML metadata");
-assertIncludes(app, "reader-library", "reader page navigation");
-assertIncludes(app, "reader-article", "reader article");
-assertIncludes(app, "On this page", "reader section navigation");
-assertIncludes(app, "reader-mobile-page-picker", "reader mobile page picker");
-assertIncludes(app, "reader-page-footer", "reader page footer");
-assertIncludes(app, "readerParentId", "reader hierarchy metadata");
-assertIncludes(app, "readerIcon", "reader icon metadata");
-assertIncludes(app, "reader-search-kbd", "reader search shortcut hint");
-assertIncludes(app, "nav-resizer", "resizable page navigation");
-assertIncludes(app, "nav-collapsed", "collapsible page navigation");
-assertIncludes(app, "reader-collapsed-node", "collapsed reader navigation");
-assertIncludes(app, "reader-leaf-dot", "reader leaf dot navigation");
-assertIncludes(app, "reader-ask-title", "reader ask panel");
-assertIncludes(app, "reader-ask-answer", "reader answer state");
-assertIncludes(app, "reader-no-access-state", "reader no-access state");
-assertIncludes(app, "reader-citation", "reader citations");
-assertNotIncludes(app, "import * as PhosphorIcons", "direct icon imports");
-assertNotIncludes(app, "reader-refresh-button", "reader refresh button removed");
-assertNotIncludes(app, "reader-source-heading", "reader footer heading removed");
-assertIncludes(app, "\"admin/content\": \"library\"", "admin content route");
-assertIncludes(app, "\"admin/system/settings\": \"settings\"", "admin settings route");
+assertIncludes(reader, "reader-library", "reader page navigation");
+assertIncludes(reader, "reader-article", "reader article");
+assertIncludes(reader, "On this page", "reader section navigation");
+assertIncludes(reader, "reader-mobile-page-picker", "reader mobile page picker");
+assertIncludes(reader, "reader-page-footer", "reader page footer");
+assertIncludes(reader, "readerIcon", "reader icon metadata");
+assertIncludes(reader, "reader-search-kbd", "reader search shortcut hint");
+assertIncludes(reader, "nav-resizer", "resizable page navigation");
+assertIncludes(reader, "nav-collapsed", "collapsible page navigation");
+assertIncludes(reader, "reader-collapsed-node", "collapsed reader navigation");
+assertIncludes(reader, "reader-leaf-dot", "reader leaf dot navigation");
+assertIncludes(reader, "reader-ask-title", "reader ask panel");
+assertIncludes(reader, "reader-ask-answer", "reader answer state");
+assertIncludes(reader, "reader-no-access-state", "reader no-access state");
+assertIncludes(reader, "reader-citation", "reader citations");
+assertNotIncludes(productUi, "import * as PhosphorIcons", "direct icon imports");
+assertNotIncludes(reader, "reader-refresh-button", "reader refresh button removed");
+assertNotIncludes(reader, "reader-source-heading", "reader footer heading removed");
+assertIncludes(routing, "\"admin/content\": \"library\"", "admin content route");
+assertIncludes(routing, "\"admin/system/settings\": \"settings\"", "admin settings route");
 assertIncludes(app, "window.history.replaceState({}, document.title", "admin canonical hash rewrite");
-assertIncludes(app, "className=\"side-nav tree-nav admin-side-nav\"", "admin console shell");
-assertIncludes(app, "renderNavigationSections(() => setIsMobileNavOpen(false))", "mobile admin shell navigation");
-assertIncludes(app, "Search pages", "reader action");
+assertIncludes(admin, "className=\"side-nav tree-nav admin-side-nav\"", "admin console shell");
+assertIncludes(admin, "renderNavigationSections(() => setIsMobileNavOpen(false))", "mobile admin shell navigation");
+assertIncludes(reader, "Search pages", "reader action");
+assertIncludes(app, 'lazy(() => import("./AdminSurface.js")', "lazy admin boundary");
+assertNotIncludes(app, 'import { AdminSurface } from "./AdminSurface.js"', "admin excluded from static entry graph");
+assertIncludes(app, "isAdminRoute(route) && !administrator", "reader admin-route guard");
 
 for (const selector of [
   ".admin-side-header",
@@ -115,9 +121,9 @@ const publicCopy = sliceBetween(
   "public entry"
 );
 const readerCopy = sliceBetween(
-  app,
-  '<main className={`reader-main ${accountSettingsRouteRequested ? "reader-main--account" : ""}`} id="main">',
-  '<CommandDialog',
+  reader,
+  '<main className={`reader-main ${accountSettings ? "reader-main--account" : ""}`} id="main">',
+  "</main>",
   "reader shell"
 );
 

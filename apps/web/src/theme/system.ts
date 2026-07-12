@@ -1,13 +1,5 @@
-import * as Chakra from "@chakra-ui/react";
-
-type SystemConfig = Record<string, unknown>;
-type ChakraSystemRuntime = typeof Chakra & {
-  createSystem: (...configs: SystemConfig[]) => unknown;
-  defaultConfig: SystemConfig;
-  defineConfig: (config: SystemConfig) => SystemConfig;
-};
-
-const { createSystem, defaultConfig, defineConfig } = Chakra as ChakraSystemRuntime;
+import { defaultConfig } from "@chakra-ui/react/preset";
+import { createSystem, defineConfig } from "@chakra-ui/react/styled-system";
 
 const systemFont = "system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif";
 

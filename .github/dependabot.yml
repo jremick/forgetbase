@@ -1,0 +1,30 @@
+version: 2
+
+updates:
+  # pnpm is intentionally omitted until Dependabot documents pnpm 11 support.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Australia/Melbourne
+    open-pull-requests-limit: 3
+
+  - package-ecosystem: docker
+    directory: /infra/docker
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:15"
+      timezone: Australia/Melbourne
+    open-pull-requests-limit: 3
+
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:30"
+      timezone: Australia/Melbourne
+    open-pull-requests-limit: 3
