@@ -44,6 +44,13 @@ try {
   }
 
   const commit = run("record candidate commit", "git", ["rev-parse", "HEAD"]).stdout.trim();
+  run(
+    "build host workspace for proof commands",
+    "npx",
+    ["-y", "pnpm@11.7.0", "build"],
+    baseEnv,
+    15 * 60 * 1_000
+  );
   const ports = await reserveDistinctPorts(4);
   const [postgresPort, apiPort, webPort, proxyPort] = ports;
   composeEnv = {
