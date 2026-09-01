@@ -27,7 +27,7 @@ Write and organize company knowledge once. People can read it. AI tools can use 
 ## Required User Experience
 
 - The reading UI is the default product experience.
-- Pages are comfortable enough to replace a basic Confluence-style company knowledge base.
+- Pages are comfortable enough to serve as a basic company knowledge base.
 - The admin console is separate from reading.
 - Regular readers do not see admin-only actions.
 - The UI uses plain words: Pages, Search, Ask, Sources, Review, Publish, Access, Admin, Exports, Settings.

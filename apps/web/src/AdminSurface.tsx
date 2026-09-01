@@ -111,6 +111,7 @@ import {
 import { Input } from "./components/ui/input.js";
 import { Label } from "./components/ui/label.js";
 import { NativeSelect } from "./components/ui/native-select.js";
+import { renderMarkdownDocument as renderSafeMarkdownDocument } from "./lib/reader-ui.js";
 import {
   Sheet,
   SheetContent,
@@ -159,6 +160,17 @@ import {
   stateBadgeVariant,
   type LibraryViewFilter
 } from "./lib/asset-ui.js";
+import {
+  assetAuthoringFormFromDetail,
+  buildAssetCreateInput,
+  buildAssetUpdateInput,
+  createEmptyAssetAuthoringForm,
+  validateAssetAuthoringForm,
+  type AssetAuthoringErrors,
+  type AssetAuthoringField,
+  type AssetAuthoringFormState,
+  type AssetAuthoringMode
+} from "./lib/asset-authoring.js";
 import {
   apiUrlStorageKey,
   loginTenantStorageKey,
@@ -415,100 +427,6 @@ function extractReaderSectionHeadings(body: string, title: string): ReaderSectio
 
     return [entry];
   });
-}
-
-function renderMarkdownDocument(body: string, title: string): ReactNode[] {
-  const output: ReactNode[] = [];
-  const lines = body.split(/\r?\n/);
-  const firstContentIndex = lines.findIndex((line) => line.trim());
-
-  if (firstContentIndex >= 0) {
-    const firstHeading = lines[firstContentIndex]?.match(/^#\s+(.+)$/);
-
-    if (firstHeading && normalizeHeadingText(firstHeading[1] ?? "") === normalizeHeadingText(title)) {
-      lines.splice(firstContentIndex, 1);
-    }
-  }
-
-  let paragraphLines: string[] = [];
-  let list: { ordered: boolean; items: string[] } | null = null;
-  let sectionIndex = 0;
-
-  function flushParagraph() {
-    if (!paragraphLines.length) {
-      return;
-    }
-
-    output.push(<p key={`p-${output.length}`}>{paragraphLines.join(" ")}</p>);
-    paragraphLines = [];
-  }
-
-  function flushList() {
-    if (!list) {
-      return;
-    }
-
-    const ListTag = list.ordered ? "ol" : "ul";
-    output.push(
-      <ListTag key={`list-${output.length}`}>
-        {list.items.map((item, index) => <li key={`${index}-${item}`}>{item}</li>)}
-      </ListTag>
-    );
-    list = null;
-  }
-
-  lines.forEach((rawLine) => {
-    const line = rawLine.trim();
-
-    if (!line) {
-      flushParagraph();
-      flushList();
-      return;
-    }
-
-    const heading = line.match(/^(#{1,3})\s+(.+)$/);
-    if (heading) {
-      flushParagraph();
-      flushList();
-      const level = heading[1]?.length ?? 1;
-      const text = heading[2] ?? "";
-
-      if (level === 1) {
-        output.push(<h1 key={`h1-${output.length}`}>{text}</h1>);
-      } else if (level === 2) {
-        output.push(<h2 id={readerHeadingId(text, sectionIndex)} key={`h2-${output.length}`}>{text}</h2>);
-        sectionIndex += 1;
-      } else {
-        output.push(<h3 id={readerHeadingId(text, sectionIndex)} key={`h3-${output.length}`}>{text}</h3>);
-        sectionIndex += 1;
-      }
-      return;
-    }
-
-    const orderedItem = line.match(/^\d+\.\s+(.+)$/);
-    const unorderedItem = line.match(/^[-*]\s+(.+)$/);
-    if (orderedItem || unorderedItem) {
-      flushParagraph();
-      const ordered = Boolean(orderedItem);
-      const item = (orderedItem?.[1] ?? unorderedItem?.[1] ?? "").trim();
-
-      if (!list || list.ordered !== ordered) {
-        flushList();
-        list = { ordered, items: [] };
-      }
-
-      list.items.push(item);
-      return;
-    }
-
-    flushList();
-    paragraphLines.push(line);
-  });
-
-  flushParagraph();
-  flushList();
-
-  return output;
 }
 
 function cleanReaderAnswerText(value: string): string {
@@ -854,6 +772,12 @@ function readInitialReaderPageId(): string {
   return new URLSearchParams(window.location.search).get("page")?.trim() ?? "";
 }
 
+function defaultAuthoringReviewDate(): string {
+  const dueAt = new Date();
+  dueAt.setUTCDate(dueAt.getUTCDate() + 90);
+  return dueAt.toISOString().slice(0, 10);
+}
+
 export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void } = {}) {
   const [apiUrl, setApiUrl] = useState(() => readInitialApiUrl(configuredApiUrl));
   const [apiKey, setApiKey] = useState(() => localStorage.getItem("forgetbase-api-key") ?? "");
@@ -1065,6 +989,13 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
   const [libraryQuery, setLibraryQuery] = useState("");
   const [libraryViewFilter, setLibraryViewFilter] = useState<LibraryViewFilter>("all");
   const [librarySensitivityFilter, setLibrarySensitivityFilter] = useState<string>("all");
+  const [authoringMode, setAuthoringMode] = useState<AssetAuthoringMode | null>(null);
+  const [authoringForm, setAuthoringForm] = useState<AssetAuthoringFormState>(() =>
+    createEmptyAssetAuthoringForm("", defaultAuthoringReviewDate())
+  );
+  const [authoringErrors, setAuthoringErrors] = useState<AssetAuthoringErrors>({});
+  const [authoringSubmitError, setAuthoringSubmitError] = useState("");
+  const [isSavingPage, setIsSavingPage] = useState(false);
   const [currentPage, setCurrentPage] = useState(() =>
     normalizePageRoute(typeof window === "undefined" ? "" : window.location.hash.replace("#", ""))
   );
@@ -1099,6 +1030,12 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
   const [loadingWorkspaceRoute, setLoadingWorkspaceRoute] = useState("");
   const commandTriggerRef = useRef<HTMLButtonElement | null>(null);
   const loadedWorkspaceRoutesRef = useRef<Set<string>>(new Set());
+  const authenticationEpochRef = useRef(0);
+  const authoringEditTargetRef = useRef<{
+    stableId: string;
+    metadata: Record<string, unknown>;
+    humanDocument?: AssetDetail["humanDocuments"][number];
+  } | null>(null);
 
   const readerRouteRequested = currentPage === "reader";
   const accountSettingsRouteRequested = currentPage === "account-settings";
@@ -1236,6 +1173,11 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
       currentPrincipal.scopes.includes("admin") ||
       currentPrincipal.scopes.includes("asset:write") ||
       currentPrincipal.scopes.includes("permission:write"))
+  );
+  const canWriteAssets = Boolean(
+    currentPrincipal &&
+    (currentPrincipal.role === "admin" || currentPrincipal.role === "maintainer") &&
+    (currentPrincipal.scopes.includes("admin") || currentPrincipal.scopes.includes("asset:write"))
   );
   const readerSelectedAsset = readerPublishedAssets.find((asset) => asset.stableId === selectedStableId) ??
     filteredReaderAssets[0] ??
@@ -1591,6 +1533,7 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
   }
 
   function clearAuthenticatedState() {
+    authenticationEpochRef.current += 1;
     setApiKey("");
     setSessionCookieActive(false);
     setAuthState("unauthenticated");
@@ -1630,6 +1573,12 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
     setProviderConfigs([]);
     setProviderHealth([]);
     setAuthProviderConfigs([]);
+    setAuthoringMode(null);
+    setAuthoringForm(createEmptyAssetAuthoringForm("", defaultAuthoringReviewDate()));
+    setAuthoringErrors({});
+    setAuthoringSubmitError("");
+    setIsSavingPage(false);
+    authoringEditTargetRef.current = null;
     onSessionEnded?.();
   }
 
@@ -1709,7 +1658,7 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
       setSessionCookieActive(!authKey);
       const healthResponse = await request<{ status: string }>("/health", {}, authKey);
       setHealth(healthResponse.status);
-      const assetResponse = await request<{ assets: AssetRecord[] }>("/assets", {}, authKey);
+      const assetResponse = await request<{ assets: AssetRecord[] }>("/assets?limit=200", {}, authKey);
       const nextSelectedStableId = assetResponse.assets.some((asset) => asset.stableId === selectedStableId)
         ? selectedStableId
         : assetResponse.assets[0]?.stableId ?? "";
@@ -1870,7 +1819,159 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
   }
 
   function replaceAsset(asset: AssetRecord) {
-    setAssets((current) => current.map((candidate) => candidate.id === asset.id ? asset : candidate));
+    setAssets((current) => current.some((candidate) => candidate.id === asset.id)
+      ? current.map((candidate) => candidate.id === asset.id ? asset : candidate)
+      : [asset, ...current]
+    );
+  }
+
+  function updateAuthoringField(field: AssetAuthoringField, value: string) {
+    setAuthoringForm((current) => ({ ...current, [field]: value }) as AssetAuthoringFormState);
+    setAuthoringErrors((current) => {
+      if (!current[field]) {
+        return current;
+      }
+
+      const next = { ...current };
+      delete next[field];
+      return next;
+    });
+    setAuthoringSubmitError("");
+  }
+
+  function startCreatePage() {
+    const ownerId = currentPrincipal?.userId ?? currentPrincipal?.principalId ?? "";
+    setAuthoringForm(createEmptyAssetAuthoringForm(ownerId, defaultAuthoringReviewDate()));
+    setAuthoringErrors({});
+    setAuthoringSubmitError("");
+    authoringEditTargetRef.current = null;
+    setAuthoringMode("create");
+    setAssetContentView("human");
+    navigatePage("library");
+  }
+
+  function startEditPage() {
+    if (!assetDetail) {
+      return;
+    }
+
+    const currentDocument = assetDetail.humanDocuments[0];
+    if (currentDocument && currentDocument.format !== "markdown") {
+      setError(`This lean editor supports Markdown pages. ${currentDocument.format} content must be updated through the API or CLI.`);
+      return;
+    }
+
+    setAuthoringForm(assetAuthoringFormFromDetail(assetDetail));
+    setAuthoringErrors({});
+    setAuthoringSubmitError("");
+    authoringEditTargetRef.current = {
+      stableId: assetDetail.asset.stableId,
+      metadata: assetDetail.asset.metadata,
+      humanDocument: currentDocument
+    };
+    setAuthoringMode("edit");
+    setAssetContentView("human");
+  }
+
+  function cancelPageAuthoring() {
+    setAuthoringMode(null);
+    setAuthoringErrors({});
+    setAuthoringSubmitError("");
+    authoringEditTargetRef.current = null;
+  }
+
+  async function saveAuthoredPage(event: FormEvent) {
+    event.preventDefault();
+
+    if (!authoringMode || isSavingPage) {
+      return;
+    }
+
+    const editTargetParent = typeof authoringEditTargetRef.current?.metadata.readerParentId === "string"
+      ? authoringEditTargetRef.current.metadata.readerParentId
+      : "";
+    const knownStableIds = assets.map((asset) => asset.stableId);
+    if (editTargetParent && !knownStableIds.includes(editTargetParent)) {
+      knownStableIds.push(editTargetParent);
+    }
+    const fieldErrors = validateAssetAuthoringForm(
+      authoringForm,
+      authoringMode,
+      knownStableIds,
+      new Map(assets.flatMap((asset) => {
+        const parentId = readerParentId(asset);
+        return parentId ? [[asset.stableId, parentId] as const] : [];
+      }))
+    );
+
+    if (Object.keys(fieldErrors).length) {
+      setAuthoringErrors(fieldErrors);
+      setAuthoringSubmitError("Fix the highlighted fields, then save again.");
+      return;
+    }
+
+    const editTarget = authoringEditTargetRef.current;
+    if (authoringMode === "edit" && !editTarget) {
+      setAuthoringSubmitError("This page is no longer loaded. Cancel editing, reopen it, and try again.");
+      return;
+    }
+
+    setError("");
+    setMessage("");
+    setAuthoringSubmitError("");
+    setIsSavingPage(true);
+    const authenticationEpoch = authenticationEpochRef.current;
+
+    try {
+      const detail = authoringMode === "create"
+        ? await request<AssetDetail>("/assets", {
+            method: "POST",
+            body: JSON.stringify(buildAssetCreateInput(authoringForm))
+          })
+        : await request<AssetDetail>(`/assets/${encodeURIComponent(editTarget!.stableId)}/versions`, {
+            method: "POST",
+            body: JSON.stringify(buildAssetUpdateInput(
+              authoringForm,
+              editTarget!.metadata,
+              editTarget!.humanDocument
+            ))
+          });
+      const savedMode = authoringMode;
+
+      if (authenticationEpoch !== authenticationEpochRef.current) {
+        return;
+      }
+
+      setAssetDetail(detail);
+      replaceAsset(detail.asset);
+      setSelectedStableId(detail.asset.stableId);
+      setVersionSnapshot(null);
+      setAuthoringMode(null);
+      setAuthoringErrors({});
+      authoringEditTargetRef.current = null;
+      navigatePage("asset-read");
+      setMessage(savedMode === "create"
+        ? `Created ${detail.asset.stableId} as a draft`
+        : `Saved ${detail.asset.stableId} as a new draft version`
+      );
+    } catch (saveError) {
+      if (authenticationEpoch !== authenticationEpochRef.current) {
+        return;
+      }
+
+      const saveErrorMessage = saveError instanceof Error ? saveError.message : String(saveError);
+
+      if (saveErrorMessage.startsWith("409 ")) {
+        setAuthoringErrors((current) => ({ ...current, stableId: "This stable ID is already in use." }));
+        setAuthoringSubmitError("Choose a different stable ID, then save again.");
+      } else {
+        setAuthoringSubmitError(`The page was not saved. ${saveErrorMessage}`);
+      }
+    } finally {
+      if (authenticationEpoch === authenticationEpochRef.current) {
+        setIsSavingPage(false);
+      }
+    }
   }
 
   async function runSearch(event?: FormEvent) {
@@ -3250,6 +3351,7 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
   }
 
   function openAssetRead(stableId: string) {
+    cancelPageAuthoring();
     setSelectedStableId(stableId);
     navigatePage("asset-read");
   }
@@ -4121,7 +4223,7 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
                   <div className="reader-document">
                     {currentHumanBody ? (
                       <div className="reader-document-body">
-                        {renderMarkdownDocument(currentHumanBody, assetDetail.asset.title)}
+                        {renderSafeMarkdownDocument(currentHumanBody, assetDetail.asset.title)}
                       </div>
                     ) : (
                       <div className="reader-empty-state">
@@ -4367,7 +4469,19 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
                 : currentPage === "asset-read"
                   ? "Read the selected page with review state, access, versions, and source details."
                   : "Manage pages, policies, guides, templates, checklists, and other knowledge content."}
-              actions={<Button type="button" onClick={() => void refresh()}><ArrowsClockwise aria-hidden="true" />Refresh</Button>}
+              actions={(
+                <>
+                  {currentPage === "library" && canWriteAssets ? (
+                    <Button type="button" variant="primary" onClick={startCreatePage} disabled={authoringMode !== null || isSavingPage}>New page</Button>
+                  ) : null}
+                  {currentPage === "asset-read" && assetDetail && canWriteAssets ? (
+                    <Button type="button" onClick={startEditPage} disabled={authoringMode !== null || isSavingPage}>Edit page</Button>
+                  ) : null}
+                  <Button type="button" onClick={() => void refresh()} disabled={isSavingPage}>
+                    <ArrowsClockwise aria-hidden="true" />Refresh
+                  </Button>
+                </>
+              )}
             />
             {currentPage === "library" ? (
               <div className="grid four">
@@ -4493,18 +4607,203 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
               ) : null}
 
               <SectionCard
-                title={assetDetail?.asset.title ?? "Asset detail"}
-                description="Page details"
+                title={authoringMode === "create"
+                  ? "Create page"
+                  : authoringMode === "edit"
+                    ? `Edit ${assetDetail?.asset.title ?? "page"}`
+                    : assetDetail?.asset.title ?? "Asset detail"}
+                description={authoringMode
+                  ? "Save a Markdown page as a governed draft. Review and publish it when it is ready."
+                  : "Page details"}
                 variant="tool"
                 className="min-w-0"
-                actions={assetDetail ? (
+                actions={!authoringMode && assetDetail ? (
                   <Badge variant={isPublicReaderEligible(assetDetail.asset) ? "success" : "neutral"}>
                     {isPublicReaderEligible(assetDetail.asset) ? "public reader eligible" : "authenticated access"}
                   </Badge>
                 ) : null}
                 contentClassName="grid gap-4"
               >
-                {assetDetail ? (
+                {authoringMode ? (
+                  <form className="grid gap-5" onSubmit={(event) => void saveAuthoredPage(event)} noValidate>
+                    {authoringSubmitError ? (
+                      <Alert variant="destructive" role="alert">
+                        <AlertTitle>Page not saved</AlertTitle>
+                        <AlertDescription>{authoringSubmitError}</AlertDescription>
+                      </Alert>
+                    ) : null}
+                    {authoringMode === "edit" ? (
+                      <Alert variant="warning">
+                        <AlertTitle>Saving returns this page to draft</AlertTitle>
+                        <AlertDescription>
+                          The new version will leave reader navigation and search until it is reviewed and published again.
+                        </AlertDescription>
+                      </Alert>
+                    ) : null}
+                    <div className="grid gap-4 md:grid-cols-2">
+                      <FormField
+                        label="Stable ID"
+                        htmlFor="authoring-stable-id"
+                        required
+                        errorText={authoringErrors.stableId}
+                        helpText={authoringMode === "edit"
+                          ? "Stable IDs cannot change after creation."
+                          : "Use a durable ID such as guide.release-checklist."}
+                      >
+                        <Input
+                          id="authoring-stable-id"
+                          value={authoringForm.stableId}
+                          onChange={(event) => updateAuthoringField("stableId", event.target.value)}
+                          disabled={authoringMode === "edit"}
+                          aria-invalid={Boolean(authoringErrors.stableId)}
+                          autoComplete="off"
+                        />
+                      </FormField>
+                      <FormField label="Title" htmlFor="authoring-title" required errorText={authoringErrors.title}>
+                        <Input
+                          id="authoring-title"
+                          value={authoringForm.title}
+                          onChange={(event) => updateAuthoringField("title", event.target.value)}
+                          aria-invalid={Boolean(authoringErrors.title)}
+                        />
+                      </FormField>
+                      <FormField label="Summary" htmlFor="authoring-summary" className="md:col-span-2">
+                        <Textarea
+                          id="authoring-summary"
+                          value={authoringForm.summary}
+                          onChange={(event) => updateAuthoringField("summary", event.target.value)}
+                          rows={2}
+                        />
+                      </FormField>
+                      <FormField
+                        label="Parent page"
+                        htmlFor="authoring-parent"
+                        errorText={authoringErrors.parentStableId}
+                        helpText="Optional. This controls where the page appears in reader navigation."
+                      >
+                        <NativeSelect
+                          id="authoring-parent"
+                          value={authoringForm.parentStableId}
+                          onChange={(event) => updateAuthoringField("parentStableId", event.target.value)}
+                          aria-invalid={Boolean(authoringErrors.parentStableId)}
+                        >
+                          <option value="">Top level</option>
+                          {authoringForm.parentStableId && !assets.some((asset) => asset.stableId === authoringForm.parentStableId) ? (
+                            <option value={authoringForm.parentStableId}>{authoringForm.parentStableId} · current parent</option>
+                          ) : null}
+                          {assets
+                            .filter((asset) => asset.stableId !== authoringForm.stableId)
+                            .sort((left, right) => left.title.localeCompare(right.title))
+                            .map((asset) => (
+                              <option key={asset.id} value={asset.stableId}>{asset.title} · {asset.stableId}</option>
+                            ))}
+                        </NativeSelect>
+                      </FormField>
+                      <FormField
+                        label="Owner ID"
+                        htmlFor="authoring-owner"
+                        required
+                        errorText={authoringErrors.ownerId}
+                        helpText={authoringMode === "edit" ? "Ownership changes are not supported by the current version API." : undefined}
+                      >
+                        <Input
+                          id="authoring-owner"
+                          value={authoringForm.ownerId}
+                          onChange={(event) => updateAuthoringField("ownerId", event.target.value)}
+                          disabled={authoringMode === "edit"}
+                          aria-invalid={Boolean(authoringErrors.ownerId)}
+                        />
+                      </FormField>
+                      <FormField label="Review date" htmlFor="authoring-review-date" required errorText={authoringErrors.reviewDueAt}>
+                        <Input
+                          id="authoring-review-date"
+                          type="date"
+                          value={authoringForm.reviewDueAt}
+                          onChange={(event) => updateAuthoringField("reviewDueAt", event.target.value)}
+                          aria-invalid={Boolean(authoringErrors.reviewDueAt)}
+                        />
+                      </FormField>
+                      <FormField label="Sensitivity" htmlFor="authoring-sensitivity" required>
+                        <Select
+                          value={authoringForm.sensitivity}
+                          onValueChange={(value) => updateAuthoringField("sensitivity", value)}
+                        >
+                          <SelectTrigger id="authoring-sensitivity"><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            {sensitivityFilterValues.map((sensitivity) => (
+                              <SelectItem key={sensitivity} value={sensitivity}>{sensitivity}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </FormField>
+                      <FormField
+                        label="Access / audience"
+                        htmlFor="authoring-audience"
+                        required
+                        errorText={authoringErrors.audience}
+                        helpText="Comma-separated audience labels. Document grants still control restricted access."
+                      >
+                        <Input
+                          id="authoring-audience"
+                          value={authoringForm.audience}
+                          onChange={(event) => updateAuthoringField("audience", event.target.value)}
+                          aria-invalid={Boolean(authoringErrors.audience)}
+                        />
+                      </FormField>
+                      {authoringMode === "edit" ? (
+                        <FormField
+                          label="Change note"
+                          htmlFor="authoring-change-note"
+                          required
+                          errorText={authoringErrors.changeNote}
+                          helpText="This note is stored with the new version."
+                        >
+                          <Input
+                            id="authoring-change-note"
+                            value={authoringForm.changeNote}
+                            onChange={(event) => updateAuthoringField("changeNote", event.target.value)}
+                            aria-invalid={Boolean(authoringErrors.changeNote)}
+                          />
+                        </FormField>
+                      ) : null}
+                    </div>
+                    <div className="grid items-start gap-4 xl:grid-cols-2">
+                      <FormField
+                        label="Markdown"
+                        htmlFor="authoring-body"
+                        required
+                        errorText={authoringErrors.body}
+                        helpText="Use headings, paragraphs, and ordered or unordered lists."
+                      >
+                        <Textarea
+                          id="authoring-body"
+                          value={authoringForm.body}
+                          onChange={(event) => updateAuthoringField("body", event.target.value)}
+                          rows={18}
+                          className="font-mono text-sm leading-6"
+                          aria-invalid={Boolean(authoringErrors.body)}
+                        />
+                      </FormField>
+                      <SectionCard title="Preview" description="Reader-style preview of the current draft." variant="compact">
+                        {authoringForm.body.trim() ? (
+                          <article className="reader-document">
+                            <div className="reader-document-body">
+                              {renderSafeMarkdownDocument(authoringForm.body, authoringForm.title || "Untitled page")}
+                            </div>
+                          </article>
+                        ) : (
+                          <EmptyState title="Nothing to preview" description="Add Markdown content to see the page preview." />
+                        )}
+                      </SectionCard>
+                    </div>
+                    <div className="flex flex-wrap justify-end gap-2 border-t border-border pt-4">
+                      <Button type="button" onClick={cancelPageAuthoring} disabled={isSavingPage}>Cancel</Button>
+                      <Button type="submit" variant="primary" disabled={isSavingPage}>
+                        {isSavingPage ? "Saving…" : authoringMode === "create" ? "Create draft" : "Save draft version"}
+                      </Button>
+                    </div>
+                  </form>
+                ) : assetDetail ? (
                   <>
                     <TrustStateSummary
                       state={isAssetGovernanceDue(assetDetail.asset) ? "needs-review" : isPublicReaderEligible(assetDetail.asset) ? "trusted" : "restricted"}

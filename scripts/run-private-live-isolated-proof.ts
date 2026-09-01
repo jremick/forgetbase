@@ -148,6 +148,7 @@ try {
       UAT_BASE_URL: webUrl,
       UAT_MODE: "release",
       UAT_EXPECT_ROLE: "admin",
+      UAT_TEST_AUTHORING: "true",
       UAT_TENANT_ID: tenantId,
       UAT_EMAIL: adminEmail,
       UAT_PASSWORD: password,

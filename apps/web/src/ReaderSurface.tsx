@@ -16,6 +16,7 @@ import { NativeSelect } from "./components/ui/native-select.js";
 import type { AppRequest } from "./lib/app-api.js";
 import type { AppRoute } from "./lib/app-routing.js";
 import { formatList, stateBadgeVariant } from "./lib/asset-ui.js";
+import { groupReaderSearchResults } from "./lib/reader-search-results.js";
 import {
   buildReaderNavTree,
   extractReaderSectionHeadings,
@@ -115,8 +116,8 @@ export function ReaderSurface({ principal, route, request, onLogout, onNavigate,
   const normalizedSearchQuery = normalizeReaderQuery(libraryQuery);
   const searchHasFreshResponse = Boolean(normalizedSearchQuery && searchResponse && normalizeReaderQuery(searchResponse.query) === normalizedSearchQuery);
   const publishedAssetIds = useMemo(() => new Set(publishedAssets.map((asset) => asset.id)), [publishedAssets]);
-  const searchResults = useMemo(
-    () => (searchResponse?.results ?? []).filter((result) => publishedAssetIds.has(result.asset.id)),
+  const searchPageResults = useMemo(
+    () => groupReaderSearchResults((searchResponse?.results ?? []).filter((result) => publishedAssetIds.has(result.asset.id))),
     [publishedAssetIds, searchResponse]
   );
   const displayIdentity = principal.displayName || principal.email || "Guest";
@@ -290,7 +291,7 @@ export function ReaderSurface({ principal, route, request, onLogout, onNavigate,
       {accountSettings ? <section className="account-settings-page" aria-labelledby="account-settings-title"><header className="account-settings-header"><p className="eyebrow">Account</p><h1 id="account-settings-title">Settings</h1><p>Review the signed-in identity, role, groups, and access scopes used for this session.</p></header><dl className="account-settings-grid"><div><dt>Name</dt><dd>{displayIdentity}</dd></div><div><dt>Email</dt><dd>{principal.email ?? "not available"}</dd></div><div><dt>Role</dt><dd>{principal.role}</dd></div><div><dt>Principal</dt><dd>{principal.principalType}</dd></div><div><dt>Groups</dt><dd>{formatList(principal.groupIds)}</dd></div><div><dt>Scopes</dt><dd>{formatList(principal.scopes)}</dd></div></dl><div className="account-settings-actions">{canUseAdministration ? <Button type="button" onClick={() => onNavigate("admin/content")}>Admin</Button> : null}<Button type="button" variant="ghost" onClick={() => void onLogout()}>Sign out</Button></div></section> : <>
         {error ? <Alert variant="destructive" className="reader-alert"><AlertTitle>Request failed</AlertTitle><AlertDescription>{error}</AlertDescription></Alert> : null}
         {filterActive ? <section className="reader-search-results" id="reader-search-results" aria-label="Search results"><div className="reader-search-results-header"><div><p className="eyebrow">Search results</p><h2>Results for “{libraryQuery.trim()}”</h2></div><Button type="button" size="sm" variant="ghost" onClick={() => { setLibraryQuery(""); setSearchQuery(""); setSearchResponse(null); }}>Clear</Button></div>
-          {searchHasFreshResponse ? searchResults.length ? <div className="reader-search-list">{searchResults.slice(0, 5).map((result) => <article className="reader-search-result" key={`${result.asset.stableId}:${result.chunkId}`}><div><p className="reader-search-meta">{formatAssetTypeLabel(result.asset.type)} · {formatReaderAccess(result.asset)}</p><h3>{result.asset.title}</h3><p>{formatReaderSnippet(result.citation.snippet || result.content, 180)}</p></div><Button type="button" size="sm" onClick={() => { selectPage(result.asset.stableId); scrollReaderRegionIntoView("reader-article"); }}>Open page</Button></article>)}</div> : <div className="reader-empty-state"><h3>No readable results</h3><p>No pages you can read matched this search.</p></div> : <div className="reader-search-prompt"><p>Press Enter to search page content and sources.</p></div>}
+          {searchHasFreshResponse ? searchPageResults.length ? <div className="reader-search-list">{searchPageResults.slice(0, 5).map(({ result, matchCount }) => <article className="reader-search-result" data-stable-id={result.asset.stableId} key={result.asset.stableId}><div><p className="reader-search-meta">{formatAssetTypeLabel(result.asset.type)} · {formatReaderAccess(result.asset)}{matchCount > 1 ? ` · ${matchCount} matches` : ""}</p><h3>{result.asset.title}</h3><p>{formatReaderSnippet(result.citation.snippet || result.content, 180)}</p></div><Button type="button" size="sm" onClick={() => { selectPage(result.asset.stableId); scrollReaderRegionIntoView("reader-article"); }}>Open page</Button></article>)}</div> : <div className="reader-empty-state"><h3>No readable results</h3><p>No pages you can read matched this search.</p></div> : <div className="reader-search-prompt"><p>Press Enter to search page content and sources.</p></div>}
         </section> : null}
         <section className="reader-mobile-page-picker" aria-label="Choose a page"><div><p className="eyebrow">Pages</p><p>{filteredAssets.length} page{filteredAssets.length === 1 ? "" : "s"} available</p></div><NativeSelect aria-label="Choose a page" value={selectedAsset?.stableId ?? ""} onChange={(event) => { selectPage(event.target.value); scrollReaderRegionIntoView("reader-article"); }}>{filteredAssets.map((asset) => <option key={asset.id} value={asset.stableId}>{asset.title}</option>)}</NativeSelect></section>
         <section className="reader-layout reader-layout--content" aria-label="Published library"><article className="reader-article" id="reader-article">
