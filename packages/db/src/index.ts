@@ -37,6 +37,7 @@ import {
 } from "@forgetbase/schema";
 
 export * from "./auth.js";
+export * from "./attachments.js";
 export * from "./auth-provider-config.js";
 export * from "./action-execution.js";
 export * from "./embeddings.js";

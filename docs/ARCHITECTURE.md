@@ -57,7 +57,7 @@ Initial system of record for users, tenants, registry objects, versions, permiss
 
 ### Object Storage
 
-S3-compatible adapter for attachments, generated exports, large logs, and import artifacts.
+The attachment contract separates tenant-scoped metadata in Postgres from opaque blob keys in a storage adapter. The current self-hosted development/runtime adapter stores bounded files in a dedicated local volume. A later S3-compatible adapter can implement the same `put/get/delete` boundary without changing attachment authorization or public metadata. Generated exports, large logs, and import artifacts remain future object-storage consumers.
 
 ## Data Model Direction
 

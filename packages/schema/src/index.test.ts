@@ -10,10 +10,85 @@ import {
   managedQueryInputSchema,
   modelProviderConfigInputSchema,
   readerNavigationFallbacks,
-  readerNavigationMetadataSchema
+  readerNavigationMetadataSchema,
+  telemetryAnalyticsSummarySchema
 } from "./index.js";
 
 describe("schema package", () => {
+  it("validates the additive lean telemetry analytics contract", () => {
+    const summary = telemetryAnalyticsSummarySchema.parse({
+      tenantId: "tenant_demo",
+      generatedAt: "2026-09-01T00:00:00.000Z",
+      window: { since: "2026-08-03T00:00:00.000Z", until: "2026-09-01T00:00:00.000Z", sampleLimit: 200 },
+      retrieval: { eventCount: 2, resultCount: 3, deniedCount: 0, averageLatencyMs: 2, redactedQueryCount: 1, bySurface: [], byQueryKind: [] },
+      audit: { eventCount: 0, successCount: 0, deniedCount: 0, errorCount: 0, byAction: [], byOutcome: [] },
+      feedback: {
+        recordCount: 0,
+        byOutcome: [],
+        averageScores: {
+          factualCitationAccuracy: null,
+          policyCompliance: null,
+          taskCompletionQuality: null,
+          consistency: null,
+          responseEffectiveness: null
+        }
+      },
+      providerGeneration: {
+        eventCount: 0,
+        completedCount: 0,
+        skippedCount: 0,
+        failedCount: 0,
+        cacheHitCount: 0,
+        totalInputTokens: 0,
+        totalOutputTokens: 0,
+        totalTokens: 0,
+        estimatedCostUsd: null,
+        averageLatencyMs: null,
+        byProvider: [],
+        byModel: [],
+        byStatus: [],
+        byCacheStatus: [],
+        byReason: []
+      },
+      searchQuality: {
+        lowResultThreshold: 2,
+        searchEventCount: 2,
+        unansweredSearchCount: 1,
+        lowResultSearchCount: 1,
+        topQueries: [{ query: "[REDACTED_EMAIL]", count: 1, resultCount: 0, uniquePageCount: 0 }],
+        mostReturnedPages: [{ stableId: "policy.public", assetId: "asset_1", count: 2 }]
+      },
+      pageViews: {
+        eventCount: 1,
+        popularPages: [{ stableId: "policy.public", assetId: "asset_1", count: 1 }]
+      },
+      contentHealth: {
+        asOf: "2026-09-01",
+        dueSoonDays: 30,
+        sampleLimit: 200,
+        sampleLimitReached: false,
+        totalCount: 1,
+        freshCount: 0,
+        dueSoonCount: 0,
+        overdueCount: 1,
+        needsReviewCount: 0,
+        byReviewState: [{ key: "overdue", count: 1 }]
+      },
+      dailyTrends: [{
+        date: "2026-09-01",
+        searchCount: 2,
+        unansweredSearchCount: 1,
+        lowResultSearchCount: 1,
+        pageViewCount: 1,
+        uniquePageCount: 1
+      }],
+      assets: { sampleCount: 1, byType: [], byLifecycleState: [], byStatus: [], bySensitivity: [] }
+    });
+
+    expect(summary.searchQuality.lowResultThreshold).toBe(2);
+    expect(summary.contentHealth.asOf).toBe("2026-09-01");
+  });
+
   it("validates a governed asset", () => {
     const asset = assetSchema.parse({
       id: "asset_01",

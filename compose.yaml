@@ -28,6 +28,18 @@ services:
         condition: service_healthy
     restart: "no"
 
+  clamav:
+    image: clamav/clamav:1.5.4-debian13-slim@sha256:be3cb41d9833ce9ffb98f3d3e1483c35c0d87060c2bda3624d75fd28bbf0b3bd
+    volumes:
+      - clamav-data:/var/lib/clamav
+    healthcheck:
+      test: ["CMD-SHELL", "printf 'PING\\n' | nc 127.0.0.1 3310 | grep -qx PONG"]
+      start_period: 180s
+      interval: 15s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
   api:
     build:
       context: .
@@ -47,11 +59,30 @@ services:
       FORGETBASE_LOGIN_THROTTLE_WINDOW_MS: ${FORGETBASE_LOGIN_THROTTLE_WINDOW_MS:-60000}
       FORGETBASE_LOGIN_THROTTLE_BLOCK_MS: ${FORGETBASE_LOGIN_THROTTLE_BLOCK_MS:-60000}
       FORGETBASE_LOGIN_THROTTLE_MAX_ENTRIES: ${FORGETBASE_LOGIN_THROTTLE_MAX_ENTRIES:-10000}
+      FORGETBASE_ATTACHMENT_STORAGE_ROOT: /var/lib/forgetbase/attachments
+      FORGETBASE_ATTACHMENT_MAX_BYTES: ${FORGETBASE_ATTACHMENT_MAX_BYTES:-10485760}
+      FORGETBASE_ATTACHMENT_TENANT_MAX_BYTES: ${FORGETBASE_ATTACHMENT_TENANT_MAX_BYTES:-1073741824}
+      FORGETBASE_ATTACHMENT_TENANT_MAX_FILES: ${FORGETBASE_ATTACHMENT_TENANT_MAX_FILES:-1000}
+      FORGETBASE_ATTACHMENT_PRINCIPAL_MAX_BYTES: ${FORGETBASE_ATTACHMENT_PRINCIPAL_MAX_BYTES:-268435456}
+      FORGETBASE_ATTACHMENT_PRINCIPAL_MAX_FILES: ${FORGETBASE_ATTACHMENT_PRINCIPAL_MAX_FILES:-250}
+      FORGETBASE_ATTACHMENT_UPLOADS_PER_MINUTE: ${FORGETBASE_ATTACHMENT_UPLOADS_PER_MINUTE:-30}
+      FORGETBASE_ATTACHMENT_MAX_CONCURRENT_UPLOADS: ${FORGETBASE_ATTACHMENT_MAX_CONCURRENT_UPLOADS:-4}
+      FORGETBASE_ATTACHMENT_SCAN_REQUIRED: "true"
+      FORGETBASE_ATTACHMENT_CLAMD_HOST: clamav
+      FORGETBASE_ATTACHMENT_CLAMD_PORT: 3310
+      FORGETBASE_ATTACHMENT_SCAN_TIMEOUT_MS: ${FORGETBASE_ATTACHMENT_SCAN_TIMEOUT_MS:-15000}
+      FORGETBASE_ATTACHMENT_RECONCILIATION_ENABLED: "true"
+      FORGETBASE_ATTACHMENT_RECONCILIATION_DRY_RUN: "true"
+      FORGETBASE_ATTACHMENT_RECONCILIATION_INTERVAL_MS: ${FORGETBASE_ATTACHMENT_RECONCILIATION_INTERVAL_MS:-3600000}
     ports:
       - "${FORGETBASE_API_PORT:-127.0.0.1:3000}:3000"
+    volumes:
+      - attachment-data:/var/lib/forgetbase/attachments
     depends_on:
       migrate:
         condition: service_completed_successfully
+      clamav:
+        condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "wget --quiet --output-document=- http://127.0.0.1:3000/ready >/dev/null"]
       interval: 10s
@@ -108,3 +139,5 @@ services:
 
 volumes:
   postgres-data:
+  attachment-data:
+  clamav-data:

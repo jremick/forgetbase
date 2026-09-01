@@ -5,7 +5,7 @@ This runbook covers the pragmatic SMB self-hosting path for one Docker Compose d
 ## Scope
 
 - Postgres is the system of record.
-- API, worker, and web are deployed from the local repo or a checked-out release tag.
+- API, worker, and web are deployed from the local repo or a checked-out release tag; the digest-pinned ClamAV image provides internal-only attachment scanning.
 - Secrets are supplied through the deployment environment or mounted secret files, not committed files.
 - Hosted multi-tenant operations, object storage, external secret managers, and OIDC login are future deployment paths.
 
@@ -46,6 +46,7 @@ FORGETBASE_PUBLIC_DEPLOYMENT=true \
 FORGETBASE_PUBLIC_ENTRYPOINT=compose-tls \
 FORGETBASE_REQUIRE_AUTHENTICATION=true \
 FORGETBASE_SESSION_COOKIE_SECURE=true \
+FORGETBASE_ATTACHMENT_SCAN_REQUIRED=true \
 FORGETBASE_CORS_ALLOWED_ORIGINS=https://cms.example.com \
 FORGETBASE_API_PORT=127.0.0.1:3000 \
 FORGETBASE_WEB_PORT=127.0.0.1:5175 \
@@ -55,14 +56,14 @@ FORGETBASE_HTTPS_PORT=443 \
 npx -y pnpm@11.7.0 security:check-deployment-defaults
 ```
 
-Start Postgres, API, worker, and web:
+Start Postgres, ClamAV, API, worker, and web:
 
 ```bash
-docker compose up -d postgres migrate api worker web
+docker compose up -d postgres migrate clamav api worker web
 docker compose ps
 ```
 
-The one-shot `migrate` service waits for healthy Postgres, runs `pnpm db:migrate`, exits successfully, and gates API/worker startup through `service_completed_successfully`. This is the normal first-run and update path; rerunning Compose skips already-applied migrations through `schema_migrations`.
+The one-shot `migrate` service waits for healthy Postgres, runs `pnpm db:migrate`, exits successfully, and gates API/worker startup through `service_completed_successfully`. The API also waits for healthy ClamAV and its `/ready` route fails closed when required scanning is unavailable. ClamD has no host port mapping. This is the normal first-run and update path; rerunning Compose skips already-applied migrations through `schema_migrations`.
 
 For the recommended browser-cookie deployment shape, add the same-origin proxy overlay:
 

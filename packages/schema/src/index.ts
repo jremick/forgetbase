@@ -150,6 +150,111 @@ export const assetRecordSchema = assetSchema.extend({
   updatedAt: z.string().min(1)
 });
 
+const attachmentFilenameSchema = z.string()
+  .min(1)
+  .max(255)
+  .refine((value) => !/[\\/\u0000-\u001f\u007f]/.test(value), "Filename must not contain paths or control characters");
+const attachmentMediaTypeSchema = z.string()
+  .min(1)
+  .max(255)
+  .regex(
+    /^[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*\/[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*$/,
+    "Expected a MIME type without parameters"
+  );
+const attachmentStorageKeySchema = z.string()
+  .regex(/^[0-9a-f]{2}\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+const sha256Schema = z.string().regex(/^[0-9a-f]{64}$/);
+
+export const attachmentAllowedMediaTypes = [
+  "application/json",
+  "application/pdf",
+  "application/vnd.ms-excel",
+  "application/vnd.ms-powerpoint",
+  "application/vnd.ms-word",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+  "text/csv",
+  "text/markdown",
+  "text/plain"
+] as const;
+
+export const attachmentLifecycleStateSchema = z.enum(["active", "deleting", "deleted"]);
+
+export const attachmentUploadMetadataSchema = z.object({
+  filename: attachmentFilenameSchema,
+  mediaType: attachmentMediaTypeSchema
+});
+
+export const attachmentCreateInputSchema = attachmentUploadMetadataSchema.extend({
+  tenantId: z.string().min(1).default("tenant_demo"),
+  assetId: z.string().min(1),
+  sizeBytes: z.number().int().nonnegative(),
+  contentSha256: sha256Schema,
+  storageKey: attachmentStorageKeySchema,
+  metadata: jsonObjectSchema.default({}),
+  uploadedByUserId: z.string().min(1).optional(),
+  uploadedByServiceAccountId: z.string().min(1).optional(),
+  uploadedByApiKeyId: z.string().min(1).optional()
+});
+
+export const attachmentRecordSchema = attachmentCreateInputSchema.extend({
+  id: z.string().min(1),
+  lifecycleState: attachmentLifecycleStateSchema,
+  uploadedByUserId: z.string().min(1).nullable(),
+  uploadedByServiceAccountId: z.string().min(1).nullable(),
+  uploadedByApiKeyId: z.string().min(1).nullable(),
+  deletionRequestedByUserId: z.string().min(1).nullable(),
+  deletionRequestedByServiceAccountId: z.string().min(1).nullable(),
+  deletionRequestedByApiKeyId: z.string().min(1).nullable(),
+  deletionRequestedAt: z.string().min(1).nullable(),
+  deletedAt: z.string().min(1).nullable(),
+  createdAt: z.string().min(1),
+  updatedAt: z.string().min(1)
+});
+
+export const attachmentSchema = attachmentRecordSchema.pick({
+  id: true,
+  filename: true,
+  mediaType: true,
+  sizeBytes: true,
+  contentSha256: true,
+  lifecycleState: true,
+  metadata: true,
+  createdAt: true,
+  updatedAt: true
+});
+
+export const attachmentListResponseSchema = z.object({
+  attachments: z.array(attachmentSchema)
+});
+
+export const attachmentReconciliationInputSchema = z.object({
+  dryRun: z.boolean().default(true),
+  verifyContent: z.boolean().default(false),
+  staleDeletingAfterMinutes: z.number().int().min(1).max(10_080).default(15),
+  recordLimit: z.number().int().min(1).max(9_999).default(5_000)
+});
+
+export const attachmentReconciliationReportSchema = z.object({
+  checkedAt: z.string().min(1),
+  dryRun: z.boolean(),
+  verifyContent: z.boolean(),
+  recordCount: z.number().int().nonnegative(),
+  storageObjectCount: z.number().int().nonnegative(),
+  truncated: z.boolean(),
+  activeMissingOrUnreadableCount: z.number().int().nonnegative(),
+  activeIntegrityFailureCount: z.number().int().nonnegative(),
+  staleDeletingCount: z.number().int().nonnegative(),
+  orphanedObjectCount: z.number().int().nonnegative(),
+  unexpectedStorageEntryCount: z.number().int().nonnegative(),
+  resolvedDeletingCount: z.number().int().nonnegative(),
+  deletedOrphanCount: z.number().int().nonnegative()
+});
+
 export const agentInstructionInputSchema = z.object({
   instructionKind: z.string().min(1),
   targetAgents: z.array(z.string().min(1)).default([]),
@@ -1852,6 +1957,28 @@ export const telemetryScoreAveragesSchema = z.object({
   responseEffectiveness: z.number().nullable()
 });
 
+export const telemetryQueryCountSchema = z.object({
+  query: z.string().min(1),
+  count: z.number().int().nonnegative(),
+  resultCount: z.number().int().nonnegative(),
+  uniquePageCount: z.number().int().nonnegative()
+});
+
+export const telemetryPageCountSchema = z.object({
+  stableId: z.string().min(1),
+  assetId: z.string().min(1).nullable(),
+  count: z.number().int().nonnegative()
+});
+
+export const telemetryDailyTrendSchema = z.object({
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  searchCount: z.number().int().nonnegative(),
+  unansweredSearchCount: z.number().int().nonnegative(),
+  lowResultSearchCount: z.number().int().nonnegative(),
+  pageViewCount: z.number().int().nonnegative(),
+  uniquePageCount: z.number().int().nonnegative()
+});
+
 export const telemetryAnalyticsSummarySchema = z.object({
   tenantId: z.string().min(1),
   generatedAt: z.string().min(1),
@@ -1899,6 +2026,31 @@ export const telemetryAnalyticsSummarySchema = z.object({
     byCacheStatus: z.array(telemetryCountSchema),
     byReason: z.array(telemetryCountSchema)
   }),
+  searchQuality: z.object({
+    lowResultThreshold: z.literal(2),
+    searchEventCount: z.number().int().nonnegative(),
+    unansweredSearchCount: z.number().int().nonnegative(),
+    lowResultSearchCount: z.number().int().nonnegative(),
+    topQueries: z.array(telemetryQueryCountSchema),
+    mostReturnedPages: z.array(telemetryPageCountSchema)
+  }),
+  pageViews: z.object({
+    eventCount: z.number().int().nonnegative(),
+    popularPages: z.array(telemetryPageCountSchema)
+  }),
+  contentHealth: z.object({
+    asOf: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    dueSoonDays: z.literal(30),
+    sampleLimit: z.number().int().positive().max(200),
+    sampleLimitReached: z.boolean(),
+    totalCount: z.number().int().nonnegative(),
+    freshCount: z.number().int().nonnegative(),
+    dueSoonCount: z.number().int().nonnegative(),
+    overdueCount: z.number().int().nonnegative(),
+    needsReviewCount: z.number().int().nonnegative(),
+    byReviewState: z.array(telemetryCountSchema)
+  }),
+  dailyTrends: z.array(telemetryDailyTrendSchema),
   assets: z.object({
     sampleCount: z.number().int().nonnegative(),
     byType: z.array(telemetryCountSchema),
@@ -2063,6 +2215,13 @@ export type AssetRecord = z.infer<typeof assetRecordSchema>;
 export type AssetUpdateInput = z.input<typeof assetUpdateInputSchema>;
 export type AssetVersion = z.infer<typeof assetVersionSchema>;
 export type AssetVersionAssetSnapshot = z.infer<typeof assetVersionAssetSnapshotSchema>;
+export type Attachment = z.infer<typeof attachmentSchema>;
+export type AttachmentCreateInput = z.input<typeof attachmentCreateInputSchema>;
+export type AttachmentLifecycleState = z.infer<typeof attachmentLifecycleStateSchema>;
+export type AttachmentReconciliationInput = z.input<typeof attachmentReconciliationInputSchema>;
+export type AttachmentReconciliationReport = z.infer<typeof attachmentReconciliationReportSchema>;
+export type AttachmentRecord = z.infer<typeof attachmentRecordSchema>;
+export type AttachmentUploadMetadata = z.input<typeof attachmentUploadMetadataSchema>;
 export type AssetVersionSnapshot = z.infer<typeof assetVersionSnapshotSchema>;
 export type AssetVersionSnapshotInput = z.input<typeof assetVersionSnapshotInputSchema>;
 export type AssetType = z.infer<typeof assetTypeSchema>;

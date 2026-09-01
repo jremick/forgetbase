@@ -43,6 +43,8 @@ export interface IndexAllAssetsResult {
 
 export interface RetrievalEventListOptions {
   tenantId?: string;
+  since?: string;
+  until?: string;
   limit?: number;
 }
 
@@ -322,10 +324,12 @@ export class PostgresRetrievalRepository implements RetrievalRepository {
         SELECT *
         FROM retrieval_events
         WHERE tenant_id = $1
+          AND ($2::timestamptz IS NULL OR created_at >= $2::timestamptz)
+          AND ($3::timestamptz IS NULL OR created_at <= $3::timestamptz)
         ORDER BY created_at DESC
-        LIMIT $2
+        LIMIT $4
       `,
-      [tenantId, limit]
+      [tenantId, options.since ?? null, options.until ?? null, limit]
     );
 
     return result.rows.map(mapRetrievalEventRow);
@@ -463,7 +467,13 @@ export class InMemoryRetrievalRepository implements RetrievalRepository {
   async listRetrievalEvents(options: RetrievalEventListOptions = {}): Promise<RetrievalEvent[]> {
     const tenantId = options.tenantId ?? "tenant_demo";
     const limit = Math.min(Math.max(options.limit ?? 50, 1), 200);
-    return this.events.filter((event) => event.tenantId === tenantId).slice(0, limit);
+    const since = options.since ? Date.parse(options.since) : undefined;
+    const until = options.until ? Date.parse(options.until) : undefined;
+
+    return this.events
+      .filter((event) => event.tenantId === tenantId)
+      .filter((event) => isCreatedAtInWindow(event.createdAt, since, until))
+      .slice(0, limit);
   }
 
   async purgeRetrievalEvents(options: RetrievalEventPurgeOptions): Promise<number> {
@@ -482,6 +492,14 @@ export class InMemoryRetrievalRepository implements RetrievalRepository {
 
     return matches.length;
   }
+}
+
+function isCreatedAtInWindow(createdAt: string, since?: number, until?: number): boolean {
+  const value = Date.parse(createdAt);
+
+  return !Number.isNaN(value) &&
+    (since === undefined || value >= since) &&
+    (until === undefined || value <= until);
 }
 
 function buildChunks(detail: AssetDetail): BuiltChunk[] {

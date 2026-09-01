@@ -124,6 +124,7 @@ try {
     { ...composeEnv, FORGETBASE_API_KEY: adminKey },
     5 * 60 * 1_000
   );
+  await verifySyntheticAttachment(apiUrl, adminKey);
 
   run(
     "run Compose smoke and restricted-leakage proof",
@@ -132,13 +133,36 @@ try {
     { ...composeEnv, FORGETBASE_API_URL: apiUrl },
     10 * 60 * 1_000
   );
+  const backupSetPath = resolve(outputDir, "backup-set");
   run(
-    "run backup and restore proof",
+    "stop writers for coordinated backup",
+    "docker",
+    ["compose", ...composeFiles, "stop", "api", "worker"],
+    composeEnv,
+    5 * 60 * 1_000
+  );
+  run(
+    "create coordinated database and attachment backup set",
     "npx",
-    ["-y", "pnpm@11.7.0", "db:verify-backup-restore"],
+    ["-y", "pnpm@11.7.0", "backup:set", "--", backupSetPath],
     composeEnv,
     10 * 60 * 1_000
   );
+  run(
+    "verify coordinated backup set",
+    "npx",
+    ["-y", "pnpm@11.7.0", "backup:set:verify", "--", backupSetPath],
+    composeEnv,
+    10 * 60 * 1_000
+  );
+  run(
+    "restart writers after backup verification",
+    "docker",
+    ["compose", ...composeFiles, "up", "-d", "api", "worker", "web", "proxy"],
+    composeEnv,
+    10 * 60 * 1_000
+  );
+  await waitForUrl(`${apiUrl}/ready`, 120_000);
   run(
     "run authenticated admin browser UAT",
     "npx",
@@ -152,6 +176,7 @@ try {
       UAT_TENANT_ID: tenantId,
       UAT_EMAIL: adminEmail,
       UAT_PASSWORD: password,
+      UAT_EXPECT_ATTACHMENT_FILENAME: "private-live-proof.txt",
       UAT_OUTPUT_DIR: `${outputDir}/uat-admin`
     },
     10 * 60 * 1_000
@@ -168,6 +193,7 @@ try {
       UAT_TENANT_ID: tenantId,
       UAT_EMAIL: readerEmail,
       UAT_PASSWORD: password,
+      UAT_EXPECT_ATTACHMENT_FILENAME: "private-live-proof.txt",
       UAT_OUTPUT_DIR: `${outputDir}/uat-reader`
     },
     10 * 60 * 1_000
@@ -385,6 +411,89 @@ async function requestJson(
     throw new Error(`${input.method} ${url} did not return a JSON object`);
   }
   return parsed as Record<string, unknown>;
+}
+
+async function verifySyntheticAttachment(apiUrl: string, apiKey: string): Promise<void> {
+  const startedAt = Date.now();
+  const stableId = "playbook.public-demo-no-export";
+  const content = Buffer.from("ForgetBase synthetic attachment proof\n", "utf8");
+  const uploadUrl = new URL(`/assets/${encodeURIComponent(stableId)}/attachments`, apiUrl);
+
+  const upload = await fetch(uploadUrl, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${apiKey}`,
+      "content-type": "application/octet-stream",
+      "x-forgetbase-attachment-filename-encoded": encodeURIComponent("private-live-proof.txt"),
+      "x-forgetbase-attachment-media-type": "text/plain"
+    },
+    body: content
+  });
+  const uploadText = await upload.text();
+  if (!upload.ok) {
+    throw new Error(`Synthetic attachment upload failed with HTTP ${upload.status}: ${sanitize(uploadText)}`);
+  }
+  const metadata = JSON.parse(uploadText) as Record<string, unknown>;
+  const attachmentId = readRequiredString(metadata, "id", "synthetic attachment ID");
+  if ("storageKey" in metadata || "tenantId" in metadata || "uploadedByApiKeyId" in metadata) {
+    throw new Error("Synthetic attachment upload exposed private persistence metadata");
+  }
+
+  const list = await requestJson(`${apiUrl}/assets/${encodeURIComponent(stableId)}/attachments`, {
+    method: "GET",
+    apiKey
+  });
+  const listed = Array.isArray(list.attachments) ? list.attachments : [];
+  if (!listed.some((attachment) => attachment && typeof attachment === "object" && (attachment as Record<string, unknown>).id === attachmentId)) {
+    throw new Error("Synthetic attachment was missing from the authorized list response");
+  }
+
+  const download = await fetch(`${apiUrl}/assets/${encodeURIComponent(stableId)}/attachments/${encodeURIComponent(attachmentId)}/download`, {
+    headers: { authorization: `Bearer ${apiKey}` }
+  });
+  if (!download.ok) {
+    throw new Error(`Synthetic attachment download failed with HTTP ${download.status}`);
+  }
+  const downloaded = Buffer.from(await download.arrayBuffer());
+  if (!downloaded.equals(content)) {
+    throw new Error("Synthetic attachment download bytes did not match the upload");
+  }
+  if (
+    download.headers.get("x-content-type-options") !== "nosniff" ||
+    download.headers.get("cache-control") !== "private, no-store" ||
+    !download.headers.get("content-disposition")?.startsWith("attachment;")
+  ) {
+    throw new Error("Synthetic attachment download security headers were incomplete");
+  }
+
+  const eicar = Buffer.from(
+    "X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*",
+    "utf8"
+  );
+  const infectedUpload = await fetch(uploadUrl, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${apiKey}`,
+      "content-type": "application/octet-stream",
+      "x-forgetbase-attachment-filename-encoded": encodeURIComponent("scanner-proof.txt"),
+      "x-forgetbase-attachment-media-type": "text/plain"
+    },
+    body: eicar
+  });
+  const infectedText = await infectedUpload.text();
+  if (infectedUpload.status !== 422 || !infectedText.includes("malware")) {
+    throw new Error(`ClamAV did not reject the synthetic EICAR attachment: HTTP ${infectedUpload.status}`);
+  }
+
+  steps.push({
+    name: "verify clean attachment lifecycle and EICAR rejection",
+    command: "HTTP attachment lifecycle proof",
+    ok: true,
+    status: 0,
+    durationMs: Date.now() - startedAt,
+    stdout: `verified ${content.byteLength} synthetic bytes`,
+    stderr: ""
+  });
 }
 
 function readRequiredString(value: Record<string, unknown>, key: string, description: string): string {

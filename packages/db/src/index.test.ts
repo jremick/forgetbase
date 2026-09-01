@@ -1,7 +1,8 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { Pool } from "pg";
 import type { AssetCreateInput, ManagedQueryEvalReport } from "@forgetbase/schema";
 import {
@@ -22,6 +23,7 @@ import {
   InMemorySecretReferencePolicyRepository,
   InMemoryTelemetryRetentionPolicyRepository,
   PostgresAgentActionExecutionRepository,
+  PostgresAttachmentRepository,
   PostgresAuthRepository,
   PostgresAuthProviderConfigRepository,
   PostgresManagedQueryEvalRunRepository,
@@ -1165,6 +1167,66 @@ describe("InMemoryTelemetryRetentionPolicyRepository", () => {
 });
 
 describe("InMemoryRetrievalRepository", () => {
+  it("applies telemetry date windows before list limits across repositories", async () => {
+    const retrievalRepository = new InMemoryRetrievalRepository();
+    const authRepository = new InMemoryAuthRepository();
+    const feedbackRepository = new InMemoryManagedQueryFeedbackRepository();
+
+    try {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-07-15T12:00:00.000Z"));
+      await retrievalRepository.recordRetrievalEvent({
+        query: "in-window",
+        surface: "api",
+        resultCount: 1,
+        latencyMs: 1
+      });
+      await authRepository.recordAuditEvent({
+        action: "asset.read",
+        targetType: "asset",
+        outcome: "success"
+      });
+      await feedbackRepository.recordFeedback({
+        telemetryEventId: "retrieval_in_window",
+        query: "in-window",
+        outcome: "accepted"
+      });
+
+      vi.setSystemTime(new Date("2026-08-15T12:00:00.000Z"));
+      await retrievalRepository.recordRetrievalEvent({
+        query: "out-of-window",
+        surface: "api",
+        resultCount: 1,
+        latencyMs: 1
+      });
+      await authRepository.recordAuditEvent({
+        action: "asset.update",
+        targetType: "asset",
+        outcome: "success"
+      });
+      await feedbackRepository.recordFeedback({
+        telemetryEventId: "retrieval_out_of_window",
+        query: "out-of-window",
+        outcome: "rejected"
+      });
+
+      const window = {
+        since: "2026-07-01T00:00:00.000Z",
+        until: "2026-07-31T23:59:59.999Z",
+        limit: 1
+      };
+
+      expect((await retrievalRepository.listRetrievalEvents(window)).map((event) => event.query))
+        .toEqual(["in-window"]);
+      expect((await authRepository.listAuditEvents(window)).map((event) => event.action))
+        .toEqual(["asset.read"]);
+      expect((await feedbackRepository.listFeedback(window)).map((feedback) => feedback.query))
+        .toEqual(["in-window"]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("indexes assets and returns citation-bearing search results", async () => {
     const registryRepository = new InMemoryRegistryRepository();
     const retrievalRepository = new InMemoryRetrievalRepository();
@@ -1830,6 +1892,84 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("PostgresRegistryRepository", ()
 
   afterAll(async () => {
     await pool.end();
+  });
+
+  it("persists tenant-scoped attachment metadata and its retryable deletion lifecycle", async () => {
+    const registryRepository = new PostgresRegistryRepository(pool);
+    const attachmentRepository = new PostgresAttachmentRepository(pool);
+    const authRepository = new PostgresAuthRepository(pool);
+    const suffix = randomUUID();
+    const tenantId = `tenant_attachment_${suffix}`;
+    const uploader = await authRepository.createUser({
+      tenantId,
+      email: `attachment-${suffix}@example.test`,
+      displayName: "Attachment Operator",
+      role: "maintainer"
+    });
+    const createdAsset = await registryRepository.createAsset({
+      ...sampleAsset,
+      tenantId,
+      stableId: `human-document.attachment-${suffix}`,
+      type: "human-document",
+      instruction: undefined,
+      humanDocument: {
+        format: "markdown",
+        body: "# Attachment persistence"
+      }
+    });
+    const blobId = randomUUID();
+    const created = await attachmentRepository.createAttachment({
+      tenantId,
+      assetId: createdAsset.asset.id,
+      filename: "restore-evidence.txt",
+      mediaType: "text/plain",
+      sizeBytes: 8,
+      contentSha256: "a".repeat(64),
+      storageKey: `${blobId.slice(0, 2)}/${blobId}`,
+      uploadedByUserId: uploader.id,
+      metadata: { fixture: true }
+    });
+
+    expect(await attachmentRepository.listAttachments({
+      tenantId,
+      assetId: createdAsset.asset.id
+    })).toEqual([created]);
+    expect(await attachmentRepository.getAttachment(created.id, { tenantId: "tenant_other" })).toBeNull();
+    expect(await attachmentRepository.getAttachmentUsage({ tenantId })).toEqual({
+      fileCount: 1,
+      totalBytes: 8
+    });
+    expect(await attachmentRepository.getAttachmentUsage({
+      tenantId,
+      uploadedByUserId: uploader.id
+    })).toEqual({ fileCount: 1, totalBytes: 8 });
+    expect((await attachmentRepository.listAttachmentsForReconciliation({ limit: 1000 }))
+      .some((attachment) => attachment.id === created.id)).toBe(true);
+
+    const deleting = await attachmentRepository.markAttachmentDeleting({
+      tenantId,
+      attachmentId: created.id
+    });
+    expect(deleting?.lifecycleState).toBe("deleting");
+    expect((await attachmentRepository.markAttachmentDeleting({
+      tenantId,
+      attachmentId: created.id
+    }))?.lifecycleState).toBe("deleting");
+    expect(await attachmentRepository.getAttachment(created.id, { tenantId })).toBeNull();
+
+    const deleted = await attachmentRepository.markAttachmentDeleted({
+      tenantId,
+      attachmentId: created.id
+    });
+    expect(deleted?.lifecycleState).toBe("deleted");
+    expect((await attachmentRepository.getAttachment(created.id, {
+      tenantId,
+      includeUnavailable: true
+    }))?.deletedAt).toBeTruthy();
+    expect(await attachmentRepository.getAttachmentUsage({ tenantId })).toEqual({
+      fileCount: 0,
+      totalBytes: 0
+    });
   });
 
   it("serializes concurrent migration runners with an advisory lock", async () => {
