@@ -16,6 +16,7 @@ type CheckResult = {
 const root = process.cwd();
 const mode = parseMode(process.env.UAT_MODE);
 const expectedRole = parseExpectedRole(process.env.UAT_EXPECT_ROLE);
+const shouldTestAuthoring = process.env.UAT_TEST_AUTHORING === "true";
 const outputDir = resolve(process.env.UAT_OUTPUT_DIR ?? join(root, "work/public-beta-uat"));
 const shouldStartServer = !process.env.UAT_BASE_URL;
 const baseUrl = process.env.UAT_BASE_URL ?? "http://127.0.0.1:4175/";
@@ -317,11 +318,49 @@ async function checkReleaseFlow(page: Page, viewportName: "desktop" | "mobile"):
   await assertNoHorizontalOverflow(page, "release: admin desktop overflow");
   await assertNoClippedText(page, "release: admin desktop clipped text");
   await screenshot(page, "admin-desktop.png", "release: admin screenshot");
+  if (shouldTestAuthoring) {
+    await checkAdminPageAuthoring(page);
+  }
   await screenshotAdminRoute(page, "admin/reviews", "Review queue", "reviews.png", "release: admin reviews screenshot");
   await screenshotAdminRoute(page, "admin/system/policies", "Telemetry retention", "policies.png", "release: admin policies screenshot");
   await screenshotAdminRoute(page, "admin/system/access", "Users", "access-management.png", "release: admin access screenshot");
   await screenshotAdminRoute(page, "admin/system/approvals", "Action execution", "approvals.png", "release: admin approvals screenshot");
   await screenshotExportRoute(page);
+}
+
+async function checkAdminPageAuthoring(page: Page): Promise<void> {
+  const stableId = "guide.browser-authoring-uat";
+  const createdTitle = "Browser Authoring UAT Guide";
+  const updatedTitle = "Browser Authoring UAT Guide Updated";
+
+  await page.getByRole("button", { name: "New page", exact: true }).click();
+  await expectVisibleText(page, "Create page", "release: authoring create form opened");
+  await page.locator("#authoring-stable-id").fill(stableId);
+  await page.locator("#authoring-title").fill(createdTitle);
+  await page.locator("#authoring-summary").fill("Synthetic page created by the isolated browser authoring proof.");
+  await page.locator("#authoring-body").fill("# Browser authoring proof\n\nThis synthetic page verifies the browser create, edit, review, and publish flow.");
+  await page.getByRole("button", { name: "Create draft", exact: true }).click();
+  await expectVisibleText(page, `Created ${stableId} as a draft`, "release: authoring draft created");
+  await expectVisibleText(page, createdTitle, "release: authored page selected");
+
+  await page.getByRole("button", { name: "Edit page", exact: true }).click();
+  await expectVisibleText(page, `Edit ${createdTitle}`, "release: authoring edit form opened");
+  await page.locator("#authoring-title").fill(updatedTitle);
+  await page.locator("#authoring-change-note").fill("Verify browser version authoring");
+  await page.locator("#authoring-body").fill("# Browser authoring proof\n\nThis updated synthetic page verifies that browser edits create a governed version before publishing.");
+  await page.getByRole("button", { name: "Save draft version", exact: true }).click();
+  await expectVisibleText(page, `Saved ${stableId} as a new draft version`, "release: authoring draft version saved");
+  await expectVisibleText(page, updatedTitle, "release: authored page title updated");
+  await expectVisibleText(page, "v2", "release: authored page version advanced");
+
+  await page.getByRole("button", { name: "Review", exact: true }).click();
+  await expectVisibleText(page, `Reviewed ${stableId}`, "release: authored page reviewed");
+  await page.getByRole("button", { name: "Publish", exact: true }).click();
+  await page.getByRole("button", { name: "Publish page", exact: true }).click();
+  await expectVisibleText(page, `Published ${stableId}`, "release: authored page published");
+  await assertNoHorizontalOverflow(page, "release: authoring desktop overflow");
+  await assertNoClippedText(page, "release: authoring desktop clipped text");
+  await screenshot(page, "authoring-flow.png", "release: authoring flow screenshot");
 }
 
 async function applyTenantOverride(page: Page): Promise<void> {
@@ -745,15 +784,25 @@ async function assertReaderSearchResults(page: Page, name: string): Promise<void
       return paragraphs.some((paragraph) => (paragraph.textContent ?? "").replace(/\s+/g, " ").trim().length > 40);
     }).length;
 
+    const stableIds = rows.map((row) => row.dataset.stableId ?? "");
+
     return {
       rows: rows.length,
       openButtons,
-      readableSnippets
+      readableSnippets,
+      stableIdsPresent: stableIds.filter(Boolean).length,
+      uniqueStableIds: new Set(stableIds).size
     };
   });
 
-  if (result.rows < 1 || result.openButtons < 1 || result.readableSnippets < 1) {
-    throw new Error(`${name}: expected at least one result with a snippet and Open page action; got ${JSON.stringify(result)}`);
+  if (
+    result.rows < 1 ||
+    result.openButtons < 1 ||
+    result.readableSnippets < 1 ||
+    result.stableIdsPresent !== result.rows ||
+    result.uniqueStableIds !== result.rows
+  ) {
+    throw new Error(`${name}: expected one result per page with a snippet and Open page action; got ${JSON.stringify(result)}`);
   }
 
   checks.push({ name, status: "pass", detail: result.rows });

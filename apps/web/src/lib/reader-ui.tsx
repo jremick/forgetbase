@@ -115,9 +115,25 @@ function renderInlineMarkdown(value: string): ReactNode[] {
     const strong = /^\*\*([^*]+)\*\*$/.exec(token);
     if (strong) return <strong key={index}>{strong[1]}</strong>;
     const link = /^\[([^\]]+)\]\(([^)]+)\)$/.exec(token);
-    if (link) return <a key={index} href={link[2]} target="_blank" rel="noreferrer">{link[1]}</a>;
+    if (link) {
+      const href = sanitizeMarkdownHref(link[2] ?? "");
+      return href
+        ? <a key={index} href={href} target="_blank" rel="noreferrer">{link[1]}</a>
+        : <span key={index}>{link[1]}</span>;
+    }
     return token;
   });
+}
+
+export function sanitizeMarkdownHref(value: string): string | null {
+  const trimmed = value.trim();
+  if (!trimmed || /^[\\/]{2}/.test(trimmed)) return null;
+
+  const normalizedForScheme = trimmed.replace(/[\u0000-\u0020\u007f\u00a0]+/g, "");
+  const scheme = /^([a-z][a-z0-9+.-]*):/i.exec(normalizedForScheme)?.[1]?.toLowerCase();
+
+  if (scheme && !new Set(["http", "https", "mailto"]).has(scheme)) return null;
+  return trimmed;
 }
 
 export function renderMarkdownDocument(body: string, title: string): ReactNode[] {

@@ -6,12 +6,18 @@ All notable changes will be recorded here once public beta releases begin.
 
 ### Added
 
+- Browser-based Markdown page creation and editing with hierarchy, ownership, review dates, audience, sensitivity, validation, and the existing draft-review-publish lifecycle.
+- Reader search results grouped by page so the strongest matching excerpt is shown once, with the total matching-chunk count retained as context.
 - Knowledge-base registry with stable page IDs, publishing state, separate AI instructions, and human-readable documents.
 - Local users, service accounts, groups, scoped API keys, password login, OIDC configuration, and permission-filtered reads.
 - REST/OpenAPI, CLI, MCP, worker, and operational web UI surfaces.
 - Postgres-backed retrieval chunks, permission-aware search, citations, managed query, provider-routed generation, deterministic fallback, and eval scaffolding.
 - Synthetic demo corpus, validation gates, restricted leakage verifier, backup/restore verifier, and Docker Compose runbooks.
 - Redaction, retention, cache, audit, provider, action execution, and session hardening foundations.
+
+### Changed
+
+- Removed an invalid root Docker Dependabot update target while retaining updates for the actual Railway Dockerfiles under `infra/docker`.
 
 ### Release Boundary
 
