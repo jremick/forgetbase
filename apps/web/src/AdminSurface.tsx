@@ -13,6 +13,7 @@ import type {
   AssetDetail,
   AssetRecord,
   Attachment,
+  AttachmentReconciliationReport,
   AssetReviewQueueResponse,
   AssetVersionSnapshot,
   AuditEvent,
@@ -90,7 +91,11 @@ import {
 } from "./components/app/index.js";
 import { TrustStateSummary } from "./components/domain/index.js";
 import { AnalyticsDashboard, type AnalyticsWindowDays } from "./components/domain/analytics-dashboard.js";
-import { attachmentUploadHeaders, AttachmentsPanel } from "./components/domain/attachments-panel.js";
+import {
+  attachmentUploadErrorMessage,
+  attachmentUploadHeaders,
+  AttachmentsPanel
+} from "./components/domain/attachments-panel.js";
 import {
   Command,
   CommandDialog,
@@ -800,6 +805,7 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
   const [attachmentsLoading, setAttachmentsLoading] = useState(false);
   const [attachmentUploading, setAttachmentUploading] = useState(false);
   const [attachmentsError, setAttachmentsError] = useState("");
+  const [attachmentReconciliation, setAttachmentReconciliation] = useState<AttachmentReconciliationReport | null>(null);
   const [pendingAttachmentDelete, setPendingAttachmentDelete] = useState<Attachment | null>(null);
   const [assetContentView, setAssetContentView] = useState<AssetContentView>("human");
   const [policySettingsView, setPolicySettingsView] = useState<PolicySettingsView>("retention");
@@ -1482,6 +1488,18 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
     }
   }
 
+  async function loadAttachmentReconciliation(verifyContent = false) {
+    try {
+      const report = await request<AttachmentReconciliationReport>("/admin/attachments/reconcile", {
+        method: "POST",
+        body: JSON.stringify({ dryRun: true, verifyContent })
+      });
+      setAttachmentReconciliation(report);
+    } catch (reconciliationError) {
+      setError(reconciliationError instanceof Error ? reconciliationError.message : String(reconciliationError));
+    }
+  }
+
   async function checkAuthenticatedSession(authKey = apiKey): Promise<AuthPrincipal | null> {
     try {
       const principal = await request<AuthPrincipal>("/auth/me", {}, authKey);
@@ -1780,7 +1798,7 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
       await loadAttachments(stableId, loadEpoch);
       setMessage(`Uploaded ${file.name}`);
     } catch (uploadError) {
-      setAttachmentsError(uploadError instanceof Error ? uploadError.message : String(uploadError));
+      setAttachmentsError(attachmentUploadErrorMessage(uploadError));
     } finally {
       setAttachmentUploading(false);
     }
@@ -3555,6 +3573,7 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
       case "health":
         return [
           () => refreshHealth(),
+          () => loadAttachmentReconciliation(false),
           loadTelemetrySummary,
           loadProviderHealth,
           loadActionExecutionPolicy,
@@ -5652,6 +5671,16 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
                   { term: "Action policy", description: actionExecutionPolicy ? actionExecutionPolicy.enabled ? "enabled" : "disabled" : "not loaded" },
                   { term: "Pending actions", description: agentActions.length },
                   {
+                    term: "File drift",
+                    description: attachmentReconciliation
+                      ? attachmentReconciliation.activeMissingOrUnreadableCount +
+                        attachmentReconciliation.activeIntegrityFailureCount +
+                        attachmentReconciliation.staleDeletingCount +
+                        attachmentReconciliation.orphanedObjectCount +
+                        attachmentReconciliation.unexpectedStorageEntryCount
+                      : "pending"
+                  },
+                  {
                     term: "Eval latest",
                     description: evalSummary ? evalSummary.latestPassRate === null ? "n/a" : formatPercent(evalSummary.latestPassRate) : "not loaded"
                   },
@@ -5661,6 +5690,12 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
                   }
                 ]}
               />
+              <Button
+                type="button"
+                onClick={() => void loadAttachmentReconciliation(true)}
+              >
+                Verify files
+              </Button>
               {providerHealth.length ? (
                 <div className="grid gap-2">
                   {providerHealth.map((provider) => (

@@ -9,7 +9,7 @@ This document records what is not actually complete after the early functional c
 - Permission-filtered retrieval through lexical, deterministic hash-vector, OpenAI-compatible provider-vector, and hybrid strategies.
 - REST/OpenAPI, SDK, CLI, MCP, worker, operational web UI, AI export, and OKF v0.1 export projection, with a documented early contract for the first-run and fetch/search/export lane plus focused CLI and MCP contract-test automation.
 - Telemetry, redaction, retention, cache controls, provider-routed managed-query foundation, deterministic evals, and disabled-by-default action-request governance.
-- Docker Compose runbooks, backup/restore verification helpers, restricted leakage verifier, Railway deployment template, and public-prototype hardening.
+- Docker Compose runbooks, coordinated database/blob backup-set verification, attachment inspection and malware scanning, dry-run reconciliation, restricted leakage verification, Railway deployment template, and public-prototype hardening.
 - Reader/admin runtime splitting with an authorization guard before the lazy admin import, compiler-enforced unused-code checks, and a measured raw/gzip bundle budget.
 - A push/manual GitHub Actions workflow for the isolated private-live proof, including synthetic seed data, smoke/leakage checks, backup/restore, authenticated reader/admin UAT, evidence upload, and cleanup.
 
@@ -29,7 +29,7 @@ This document records what is not actually complete after the early functional c
 - External side-effecting action adapters, connector credential governance, sandboxing, rollback semantics, and richer multi-step approvals.
 - SCIM, MFA enforcement/reporting, remembered-device trust policy, richer Entra lifecycle mapping, and hosted identity hardening.
 - Advanced analytics warehouse, long-range dashboards, alerting/escalation preferences, and ACME/managed ingress automation. The bounded 7/30/90-day operational dashboard is implemented without a warehouse.
-- S3-compatible object storage for attachments, plus storage adapters for generated export artifacts, large logs, and hosted backup orchestration. The local attachment adapter and coordinated self-hosted backup/restore path are implemented.
+- S3-compatible object storage for attachments, transactional quota reservations for multi-instance API deployments, content disarm/reconstruction, plus storage adapters for generated export artifacts, large logs, and hosted backup orchestration. The bounded local attachment adapter, single-instance quota controls, required Compose malware scanner, reconciliation path, and coordinated self-hosted backup-set verification are implemented.
 
 ## Deferred: Repo-Local Hardening Still Worth Doing
 

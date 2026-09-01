@@ -19,6 +19,23 @@ export interface AttachmentGetOptions {
   includeUnavailable?: boolean;
 }
 
+export interface AttachmentUsageOptions {
+  tenantId?: string;
+  uploadedByUserId?: string;
+  uploadedByServiceAccountId?: string;
+  uploadedByApiKeyId?: string;
+}
+
+export interface AttachmentUsage {
+  fileCount: number;
+  totalBytes: number;
+}
+
+export interface AttachmentReconciliationListOptions {
+  tenantId?: string;
+  limit?: number;
+}
+
 export interface AttachmentDeletionRequestInput {
   tenantId?: string;
   attachmentId: string;
@@ -36,6 +53,8 @@ export interface AttachmentRepository {
   createAttachment(input: AttachmentCreateInput): Promise<AttachmentRecord>;
   getAttachment(attachmentId: string, options?: AttachmentGetOptions): Promise<AttachmentRecord | null>;
   listAttachments(options: AttachmentListOptions): Promise<AttachmentRecord[]>;
+  getAttachmentUsage(options?: AttachmentUsageOptions): Promise<AttachmentUsage>;
+  listAttachmentsForReconciliation(options?: AttachmentReconciliationListOptions): Promise<AttachmentRecord[]>;
   markAttachmentDeleting(input: AttachmentDeletionRequestInput): Promise<AttachmentRecord | null>;
   markAttachmentDeleted(input: AttachmentDeletionCompleteInput): Promise<AttachmentRecord | null>;
 }
@@ -150,6 +169,55 @@ export class PostgresAttachmentRepository implements AttachmentRepository {
       ]
     );
 
+    return result.rows.map(mapAttachmentRow);
+  }
+
+  async getAttachmentUsage(options: AttachmentUsageOptions = {}): Promise<AttachmentUsage> {
+    const tenantId = options.tenantId ?? "tenant_demo";
+    const hasPrincipalFilter = Boolean(
+      options.uploadedByUserId || options.uploadedByServiceAccountId || options.uploadedByApiKeyId
+    );
+    const result = await this.pool.query<{ file_count: string | number; total_bytes: string | number }>(
+      `
+        SELECT count(*) AS file_count, COALESCE(sum(size_bytes), 0) AS total_bytes
+        FROM attachments
+        WHERE tenant_id = $1
+          AND lifecycle_state <> 'deleted'
+          AND (
+            $2::boolean = false
+            OR uploaded_by_user_id = $3
+            OR uploaded_by_service_account_id = $4
+            OR uploaded_by_api_key_id = $5
+          )
+      `,
+      [
+        tenantId,
+        hasPrincipalFilter,
+        options.uploadedByUserId ?? null,
+        options.uploadedByServiceAccountId ?? null,
+        options.uploadedByApiKeyId ?? null
+      ]
+    );
+    return {
+      fileCount: Number(result.rows[0]?.file_count ?? 0),
+      totalBytes: Number(result.rows[0]?.total_bytes ?? 0)
+    };
+  }
+
+  async listAttachmentsForReconciliation(
+    options: AttachmentReconciliationListOptions = {}
+  ): Promise<AttachmentRecord[]> {
+    const limit = boundedReconciliationLimit(options.limit);
+    const result = await this.pool.query<AttachmentRow>(
+      `
+        SELECT *
+        FROM attachments
+        WHERE ($1::text IS NULL OR tenant_id = $1)
+        ORDER BY created_at ASC, id ASC
+        LIMIT $2
+      `,
+      [options.tenantId ?? null, limit]
+    );
     return result.rows.map(mapAttachmentRow);
   }
 
@@ -299,6 +367,35 @@ export class InMemoryAttachmentRepository implements AttachmentRepository {
       .slice(0, limit);
   }
 
+  async getAttachmentUsage(options: AttachmentUsageOptions = {}): Promise<AttachmentUsage> {
+    const tenantId = options.tenantId ?? "tenant_demo";
+    const hasPrincipalFilter = Boolean(
+      options.uploadedByUserId || options.uploadedByServiceAccountId || options.uploadedByApiKeyId
+    );
+    const matches = Array.from(this.attachments.values()).filter((attachment) =>
+      attachment.tenantId === tenantId &&
+      attachment.lifecycleState !== "deleted" &&
+      (!hasPrincipalFilter ||
+        (Boolean(options.uploadedByUserId) && attachment.uploadedByUserId === options.uploadedByUserId) ||
+        (Boolean(options.uploadedByServiceAccountId) &&
+          attachment.uploadedByServiceAccountId === options.uploadedByServiceAccountId) ||
+        (Boolean(options.uploadedByApiKeyId) && attachment.uploadedByApiKeyId === options.uploadedByApiKeyId))
+    );
+    return {
+      fileCount: matches.length,
+      totalBytes: matches.reduce((total, attachment) => total + attachment.sizeBytes, 0)
+    };
+  }
+
+  async listAttachmentsForReconciliation(
+    options: AttachmentReconciliationListOptions = {}
+  ): Promise<AttachmentRecord[]> {
+    return Array.from(this.attachments.values())
+      .filter((attachment) => !options.tenantId || attachment.tenantId === options.tenantId)
+      .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id))
+      .slice(0, boundedReconciliationLimit(options.limit));
+  }
+
   async markAttachmentDeleting(input: AttachmentDeletionRequestInput): Promise<AttachmentRecord | null> {
     const tenantId = input.tenantId ?? "tenant_demo";
     const attachment = this.attachments.get(requireIdentifier(input.attachmentId, "attachmentId"));
@@ -379,6 +476,10 @@ function requireIdentifier(value: string, name: string): string {
 
 function boundedLimit(limit = 100): number {
   return Math.min(Math.max(Math.trunc(limit), 1), 500);
+}
+
+function boundedReconciliationLimit(limit = 5_000): number {
+  return Math.min(Math.max(Math.trunc(limit), 1), 10_000);
 }
 
 function isUniqueViolation(error: unknown): boolean {

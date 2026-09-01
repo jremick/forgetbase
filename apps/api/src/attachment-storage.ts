@@ -2,8 +2,10 @@ import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import {
   lstat,
+  link,
   mkdir,
   open,
+  readdir,
   realpath,
   unlink,
   type FileHandle
@@ -16,6 +18,12 @@ export interface AttachmentStorageAdapter {
   put(storageKey: string, content: Uint8Array): Promise<void>;
   get(storageKey: string): Promise<Buffer>;
   delete(storageKey: string): Promise<boolean>;
+  inventory?(): Promise<AttachmentStorageInventory>;
+}
+
+export interface AttachmentStorageInventory {
+  storageKeys: string[];
+  unexpectedEntryCount: number;
 }
 
 export function generateAttachmentStorageKey(): string {
@@ -86,8 +94,10 @@ export class LocalFilesystemAttachmentStorage implements AttachmentStorageAdapte
     await mkdir(dirname(target), { recursive: true, mode: 0o700 });
     await this.assertSafeDirectory(dirname(target), root);
 
+    const temporaryTarget = resolve(dirname(target), `.${randomUUID()}.tmp`);
+
     const handle = await open(
-      target,
+      temporaryTarget,
       constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | noFollowFlag(),
       0o600
     ).catch((error: unknown) => {
@@ -102,11 +112,19 @@ export class LocalFilesystemAttachmentStorage implements AttachmentStorageAdapte
       await handle.sync();
     } catch (error) {
       await handle.close().catch(() => undefined);
-      await unlink(target).catch(() => undefined);
+      await unlink(temporaryTarget).catch(() => undefined);
       throw error;
     }
 
     await handle.close();
+    try {
+      await link(temporaryTarget, target);
+    } catch (error) {
+      await unlink(temporaryTarget).catch(() => undefined);
+      throw error;
+    }
+    await unlink(temporaryTarget);
+    await syncDirectory(dirname(target));
   }
 
   async get(storageKey: string): Promise<Buffer> {
@@ -155,6 +173,33 @@ export class LocalFilesystemAttachmentStorage implements AttachmentStorageAdapte
 
     await unlink(target);
     return true;
+  }
+
+  async inventory(): Promise<AttachmentStorageInventory> {
+    const root = await this.ensureSafeRoot();
+    const storageKeys: string[] = [];
+    let unexpectedEntryCount = 0;
+    const rootEntries = await readdir(root, { withFileTypes: true });
+
+    for (const rootEntry of rootEntries) {
+      if (!rootEntry.isDirectory() || rootEntry.isSymbolicLink() || !/^[0-9a-f]{2}$/.test(rootEntry.name)) {
+        unexpectedEntryCount += 1;
+        continue;
+      }
+      const shardPath = resolve(root, rootEntry.name);
+      await this.assertSafeDirectory(shardPath, root);
+      for (const entry of await readdir(shardPath, { withFileTypes: true })) {
+        const storageKey = `${rootEntry.name}/${entry.name}`;
+        if (!entry.isFile() || entry.isSymbolicLink() || !ATTACHMENT_STORAGE_KEY_PATTERN.test(storageKey)) {
+          unexpectedEntryCount += 1;
+          continue;
+        }
+        storageKeys.push(storageKey);
+      }
+    }
+
+    storageKeys.sort();
+    return { storageKeys, unexpectedEntryCount };
   }
 
   private async ensureSafeRoot(): Promise<string> {
@@ -229,4 +274,13 @@ function errorCode(error: unknown): string | undefined {
   return error && typeof error === "object" && "code" in error
     ? String(error.code)
     : undefined;
+}
+
+async function syncDirectory(directory: string): Promise<void> {
+  const handle = await open(directory, constants.O_RDONLY);
+  try {
+    await handle.sync().catch(() => undefined);
+  } finally {
+    await handle.close();
+  }
 }

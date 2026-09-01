@@ -24,6 +24,7 @@ import {
   InMemoryTelemetryRetentionPolicyRepository
 } from "@forgetbase/db";
 import { LocalFilesystemAttachmentStorage, type AttachmentStorageAdapter } from "./attachment-storage.js";
+import type { AttachmentMalwareScanner } from "./attachment-security.js";
 import { buildServer, type ModelRuntimeRequest } from "./server.js";
 
 let server = buildServer({ logger: false });
@@ -483,7 +484,7 @@ describe("API asset registry routes", () => {
       });
       expect(createdAsset.statusCode).toBe(201);
 
-      const content = Buffer.from("bounded attachment content");
+      const content = Buffer.from("%PDF-1.7\nbounded attachment content");
       const queryMetadataRejected = await server.inject({
         method: "POST",
         url: "/assets/page.attachment-lifecycle/attachments?filename=logged-name.pdf&mediaType=application%2Fpdf",
@@ -504,7 +505,7 @@ describe("API asset registry routes", () => {
         payload: content
       });
 
-      expect(uploaded.statusCode).toBe(201);
+      expect(uploaded.statusCode, uploaded.body).toBe(201);
       expect(uploaded.json()).toMatchObject({
         filename: "guide – résumé.pdf",
         mediaType: "application/pdf",
@@ -644,6 +645,70 @@ describe("API asset registry routes", () => {
     }
   });
 
+  it("enforces tenant and principal attachment quotas before writing another blob", async () => {
+    const attachmentRoot = await mkdtemp(join(tmpdir(), "forgetbase-attachments-quota-"));
+    const attachmentRepository = new InMemoryAttachmentRepository();
+    server = buildServer({
+      logger: false,
+      registryRepository: new InMemoryRegistryRepository(),
+      authRepository: new InMemoryAuthRepository(),
+      retrievalRepository: new InMemoryRetrievalRepository(),
+      attachmentRepository,
+      attachmentStorage: new LocalFilesystemAttachmentStorage(attachmentRoot, 1_024),
+      attachmentTenantMaxFiles: 1,
+      attachmentPrincipalMaxFiles: 1,
+      attachmentMaxBytes: 1_024
+    });
+
+    try {
+      const bootstrap = await server.inject({
+        method: "POST",
+        url: "/auth/bootstrap",
+        payload: { email: "attachment-quota@example.test", displayName: "Attachment Quota" }
+      });
+      const admin = bootstrap.json();
+      const authorization = { authorization: `Bearer ${admin.secret}` };
+      await server.inject({
+        method: "POST",
+        url: "/assets",
+        headers: authorization,
+        payload: {
+          stableId: "page.attachment-quota",
+          type: "human-document",
+          ownerId: admin.user.id,
+          title: "Attachment quota",
+          lifecycleState: "active",
+          sensitivity: "internal",
+          audience: ["readers"],
+          status: "approved",
+          reviewDueAt: "2027-01-31",
+          allowedSurfaces: ["api", "web"],
+          humanDocument: { format: "markdown", body: "# Attachment quota" }
+        }
+      });
+      const upload = (filename: string) => server.inject({
+        method: "POST",
+        url: "/assets/page.attachment-quota/attachments",
+        headers: {
+          ...authorization,
+          "content-type": "application/octet-stream",
+          "x-forgetbase-attachment-filename-encoded": encodeURIComponent(filename),
+          "x-forgetbase-attachment-media-type": "text/plain"
+        },
+        payload: Buffer.from("quota")
+      });
+
+      expect((await upload("first.txt")).statusCode).toBe(201);
+      const denied = await upload("second.txt");
+      expect(denied.statusCode, denied.body).toBe(409);
+      expect(denied.json()).toEqual({ error: "attachment_quota_exceeded", scope: "tenant" });
+      await expect(attachmentRepository.getAttachmentUsage({ tenantId: "tenant_demo" }))
+        .resolves.toEqual({ fileCount: 1, totalBytes: 5 });
+    } finally {
+      await rm(attachmentRoot, { recursive: true, force: true });
+    }
+  });
+
   it("fails closed and audits attachment storage write failures", async () => {
     const authRepository = new InMemoryAuthRepository();
     const failingStorage: AttachmentStorageAdapter = {
@@ -698,7 +763,7 @@ describe("API asset registry routes", () => {
       payload: Buffer.from("failure")
     });
 
-    expect(response.statusCode).toBe(503);
+    expect(response.statusCode, response.body).toBe(503);
     expect(response.json().error).toBe("attachment_storage_unavailable");
     expect(await authRepository.listAuditEvents({ limit: 10 })).toEqual(expect.arrayContaining([
       expect.objectContaining({
@@ -769,7 +834,7 @@ describe("API asset registry routes", () => {
       payload: Buffer.from("metadata")
     });
 
-    expect(response.statusCode).toBe(503);
+    expect(response.statusCode, response.body).toBe(503);
     expect(response.json().error).toBe("attachment_metadata_unavailable");
     expect(deletedStorageKey).toMatch(/^[0-9a-f]{2}\/[0-9a-f-]{36}$/);
     expect(await authRepository.listAuditEvents({ limit: 10 })).toEqual(expect.arrayContaining([
@@ -779,6 +844,128 @@ describe("API asset registry routes", () => {
         reason: "metadata_write_failed",
         metadata: expect.objectContaining({ orphanCleanupSucceeded: true })
       })
+    ]));
+  });
+
+  it("keeps committed metadata and bytes intact when the success audit write fails", async () => {
+    const attachmentRoot = await mkdtemp(join(tmpdir(), "forgetbase-attachments-audit-failure-"));
+    const authRepository = new InMemoryAuthRepository();
+    const attachmentRepository = new InMemoryAttachmentRepository();
+    const storage = new LocalFilesystemAttachmentStorage(attachmentRoot, 1_024);
+    const scanner: AttachmentMalwareScanner = {
+      async scan() { return { status: "clean", scanner: "synthetic" }; }
+    };
+    server = buildServer({
+      logger: false,
+      registryRepository: new InMemoryRegistryRepository(),
+      authRepository,
+      retrievalRepository: new InMemoryRetrievalRepository(),
+      attachmentRepository,
+      attachmentStorage: storage,
+      attachmentMalwareScanner: scanner,
+      attachmentScanRequired: true,
+      attachmentMaxBytes: 1_024
+    });
+
+    try {
+      const bootstrap = await server.inject({
+        method: "POST",
+        url: "/auth/bootstrap",
+        payload: { email: "attachment-audit@example.test", displayName: "Attachment Audit" }
+      });
+      const admin = bootstrap.json();
+      const authorization = { authorization: `Bearer ${admin.secret}` };
+      await server.inject({
+        method: "POST",
+        url: "/assets",
+        headers: authorization,
+        payload: {
+          stableId: "human-document.attachment-audit-failure",
+          type: "human-document",
+          ownerId: admin.user.id,
+          title: "Attachment audit failure",
+          lifecycleState: "active",
+          sensitivity: "internal",
+          audience: ["readers"],
+          status: "approved",
+          reviewDueAt: "2027-01-31",
+          allowedSurfaces: ["api", "web"],
+          humanDocument: { format: "markdown", body: "# Attachment audit failure" }
+        }
+      });
+
+      vi.spyOn(authRepository, "recordAuditEvent").mockRejectedValueOnce(new Error("synthetic audit failure"));
+      const content = Buffer.from("audit-safe content");
+      const response = await server.inject({
+        method: "POST",
+        url: "/assets/human-document.attachment-audit-failure/attachments",
+        headers: {
+          ...authorization,
+          "content-type": "application/octet-stream",
+          "x-forgetbase-attachment-filename-encoded": encodeURIComponent("audit.txt"),
+          "x-forgetbase-attachment-media-type": "text/plain"
+        },
+        payload: content
+      });
+
+      expect(response.statusCode, response.body).toBe(201);
+      const stored = await attachmentRepository.getAttachment(response.json().id, {
+        tenantId: admin.user.tenantId,
+        includeUnavailable: true
+      });
+      expect(stored).not.toBeNull();
+      await expect(storage.get(stored!.storageKey)).resolves.toEqual(content);
+    } finally {
+      await rm(attachmentRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("lets admins dry-run attachment reconciliation and records bounded audit evidence", async () => {
+    const authRepository = new InMemoryAuthRepository();
+    const files = new Map([["ab/11111111-2222-4333-8444-555555555555", Buffer.from("orphan")]]);
+    const storage: AttachmentStorageAdapter = {
+      async put(key, content) { files.set(key, Buffer.from(content)); },
+      async get(key) {
+        const content = files.get(key);
+        if (!content) throw new Error("missing");
+        return content;
+      },
+      async delete(key) { return files.delete(key); },
+      async inventory() { return { storageKeys: Array.from(files.keys()), unexpectedEntryCount: 0 }; }
+    };
+    server = buildServer({
+      logger: false,
+      registryRepository: new InMemoryRegistryRepository(),
+      authRepository,
+      retrievalRepository: new InMemoryRetrievalRepository(),
+      attachmentRepository: new InMemoryAttachmentRepository(),
+      attachmentStorage: storage
+    });
+    const bootstrap = await server.inject({
+      method: "POST",
+      url: "/auth/bootstrap",
+      payload: { email: "attachment-reconcile@example.test", displayName: "Attachment Reconcile" }
+    });
+    const authorization = { authorization: `Bearer ${bootstrap.json().secret}` };
+
+    const response = await server.inject({
+      method: "POST",
+      url: "/admin/attachments/reconcile",
+      headers: authorization,
+      payload: { dryRun: true, verifyContent: true }
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json()).toMatchObject({
+      dryRun: true,
+      orphanedObjectCount: 0,
+      storageObjectCount: 0,
+      unexpectedStorageEntryCount: 0,
+      deletedOrphanCount: 0
+    });
+    expect(files.size).toBe(1);
+    expect(await authRepository.listAuditEvents({ limit: 10 })).toEqual(expect.arrayContaining([
+      expect.objectContaining({ action: "attachment.reconcile", outcome: "success" })
     ]));
   });
 

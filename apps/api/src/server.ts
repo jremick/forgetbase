@@ -39,6 +39,8 @@ import {
   assetValidationInputSchema,
   assetValidationReportSchema,
   attachmentListResponseSchema,
+  attachmentReconciliationInputSchema,
+  attachmentReconciliationReportSchema,
   attachmentSchema,
   attachmentUploadMetadataSchema,
   auditEventSchema,
@@ -215,7 +217,18 @@ import {
   generateAttachmentStorageKey,
   type AttachmentStorageAdapter
 } from "./attachment-storage.js";
+import {
+  AttachmentConcurrencyGate,
+  AttachmentContentRejectedError,
+  AttachmentFixedWindowRateLimiter,
+  AttachmentScannerUnavailableError,
+  ClamDAttachmentMalwareScanner,
+  DisabledAttachmentMalwareScanner,
+  inspectAttachmentContent,
+  type AttachmentMalwareScanner
+} from "./attachment-security.js";
 import { buildOpenApiDocument } from "./openapi.js";
+import { reconcileAttachments } from "./attachment-reconciliation.js";
 
 const OIDC_STATE_TTL_MS = 10 * 60 * 1000;
 const OIDC_JWT_ALGORITHMS = ["RS256", "RS384", "RS512", "PS256", "PS384", "PS512", "ES256", "ES384", "ES512"];
@@ -243,6 +256,12 @@ const DEFAULT_LOGIN_THROTTLE_MAX_ENTRIES = 10_000;
 const DEFAULT_CORS_ALLOWED_ORIGINS = ["http://127.0.0.1:5175", "http://localhost:5175"];
 const DEFAULT_ATTACHMENT_MAX_BYTES = 10 * 1024 * 1024;
 const MAX_ATTACHMENT_MAX_BYTES = 100 * 1024 * 1024;
+const DEFAULT_ATTACHMENT_TENANT_MAX_BYTES = 1024 * 1024 * 1024;
+const DEFAULT_ATTACHMENT_TENANT_MAX_FILES = 1_000;
+const DEFAULT_ATTACHMENT_PRINCIPAL_MAX_BYTES = 256 * 1024 * 1024;
+const DEFAULT_ATTACHMENT_PRINCIPAL_MAX_FILES = 250;
+const DEFAULT_ATTACHMENT_UPLOADS_PER_MINUTE = 30;
+const DEFAULT_ATTACHMENT_MAX_CONCURRENT_UPLOADS = 4;
 const ALLOWED_ATTACHMENT_MEDIA_TYPES = new Set<string>(attachmentAllowedMediaTypes);
 
 export interface BuildServerOptions extends FastifyServerOptions {
@@ -251,6 +270,17 @@ export interface BuildServerOptions extends FastifyServerOptions {
   attachmentStorage?: AttachmentStorageAdapter;
   attachmentStorageRoot?: string;
   attachmentMaxBytes?: number;
+  attachmentMalwareScanner?: AttachmentMalwareScanner;
+  attachmentScanRequired?: boolean;
+  attachmentTenantMaxBytes?: number;
+  attachmentTenantMaxFiles?: number;
+  attachmentPrincipalMaxBytes?: number;
+  attachmentPrincipalMaxFiles?: number;
+  attachmentUploadsPerMinute?: number;
+  attachmentMaxConcurrentUploads?: number;
+  attachmentReconciliationEnabled?: boolean;
+  attachmentReconciliationDryRun?: boolean;
+  attachmentReconciliationIntervalMs?: number;
   authRepository?: AuthRepository;
   retrievalRepository?: RetrievalRepository;
   retrievalRankingPolicyRepository?: RetrievalRankingPolicyRepository;
@@ -412,6 +442,80 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
         attachmentMaxBytes
       )
     : undefined);
+  const attachmentScanRequired = options.attachmentScanRequired ??
+    readOptionalEnvBoolean(process.env.FORGETBASE_ATTACHMENT_SCAN_REQUIRED) ??
+    false;
+  const attachmentScannerHost = process.env.FORGETBASE_ATTACHMENT_CLAMD_HOST?.trim();
+  const attachmentScannerConfigured = Boolean(options.attachmentMalwareScanner || attachmentScannerHost);
+  const attachmentMalwareScanner: AttachmentMalwareScanner = options.attachmentMalwareScanner ?? (attachmentScannerHost
+    ? new ClamDAttachmentMalwareScanner(
+        attachmentScannerHost,
+        readPositiveIntegerOption(
+          undefined,
+          process.env.FORGETBASE_ATTACHMENT_CLAMD_PORT,
+          3310,
+          "FORGETBASE_ATTACHMENT_CLAMD_PORT"
+        ),
+        readPositiveIntegerOption(
+          undefined,
+          process.env.FORGETBASE_ATTACHMENT_SCAN_TIMEOUT_MS,
+          15_000,
+          "FORGETBASE_ATTACHMENT_SCAN_TIMEOUT_MS"
+        )
+      )
+    : new DisabledAttachmentMalwareScanner());
+  const attachmentTenantMaxBytes = readPositiveIntegerOption(
+    options.attachmentTenantMaxBytes,
+    process.env.FORGETBASE_ATTACHMENT_TENANT_MAX_BYTES,
+    DEFAULT_ATTACHMENT_TENANT_MAX_BYTES,
+    "FORGETBASE_ATTACHMENT_TENANT_MAX_BYTES"
+  );
+  const attachmentTenantMaxFiles = readPositiveIntegerOption(
+    options.attachmentTenantMaxFiles,
+    process.env.FORGETBASE_ATTACHMENT_TENANT_MAX_FILES,
+    DEFAULT_ATTACHMENT_TENANT_MAX_FILES,
+    "FORGETBASE_ATTACHMENT_TENANT_MAX_FILES"
+  );
+  const attachmentPrincipalMaxBytes = readPositiveIntegerOption(
+    options.attachmentPrincipalMaxBytes,
+    process.env.FORGETBASE_ATTACHMENT_PRINCIPAL_MAX_BYTES,
+    DEFAULT_ATTACHMENT_PRINCIPAL_MAX_BYTES,
+    "FORGETBASE_ATTACHMENT_PRINCIPAL_MAX_BYTES"
+  );
+  const attachmentPrincipalMaxFiles = readPositiveIntegerOption(
+    options.attachmentPrincipalMaxFiles,
+    process.env.FORGETBASE_ATTACHMENT_PRINCIPAL_MAX_FILES,
+    DEFAULT_ATTACHMENT_PRINCIPAL_MAX_FILES,
+    "FORGETBASE_ATTACHMENT_PRINCIPAL_MAX_FILES"
+  );
+  const attachmentUploadRateLimiter = new AttachmentFixedWindowRateLimiter(
+    readPositiveIntegerOption(
+      options.attachmentUploadsPerMinute,
+      process.env.FORGETBASE_ATTACHMENT_UPLOADS_PER_MINUTE,
+      DEFAULT_ATTACHMENT_UPLOADS_PER_MINUTE,
+      "FORGETBASE_ATTACHMENT_UPLOADS_PER_MINUTE"
+    ),
+    60_000
+  );
+  const attachmentUploadGate = new AttachmentConcurrencyGate(readPositiveIntegerOption(
+    options.attachmentMaxConcurrentUploads,
+    process.env.FORGETBASE_ATTACHMENT_MAX_CONCURRENT_UPLOADS,
+    DEFAULT_ATTACHMENT_MAX_CONCURRENT_UPLOADS,
+    "FORGETBASE_ATTACHMENT_MAX_CONCURRENT_UPLOADS"
+  ));
+  const attachmentReconciliationEnabled = options.attachmentReconciliationEnabled ??
+    readOptionalEnvBoolean(process.env.FORGETBASE_ATTACHMENT_RECONCILIATION_ENABLED) ??
+    false;
+  const attachmentReconciliationDryRun = options.attachmentReconciliationDryRun ??
+    readOptionalEnvBoolean(process.env.FORGETBASE_ATTACHMENT_RECONCILIATION_DRY_RUN) ??
+    true;
+  const attachmentReconciliationIntervalMs = readPositiveIntegerOption(
+    options.attachmentReconciliationIntervalMs,
+    process.env.FORGETBASE_ATTACHMENT_RECONCILIATION_INTERVAL_MS,
+    60 * 60 * 1_000,
+    "FORGETBASE_ATTACHMENT_RECONCILIATION_INTERVAL_MS"
+  );
+  let attachmentReconciliationTimer: NodeJS.Timeout | undefined;
   const oidcRuntime = options.oidcRuntime ?? defaultOidcRuntime;
   const oidcStateSecret = options.oidcStateSecret ?? process.env.FORGETBASE_OIDC_STATE_SECRET;
   const modelRuntime = options.modelRuntime ?? defaultModelRuntime;
@@ -455,6 +559,25 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
     { parseAs: "buffer", bodyLimit: attachmentMaxBytes },
     (_request, body, done) => done(null, body)
   );
+
+  server.addHook("onRequest", async (request, reply) => {
+    if (request.method !== "POST" || !/^\/assets\/[^/?]+\/attachments(?:\?|$)/.test(request.url)) return;
+
+    const rate = attachmentUploadRateLimiter.consume(request.ip);
+    if (!rate.allowed) {
+      reply.header("retry-after", String(rate.retryAfterSeconds));
+      return reply.code(429).send({ error: "attachment_upload_rate_limited" });
+    }
+
+    const release = attachmentUploadGate.tryAcquire();
+    if (!release) {
+      reply.header("retry-after", "1");
+      return reply.code(429).send({ error: "attachment_upload_concurrency_limited" });
+    }
+    request.raw.once("aborted", release);
+    reply.raw.once("close", release);
+    reply.raw.once("finish", release);
+  });
 
   server.addHook("onRequest", async (request, reply) => {
     const origin = request.headers.origin;
@@ -524,6 +647,33 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
     });
   }
 
+  if (attachmentReconciliationEnabled) {
+    server.addHook("onReady", async () => {
+      if (!attachmentRepository || !attachmentStorage?.inventory) {
+        server.log.error("Attachment reconciliation is enabled but inventory support is unavailable");
+        return;
+      }
+      const run = async () => {
+        try {
+          const report = await reconcileAttachments({
+            repository: attachmentRepository,
+            storage: attachmentStorage,
+            dryRun: attachmentReconciliationDryRun
+          });
+          server.log.info({ attachmentReconciliation: report }, "Attachment reconciliation completed");
+        } catch (error) {
+          server.log.error(error, "Scheduled attachment reconciliation failed");
+        }
+      };
+      await run();
+      attachmentReconciliationTimer = setInterval(() => void run(), attachmentReconciliationIntervalMs);
+      attachmentReconciliationTimer.unref();
+    });
+    server.addHook("onClose", async () => {
+      if (attachmentReconciliationTimer) clearInterval(attachmentReconciliationTimer);
+    });
+  }
+
   server.get("/health", async () => {
     return healthResponseSchema.parse(createHealthResponse("forgetbase-api"));
   });
@@ -547,6 +697,12 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
         if (!readiness.rows[0]?.ready) {
           throw new Error("Database migrations are not ready");
         }
+      }
+      if (attachmentScanRequired) {
+        if (!attachmentScannerConfigured || !attachmentMalwareScanner.checkReady) {
+          throw new AttachmentScannerUnavailableError();
+        }
+        await attachmentMalwareScanner.checkReady();
       }
 
       return {
@@ -2179,6 +2335,106 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
       return reply.code(413).send({ error: "attachment_too_large", maxBytes: attachmentMaxBytes });
     }
 
+    const [tenantUsage, principalUsage] = await Promise.all([
+      attachmentRepository.getAttachmentUsage({ tenantId: detail.asset.tenantId }),
+      attachmentRepository.getAttachmentUsage({
+        tenantId: detail.asset.tenantId,
+        uploadedByUserId: principal.userId ?? undefined,
+        uploadedByServiceAccountId: principal.serviceAccountId ?? undefined,
+        uploadedByApiKeyId: principal.apiKeyId
+      })
+    ]);
+    const tenantQuotaExceeded = tenantUsage.fileCount + 1 > attachmentTenantMaxFiles ||
+      tenantUsage.totalBytes + content.byteLength > attachmentTenantMaxBytes;
+    const principalQuotaExceeded = principalUsage.fileCount + 1 > attachmentPrincipalMaxFiles ||
+      principalUsage.totalBytes + content.byteLength > attachmentPrincipalMaxBytes;
+    if (tenantQuotaExceeded || principalQuotaExceeded) {
+      const scope = tenantQuotaExceeded ? "tenant" : "principal";
+      await authRepository.recordAuditEvent({
+        tenantId: detail.asset.tenantId,
+        ...auditActor(principal),
+        action: "attachment.upload",
+        targetType: "asset",
+        targetId: detail.asset.id,
+        outcome: "denied",
+        reason: "attachment_quota_exceeded",
+        metadata: {
+          stableId: detail.asset.stableId,
+          scope,
+          sizeBytes: content.byteLength
+        }
+      }).catch((auditError: unknown) => server.log.error(auditError, "Attachment quota audit failed"));
+      return reply.code(409).send({ error: "attachment_quota_exceeded", scope });
+    }
+
+    let inspection;
+    try {
+      inspection = inspectAttachmentContent({
+        filename: metadata.data.filename,
+        mediaType: metadata.data.mediaType,
+        content
+      });
+    } catch (error) {
+      if (!(error instanceof AttachmentContentRejectedError)) throw error;
+      await authRepository.recordAuditEvent({
+        tenantId: detail.asset.tenantId,
+        ...auditActor(principal),
+        action: "attachment.upload",
+        targetType: "asset",
+        targetId: detail.asset.id,
+        outcome: "denied",
+        reason: error.reason,
+        metadata: {
+          stableId: detail.asset.stableId,
+          mediaType: metadata.data.mediaType,
+          sizeBytes: content.byteLength
+        }
+      }).catch((auditError: unknown) => server.log.error(auditError, "Attachment rejection audit failed"));
+      return reply.code(422).send({ error: "attachment_content_rejected", reason: error.reason });
+    }
+
+    let malwareScan;
+    try {
+      if (attachmentScanRequired && !attachmentScannerConfigured) {
+        throw new AttachmentScannerUnavailableError();
+      }
+      malwareScan = await attachmentMalwareScanner.scan(content);
+    } catch (error) {
+      await authRepository.recordAuditEvent({
+        tenantId: detail.asset.tenantId,
+        ...auditActor(principal),
+        action: "attachment.upload",
+        targetType: "asset",
+        targetId: detail.asset.id,
+        outcome: "error",
+        reason: "malware_scanner_unavailable",
+        metadata: {
+          stableId: detail.asset.stableId,
+          mediaType: metadata.data.mediaType,
+          sizeBytes: content.byteLength
+        }
+      }).catch((auditError: unknown) => server.log.error(auditError, "Attachment scanner failure audit failed"));
+      return reply.code(503).send({ error: "attachment_scanner_unavailable" });
+    }
+    if (malwareScan.status === "infected") {
+      await authRepository.recordAuditEvent({
+        tenantId: detail.asset.tenantId,
+        ...auditActor(principal),
+        action: "attachment.upload",
+        targetType: "asset",
+        targetId: detail.asset.id,
+        outcome: "denied",
+        reason: "malware_detected",
+        metadata: {
+          stableId: detail.asset.stableId,
+          mediaType: metadata.data.mediaType,
+          sizeBytes: content.byteLength,
+          scanner: malwareScan.scanner
+        }
+      }).catch((auditError: unknown) => server.log.error(auditError, "Attachment malware audit failed"));
+      return reply.code(422).send({ error: "attachment_malware_detected" });
+    }
+
     const storageKey = generateAttachmentStorageKey();
     const contentSha256 = createHash("sha256").update(content).digest("hex");
     try {
@@ -2202,8 +2458,9 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
       return reply.code(503).send({ error: "attachment_storage_unavailable" });
     }
 
+    let attachment;
     try {
-      const attachment = await attachmentRepository.createAttachment({
+      attachment = await attachmentRepository.createAttachment({
         tenantId: detail.asset.tenantId,
         assetId: detail.asset.id,
         filename: metadata.data.filename,
@@ -2213,24 +2470,19 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
         storageKey,
         uploadedByUserId: principal.userId ?? undefined,
         uploadedByServiceAccountId: principal.serviceAccountId ?? undefined,
-        uploadedByApiKeyId: principal.apiKeyId
-      });
-
-      await authRepository.recordAuditEvent({
-        tenantId: detail.asset.tenantId,
-        ...auditActor(principal),
-        action: "attachment.upload",
-        targetType: "attachment",
-        targetId: attachment.id,
-        outcome: "success",
+        uploadedByApiKeyId: principal.apiKeyId,
         metadata: {
-          stableId: detail.asset.stableId,
-          mediaType: attachment.mediaType,
-          sizeBytes: attachment.sizeBytes,
-          contentSha256: attachment.contentSha256
+          contentInspection: {
+            status: "passed",
+            detectedMediaType: inspection.detectedMediaType,
+            extension: inspection.extension
+          },
+          malwareScan: {
+            status: malwareScan.scanner === "disabled" ? "not-required" : "clean",
+            scanner: malwareScan.scanner
+          }
         }
       });
-      return reply.code(201).send(attachmentSchema.parse(attachment));
     } catch {
       let orphanCleanupSucceeded = false;
 
@@ -2258,6 +2510,27 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
       }).catch(() => undefined);
       return reply.code(503).send({ error: "attachment_metadata_unavailable" });
     }
+
+    try {
+      await authRepository.recordAuditEvent({
+        tenantId: detail.asset.tenantId,
+        ...auditActor(principal),
+        action: "attachment.upload",
+        targetType: "attachment",
+        targetId: attachment.id,
+        outcome: "success",
+        metadata: {
+          stableId: detail.asset.stableId,
+          mediaType: attachment.mediaType,
+          sizeBytes: attachment.sizeBytes,
+          contentSha256: attachment.contentSha256,
+          scanner: malwareScan.scanner
+        }
+      });
+    } catch (error) {
+      server.log.error({ error, attachmentId: attachment.id }, "Attachment success audit failed after metadata commit");
+    }
+    return reply.code(201).send(attachmentSchema.parse(attachment));
   });
 
   server.get("/assets/:stableId/attachments/:attachmentId/download", async (request, reply) => {
@@ -2286,6 +2559,20 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
     });
     if (!attachment || attachment.assetId !== detail.asset.id) {
       return reply.code(404).send({ error: "attachment_not_found" });
+    }
+    if (attachmentScanRequired &&
+      readMetadataString((attachment.metadata.malwareScan as Record<string, unknown> | undefined)?.status) !== "clean") {
+      await authRepository.recordAuditEvent({
+        tenantId: detail.asset.tenantId,
+        ...auditActor(principal),
+        action: "attachment.download",
+        targetType: "attachment",
+        targetId: attachment.id,
+        outcome: "denied",
+        reason: "malware_scan_not_verified",
+        metadata: { stableId: detail.asset.stableId }
+      }).catch((auditError: unknown) => server.log.error(auditError, "Attachment scan-state denial audit failed"));
+      return reply.code(503).send({ error: "attachment_scan_not_verified" });
     }
 
     let content: Buffer;
@@ -2409,6 +2696,57 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
       metadata: { stableId: detail.asset.stableId, sizeBytes: deleted.sizeBytes }
     });
     return attachmentSchema.parse(deleted);
+  });
+
+  server.post("/admin/attachments/reconcile", async (request, reply) => {
+    if (!authRepository || !attachmentRepository || !attachmentStorage?.inventory) {
+      return reply.code(503).send({ error: "attachment_reconciliation_unavailable" });
+    }
+
+    const principal = await requireAdminPrincipal(request, reply, authRepository, loginSessionIdleTimeoutSeconds);
+    if (!principal) return;
+    const parsed = attachmentReconciliationInputSchema.safeParse(
+      request.body && typeof request.body === "object" ? request.body : {}
+    );
+    if (!parsed.success) return sendValidationError(reply, parsed.error.issues);
+
+    try {
+      const report = await reconcileAttachments({
+        repository: attachmentRepository,
+        storage: attachmentStorage,
+        tenantId: principal.tenantId,
+        dryRun: parsed.data.dryRun,
+        verifyContent: parsed.data.verifyContent,
+        staleDeletingAfterMs: parsed.data.staleDeletingAfterMinutes * 60 * 1_000,
+        recordLimit: parsed.data.recordLimit
+      });
+      await authRepository.recordAuditEvent({
+        tenantId: principal.tenantId,
+        ...auditActor(principal),
+        action: "attachment.reconcile",
+        targetType: "attachment_storage",
+        targetId: principal.tenantId,
+        outcome: "success",
+        metadata: report
+      });
+      return attachmentReconciliationReportSchema.parse(report);
+    } catch (error) {
+      server.log.error(error, "Attachment reconciliation failed");
+      await authRepository.recordAuditEvent({
+        tenantId: principal.tenantId,
+        ...auditActor(principal),
+        action: "attachment.reconcile",
+        targetType: "attachment_storage",
+        targetId: principal.tenantId,
+        outcome: "error",
+        reason: "attachment_reconciliation_failed",
+        metadata: {
+          dryRun: parsed.data.dryRun,
+          verifyContent: parsed.data.verifyContent
+        }
+      }).catch(() => undefined);
+      return reply.code(503).send({ error: "attachment_reconciliation_failed" });
+    }
   });
 
   server.get("/assets/:stableId/versions/:versionNumber", async (request, reply) => {

@@ -1897,10 +1897,18 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("PostgresRegistryRepository", ()
   it("persists tenant-scoped attachment metadata and its retryable deletion lifecycle", async () => {
     const registryRepository = new PostgresRegistryRepository(pool);
     const attachmentRepository = new PostgresAttachmentRepository(pool);
+    const authRepository = new PostgresAuthRepository(pool);
     const suffix = randomUUID();
+    const tenantId = `tenant_attachment_${suffix}`;
+    const uploader = await authRepository.createUser({
+      tenantId,
+      email: `attachment-${suffix}@example.test`,
+      displayName: "Attachment Operator",
+      role: "maintainer"
+    });
     const createdAsset = await registryRepository.createAsset({
       ...sampleAsset,
-      tenantId: "tenant_demo",
+      tenantId,
       stableId: `human-document.attachment-${suffix}`,
       type: "human-document",
       instruction: undefined,
@@ -1911,42 +1919,57 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("PostgresRegistryRepository", ()
     });
     const blobId = randomUUID();
     const created = await attachmentRepository.createAttachment({
-      tenantId: "tenant_demo",
+      tenantId,
       assetId: createdAsset.asset.id,
       filename: "restore-evidence.txt",
       mediaType: "text/plain",
       sizeBytes: 8,
       contentSha256: "a".repeat(64),
       storageKey: `${blobId.slice(0, 2)}/${blobId}`,
+      uploadedByUserId: uploader.id,
       metadata: { fixture: true }
     });
 
     expect(await attachmentRepository.listAttachments({
-      tenantId: "tenant_demo",
+      tenantId,
       assetId: createdAsset.asset.id
     })).toEqual([created]);
     expect(await attachmentRepository.getAttachment(created.id, { tenantId: "tenant_other" })).toBeNull();
+    expect(await attachmentRepository.getAttachmentUsage({ tenantId })).toEqual({
+      fileCount: 1,
+      totalBytes: 8
+    });
+    expect(await attachmentRepository.getAttachmentUsage({
+      tenantId,
+      uploadedByUserId: uploader.id
+    })).toEqual({ fileCount: 1, totalBytes: 8 });
+    expect((await attachmentRepository.listAttachmentsForReconciliation({ limit: 1000 }))
+      .some((attachment) => attachment.id === created.id)).toBe(true);
 
     const deleting = await attachmentRepository.markAttachmentDeleting({
-      tenantId: "tenant_demo",
+      tenantId,
       attachmentId: created.id
     });
     expect(deleting?.lifecycleState).toBe("deleting");
     expect((await attachmentRepository.markAttachmentDeleting({
-      tenantId: "tenant_demo",
+      tenantId,
       attachmentId: created.id
     }))?.lifecycleState).toBe("deleting");
-    expect(await attachmentRepository.getAttachment(created.id, { tenantId: "tenant_demo" })).toBeNull();
+    expect(await attachmentRepository.getAttachment(created.id, { tenantId })).toBeNull();
 
     const deleted = await attachmentRepository.markAttachmentDeleted({
-      tenantId: "tenant_demo",
+      tenantId,
       attachmentId: created.id
     });
     expect(deleted?.lifecycleState).toBe("deleted");
     expect((await attachmentRepository.getAttachment(created.id, {
-      tenantId: "tenant_demo",
+      tenantId,
       includeUnavailable: true
     }))?.deletedAt).toBeTruthy();
+    expect(await attachmentRepository.getAttachmentUsage({ tenantId })).toEqual({
+      fileCount: 0,
+      totalBytes: 0
+    });
   });
 
   it("serializes concurrent migration runners with an advisory lock", async () => {

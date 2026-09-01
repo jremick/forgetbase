@@ -54,6 +54,18 @@ describe("LocalFilesystemAttachmentStorage", () => {
     await expect(storage.get(STORAGE_KEY)).resolves.toEqual(Buffer.from("first"));
   });
 
+  it("publishes complete files atomically and inventories only opaque storage keys", async () => {
+    const root = await temporaryRoot();
+    const storage = new LocalFilesystemAttachmentStorage(root, 16);
+    await storage.put(STORAGE_KEY, Buffer.from("complete"));
+    await writeFile(join(root, "unexpected"), "ignored");
+
+    await expect(storage.inventory()).resolves.toEqual({
+      storageKeys: [STORAGE_KEY],
+      unexpectedEntryCount: 1
+    });
+  });
+
   it("rejects traversal and non-generated keys before filesystem access", async () => {
     const storage = new LocalFilesystemAttachmentStorage(await temporaryRoot(), 16);
 

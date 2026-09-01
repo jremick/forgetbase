@@ -12,6 +12,8 @@
     "attachments:backup": "bash scripts/backup-attachments.sh",
     "attachments:restore": "bash scripts/restore-attachments.sh",
     "attachments:verify-backup-restore": "bash scripts/verify-attachment-backup-restore.sh",
+    "backup:set": "bash scripts/backup-set.sh",
+    "backup:set:verify": "bash scripts/verify-backup-set.sh",
     "db:migrate": "pnpm --filter @forgetbase/db migrate",
     "db:restore": "bash scripts/restore-postgres.sh",
     "db:verify-backup-restore": "bash scripts/verify-backup-restore.sh",

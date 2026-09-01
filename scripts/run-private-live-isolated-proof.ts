@@ -133,20 +133,36 @@ try {
     { ...composeEnv, FORGETBASE_API_URL: apiUrl },
     10 * 60 * 1_000
   );
+  const backupSetPath = resolve(outputDir, "backup-set");
   run(
-    "run backup and restore proof",
+    "stop writers for coordinated backup",
+    "docker",
+    ["compose", ...composeFiles, "stop", "api", "worker"],
+    composeEnv,
+    5 * 60 * 1_000
+  );
+  run(
+    "create coordinated database and attachment backup set",
     "npx",
-    ["-y", "pnpm@11.7.0", "db:verify-backup-restore"],
+    ["-y", "pnpm@11.7.0", "backup:set", "--", backupSetPath],
     composeEnv,
     10 * 60 * 1_000
   );
   run(
-    "run attachment backup and restore proof",
+    "verify coordinated backup set",
     "npx",
-    ["-y", "pnpm@11.7.0", "attachments:verify-backup-restore"],
+    ["-y", "pnpm@11.7.0", "backup:set:verify", "--", backupSetPath],
     composeEnv,
     10 * 60 * 1_000
   );
+  run(
+    "restart writers after backup verification",
+    "docker",
+    ["compose", ...composeFiles, "up", "-d", "api", "worker", "web", "proxy"],
+    composeEnv,
+    10 * 60 * 1_000
+  );
+  await waitForUrl(`${apiUrl}/ready`, 120_000);
   run(
     "run authenticated admin browser UAT",
     "npx",
@@ -450,8 +466,27 @@ async function verifySyntheticAttachment(apiUrl: string, apiKey: string): Promis
     throw new Error("Synthetic attachment download security headers were incomplete");
   }
 
+  const eicar = Buffer.from(
+    "X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*",
+    "utf8"
+  );
+  const infectedUpload = await fetch(uploadUrl, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${apiKey}`,
+      "content-type": "application/octet-stream",
+      "x-forgetbase-attachment-filename-encoded": encodeURIComponent("scanner-proof.txt"),
+      "x-forgetbase-attachment-media-type": "text/plain"
+    },
+    body: eicar
+  });
+  const infectedText = await infectedUpload.text();
+  if (infectedUpload.status !== 422 || !infectedText.includes("malware")) {
+    throw new Error(`ClamAV did not reject the synthetic EICAR attachment: HTTP ${infectedUpload.status}`);
+  }
+
   steps.push({
-    name: "verify synthetic attachment upload and download",
+    name: "verify clean attachment lifecycle and EICAR rejection",
     command: "HTTP attachment lifecycle proof",
     ok: true,
     status: 0,

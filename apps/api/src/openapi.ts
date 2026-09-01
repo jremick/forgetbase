@@ -380,8 +380,12 @@ export function buildOpenApiDocument() {
             "400": jsonResponse("Validation error"),
             "401": jsonResponse("Authentication required"),
             "403": jsonResponse("Access denied"),
+            "409": jsonResponse("Tenant or principal attachment quota exceeded"),
+            "422": jsonResponse("Attachment content or malware scan rejected the file"),
+            "429": jsonResponse("Attachment upload rate or concurrency limited"),
             "413": jsonResponse("Attachment exceeds configured byte limit"),
-            "415": jsonResponse("Attachment media type not allowed")
+            "415": jsonResponse("Attachment media type not allowed"),
+            "503": jsonResponse("Attachment storage or malware scanner unavailable")
           }
         }
       },
@@ -408,6 +412,18 @@ export function buildOpenApiDocument() {
             "403": jsonResponse("Access denied"),
             "404": jsonResponse("Asset or attachment not found"),
             "503": jsonResponse("Attachment storage unavailable")
+          }
+        }
+      },
+      "/admin/attachments/reconcile": {
+        post: {
+          summary: "Dry-run or execute bounded attachment storage reconciliation",
+          responses: {
+            "200": jsonResponse("Attachment reconciliation report"),
+            "400": jsonResponse("Validation error"),
+            "401": jsonResponse("Authentication required"),
+            "403": jsonResponse("Admin access required"),
+            "503": jsonResponse("Attachment reconciliation unavailable")
           }
         }
       },

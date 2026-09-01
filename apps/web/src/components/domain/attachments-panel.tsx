@@ -4,6 +4,7 @@ import { Box, Heading, HStack, Stack, Text } from "@chakra-ui/react";
 import type { Attachment } from "@forgetbase/schema";
 
 import { Alert, AlertDescription, AlertTitle } from "../ui/alert.js";
+import { Badge } from "../ui/badge.js";
 import { Button } from "../ui/button.js";
 import { Input } from "../ui/input.js";
 import { Label } from "../ui/label.js";
@@ -77,6 +78,39 @@ export function attachmentUploadHeaders(file: Pick<File, "name" | "type">): Reco
     "x-forgetbase-attachment-filename-encoded": encodeURIComponent(file.name),
     "x-forgetbase-attachment-media-type": file.type
   };
+}
+
+export function attachmentSecurityPresentation(attachment: Attachment): {
+  label: string;
+  variant: "success" | "warning" | "neutral";
+} {
+  const malwareScan = attachment.metadata.malwareScan;
+  const status = malwareScan && typeof malwareScan === "object" && !Array.isArray(malwareScan)
+    ? (malwareScan as Record<string, unknown>).status
+    : undefined;
+  if (status === "clean") return { label: "Malware scan passed", variant: "success" };
+  if (status === "not-required") return { label: "Content checked", variant: "neutral" };
+  return { label: "Scan status unavailable", variant: "warning" };
+}
+
+export function attachmentUploadErrorMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  if (message.includes("attachment_content_rejected")) {
+    return "The file extension, declared type, and file contents do not match.";
+  }
+  if (message.includes("attachment_malware_detected")) {
+    return "The malware scanner rejected this file. It was not stored.";
+  }
+  if (message.includes("attachment_scanner_unavailable")) {
+    return "The malware scanner is unavailable. Uploads are paused until it recovers.";
+  }
+  if (message.includes("attachment_quota_exceeded")) {
+    return "The attachment storage quota has been reached. Delete unused files or increase the configured quota.";
+  }
+  if (message.includes("attachment_upload_rate_limited") || message.includes("attachment_upload_concurrency_limited")) {
+    return "Too many attachments are being uploaded. Wait briefly and try again.";
+  }
+  return message;
 }
 
 export function getAttachmentPanelPresentation({
@@ -182,7 +216,7 @@ export function AttachmentsPanel({
                 onChange={selectFile}
               />
               <Text id={helpId} color="fg.muted" textStyle="sm">
-                {presentation.uploadLimitLabel} Supported: PDF, Office documents, JSON, text, Markdown, CSV, PNG, JPEG, and WebP. Files are stored for download only.
+                {presentation.uploadLimitLabel} Supported: PDF, Office documents, JSON, text, Markdown, CSV, PNG, JPEG, and WebP. The extension, file signature, and malware scan must pass before the file is stored.
               </Text>
               {selectionError ? (
                 <Text id={errorId} color="fg.error" textStyle="sm" role="alert">
@@ -225,6 +259,11 @@ export function AttachmentsPanel({
                   <Text color="fg.muted" textStyle="sm">
                     {attachment.mediaType} · {formatAttachmentSize(attachment.sizeBytes)}
                   </Text>
+                  <Box>
+                    <Badge variant={attachmentSecurityPresentation(attachment).variant}>
+                      {attachmentSecurityPresentation(attachment).label}
+                    </Badge>
+                  </Box>
                 </Stack>
                 <HStack gap="2" align="center" flexWrap="wrap" flexShrink="0">
                   <Button

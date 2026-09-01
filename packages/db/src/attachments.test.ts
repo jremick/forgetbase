@@ -63,6 +63,34 @@ describe("InMemoryAttachmentRepository", () => {
       .rejects.toBeInstanceOf(DuplicateAttachmentStorageKeyError);
   });
 
+  it("reports tenant and uploader usage without counting deleted attachments", async () => {
+    const repository = new InMemoryAttachmentRepository({
+      generateId: (() => {
+        let id = 0;
+        return () => `attachment_${++id}`;
+      })()
+    });
+    await repository.createAttachment(attachmentInput());
+    await repository.createAttachment(attachmentInput({
+      storageKey: "cd/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+      sizeBytes: 8,
+      uploadedByUserId: "user_two"
+    }));
+    const deleting = await repository.markAttachmentDeleting({
+      tenantId: "tenant_one",
+      attachmentId: "attachment_2",
+      requestedByUserId: "user_two"
+    });
+    await repository.markAttachmentDeleted({ tenantId: "tenant_one", attachmentId: deleting!.id });
+
+    await expect(repository.getAttachmentUsage({ tenantId: "tenant_one" }))
+      .resolves.toEqual({ fileCount: 1, totalBytes: 12 });
+    await expect(repository.getAttachmentUsage({ tenantId: "tenant_one", uploadedByUserId: "user_one" }))
+      .resolves.toEqual({ fileCount: 1, totalBytes: 12 });
+    await expect(repository.getAttachmentUsage({ tenantId: "tenant_one", uploadedByUserId: "user_two" }))
+      .resolves.toEqual({ fileCount: 0, totalBytes: 0 });
+  });
+
   it("fails closed throughout two-phase deletion and does not allow invalid transitions", async () => {
     const timestamps = [
       new Date("2026-09-01T00:00:00.000Z"),

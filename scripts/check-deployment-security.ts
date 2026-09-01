@@ -103,6 +103,15 @@ function checkTemplatePosture(): void {
   requireIncludes("compose.yaml", compose, "${FORGETBASE_POSTGRES_PORT:-127.0.0.1:5432}:5432", "local Compose Postgres defaults to loopback");
   requireIncludes("compose.yaml", compose, "${FORGETBASE_API_PORT:-127.0.0.1:3000}:3000", "local Compose API defaults to loopback");
   requireIncludes("compose.yaml", compose, "${FORGETBASE_WEB_PORT:-127.0.0.1:5175}:4173", "local Compose web preview defaults to loopback");
+  requireIncludes("compose.yaml", compose, "clamav/clamav:1.5.4-debian13-slim@sha256:", "Compose pins the ClamAV image by digest");
+  requireIncludes("compose.yaml", compose, "FORGETBASE_ATTACHMENT_SCAN_REQUIRED: \"true\"", "Compose requires attachment malware scanning");
+  requireIncludes("compose.yaml", compose, "FORGETBASE_ATTACHMENT_RECONCILIATION_DRY_RUN: \"true\"", "scheduled attachment reconciliation defaults to dry-run");
+  const clamavServiceMatch = compose.match(/\n  clamav:[\s\S]*?\n  api:/);
+  record(
+    clamavServiceMatch && !clamavServiceMatch[0].includes("ports:") ? "pass" : "fail",
+    "ClamAV network exposure",
+    "Compose ClamAV must remain internal and have no host port mapping"
+  );
   requireIncludes("compose.same-origin.yaml", composeSameOrigin, "proxy:", "same-origin proxy overlay exists");
   requireIncludes("compose.same-origin.yaml", composeSameOrigin, "${FORGETBASE_PROXY_PORT:-127.0.0.1:8080}:8080", "same-origin proxy defaults to loopback");
   requireIncludes("infra/docker/nginx.same-origin.conf", sameOriginNginx, "location /api/", "same-origin proxy routes API under /api");
@@ -155,6 +164,7 @@ function checkPublicEnvironment(): void {
 
   const requireAuthentication = parseStrictBoolean("FORGETBASE_REQUIRE_AUTHENTICATION");
   const secureCookies = parseStrictBoolean("FORGETBASE_SESSION_COOKIE_SECURE");
+  const attachmentScanRequired = parseStrictBoolean("FORGETBASE_ATTACHMENT_SCAN_REQUIRED");
 
   record(
     requireAuthentication === true ? "pass" : "fail",
@@ -165,6 +175,11 @@ function checkPublicEnvironment(): void {
     secureCookies === true ? "pass" : "fail",
     "public secure-cookie requirement",
     "FORGETBASE_SESSION_COOKIE_SECURE must be true for public browser-cookie deployment checks"
+  );
+  record(
+    attachmentScanRequired === true ? "pass" : "fail",
+    "public attachment scanning requirement",
+    "FORGETBASE_ATTACHMENT_SCAN_REQUIRED must be true for public deployment checks"
   );
 
   const publicEntrypoint = process.env.FORGETBASE_PUBLIC_ENTRYPOINT;

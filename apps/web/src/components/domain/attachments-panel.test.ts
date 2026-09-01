@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import { attachmentAllowedMediaTypes } from "@forgetbase/schema";
 
 import {
+  attachmentSecurityPresentation,
+  attachmentUploadErrorMessage,
   attachmentUploadHeaders,
   attachmentClientAllowedMediaTypes,
   formatAttachmentSize,
@@ -88,5 +90,23 @@ describe("attachments panel helpers", () => {
       "x-forgetbase-attachment-filename-encoded": "private%20guide%20%E2%80%93%20r%C3%A9sum%C3%A9.pdf",
       "x-forgetbase-attachment-media-type": "application/pdf"
     });
+  });
+
+  it("presents scan state and actionable upload failures", () => {
+    const attachment = {
+      id: "attachment_one",
+      filename: "guide.pdf",
+      mediaType: "application/pdf",
+      sizeBytes: 8,
+      contentSha256: "a".repeat(64),
+      lifecycleState: "active" as const,
+      metadata: { malwareScan: { status: "clean", scanner: "clamd" } },
+      createdAt: "2026-09-01T00:00:00.000Z",
+      updatedAt: "2026-09-01T00:00:00.000Z"
+    };
+    expect(attachmentSecurityPresentation(attachment)).toEqual({ label: "Malware scan passed", variant: "success" });
+    expect(attachmentUploadErrorMessage(new Error("422 attachment_content_rejected"))).toContain("do not match");
+    expect(attachmentUploadErrorMessage(new Error("503 attachment_scanner_unavailable"))).toContain("paused");
+    expect(attachmentUploadErrorMessage(new Error("409 attachment_quota_exceeded"))).toContain("quota");
   });
 });

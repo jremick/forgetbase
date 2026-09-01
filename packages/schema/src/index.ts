@@ -232,6 +232,29 @@ export const attachmentListResponseSchema = z.object({
   attachments: z.array(attachmentSchema)
 });
 
+export const attachmentReconciliationInputSchema = z.object({
+  dryRun: z.boolean().default(true),
+  verifyContent: z.boolean().default(false),
+  staleDeletingAfterMinutes: z.number().int().min(1).max(10_080).default(15),
+  recordLimit: z.number().int().min(1).max(9_999).default(5_000)
+});
+
+export const attachmentReconciliationReportSchema = z.object({
+  checkedAt: z.string().min(1),
+  dryRun: z.boolean(),
+  verifyContent: z.boolean(),
+  recordCount: z.number().int().nonnegative(),
+  storageObjectCount: z.number().int().nonnegative(),
+  truncated: z.boolean(),
+  activeMissingOrUnreadableCount: z.number().int().nonnegative(),
+  activeIntegrityFailureCount: z.number().int().nonnegative(),
+  staleDeletingCount: z.number().int().nonnegative(),
+  orphanedObjectCount: z.number().int().nonnegative(),
+  unexpectedStorageEntryCount: z.number().int().nonnegative(),
+  resolvedDeletingCount: z.number().int().nonnegative(),
+  deletedOrphanCount: z.number().int().nonnegative()
+});
+
 export const agentInstructionInputSchema = z.object({
   instructionKind: z.string().min(1),
   targetAgents: z.array(z.string().min(1)).default([]),
@@ -2195,6 +2218,8 @@ export type AssetVersionAssetSnapshot = z.infer<typeof assetVersionAssetSnapshot
 export type Attachment = z.infer<typeof attachmentSchema>;
 export type AttachmentCreateInput = z.input<typeof attachmentCreateInputSchema>;
 export type AttachmentLifecycleState = z.infer<typeof attachmentLifecycleStateSchema>;
+export type AttachmentReconciliationInput = z.input<typeof attachmentReconciliationInputSchema>;
+export type AttachmentReconciliationReport = z.infer<typeof attachmentReconciliationReportSchema>;
 export type AttachmentRecord = z.infer<typeof attachmentRecordSchema>;
 export type AttachmentUploadMetadata = z.input<typeof attachmentUploadMetadataSchema>;
 export type AssetVersionSnapshot = z.infer<typeof assetVersionSnapshotSchema>;

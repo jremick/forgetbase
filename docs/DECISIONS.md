@@ -3066,3 +3066,34 @@ Extend `/telemetry/summary` with unanswered and low-result search counts, popula
 ### Follow-Ups / Review
 
 Review when the event bound hides material trends, when retention-specific historical analysis is required, or when alerting, tenant exports, warehouse ingestion, or hosted analytics become explicit product needs.
+
+## 0101: Inspect Attachments Before Availability And Verify One Recovery Set
+
+### Context
+
+The first attachment slice enforced authorization, storage-key safety, byte limits, integrity on download, and retryable deletion. It still trusted declared file types, had no malware gate or tenant/uploader quotas, could delete a committed blob after a later audit failure, and relied on operators to pair two independently created backup artifacts.
+
+### Options Considered
+
+- document those risks and defer enforcement
+- require object storage and a hosted scanning pipeline now
+- add bounded local inspection, fail-closed scanning, drift reconciliation, and one verifiable backup set
+
+### Decision And Rationale
+
+Validate extension, declared media type, and supported content signatures before publication; reject macro-bearing OpenXML; and require a clean malware result when scanning is enabled. Compose runs a pinned internal-only ClamAV daemon and requires it for readiness, upload, and subsequent download eligibility. Bound resource use with file-size, tenant, uploader, rate, and concurrency limits. Publish local blobs atomically and preserve a blob when its metadata is committed even if the later audit write fails.
+
+Add tenant-scoped admin reconciliation that defaults to dry-run, exposes bounded counts without storage keys or global totals, and can resolve only the tenant's stale deletes. The scheduled operator job can delete proven orphan blobs only from a complete global metadata inventory. Replace the preferred two-command backup procedure with one stopped-writer directory and manifest; verification restores to temporary state and proves exact database-to-blob integrity.
+
+### Consequences
+
+- Unsupported, disguised, malformed, infected, over-quota, and overload uploads fail before availability.
+- Scanner failure reduces write availability instead of weakening the acceptance policy.
+- The buffered upload path is bounded by the default 10 MiB file cap and four concurrent requests; it is not streaming.
+- Quotas are suitable for the single-API Compose prototype but need transactional reservation before multi-instance deployment.
+- Content checks and ClamAV reduce risk but do not provide content disarm/reconstruction or prove every active-content format harmless.
+- Operators still own encrypted off-host retention, recovery scheduling, and restoration approval.
+
+### Follow-Ups / Review
+
+Review when adding S3-compatible storage, multi-instance APIs, streaming uploads, content disarm/reconstruction, legal hold, attachment versioning, inline preview, or hosted backup orchestration.

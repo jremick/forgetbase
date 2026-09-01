@@ -89,11 +89,11 @@ Included now:
 - admin console for content, reviews, access, exports, settings, and system health
 - local users, groups, service accounts, API keys, password login, and OIDC setup
 - permission-aware search, citations, question answering, and exports
-- permission-aware page attachments with bounded local storage, download-only reader access, and admin lifecycle controls
+- permission-aware page attachments with content/signature checks, required malware scanning in Compose, per-tenant/uploader quotas, bounded upload concurrency, download-only reader access, and admin lifecycle controls
 - lean 7/30/90-day admin analytics for search quality, page activity, content health, and daily trends
 - REST/OpenAPI, CLI, MCP server, worker, and Docker Compose setup
 - synthetic demo corpus and validation checks
-- restricted-content leakage checks and backup/restore verification helpers
+- restricted-content leakage checks, attachment drift reconciliation, and coordinated database/blob backup-set verification
 - GitHub Actions CI with strict typecheck, measured web bundle budgets, public beta UI checks, browser screenshot UAT, API contract checks, claims lint, Postgres-backed tests, and a separate isolated private-live proof workflow
 
 Still future work:
