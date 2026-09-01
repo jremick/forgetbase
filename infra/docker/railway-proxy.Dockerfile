@@ -11,7 +11,7 @@ COPY packages ./packages
 RUN pnpm install --frozen-lockfile
 RUN pnpm --filter @forgetbase/web build
 
-FROM nginx:1.27-alpine
+FROM nginx:1.31-alpine
 
 ENV PORT=8080
 
