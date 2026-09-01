@@ -8,6 +8,8 @@ describe("app routing", () => {
     expect(normalizeAppRoute("exports")).toBe("distribute");
     expect(canonicalAppHash("library")).toBe("admin/content");
     expect(canonicalAppHash("settings")).toBe("admin/system/settings");
+    expect(normalizeAppRoute("admin/system/updates")).toBe("updates");
+    expect(canonicalAppHash("updates")).toBe("admin/system/updates");
   });
 
   it("defaults unknown routes to the reader", () => {

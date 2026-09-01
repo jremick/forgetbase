@@ -2,6 +2,14 @@
 
 This runbook covers pragmatic SMB rollback for the Docker Compose deployment path.
 
+## Managed Installation Rollback
+
+For a managed Docker Compose install, use **Admin > Updates** first. Select a verified recovery point, review its timestamp and rollback mode, then confirm. A database restore can discard all writes after the selected recovery point and requires explicit data-loss confirmation.
+
+If the app UI or API is unavailable, keep the updater state directory and release bundle intact. The host updater ledger, `current-release.env`, recovery dumps, and configuration snapshots are outside Postgres. Use the recovery point paths from that ledger with the database procedure below. Do not delete the failed candidate environment until recovery is verified.
+
+Automatic rollback applies only before the candidate reopens writes. After writes reopen, treat rollback as a new operator decision because the previous database snapshot can be stale.
+
 ## Application Rollback
 
 1. Identify the last known-good git revision or container image tag.
@@ -80,3 +88,4 @@ Required future work:
 - richer visual diff view
 - multi-step rollback approval
 - scheduled publish/archive controls
+- a dedicated offline updater recovery CLI over the same state ledger

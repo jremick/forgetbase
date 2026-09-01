@@ -2,7 +2,15 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { aiExportPackageSchema, healthResponseSchema, okfExportPackageSchema } from "@forgetbase/schema";
+import {
+  aiExportPackageSchema,
+  healthResponseSchema,
+  okfExportPackageSchema,
+  productIdentitySchema,
+  systemVersionResponseSchema,
+  updateSystemStatusSchema
+} from "@forgetbase/schema";
+import type { UpdateControlService } from "@forgetbase/updater";
 import {
   InMemoryAgentActionExecutionRepository,
   InMemoryAttachmentRepository,
@@ -440,6 +448,94 @@ describe("API health route", () => {
     expect(JSON.stringify(failedLogins)).not.toContain("incorrect");
   });
 });
+
+describe("system update control", () => {
+  it("separates deployment ownership from tenant admin authorization", async () => {
+    const authRepository = new InMemoryAuthRepository();
+    const bootstrapServer = buildServer({ logger: false, authRepository });
+    const bootstrap = await bootstrapServer.inject({
+      method: "POST",
+      url: "/auth/bootstrap",
+      payload: { email: "owner@example.test", displayName: "Install Owner" }
+    });
+    await bootstrapServer.close();
+    const updateControlService = buildUpdateControlService();
+    server = buildServer({
+      logger: false,
+      authRepository,
+      updateControlService,
+      systemUpdateOwnerEmails: ["different@example.test"]
+    });
+    const denied = await server.inject({
+      method: "GET",
+      url: "/system/updates",
+      headers: { authorization: `Bearer ${bootstrap.json().secret}` }
+    });
+    expect(denied.statusCode).toBe(403);
+    expect(denied.json().error).toBe("system_update_access_denied");
+
+    await server.close();
+    server = buildServer({
+      logger: false,
+      authRepository,
+      updateControlService,
+      systemUpdateOwnerEmails: ["OWNER@example.test"]
+    });
+    const allowed = await server.inject({
+      method: "GET",
+      url: "/system/updates",
+      headers: { authorization: `Bearer ${bootstrap.json().secret}` }
+    });
+    expect(allowed.statusCode).toBe(200);
+    expect(allowed.json().identity.installationMode).toBe("managed");
+  });
+
+  it("returns release identity without exposing updater credentials", async () => {
+    const response = await server.inject({ method: "GET", url: "/system/version" });
+    expect(response.statusCode).toBe(200);
+    expect(systemVersionResponseSchema.parse(response.json())).toMatchObject({
+      product: "forgetbase",
+      version: "0.1.0",
+      installationMode: "source",
+      managed: false
+    });
+    expect(JSON.stringify(response.json())).not.toContain("token");
+  });
+});
+
+function buildUpdateControlService(): UpdateControlService {
+  const identity = productIdentitySchema.parse({
+    product: "forgetbase",
+    version: "0.1.0",
+    sourceRevision: "1".repeat(40),
+    builtAt: "2026-09-01T00:00:00.000Z",
+    channel: "beta",
+    installationMode: "managed",
+    databaseSchemaVersion: "032_api_key_surface_bindings",
+    updaterVersion: "0.1.0",
+    updaterProtocolVersion: "1",
+    managed: true
+  });
+  const status = updateSystemStatusSchema.parse({
+    enabled: true,
+    identity,
+    availableUpdate: null,
+    activeJob: null,
+    jobs: [],
+    recoveryPoints: [],
+    lastCheckedAt: null,
+    feedStatus: "not-checked"
+  });
+  return {
+    status: async () => status,
+    identity: async () => identity,
+    check: async () => status,
+    preflight: async () => { throw new Error("not used"); },
+    apply: async () => { throw new Error("not used"); },
+    cancel: async () => { throw new Error("not used"); },
+    rollback: async () => { throw new Error("not used"); }
+  };
+}
 
 describe("API asset registry routes", () => {
   it("runs the authenticated attachment upload, list, download, and delete lifecycle without exposing storage keys", async () => {

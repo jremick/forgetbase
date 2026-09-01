@@ -45,6 +45,7 @@ import {
   OpenAiEmbeddingProvider,
   isSecretEnvVarAllowed,
   purgeTelemetryForRetentionPolicy,
+  planMigrations,
   runMigrations,
   type EmbeddingProvider,
   type AuthRepository,
@@ -2007,6 +2008,34 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("PostgresRegistryRepository", ()
     } finally {
       await pool.query(`DROP TABLE IF EXISTS ${tableName}`);
       await pool.query(`DROP TYPE IF EXISTS ${typeName}`);
+      await pool.query("DELETE FROM schema_migrations WHERE id = $1", [id]);
+      await rm(migrationsDir, { recursive: true, force: true });
+    }
+  });
+
+  it("plans the exact pending set and rejects applied migration checksum drift", async () => {
+    const suffix = `${Date.now()}_${Math.floor(Math.random() * 1_000_000)}`;
+    const id = `901_checksum_${suffix}`;
+    const tableName = `migration_checksum_table_${suffix}`;
+    const migrationsDir = await mkdtemp(join(tmpdir(), "forgetbase-migration-checksum-"));
+    const migrationPath = join(migrationsDir, `${id}.sql`);
+    await writeFile(migrationPath, `CREATE TABLE ${tableName} (id text PRIMARY KEY);\n`);
+
+    try {
+      const pending = await planMigrations(pool, migrationsDir, [id]);
+      expect(pending.pending).toEqual([id]);
+      expect(pending.expectedPendingMatches).toBe(true);
+      await runMigrations(pool, migrationsDir, { releaseVersion: "0.2.0", expectedPendingIds: [id] });
+      const current = await planMigrations(pool, migrationsDir, []);
+      expect(current.pending).toEqual([]);
+      expect(current.checksumMismatches).toEqual([]);
+
+      await writeFile(migrationPath, `CREATE TABLE ${tableName} (id text PRIMARY KEY, changed text);\n`);
+      const drifted = await planMigrations(pool, migrationsDir, []);
+      expect(drifted.checksumMismatches).toEqual([id]);
+      await expect(runMigrations(pool, migrationsDir)).rejects.toThrow(`Applied migration checksum mismatch: ${id}`);
+    } finally {
+      await pool.query(`DROP TABLE IF EXISTS ${tableName}`);
       await pool.query("DELETE FROM schema_migrations WHERE id = $1", [id]);
       await rm(migrationsDir, { recursive: true, force: true });
     }

@@ -74,6 +74,7 @@ import {
   managedQueryCachePurgeResultSchema,
   managedQueryRetentionPolicyInputSchema,
   managedQueryRetentionPolicySchema,
+  installationModeSchema,
   managedQueryFeedbackInputSchema,
   managedQueryFeedbackListResponseSchema,
   managedQueryFeedbackSchema,
@@ -114,6 +115,12 @@ import {
   telemetryRetentionPolicySchema,
   telemetryRetentionPurgeInputSchema,
   telemetryRetentionPurgeResultSchema,
+  productIdentitySchema,
+  releaseChannelSchema,
+  systemVersionResponseSchema,
+  updateApplyInputSchema,
+  updateRollbackInputSchema,
+  forgetBaseVersion,
   createHealthResponse,
   buildOkfExportPackage,
   healthResponseSchema,
@@ -143,6 +150,7 @@ import {
   type ManagedQueryGeneration,
   type ManagedQueryGenerationAttempt,
   type ManagedQueryGenerationUsage,
+  type ProductIdentity,
   type ModelProvider,
   type ModelProviderConfig,
   type ModelProviderHealth,
@@ -155,6 +163,7 @@ import {
   type TelemetryAnalyticsInput,
   type TelemetryAnalyticsSummary,
 } from "@forgetbase/schema";
+import { HttpUpdateControlClient, type UpdateControlService } from "@forgetbase/updater";
 	import {
   PostgresAgentActionExecutionRepository,
   PostgresAttachmentRepository,
@@ -313,6 +322,9 @@ export interface BuildServerOptions extends FastifyServerOptions {
   loginThrottleMaxEntries?: number;
   requireAuthentication?: boolean;
   readinessCheck?: () => Promise<void>;
+  productIdentity?: ProductIdentity;
+  updateControlService?: UpdateControlService;
+  systemUpdateOwnerEmails?: string[];
 }
 
 export interface OidcDiscoveryDocument {
@@ -553,6 +565,12 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
   const requireAuthentication = options.requireAuthentication ??
     readOptionalEnvBoolean(process.env.FORGETBASE_REQUIRE_AUTHENTICATION) ??
     false;
+  const productIdentity = productIdentitySchema.parse(options.productIdentity ?? readProductIdentityFromEnvironment());
+  const updateControlService = options.updateControlService ?? readUpdateControlServiceFromEnvironment();
+  const systemUpdateOwnerEmails = new Set(
+    (options.systemUpdateOwnerEmails ?? readCsvEnvironment(process.env.FORGETBASE_SYSTEM_UPDATE_OWNER_EMAILS))
+      .map((email) => email.toLowerCase())
+  );
 
   server.addContentTypeParser(
     "application/octet-stream",
@@ -623,7 +641,7 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
 
   if (pool) {
     server.addHook("onReady", async () => {
-      if (options.autoMigrate ?? true) {
+      if (options.autoMigrate ?? readOptionalEnvBoolean(process.env.FORGETBASE_AUTO_MIGRATE) ?? true) {
         await runMigrations(pool);
       } else {
         const readiness = await pool.query<{ ready: boolean }>(
@@ -675,7 +693,7 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
   }
 
   server.get("/health", async () => {
-    return healthResponseSchema.parse(createHealthResponse("forgetbase-api"));
+    return healthResponseSchema.parse(createHealthResponse("forgetbase-api", productIdentity.version));
   });
 
   server.get("/ready", async (_request, reply) => {
@@ -724,6 +742,138 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
         }
       });
     }
+  });
+
+  server.get("/system/version", async (request, reply) => {
+    const principal = authRepository
+      ? await requireAdminPrincipal(request, reply, authRepository, loginSessionIdleTimeoutSeconds)
+      : null;
+    if (authRepository && !principal) return;
+
+    let databaseSchemaVersion = productIdentity.databaseSchemaVersion;
+    if (pool) {
+      const result = await pool.query<{ id: string }>("SELECT id FROM schema_migrations ORDER BY applied_at DESC, id DESC LIMIT 1");
+      databaseSchemaVersion = result.rows[0]?.id ?? databaseSchemaVersion;
+    }
+
+    const email = principal?.email?.toLowerCase() ?? "";
+    return systemVersionResponseSchema.parse({
+      ...productIdentity,
+      databaseSchemaVersion,
+      updateManagement: {
+        configured: Boolean(updateControlService),
+        authorized: Boolean(email && systemUpdateOwnerEmails.has(email)),
+        mode: productIdentity.installationMode === "hosted"
+          ? "platform-managed"
+          : productIdentity.installationMode === "managed" ? "self-managed" : "source-advisory"
+      }
+    });
+  });
+
+  server.get("/system/updates", async (request, reply) => {
+    const principal = await requireSystemUpdatePrincipal(
+      request,
+      reply,
+      authRepository,
+      loginSessionIdleTimeoutSeconds,
+      systemUpdateOwnerEmails
+    );
+    if (!principal) return;
+    if (!updateControlService) return reply.code(503).send({ error: "updater_unavailable" });
+    return updateControlService.status();
+  });
+
+  server.post("/system/updates/check", async (request, reply) => {
+    const principal = await requireSystemUpdatePrincipal(
+      request,
+      reply,
+      authRepository,
+      loginSessionIdleTimeoutSeconds,
+      systemUpdateOwnerEmails
+    );
+    if (!principal) return;
+    if (!updateControlService) return reply.code(503).send({ error: "updater_unavailable" });
+    const status = await updateControlService.check();
+    await recordSystemUpdateAudit(authRepository, principal, "system.update.check", "success", {
+      updateAvailable: status.availableUpdate?.updateAvailable ?? false,
+      targetVersion: status.availableUpdate?.release?.version ?? null
+    });
+    return status;
+  });
+
+  server.post<{ Body: { version?: string } }>("/system/updates/preflight", async (request, reply) => {
+    const principal = await requireSystemUpdatePrincipal(
+      request,
+      reply,
+      authRepository,
+      loginSessionIdleTimeoutSeconds,
+      systemUpdateOwnerEmails
+    );
+    if (!principal) return;
+    if (!updateControlService) return reply.code(503).send({ error: "updater_unavailable" });
+    const preflight = await updateControlService.preflight(request.body?.version);
+    await recordSystemUpdateAudit(authRepository, principal, "system.update.preflight", preflight.eligible ? "success" : "denied", {
+      targetVersion: preflight.targetVersion,
+      eligible: preflight.eligible,
+      failedCheckIds: preflight.checks.filter((check) => check.status === "fail").map((check) => check.id)
+    });
+    return preflight;
+  });
+
+  server.post("/system/updates/jobs", async (request, reply) => {
+    const principal = await requireSystemUpdatePrincipal(
+      request,
+      reply,
+      authRepository,
+      loginSessionIdleTimeoutSeconds,
+      systemUpdateOwnerEmails
+    );
+    if (!principal) return;
+    if (!updateControlService) return reply.code(503).send({ error: "updater_unavailable" });
+    const input = updateApplyInputSchema.parse(request.body);
+    const job = await updateControlService.apply(input);
+    await recordSystemUpdateAudit(authRepository, principal, "system.update.apply", "success", {
+      jobId: job.id,
+      targetVersion: job.targetVersion,
+      scheduledFor: job.scheduledFor,
+      automaticRollback: job.automaticRollback
+    });
+    return reply.code(202).send(job);
+  });
+
+  server.post<{ Params: { jobId: string } }>("/system/updates/jobs/:jobId/cancel", async (request, reply) => {
+    const principal = await requireSystemUpdatePrincipal(
+      request,
+      reply,
+      authRepository,
+      loginSessionIdleTimeoutSeconds,
+      systemUpdateOwnerEmails
+    );
+    if (!principal) return;
+    if (!updateControlService) return reply.code(503).send({ error: "updater_unavailable" });
+    const job = await updateControlService.cancel(request.params.jobId);
+    await recordSystemUpdateAudit(authRepository, principal, "system.update.cancel", "success", { jobId: job.id });
+    return job;
+  });
+
+  server.post("/system/updates/rollback", async (request, reply) => {
+    const principal = await requireSystemUpdatePrincipal(
+      request,
+      reply,
+      authRepository,
+      loginSessionIdleTimeoutSeconds,
+      systemUpdateOwnerEmails
+    );
+    if (!principal) return;
+    if (!updateControlService) return reply.code(503).send({ error: "updater_unavailable" });
+    const input = updateRollbackInputSchema.parse(request.body);
+    const job = await updateControlService.rollback(input);
+    await recordSystemUpdateAudit(authRepository, principal, "system.update.rollback", "success", {
+      jobId: job.id,
+      recoveryPointId: job.recoveryPointId,
+      targetVersion: job.targetVersion
+    });
+    return reply.code(202).send(job);
   });
 
   server.get("/", async () => {
@@ -8324,6 +8474,51 @@ async function requireAdminPrincipal(
   return principal;
 }
 
+async function requireSystemUpdatePrincipal(
+  request: FastifyRequest,
+  reply: FastifyReply,
+  authRepository: AuthRepository | undefined,
+  loginSessionIdleTimeoutSeconds: number | null | undefined,
+  ownerEmails: ReadonlySet<string>
+): Promise<AuthPrincipal | null> {
+  if (!authRepository) {
+    reply.code(503).send({ error: "auth_unavailable" });
+    return null;
+  }
+
+  const principal = await requireAdminPrincipal(request, reply, authRepository, loginSessionIdleTimeoutSeconds);
+  if (!principal) return null;
+
+  const email = principal.email?.toLowerCase() ?? "";
+  if (!email || !ownerEmails.has(email)) {
+    await recordDenied(authRepository, principal, principal.tenantId, "system.update.manage", "system", undefined, {
+      ownerAllowlistConfigured: ownerEmails.size > 0
+    });
+    reply.code(403).send({ error: "system_update_access_denied" });
+    return null;
+  }
+
+  return principal;
+}
+
+async function recordSystemUpdateAudit(
+  authRepository: AuthRepository | undefined,
+  principal: AuthPrincipal,
+  action: string,
+  outcome: "success" | "denied" | "error",
+  metadata: Record<string, unknown>
+): Promise<void> {
+  if (!authRepository) return;
+  await authRepository.recordAuditEvent({
+    tenantId: principal.tenantId,
+    ...auditActor(principal),
+    action,
+    targetType: "system-update",
+    outcome,
+    metadata
+  });
+}
+
 async function requirePermissionAdminPrincipal(
   request: FastifyRequest,
   reply: FastifyReply,
@@ -9000,6 +9195,36 @@ function capExpiresAt(expiresAt: string, absoluteExpiresAt: string | null): stri
 
 function readSecondsUntil(expiresAt: string): number {
   return Math.max(0, Math.floor((Date.parse(expiresAt) - Date.now()) / 1000));
+}
+
+function readProductIdentityFromEnvironment(): ProductIdentity {
+  const installationMode = installationModeSchema.parse(process.env.FORGETBASE_INSTALLATION_MODE ?? "source");
+  return productIdentitySchema.parse({
+    product: "forgetbase",
+    version: process.env.FORGETBASE_VERSION ?? forgetBaseVersion,
+    sourceRevision: process.env.FORGETBASE_SOURCE_REVISION ?? "development",
+    builtAt: process.env.FORGETBASE_BUILT_AT ?? null,
+    channel: releaseChannelSchema.parse(process.env.FORGETBASE_RELEASE_CHANNEL ?? "beta"),
+    installationMode,
+    databaseSchemaVersion: process.env.FORGETBASE_DATABASE_SCHEMA_VERSION ?? null,
+    updaterVersion: process.env.FORGETBASE_UPDATER_VERSION ?? null,
+    updaterProtocolVersion: "1",
+    managed: installationMode === "managed"
+  });
+}
+
+function readUpdateControlServiceFromEnvironment(): UpdateControlService | undefined {
+  const url = process.env.FORGETBASE_UPDATER_URL?.trim();
+  const token = process.env.FORGETBASE_UPDATER_API_TOKEN;
+  if (!url && !token) return undefined;
+  if (!url || !token) throw new Error("FORGETBASE_UPDATER_URL and FORGETBASE_UPDATER_API_TOKEN must be configured together");
+  return new HttpUpdateControlClient(url, token, fetch, {
+    allowInsecureHttp: readOptionalEnvBoolean(process.env.FORGETBASE_UPDATER_ALLOW_INSECURE_HTTP) === true
+  });
+}
+
+function readCsvEnvironment(value: string | undefined): string[] {
+  return value?.split(",").map((entry) => entry.trim()).filter(Boolean) ?? [];
 }
 
 function readOptionalEnvBoolean(value: string | undefined): boolean | undefined {

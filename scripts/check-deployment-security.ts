@@ -87,10 +87,12 @@ function checkTemplatePosture(): void {
   const compose = readRepoFile("compose.yaml");
   const composeSameOrigin = readRepoFile("compose.same-origin.yaml");
   const composeTls = readRepoFile("compose.tls.yaml");
+  const composeManaged = readRepoFile("compose.managed.yaml");
   const sameOriginNginx = readRepoFile("infra/docker/nginx.same-origin.conf");
   const tlsNginx = readRepoFile("infra/docker/nginx.tls.conf");
   const railwayNginx = readRepoFile("infra/docker/nginx.railway-proxy.conf.template");
   const nodeDockerfile = readRepoFile("infra/docker/node.Dockerfile");
+  const releaseDockerfile = readRepoFile("infra/docker/release.Dockerfile");
   const railwayApiDockerfile = readRepoFile("infra/docker/railway-api.Dockerfile");
   const railwayWorkerDockerfile = readRepoFile("infra/docker/railway-worker.Dockerfile");
   const railwayWebDockerfile = readRepoFile("infra/docker/railway-web.Dockerfile");
@@ -98,6 +100,8 @@ function checkTemplatePosture(): void {
   const railwayRunbook = readRepoFile("docs/runbooks/DEPLOY_RAILWAY_PRIVATE_TEMPLATE.md");
   const dockerRunbook = readRepoFile("docs/runbooks/DEPLOY_DOCKER_COMPOSE.md");
   const server = readRepoFile("apps/api/src/server.ts");
+  const updaterServer = readRepoFile("apps/updater/src/index.ts");
+  const managedInstaller = readRepoFile("scripts/install-managed-release.ts");
 
   requireIncludes("compose.yaml", compose, "HOST: 0.0.0.0", "API listens on the container network");
   requireIncludes("compose.yaml", compose, "${FORGETBASE_POSTGRES_PORT:-127.0.0.1:5432}:5432", "local Compose Postgres defaults to loopback");
@@ -116,6 +120,17 @@ function checkTemplatePosture(): void {
   requireIncludes("compose.same-origin.yaml", composeSameOrigin, "${FORGETBASE_PROXY_PORT:-127.0.0.1:8080}:8080", "same-origin proxy defaults to loopback");
   requireIncludes("infra/docker/nginx.same-origin.conf", sameOriginNginx, "location /api/", "same-origin proxy routes API under /api");
   requireIncludes("compose.tls.yaml", composeTls, "FORGETBASE_SESSION_COOKIE_SECURE: \"true\"", "TLS overlay enables secure browser cookies");
+  requireIncludes("compose.managed.yaml", composeManaged, "FORGETBASE_API_IMAGE:?FORGETBASE_API_IMAGE is required", "managed API image is explicit and digest-ready");
+  requireIncludes("compose.managed.yaml", composeManaged, "FORGETBASE_MIGRATE_IMAGE:?FORGETBASE_MIGRATE_IMAGE is required", "managed migration image is explicit and digest-ready");
+  requireIncludes("compose.managed.yaml", composeManaged, "FORGETBASE_AUTO_MIGRATE: \"false\"", "managed API cannot race migrations");
+  requireIncludes("compose.managed.yaml", composeManaged, "FORGETBASE_UPDATER_API_TOKEN:?FORGETBASE_UPDATER_API_TOKEN is required", "managed API requires the updater token");
+  requireIncludes("compose.managed.yaml", composeManaged, "FORGETBASE_SYSTEM_UPDATE_OWNER_EMAILS:?FORGETBASE_SYSTEM_UPDATE_OWNER_EMAILS is required", "managed update owner allowlist is required");
+  requireIncludes("compose.managed.yaml", composeManaged, "FORGETBASE_UPDATER_ALLOW_INSECURE_HTTP:-true", "managed bridge HTTP requires an explicit override");
+  record(
+    composeManaged.includes("/var/run/docker.sock") ? "fail" : "pass",
+    "managed application Docker privilege boundary",
+    composeManaged.includes("/var/run/docker.sock") ? "compose.managed.yaml mounts the Docker socket" : "compose.managed.yaml does not mount the Docker socket"
+  );
   requireIncludes("infra/docker/nginx.tls.conf", tlsNginx, "Strict-Transport-Security", "TLS proxy sets HSTS");
   requireIncludes("infra/docker/nginx.railway-proxy.conf.template", railwayNginx, "location = /api/auth/bootstrap", "Railway proxy template gates bootstrap route");
   requireIncludes("infra/docker/nginx.railway-proxy.conf.template", railwayNginx, "return 404;", "Railway proxy template blocks bootstrap exposure");
@@ -126,6 +141,8 @@ function checkTemplatePosture(): void {
   requireIncludes("docs/runbooks/DEPLOY_DOCKER_COMPOSE.md", dockerRunbook, "security:check-deployment-defaults", "Docker runbook documents deployment-default gate");
   requireIncludes("infra/docker/node.Dockerfile", nodeDockerfile, "pnpm install --frozen-lockfile", "Compose image uses the frozen lockfile");
   requireIncludes("infra/docker/node.Dockerfile", nodeDockerfile, "USER node", "Compose application image runs as non-root");
+  requireIncludes("infra/docker/release.Dockerfile", releaseDockerfile, "pnpm install --frozen-lockfile", "managed release build uses the frozen lockfile");
+  requireIncludes("infra/docker/release.Dockerfile", releaseDockerfile, "USER node", "managed Node services run as non-root");
   requireIncludes("infra/docker/railway-api.Dockerfile", railwayApiDockerfile, "USER node", "Railway API image runs as non-root");
   requireIncludes("infra/docker/railway-worker.Dockerfile", railwayWorkerDockerfile, "USER node", "Railway worker image runs as non-root");
   requireIncludes("infra/docker/railway-web.Dockerfile", railwayWebDockerfile, "USER node", "Railway web image runs as non-root");
@@ -134,6 +151,8 @@ function checkTemplatePosture(): void {
   requireIncludes("infra/docker/railway-proxy.Dockerfile", railwayProxyDockerfile, "pid /tmp/nginx.pid", "Railway proxy uses a non-root-writable PID path");
   requireIncludes("infra/docker/railway-proxy.Dockerfile", railwayProxyDockerfile, "FORGETBASE_API_UPSTREAM_PORT=8080", "Railway proxy defaults the internal API port to Railway's runtime port");
   requireIncludes("apps/api/src/server.ts", server, "server.get(\"/ready\"", "API exposes a database-aware readiness route");
+  requireIncludes("apps/updater/src/index.ts", updaterServer, "process.env.HOST ?? \"127.0.0.1\"", "host updater defaults to loopback");
+  requireIncludes("scripts/install-managed-release.ts", managedInstaller, "verifyBundleReceipt", "managed installer verifies its bundle receipt");
 
   const publicAuthBlockMatch = server.match(/function isPublicAuthenticationPath[\s\S]*?\n}/);
 

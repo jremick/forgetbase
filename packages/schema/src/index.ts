@@ -2189,17 +2189,192 @@ export const managedQueryRetentionPolicySchema = z.object({
   updatedAt: z.string().min(1).nullable()
 });
 
+export const releaseChannelSchema = z.enum(["stable", "beta", "nightly"]);
+export const installationModeSchema = z.enum(["source", "managed", "hosted"]);
+export const updateRiskSchema = z.enum(["low", "medium", "high", "critical"]);
+export const migrationCompatibilitySchema = z.enum(["application-only", "additive", "destructive"]);
+export const rollbackModeSchema = z.enum(["application", "database-restore", "platform-managed", "unavailable"]);
+export const updateJobPhaseSchema = z.enum([
+  "queued",
+  "scheduled",
+  "preflight",
+  "backing-up",
+  "staging",
+  "maintenance",
+  "migrating",
+  "starting",
+  "verifying",
+  "completed",
+  "failed",
+  "rolling-back",
+  "rolled-back",
+  "cancelled",
+  "needs-attention"
+]);
+
+export const releaseImageSchema = z.object({
+  component: z.enum(["api", "web", "worker", "migrate", "proxy", "updater"]),
+  reference: z.string().min(1).refine((value) => value.includes("@sha256:"), "release image must be digest-pinned"),
+  digest: z.string().regex(/^sha256:[a-f0-9]{64}$/)
+});
+
+export const releaseNotesSchema = z.object({
+  summary: z.string().min(1).max(2_000),
+  highlights: z.array(z.string().min(1).max(1_000)).max(100).default([]),
+  security: z.array(z.string().min(1).max(1_000)).max(100).default([]),
+  breaking: z.array(z.string().min(1).max(1_000)).max(100).default([]),
+  configuration: z.array(z.string().min(1).max(1_000)).max(100).default([]),
+  knownIssues: z.array(z.string().min(1).max(1_000)).max(100).default([])
+});
+
+export const releaseManifestSchema = z.object({
+  schemaVersion: z.literal("1"),
+  product: z.literal("forgetbase"),
+  version: z.string().regex(/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/),
+  channel: releaseChannelSchema,
+  publishedAt: z.string().datetime(),
+  sourceRevision: z.string().regex(/^[a-f0-9]{40}$/),
+  minUpdaterVersion: z.string().regex(/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/),
+  upgradeFrom: z.array(z.string().min(1)).min(1).max(50),
+  risk: updateRiskSchema,
+  estimatedDowntimeSeconds: z.number().int().nonnegative().max(86_400),
+  requiresBackup: z.boolean(),
+  rollbackMode: rollbackModeSchema,
+  migration: z.object({
+    compatibility: migrationCompatibilitySchema,
+    targetSchemaVersion: z.string().min(1),
+    migrationIds: z.array(z.string().min(1)).max(10_000)
+  }),
+  recovery: z.object({
+    components: z.array(z.enum(["database", "configuration", "attachments"])).min(1),
+    attachmentMode: z.enum(["not-configured", "included", "external-snapshot-required"])
+  }),
+  images: z.array(releaseImageSchema).min(1).max(20),
+  notes: releaseNotesSchema,
+  revoked: z.boolean().default(false),
+  revocationReason: z.string().min(1).max(1_000).nullable().default(null)
+});
+
+export const signedReleaseManifestSchema = z.object({
+  keyId: z.string().min(1).max(200),
+  signature: z.string().min(1).max(2_000),
+  manifest: releaseManifestSchema
+});
+
+export const productIdentitySchema = z.object({
+  product: z.literal("forgetbase"),
+  version: z.string().min(1),
+  sourceRevision: z.string().min(1),
+  builtAt: z.string().datetime().nullable(),
+  channel: releaseChannelSchema,
+  installationMode: installationModeSchema,
+  databaseSchemaVersion: z.string().min(1).nullable(),
+  updaterVersion: z.string().min(1).nullable(),
+  updaterProtocolVersion: z.literal("1"),
+  managed: z.boolean()
+});
+
+export const systemVersionResponseSchema = productIdentitySchema.extend({
+  updateManagement: z.object({
+    configured: z.boolean(),
+    authorized: z.boolean(),
+    mode: z.enum(["self-managed", "source-advisory", "platform-managed"])
+  })
+});
+
+export const updatePreflightCheckSchema = z.object({
+  id: z.string().min(1),
+  label: z.string().min(1),
+  status: z.enum(["pass", "warning", "fail"]),
+  detail: z.string().min(1),
+  blocking: z.boolean()
+});
+
+export const updatePreflightSchema = z.object({
+  checkedAt: z.string().datetime(),
+  currentVersion: z.string().min(1),
+  targetVersion: z.string().min(1),
+  eligible: z.boolean(),
+  rollbackMode: rollbackModeSchema,
+  estimatedDowntimeSeconds: z.number().int().nonnegative(),
+  checks: z.array(updatePreflightCheckSchema)
+});
+
+export const recoveryPointSchema = z.object({
+  id: z.string().min(1),
+  createdAt: z.string().datetime(),
+  version: z.string().min(1),
+  sourceRevision: z.string().min(1),
+  databaseSchemaVersion: z.string().min(1).nullable(),
+  imageReferences: z.array(z.string().min(1)),
+  backupPath: z.string().min(1).nullable(),
+  configurationPath: z.string().min(1).nullable(),
+  attachmentSnapshotId: z.string().min(1).nullable(),
+  verified: z.boolean(),
+  protected: z.boolean(),
+  sizeBytes: z.number().int().nonnegative().nullable()
+});
+
+export const updateJobSchema = z.object({
+  id: z.string().min(1),
+  kind: z.enum(["update", "rollback"]),
+  phase: updateJobPhaseSchema,
+  requestedAt: z.string().datetime(),
+  scheduledFor: z.string().datetime().nullable(),
+  startedAt: z.string().datetime().nullable(),
+  completedAt: z.string().datetime().nullable(),
+  currentVersion: z.string().min(1),
+  targetVersion: z.string().min(1),
+  manifestKeyId: z.string().min(1).nullable(),
+  recoveryPointId: z.string().min(1).nullable(),
+  progressPercent: z.number().int().min(0).max(100),
+  message: z.string().min(1),
+  errorCode: z.string().min(1).nullable(),
+  automaticRollback: z.boolean(),
+  writesReopened: z.boolean()
+});
+
+export const availableUpdateSchema = z.object({
+  checkedAt: z.string().datetime(),
+  updateAvailable: z.boolean(),
+  reason: z.string().min(1),
+  manifestKeyId: z.string().min(1).nullable(),
+  release: releaseManifestSchema.nullable()
+});
+
+export const updateSystemStatusSchema = z.object({
+  enabled: z.boolean(),
+  identity: productIdentitySchema,
+  availableUpdate: availableUpdateSchema.nullable(),
+  activeJob: updateJobSchema.nullable(),
+  jobs: z.array(updateJobSchema),
+  recoveryPoints: z.array(recoveryPointSchema),
+  lastCheckedAt: z.string().datetime().nullable(),
+  feedStatus: z.enum(["not-checked", "available", "current", "unreachable", "invalid", "disabled"])
+});
+
+export const updateApplyInputSchema = z.object({
+  version: z.string().min(1),
+  scheduledFor: z.string().datetime().nullable().optional(),
+  automaticRollback: z.boolean().default(true)
+});
+
+export const updateRollbackInputSchema = z.object({
+  recoveryPointId: z.string().min(1),
+  confirmDataLossAfter: z.string().datetime().nullable().optional()
+});
+
 export const healthResponseSchema = z.object({
   status: z.literal("ok"),
   service: z.string().min(1),
-  version: z.literal(forgetBaseVersion)
+  version: z.string().min(1)
 });
 
-export function createHealthResponse(service: string): HealthResponse {
+export function createHealthResponse(service: string, version = forgetBaseVersion): HealthResponse {
   return {
     status: "ok",
     service,
-    version: forgetBaseVersion
+    version
   };
 }
 
@@ -2276,6 +2451,23 @@ export type GroupMembershipListResponse = z.infer<typeof groupMembershipListResp
 export type GroupListResponse = z.infer<typeof groupListResponseSchema>;
 export type GroupRecord = z.infer<typeof groupRecordSchema>;
 export type HealthResponse = z.infer<typeof healthResponseSchema>;
+export type AvailableUpdate = z.infer<typeof availableUpdateSchema>;
+export type InstallationMode = z.infer<typeof installationModeSchema>;
+export type MigrationCompatibility = z.infer<typeof migrationCompatibilitySchema>;
+export type ProductIdentity = z.infer<typeof productIdentitySchema>;
+export type RecoveryPoint = z.infer<typeof recoveryPointSchema>;
+export type ReleaseChannel = z.infer<typeof releaseChannelSchema>;
+export type ReleaseManifest = z.infer<typeof releaseManifestSchema>;
+export type RollbackMode = z.infer<typeof rollbackModeSchema>;
+export type SignedReleaseManifest = z.infer<typeof signedReleaseManifestSchema>;
+export type UpdateApplyInput = z.input<typeof updateApplyInputSchema>;
+export type UpdateJob = z.infer<typeof updateJobSchema>;
+export type UpdateJobPhase = z.infer<typeof updateJobPhaseSchema>;
+export type UpdatePreflight = z.infer<typeof updatePreflightSchema>;
+export type UpdatePreflightCheck = z.infer<typeof updatePreflightCheckSchema>;
+export type UpdateRollbackInput = z.input<typeof updateRollbackInputSchema>;
+export type UpdateSystemStatus = z.infer<typeof updateSystemStatusSchema>;
+export type SystemVersionResponse = z.infer<typeof systemVersionResponseSchema>;
 export type AgentInstruction = z.infer<typeof agentInstructionSchema>;
 export type AgentInstructionInput = z.infer<typeof agentInstructionInputSchema>;
 export type HumanDocument = z.infer<typeof humanDocumentSchema>;

@@ -68,7 +68,7 @@ console.log(
 );
 
 function extractServerRoutes(source: string): RouteEntry[] {
-  const routePattern = /\bserver\.(get|post|put|delete|patch|options|head)\(\s*["'`]([^"'`]+)["'`]/g;
+  const routePattern = /\bserver\.(get|post|put|delete|patch|options|head)(?:<[^>]+>)?\(\s*["'`]([^"'`]+)["'`]/g;
   const routes: RouteEntry[] = [];
 
   for (const match of source.matchAll(routePattern)) {

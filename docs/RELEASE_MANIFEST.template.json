@@ -1,0 +1,60 @@
+{
+  "schemaVersion": "1",
+  "product": "forgetbase",
+  "version": "0.2.0-beta.1",
+  "channel": "beta",
+  "publishedAt": "2026-09-02T00:00:00.000Z",
+  "sourceRevision": "0000000000000000000000000000000000000000",
+  "minUpdaterVersion": "0.1.0",
+  "upgradeFrom": [">=0.1.0 <0.2.0"],
+  "risk": "medium",
+  "estimatedDowntimeSeconds": 120,
+  "requiresBackup": true,
+  "rollbackMode": "application",
+  "migration": {
+    "compatibility": "additive",
+    "targetSchemaVersion": "032_api_key_surface_bindings",
+    "migrationIds": []
+  },
+  "recovery": {
+    "components": ["database", "configuration"],
+    "attachmentMode": "not-configured"
+  },
+  "images": [
+    {
+      "component": "api",
+      "reference": "ghcr.io/jremick/forgetbase/api@sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    {
+      "component": "web",
+      "reference": "ghcr.io/jremick/forgetbase/web@sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    {
+      "component": "worker",
+      "reference": "ghcr.io/jremick/forgetbase/worker@sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    {
+      "component": "migrate",
+      "reference": "ghcr.io/jremick/forgetbase/migrate@sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    {
+      "component": "proxy",
+      "reference": "ghcr.io/jremick/forgetbase/proxy@sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    }
+  ],
+  "notes": {
+    "summary": "Replace this template text with the operator-facing release summary.",
+    "highlights": [],
+    "security": [],
+    "breaking": [],
+    "configuration": [],
+    "knownIssues": []
+  },
+  "revoked": false,
+  "revocationReason": null
+}

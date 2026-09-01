@@ -38,6 +38,80 @@ export function buildOpenApiDocument() {
           }
         }
       },
+      "/system/version": {
+        get: {
+          summary: "Inspect the installed product, schema, updater, and management mode versions",
+          responses: {
+            "200": jsonResponse("Installed system version and update-management capability"),
+            "401": jsonResponse("Authentication required")
+          }
+        }
+      },
+      "/system/updates": {
+        get: {
+          summary: "Inspect update availability, active work, history, and recovery points",
+          responses: {
+            "200": jsonResponse("Current update system status"),
+            "403": jsonResponse("Deployment-owner authorization required"),
+            "503": jsonResponse("Update control service unavailable")
+          }
+        }
+      },
+      "/system/updates/check": {
+        post: {
+          summary: "Fetch and verify the signed release feed",
+          responses: {
+            "200": jsonResponse("Verified update system status"),
+            "403": jsonResponse("Deployment-owner authorization required"),
+            "503": jsonResponse("Update control service unavailable")
+          }
+        }
+      },
+      "/system/updates/preflight": {
+        post: {
+          summary: "Run non-mutating update eligibility and recovery checks",
+          responses: {
+            "200": jsonResponse("Update preflight result"),
+            "403": jsonResponse("Deployment-owner authorization required"),
+            "503": jsonResponse("Update control service unavailable")
+          }
+        }
+      },
+      "/system/updates/jobs": {
+        post: {
+          summary: "Apply or schedule an update after explicit confirmation",
+          responses: {
+            "202": jsonResponse("Accepted update job"),
+            "403": jsonResponse("Deployment-owner authorization required"),
+            "409": jsonResponse("Update cannot be started in the current state"),
+            "503": jsonResponse("Update control service unavailable")
+          }
+        }
+      },
+      "/system/updates/jobs/{jobId}/cancel": {
+        post: {
+          summary: "Cancel an update that has not started mutating the installation",
+          parameters: [pathParameter("jobId")],
+          responses: {
+            "200": jsonResponse("Canceled update job"),
+            "403": jsonResponse("Deployment-owner authorization required"),
+            "404": jsonResponse("Update job not found"),
+            "409": jsonResponse("Update job can no longer be canceled"),
+            "503": jsonResponse("Update control service unavailable")
+          }
+        }
+      },
+      "/system/updates/rollback": {
+        post: {
+          summary: "Roll back to an eligible recovery point after explicit confirmation",
+          responses: {
+            "202": jsonResponse("Accepted rollback job"),
+            "403": jsonResponse("Deployment-owner authorization required"),
+            "409": jsonResponse("Recovery point cannot be restored in the current state"),
+            "503": jsonResponse("Update control service unavailable")
+          }
+        }
+      },
       "/auth/bootstrap": {
         post: {
           summary: "Create the first local admin and one-time API key",

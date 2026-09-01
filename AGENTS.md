@@ -60,6 +60,8 @@ Before claiming a milestone is done, provide evidence for the relevant checks:
 - `docs/PRODUCT_GOAL.md`: product thesis, users, outcomes, and non-goals.
 - `docs/END_TO_END_GOAL.md`: explicit production and MVP goal.
 - `docs/ARCHITECTURE.md`: target architecture and deployment options.
+- `docs/VERSIONING_AND_UPGRADES.md`: release identity, managed update flow, recovery, and rollback contract.
+- `docs/VERSIONING_UPGRADES_VERIFICATION.md`: current branch evidence and remaining live release proof.
 - `docs/TECHNICAL_SPEC.md`: buildable technical specification.
 - `docs/DECISIONS.md`: current decisions, tradeoffs, and review triggers.
 - `docs/MVP_SCOPE.md`: minimum useful release and acceptance checks.

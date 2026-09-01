@@ -6,6 +6,7 @@ All notable changes will be recorded here once public beta releases begin.
 
 ### Added
 
+- Signed, channel-aware managed release manifests; a host-level Docker Compose updater; deployment-owner update APIs; and an in-app flow for update discovery, release notes, preflight, scheduling, progress, recovery points, and rollback.
 - Browser-based Markdown page creation and editing with hierarchy, ownership, review dates, audience, sensitivity, validation, and the existing draft-review-publish lifecycle.
 - Reader search results grouped by page so the strongest matching excerpt is shown once, with the total matching-chunk count retained as context.
 - Knowledge-base registry with stable page IDs, publishing state, separate AI instructions, and human-readable documents.

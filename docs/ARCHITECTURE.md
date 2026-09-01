@@ -27,6 +27,9 @@ flowchart LR
   Orchestrator["Managed Agent Layer - Later"] --> API
   Orchestrator --> Providers["OpenAI / Anthropic / OpenRouter"]
   Orchestrator --> Actions["Admin-Enabled Actions"]
+  API --> Updater["Host Updater Control API"]
+  Updater --> Compose["Managed Compose Project"]
+  Updater --> Recovery["External Job And Recovery State"]
 ```
 
 ## Core Services
@@ -58,6 +61,10 @@ Initial system of record for users, tenants, registry objects, versions, permiss
 ### Object Storage
 
 The attachment contract separates tenant-scoped metadata in Postgres from opaque blob keys in a storage adapter. The current self-hosted development/runtime adapter stores bounded files in a dedicated local volume. A later S3-compatible adapter can implement the same `put/get/delete` boundary without changing attachment authorization or public metadata. Generated exports, large logs, and import artifacts remain future object-storage consumers.
+
+### Host Updater
+
+The host updater is a separate, authenticated local control plane for managed Docker Compose installations. It verifies signed release manifests, owns the update state machine, invokes Docker Compose without a shell, and stores recovery metadata outside Postgres. The API exposes a narrow deployment-owner surface to the web UI. Application containers do not receive the Docker socket. See [Versioning And Upgrades](VERSIONING_AND_UPGRADES.md).
 
 ## Data Model Direction
 
@@ -173,6 +180,8 @@ Cons:
 - local secrets and storage need careful documentation
 
 Recommendation: default OSS path.
+
+The managed Compose variant uses digest-pinned release images and the host updater. Source-checkout Compose remains the development and advanced-operator path.
 
 ### Option B: PaaS Container Deployment
 
