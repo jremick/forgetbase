@@ -101,7 +101,9 @@ function checkTemplatePosture(): void {
   const dockerRunbook = readRepoFile("docs/runbooks/DEPLOY_DOCKER_COMPOSE.md");
   const server = readRepoFile("apps/api/src/server.ts");
   const updaterServer = readRepoFile("apps/updater/src/index.ts");
+  const updaterExecutor = readRepoFile("packages/updater/src/executor.ts");
   const managedInstaller = readRepoFile("scripts/install-managed-release.ts");
+  const managedBundleBuilder = readRepoFile("scripts/build-managed-release-bundle.ts");
 
   requireIncludes("compose.yaml", compose, "HOST: 0.0.0.0", "API listens on the container network");
   requireIncludes("compose.yaml", compose, "${FORGETBASE_POSTGRES_PORT:-127.0.0.1:5432}:5432", "local Compose Postgres defaults to loopback");
@@ -126,6 +128,9 @@ function checkTemplatePosture(): void {
   requireIncludes("compose.managed.yaml", composeManaged, "FORGETBASE_UPDATER_API_TOKEN:?FORGETBASE_UPDATER_API_TOKEN is required", "managed API requires the updater token");
   requireIncludes("compose.managed.yaml", composeManaged, "FORGETBASE_SYSTEM_UPDATE_OWNER_EMAILS:?FORGETBASE_SYSTEM_UPDATE_OWNER_EMAILS is required", "managed update owner allowlist is required");
   requireIncludes("compose.managed.yaml", composeManaged, "FORGETBASE_UPDATER_ALLOW_INSECURE_HTTP:-true", "managed bridge HTTP requires an explicit override");
+  requireIncludes("compose.managed.yaml", composeManaged, "FORGETBASE_ATTACHMENT_SCAN_REQUIRED: \"true\"", "managed installs require attachment malware scanning");
+  requireIncludes("compose.managed.yaml", composeManaged, "attachment-data:/var/lib/forgetbase/attachments", "managed installs persist attachment blobs");
+  requireIncludes("compose.managed.yaml", composeManaged, "clamav/clamav:1.5.4-debian13-slim@sha256:", "managed installs pin the ClamAV image by digest");
   record(
     composeManaged.includes("/var/run/docker.sock") ? "fail" : "pass",
     "managed application Docker privilege boundary",
@@ -152,7 +157,12 @@ function checkTemplatePosture(): void {
   requireIncludes("infra/docker/railway-proxy.Dockerfile", railwayProxyDockerfile, "FORGETBASE_API_UPSTREAM_PORT=8080", "Railway proxy defaults the internal API port to Railway's runtime port");
   requireIncludes("apps/api/src/server.ts", server, "server.get(\"/ready\"", "API exposes a database-aware readiness route");
   requireIncludes("apps/updater/src/index.ts", updaterServer, "process.env.HOST ?? \"127.0.0.1\"", "host updater defaults to loopback");
+  requireIncludes("packages/updater/src/executor.ts", updaterExecutor, "scripts/backup-set.sh", "managed updater creates coordinated database and attachment backups");
+  requireIncludes("packages/updater/src/executor.ts", updaterExecutor, "scripts/verify-backup-set.sh", "managed updater restore-verifies recovery sets");
+  requireIncludes("packages/updater/src/executor.ts", updaterExecutor, "scripts/restore-attachments.sh", "managed updater restores attachment blobs with database recovery");
   requireIncludes("scripts/install-managed-release.ts", managedInstaller, "verifyBundleReceipt", "managed installer verifies its bundle receipt");
+  requireIncludes("scripts/build-managed-release-bundle.ts", managedBundleBuilder, "scripts/backup-set.sh", "managed bundle includes coordinated backup tooling");
+  requireIncludes("scripts/build-managed-release-bundle.ts", managedBundleBuilder, "scripts/restore-attachments.sh", "managed bundle includes attachment restore tooling");
 
   const publicAuthBlockMatch = server.match(/function isPublicAuthenticationPath[\s\S]*?\n}/);
 

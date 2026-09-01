@@ -34,10 +34,6 @@ export interface ManagedComposeExecutorOptions {
   commandTimeoutMs?: number;
   minimumFreeBytes?: number;
   environment?: NodeJS.ProcessEnv;
-  attachmentSnapshotProvider?: {
-    available(): Promise<boolean>;
-    create(recoveryDirectory: string): Promise<string>;
-  };
 }
 
 export class ManagedComposeExecutor implements UpdateExecutor {
@@ -72,7 +68,7 @@ export class ManagedComposeExecutor implements UpdateExecutor {
       this.tryCommand("docker", [...this.composeArgs(this.currentEnvPath), "config", "--quiet"]),
       statfs(this.stateDir),
       this.checkBackupWritable(),
-      this.options.attachmentSnapshotProvider?.available() ?? Promise.resolve(false)
+      this.checkAttachmentRecoverySupport()
     ]);
     const freeBytes = disk.bavail * disk.bsize;
     const requiredBytes = Math.max(this.options.minimumFreeBytes ?? 2 * 1024 * 1024 * 1024, manifest.images.length * 512 * 1024 * 1024);
@@ -83,6 +79,9 @@ export class ManagedComposeExecutor implements UpdateExecutor {
     details.configuration = configuration.ok ? "Managed Compose bundle validates" : configuration.output;
     details.configurationDrift = configurationDrift ? "Managed bundle checksum differs from the installed receipt" : "Managed bundle matches its receipt";
     details.backup = backupWritable ? `Recovery directory writable at ${this.recoveryDir}` : "Recovery directory is not writable";
+    details.attachments = attachmentSnapshotAvailable
+      ? "Database metadata and attachment blobs will be captured and restore-verified together"
+      : "Managed bundle is missing coordinated attachment backup or restore support";
 
     return {
       healthy: await this.checkUrl(this.options.apiHealthUrl ?? "http://127.0.0.1:3000/health", false),
@@ -101,41 +100,51 @@ export class ManagedComposeExecutor implements UpdateExecutor {
   async createRecoveryPoint(input: { identity: ProductIdentity; manifest: ReleaseManifest }): Promise<RecoveryPoint> {
     this.failIfRequested("backing-up");
     await this.ensureLayout();
+    if (!input.manifest.recovery.components.includes("attachments") || input.manifest.recovery.attachmentMode !== "included") {
+      throw new Error("Managed recovery requires an included attachment backup set");
+    }
     const id = `recovery_${safeTimestamp(new Date())}_${input.identity.version.replace(/[^0-9A-Za-z.-]/g, "-")}`;
     const directory = join(this.recoveryDir, id);
     assertWithin(this.recoveryDir, directory, "Recovery directory");
     await mkdir(directory, { recursive: false, mode: 0o700 });
-    const backupPath = join(directory, "forgetbase.dump");
     const configurationPath = join(directory, "release.env");
-    await copyFile(this.currentEnvPath, configurationPath);
-    await this.run("bash", [join(this.bundleDir, "scripts/backup-postgres.sh"), backupPath], {
-      ...this.composeEnvironment(),
-      FORGETBASE_BACKUP_DIR: directory
-    });
-    let attachmentSnapshotId: string | null = null;
+    const backupSetDirectory = join(directory, "backup-set");
+    const backupPath = join(backupSetDirectory, "database.dump");
+    const attachmentSnapshotPath = join(backupSetDirectory, "attachments.tar");
 
-    if (input.manifest.recovery.attachmentMode === "included") {
-      if (!this.options.attachmentSnapshotProvider) {
-        throw new Error("Attachment snapshot provider is required by this release");
-      }
-      attachmentSnapshotId = await this.options.attachmentSnapshotProvider.create(directory);
+    try {
+      await copyFile(this.currentEnvPath, configurationPath);
+      await this.run("bash", [join(this.bundleDir, "scripts/backup-set.sh"), backupSetDirectory], {
+        ...this.composeEnvironment(),
+        FORGETBASE_BACKUP_DIR: directory
+      });
+      await this.run("bash", [join(this.bundleDir, "scripts/verify-backup-set.sh"), backupSetDirectory], {
+        ...this.composeEnvironment()
+      });
+
+      const [backupStats, attachmentStats, configurationStats] = await Promise.all([
+        stat(backupPath),
+        stat(attachmentSnapshotPath),
+        stat(configurationPath)
+      ]);
+      return recoveryPointSchema.parse({
+        id,
+        createdAt: new Date().toISOString(),
+        version: input.identity.version,
+        sourceRevision: input.identity.sourceRevision,
+        databaseSchemaVersion: input.identity.databaseSchemaVersion,
+        imageReferences: await readImageReferences(this.currentEnvPath),
+        backupPath,
+        configurationPath,
+        attachmentSnapshotId: attachmentSnapshotPath,
+        verified: backupStats.size > 0 && attachmentStats.size > 0,
+        protected: false,
+        sizeBytes: backupStats.size + attachmentStats.size + configurationStats.size
+      });
+    } catch (error) {
+      await rm(directory, { recursive: true, force: true });
+      throw error;
     }
-
-    const backupStats = await stat(backupPath);
-    return recoveryPointSchema.parse({
-      id,
-      createdAt: new Date().toISOString(),
-      version: input.identity.version,
-      sourceRevision: input.identity.sourceRevision,
-      databaseSchemaVersion: input.identity.databaseSchemaVersion,
-      imageReferences: await readImageReferences(this.currentEnvPath),
-      backupPath,
-      configurationPath,
-      attachmentSnapshotId,
-      verified: backupStats.size > 0,
-      protected: false,
-      sizeBytes: backupStats.size
-    });
   }
 
   async stage(manifest: ReleaseManifest): Promise<void> {
@@ -164,6 +173,11 @@ export class ManagedComposeExecutor implements UpdateExecutor {
     await this.run("docker", [...this.composeArgs(this.currentEnvPath), "stop", "proxy", "api", "worker"]);
   }
 
+  async resumeCurrent(): Promise<void> {
+    await this.run("docker", [...this.composeArgs(this.currentEnvPath), "up", "-d", "postgres", "clamav"]);
+    await this.run("docker", [...this.composeArgs(this.currentEnvPath), "up", "--no-deps", "-d", "api", "worker", "web", "proxy"]);
+  }
+
   async migrate(manifest: ReleaseManifest): Promise<void> {
     this.failIfRequested("migrating");
     await this.run("docker", [
@@ -180,7 +194,8 @@ export class ManagedComposeExecutor implements UpdateExecutor {
 
   async startCandidate(_manifest: ReleaseManifest): Promise<void> {
     this.failIfRequested("starting");
-    await this.run("docker", [...this.composeArgs(this.candidateEnvPath), "up", "--no-deps", "-d", "postgres", "api", "worker", "web"]);
+    await this.run("docker", [...this.composeArgs(this.candidateEnvPath), "up", "-d", "postgres", "clamav"]);
+    await this.run("docker", [...this.composeArgs(this.candidateEnvPath), "up", "--no-deps", "-d", "api", "worker", "web"]);
   }
 
   async verifyCandidate(manifest: ReleaseManifest): Promise<void> {
@@ -195,7 +210,7 @@ export class ManagedComposeExecutor implements UpdateExecutor {
 
   async reopenWrites(manifest: ReleaseManifest): Promise<void> {
     this.failIfRequested("reopen-writes");
-    await this.run("docker", [...this.composeArgs(this.candidateEnvPath), "up", "-d", "proxy"]);
+    await this.run("docker", [...this.composeArgs(this.candidateEnvPath), "up", "--no-deps", "-d", "proxy"]);
     await copyFile(this.candidateEnvPath, this.currentEnvPath);
     const identity = productIdentitySchema.parse({
       ...this.options.currentIdentity,
@@ -214,13 +229,13 @@ export class ManagedComposeExecutor implements UpdateExecutor {
   async rollbackApplication(point: RecoveryPoint): Promise<void> {
     if (!point.configurationPath) throw new Error("Recovery point has no configuration snapshot");
     await copyFile(point.configurationPath, this.currentEnvPath);
-    await this.run("docker", [...this.composeArgs(this.currentEnvPath), "up", "-d", "postgres", "api", "worker", "web", "proxy"]);
+    await this.resumeCurrent();
     await this.writeRecoveredIdentity(point);
   }
 
   async rollbackDatabase(point: RecoveryPoint): Promise<void> {
-    if (!point.backupPath || !point.configurationPath) {
-      throw new Error("Recovery point does not contain a database and configuration snapshot");
+    if (!point.backupPath || !point.configurationPath || !point.attachmentSnapshotId) {
+      throw new Error("Recovery point does not contain a database, attachment, and configuration backup set");
     }
 
     await copyFile(point.configurationPath, this.currentEnvPath);
@@ -230,14 +245,19 @@ export class ManagedComposeExecutor implements UpdateExecutor {
       ...this.composeEnvironment(),
       FORGETBASE_RESTORE_CONFIRM: database
     });
-    await this.run("docker", [...this.composeArgs(this.currentEnvPath), "up", "-d", "postgres", "api", "worker", "web", "proxy"]);
+    await this.run("bash", [join(this.bundleDir, "scripts/restore-attachments.sh"), point.attachmentSnapshotId], {
+      ...this.composeEnvironment(),
+      FORGETBASE_ATTACHMENT_RESTORE_CONFIRM: "attachments"
+    });
+    await this.resumeCurrent();
     await this.writeRecoveredIdentity(point);
   }
 
   async deleteRecoveryPoint(point: RecoveryPoint): Promise<void> {
-    const paths = [point.backupPath, point.configurationPath].filter((value): value is string => Boolean(value));
+    const paths = [point.backupPath, point.configurationPath, point.attachmentSnapshotId]
+      .filter((value): value is string => Boolean(value));
     for (const path of paths) assertWithin(this.recoveryDir, resolve(path), "Recovery artifact");
-    const directory = paths[0] ? dirname(paths[0]) : join(this.recoveryDir, point.id);
+    const directory = point.configurationPath ? dirname(point.configurationPath) : join(this.recoveryDir, point.id);
     assertWithin(this.recoveryDir, directory, "Recovery directory");
     await rm(directory, { recursive: true, force: true });
   }
@@ -329,6 +349,20 @@ export class ManagedComposeExecutor implements UpdateExecutor {
     try {
       await writeFile(probePath, "probe", { encoding: "utf8", mode: 0o600 });
       await rm(probePath);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private async checkAttachmentRecoverySupport(): Promise<boolean> {
+    try {
+      await Promise.all([
+        "backup-attachments.sh",
+        "backup-set.sh",
+        "restore-attachments.sh",
+        "verify-backup-set.sh"
+      ].map((script) => stat(join(this.bundleDir, "scripts", script))));
       return true;
     } catch {
       return false;

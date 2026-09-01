@@ -53,6 +53,7 @@ export interface UpdateExecutor {
   createRecoveryPoint(input: { identity: ProductIdentity; manifest: ReleaseManifest }): Promise<RecoveryPoint>;
   stage(manifest: ReleaseManifest): Promise<void>;
   enterMaintenance(): Promise<void>;
+  resumeCurrent(): Promise<void>;
   migrate(manifest: ReleaseManifest): Promise<void>;
   startCandidate(manifest: ReleaseManifest): Promise<void>;
   verifyCandidate(manifest: ReleaseManifest): Promise<void>;
@@ -202,10 +203,14 @@ export class UpdateManager {
       check(
         "attachment-recovery",
         "Attachment recovery available",
-        manifest.recovery.attachmentMode !== "external-snapshot-required" || probe.attachmentSnapshotAvailable,
-        manifest.recovery.attachmentMode === "external-snapshot-required"
-          ? "This release requires an external attachment snapshot provider"
-          : `Attachment recovery mode: ${manifest.recovery.attachmentMode}`
+        manifest.recovery.components.includes("attachments") &&
+          manifest.recovery.attachmentMode === "included" &&
+          probe.attachmentSnapshotAvailable,
+        manifest.recovery.attachmentMode === "not-configured"
+          ? "Managed releases must include attachment recovery"
+          : manifest.recovery.attachmentMode === "external-snapshot-required"
+            ? "Managed Compose updates require an included attachment recovery set"
+          : probe.details.attachments ?? `Attachment recovery mode: ${manifest.recovery.attachmentMode}`
       )
     ];
 
@@ -389,21 +394,24 @@ export class UpdateManager {
 
   private async executeUpdate(jobId: string, manifest: ReleaseManifest): Promise<void> {
     let recoveryPoint: RecoveryPoint | null = null;
+    let maintenanceEntered = false;
 
     try {
       await this.setPhase(jobId, "preflight", 5, "Rechecking update preflight", { startedAt: this.now().toISOString() });
       const preflight = await this.preflight(manifest.version, jobId);
       if (!preflight.eligible) throw new Error("Update preflight failed at execution time");
 
-      await this.setPhase(jobId, "backing-up", 15, "Creating and verifying recovery point");
+      await this.setPhase(jobId, "staging", 20, "Pulling digest-pinned release images");
+      await this.options.executor.stage(manifest);
+      await this.setPhase(jobId, "maintenance", 35, "Entering maintenance mode and stopping writers");
+      maintenanceEntered = true;
+      await this.options.executor.enterMaintenance();
+
+      await this.setPhase(jobId, "backing-up", 50, "Creating and verifying database and attachment recovery point");
       recoveryPoint = recoveryPointSchema.parse(await this.options.executor.createRecoveryPoint({ identity: this.identity, manifest }));
       await this.mutate((state) => ({ ...state, recoveryPoints: [recoveryPoint!, ...state.recoveryPoints] }));
       await this.updateJob(jobId, (job) => ({ ...job, recoveryPointId: recoveryPoint?.id ?? null }));
 
-      await this.setPhase(jobId, "staging", 30, "Pulling digest-pinned release images");
-      await this.options.executor.stage(manifest);
-      await this.setPhase(jobId, "maintenance", 45, "Entering maintenance mode and stopping writers");
-      await this.options.executor.enterMaintenance();
       await this.setPhase(jobId, "migrating", 60, "Applying the verified migration set");
       await this.options.executor.migrate(manifest);
       await this.setPhase(jobId, "starting", 75, "Starting candidate application services");
@@ -412,6 +420,7 @@ export class UpdateManager {
       await this.options.executor.verifyCandidate(manifest);
       await this.updateJob(jobId, (job) => ({ ...job, writesReopened: true }));
       await this.options.executor.reopenWrites(manifest);
+      maintenanceEntered = false;
       this.identity = productIdentitySchema.parse(await this.options.executor.refreshIdentity());
       await this.updateJob(jobId, (job) => ({
         ...job,
@@ -425,6 +434,23 @@ export class UpdateManager {
     } catch (error) {
       const message = errorMessage(error);
       const job = (await this.options.store.read()).jobs.find((candidate) => candidate.id === jobId);
+
+      if (maintenanceEntered && !recoveryPoint) {
+        try {
+          await this.options.executor.resumeCurrent();
+          maintenanceEntered = false;
+          await this.failJob(jobId, classifyError(error), `${message}; current release resumed`);
+        } catch (resumeError) {
+          await this.updateJob(jobId, (current) => ({
+            ...current,
+            phase: "needs-attention",
+            completedAt: this.now().toISOString(),
+            message: `Update failed before recovery completed (${message}); current release also failed to resume (${errorMessage(resumeError)})`,
+            errorCode: "current_release_resume_failed"
+          }));
+        }
+        return;
+      }
 
       if (job?.automaticRollback && recoveryPoint && !job.writesReopened && !["application", "database-restore"].includes(manifest.rollbackMode)) {
         await this.updateJob(jobId, (current) => ({

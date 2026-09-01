@@ -98,7 +98,7 @@ The updater state directory is outside Postgres and contains:
 
 - the update job ledger
 - current and candidate release receipts
-- verified database recovery points
+- restore-verified database and attachment recovery sets
 - configuration snapshots without secret values
 - image digests and schema identity
 
@@ -119,4 +119,4 @@ docker compose \
   config --quiet
 ```
 
-Then confirm `/health`, `/ready`, `/system/version`, the Updates page, and an off-host restore drill according to the release risk tier.
+Then confirm `/health`, `/ready`, `/system/version`, the Updates page, and an off-host database-plus-attachment restore drill according to the release risk tier.

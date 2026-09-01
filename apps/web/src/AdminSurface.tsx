@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import type {
   AccountLinkingMode,
   AgentActionExecutionPolicy,
@@ -91,8 +91,8 @@ import {
   StatusAlert,
   Toolbar
 } from "./components/app/index.js";
-import { TrustStateSummary, UpdateManagementPanel } from "./components/domain/index.js";
-import { AnalyticsDashboard, type AnalyticsWindowDays } from "./components/domain/analytics-dashboard.js";
+import { TrustStateSummary } from "./components/domain/trust-state-summary.js";
+import type { AnalyticsWindowDays } from "./components/domain/analytics-dashboard.js";
 import {
   attachmentUploadErrorMessage,
   attachmentUploadHeaders,
@@ -195,6 +195,10 @@ import "./styles.css";
 
 const sessionCookieActiveStorageKey = "forgetbase-session-cookie-active";
 const csrfCookieName = "forgetbase_csrf";
+const LazyUpdateManagementPanel = lazy(() => import("./components/domain/update-management.js")
+  .then((module) => ({ default: module.UpdateManagementPanel })));
+const LazyAnalyticsDashboard = lazy(() => import("./components/domain/analytics-dashboard.js")
+  .then((module) => ({ default: module.AnalyticsDashboard })));
 const configuredApiUrl = import.meta.env.VITE_FORGETBASE_API_URL?.trim();
 const attachmentMaxBytes = 10 * 1024 * 1024;
 const demoEvalCases = [
@@ -5757,7 +5761,13 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
               )}
             </SectionCard>
           </div>
-          <div className={routePanelClass(currentPage, ["updates"], "grid gap-4")}>{currentPage === "updates" ? <UpdateManagementPanel request={request} onAvailabilityChange={setUpdateAvailable} /> : null}</div>
+          <div className={routePanelClass(currentPage, ["updates"], "grid gap-4")}>
+            {currentPage === "updates" ? (
+              <Suspense fallback={<p>Loading update controls…</p>}>
+                <LazyUpdateManagementPanel request={request} onAvailabilityChange={setUpdateAvailable} />
+              </Suspense>
+            ) : null}
+          </div>
           <div className={routePanelClass(currentPage, ["review"], "grid gap-4")}>
             <DataTableShell
               title="Review queue"
@@ -5795,16 +5805,20 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
             </DataTableShell>
           </div>
           <div className={routePanelClass(currentPage, activityPanelRoutes, "grid gap-4")}>
-            <AnalyticsDashboard
-              summary={telemetrySummary}
-              windowDays={analyticsWindowDays}
-              loading={analyticsLoading}
-              onWindowDaysChange={(days) => {
-                setAnalyticsWindowDays(days);
-                void loadTelemetrySummary(days);
-              }}
-              onRefresh={() => void loadTelemetrySummary()}
-            />
+            {currentPage === "activity" ? (
+              <Suspense fallback={<p>Loading analytics…</p>}>
+                <LazyAnalyticsDashboard
+                  summary={telemetrySummary}
+                  windowDays={analyticsWindowDays}
+                  loading={analyticsLoading}
+                  onWindowDaysChange={(days) => {
+                    setAnalyticsWindowDays(days);
+                    void loadTelemetrySummary(days);
+                  }}
+                  onRefresh={() => void loadTelemetrySummary()}
+                />
+              </Suspense>
+            ) : null}
           </div>
           <div className={routePanelClass(currentPage, activityAndHealthPanelRoutes, "grid gap-4")}>
             <SectionCard title="Telemetry summary" variant="tool">

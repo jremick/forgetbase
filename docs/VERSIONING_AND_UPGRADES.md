@@ -79,10 +79,10 @@ Before acceptance, the updater runs a non-mutating preflight. Blocking checks in
 The operator must explicitly confirm the selected version. The update state machine then:
 
 1. Repeats preflight immediately before mutation.
-2. Creates and verifies a recovery point.
-3. Pulls only digest-pinned candidate images.
-4. Confirms the candidate migration plan matches the signed migration IDs.
-5. Enters maintenance and stops writers.
+2. Pulls only digest-pinned candidate images and confirms the candidate migration plan matches the signed migration IDs.
+3. Enters maintenance and stops writers.
+4. Creates a coordinated database, attachment, and configuration recovery point and restore-verifies it.
+5. Resumes the current release automatically if recovery creation fails before a verified point exists.
 6. Runs the candidate migration once.
 7. Starts candidate services without reopening the public proxy.
 8. Verifies API health and exact candidate version, then verifies the web service.
@@ -93,10 +93,10 @@ Job state and recovery metadata live outside Postgres. A browser page that remai
 Automatic rollback is available before writes reopen. If a failure occurs in that window, the updater restores the verified recovery point according to the signed rollback mode:
 
 - `application`: restore the previous image and configuration set without restoring Postgres. This is valid only for a compatible migration declaration.
-- `database-restore`: stop writers, restore the database backup and prior configuration, then restart the previous services.
+- `database-restore`: keep writers stopped, restore the database and attachment backup set plus prior configuration, then restart the previous services.
 - `unavailable` or `platform-managed`: reject the release for a managed self-hosted installation.
 
-Manual rollback remains available from the Updates page. A database restore can discard writes made after the selected recovery point. The UI shows that timestamp and requires explicit data-loss confirmation.
+Manual rollback remains available from the Updates page. A recovery-set restore can discard database writes and attachment changes made after the selected recovery point. The UI shows that timestamp and requires explicit data-loss confirmation.
 
 ### Phase 5: Hardening And Operations
 
@@ -123,7 +123,7 @@ Updater replacement itself is not performed by the application container. A rele
 | Detect | Fetch and verify the channel manifest | Choose the feed and channel |
 | Explain | Present structured notes, risk, downtime, compatibility, and recovery mode | Review impact and known issues |
 | Decide | Never auto-apply by default | Apply now, schedule, or defer |
-| Protect | Run preflight and create a verified recovery point | Resolve blocking checks and preserve external backups |
+| Protect | Run preflight and create a restore-verified database, attachment, and configuration recovery point | Resolve blocking checks and preserve external backups |
 | Execute | Stage, migrate, health-check, and reopen in ordered phases | Keep the host updater supervised and reachable only on the trusted host path |
 | Recover | Auto-rollback before writes reopen and retain manual recovery points | Confirm any rollback that can discard later writes |
 
@@ -145,13 +145,13 @@ The system reports platform-managed maintenance. Self-hosted controls are absent
 
 - `application-only`: no database changes. The target schema must equal the installed schema and the migration list must be empty.
 - `additive`: older application code can continue to use the migrated database. Application rollback is allowed if the manifest declares it.
-- `destructive`: old code is not assumed compatible. A database recovery point is required and rollback restores it.
+- `destructive`: old code is not assumed compatible. A coordinated database and attachment recovery point is required and rollback restores it.
 
 The updater trusts neither filenames nor local migration discovery alone. It compares the candidate migration plan with the exact IDs in the signed manifest before maintenance starts.
 
 ## Recovery Retention
 
-The default retention count is three recovery points. A protected point is not deleted automatically. Retention includes the database dump, configuration snapshot, release identity, image references, schema identity, and attachment snapshot reference when configured.
+The default retention count is three recovery points. A protected point is not deleted automatically. Retention includes the database dump, attachment archive, backup-set manifest, configuration snapshot, release identity, image references, and schema identity.
 
 External backups remain necessary. In-app recovery is a fast operational path, not a replacement for off-host backup policy or restore drills.
 
@@ -165,7 +165,7 @@ A managed update capability is ready for a release only when:
 - a real managed Compose configuration validates with digest-pinned images
 - a clean update reaches the exact target health identity
 - injected failures before writes reopen produce the declared rollback result
-- destructive migration recovery is restore-tested with Postgres
+- destructive migration recovery is restore-tested as a coordinated Postgres and attachment set
 - the web flow is checked in a browser for availability, notes, preflight, confirmation, progress, history, and rollback warnings
 - OpenAPI, type, unit, integration, security, and repository contract gates pass
 

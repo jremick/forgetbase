@@ -13,12 +13,12 @@
   "rollbackMode": "application",
   "migration": {
     "compatibility": "additive",
-    "targetSchemaVersion": "032_api_key_surface_bindings",
-    "migrationIds": []
+    "targetSchemaVersion": "033_attachments",
+    "migrationIds": ["033_attachments"]
   },
   "recovery": {
-    "components": ["database", "configuration"],
-    "attachmentMode": "not-configured"
+    "components": ["database", "configuration", "attachments"],
+    "attachmentMode": "included"
   },
   "images": [
     {

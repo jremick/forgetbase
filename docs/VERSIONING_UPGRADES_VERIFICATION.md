@@ -1,7 +1,7 @@
 # Versioning And Upgrades Verification
 
-Date: 2026-09-02  
-Branch: `feat/versioning-upgrades`  
+Date: 2026-09-02
+Branch: `feat/versioning-upgrades`, rebased onto `origin/main` at `d002642`
 Risk tier: Tier 3, because the feature controls host processes, container supply chain, migrations, persistent data, and restore paths.
 
 ## Result
@@ -19,7 +19,7 @@ Phases 1-5 are implemented and ready for controlled managed-install UAT. This is
 ### Phase 2: Distribution And Installation
 
 - A temporary Ed25519 release key signed the manifest template successfully.
-- The managed bundle contained 35 receipted files.
+- The managed bundle contained 39 receipted files, including coordinated database and attachment backup, verification, and restore tooling.
 - The installer verified the full receipt and signed manifest, then created managed identity and release environment files with mode `0600`.
 - A deliberate change to a receipted runbook caused installation to fail with a bundle receipt mismatch.
 - `docker compose config --quiet` passed for `compose.managed.yaml` with the verified release environment and required deployment settings.
@@ -33,26 +33,29 @@ Phases 1-5 are implemented and ready for controlled managed-install UAT. This is
 
 ### Phase 4: Execution And Recovery
 
-- Manager tests covered successful ordered execution, automatic application rollback on migration failure, manual database-restore confirmation, source-install fail-closed behavior, scheduled-release signature revalidation, and the post-write-boundary rollback shield.
+- Manager tests covered successful ordered execution, automatic application rollback on migration failure, manual database-restore confirmation, source-install fail-closed behavior, scheduled-release signature revalidation, recovery-creation failure with current-release resumption, attachment-recovery preflight enforcement, and the post-write-boundary rollback shield.
 - Browser UAT showed that the action stayed disabled until preflight and explicit confirmation passed, then rendered durable job progress, cancel eligibility, reconnect guidance, and verified recovery history.
-- Recovery data remains outside Postgres and the managed executor uses the existing backup and restore helpers.
+- Recovery data remains outside Postgres. The managed executor stops writers before creating and restore-verifying one coordinated database and attachment backup set. It restores both components for database rollback.
 
 ### Phase 5: Hardening
 
-- A dedicated Postgres 17 plus pgvector test container ran 71 database tests, including exact pending migration sets and applied checksum drift rejection.
+- A dedicated Postgres 17 plus pgvector test container ran all 325 tests, including 73 database tests for exact pending migration sets, applied checksum drift rejection, and attachment persistence behavior.
 - The updater bearer token minimum, timing-safe comparison, explicit plaintext-transport override, loopback default, no-Docker-socket application boundary, direct argument execution, timeouts, bounded output, path containment, recovery retention, and configuration drift checks are enforced.
-- The deployment security gate passed 39 checks, including the new managed-install invariants.
+- The deployment security gate passed 51 checks, including managed attachment persistence, malware scanning, and coordinated recovery invariants.
+- The isolated private-live proof passed with synthetic data. It built and started the stack, ran Postgres-backed tests, verified clean-file and EICAR attachment behavior, proved restricted-data isolation, created and restore-verified a coordinated database and attachment backup set, passed authenticated admin and reader browser UAT, and removed its containers and volumes.
 
 ## Final Automated Checks
 
 - `pnpm typecheck`: passed across 11 workspace projects.
-- `pnpm test`: 245 passed; 37 environment-gated tests skipped. The skipped Postgres group was run separately and passed as noted above.
-- `pnpm web:bundle-budget`: passed at 860.01 kB raw and 236.64 kB gzip for all JavaScript.
-- `pnpm openapi:check`: 90 documented routes matched 92 server routes plus two explicit meta-route exceptions.
-- `pnpm security:check-deployment-defaults`: 39 checks passed.
-- `pnpm claims:lint`: passed across 94 public copy and source files.
+- `pnpm test`: 287 passed; 38 environment-gated tests skipped. A separate Postgres-backed run passed all 325 tests.
+- `pnpm web:bundle-budget`: passed at 883.79 kB raw and 245.76 kB gzip for all JavaScript; the lazy admin graph is 242.12 kB raw and 61.35 kB gzip.
+- `pnpm openapi:check`: 95 documented routes matched 97 server routes plus two explicit meta-route exceptions.
+- `pnpm contracts:check`: 55 contract tests passed.
+- `pnpm security:check-deployment-defaults`: 51 checks passed.
+- `pnpm claims:lint`: passed across 97 public copy and source files.
 - `pnpm public-beta:check`: passed.
-- `pnpm test:uat`: passed and wrote its existing public-beta evidence under `work/public-beta-uat`.
+- `pnpm test:uat`: passed and wrote public-beta evidence under `work/public-beta-uat`.
+- `PRIVATE_LIVE_REQUIRE_CLEAN=0 pnpm private-live:isolated-proof`: passed all isolated runtime and authenticated browser checks and cleaned up the temporary stack.
 - `git diff --check`: passed.
 - Rendered Updates browser UAT: passed with no console warnings or errors.
 

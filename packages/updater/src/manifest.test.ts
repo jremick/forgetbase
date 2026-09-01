@@ -108,9 +108,9 @@ describe("update manager", () => {
       "probe",
       "probe",
       "probe",
-      "backup",
       "stage",
       "maintenance",
+      "backup",
       "migrate",
       "start",
       "verify",
@@ -132,6 +132,27 @@ describe("update manager", () => {
     expect(completed.phase, completed.message).toBe("rolled-back");
     expect(completed.writesReopened).toBe(false);
     expect(executor.phases).toContain("rollback-application");
+  });
+
+  it("resumes the current release if coordinated recovery creation fails", async () => {
+    const directory = await createTemporaryDirectory();
+    const executor = new FakeExecutor("backup");
+    const { manager } = buildManager(directory, executor);
+    await seedAvailableRelease(manager, buildManifest());
+
+    const job = await manager.apply({ version: "0.2.0", automaticRollback: true });
+    const completed = await waitForTerminalJob(manager, job.id);
+
+    expect(completed.phase).toBe("failed");
+    expect(completed.message).toContain("current release resumed");
+    expect(executor.phases).toEqual([
+      "probe",
+      "probe",
+      "stage",
+      "maintenance",
+      "backup",
+      "resume-current"
+    ]);
   });
 
   it("fails closed for source installations", async () => {
@@ -160,6 +181,20 @@ describe("update manager", () => {
     expect(preflight.eligible).toBe(false);
     expect(preflight.checks.find((check) => check.id === "migration-contract")?.status).toBe("fail");
     expect(preflight.checks.find((check) => check.id === "managed-rollback-mode")?.status).toBe("fail");
+  });
+
+  it("rejects managed releases without included attachment recovery", async () => {
+    const directory = await createTemporaryDirectory();
+    const executor = new FakeExecutor();
+    const { manager } = buildManager(directory, executor);
+    await seedAvailableRelease(manager, buildManifest({
+      recovery: { components: ["database", "configuration"], attachmentMode: "not-configured" }
+    }));
+
+    const preflight = await manager.preflight("0.2.0");
+
+    expect(preflight.eligible).toBe(false);
+    expect(preflight.checks.find((check) => check.id === "attachment-recovery")?.status).toBe("fail");
   });
 
   it("does not automatically restore after the write boundary may have opened", async () => {
@@ -323,7 +358,7 @@ function buildManifest(overrides: Partial<ReleaseManifest> = {}): ReleaseManifes
       targetSchemaVersion: "033_update_system",
       migrationIds: ["033_update_system"]
     },
-    recovery: { components: ["database", "configuration"], attachmentMode: "not-configured" },
+    recovery: { components: ["database", "configuration", "attachments"], attachmentMode: "included" },
     images: ["api", "web", "worker", "migrate", "proxy"].map((component) => ({
       component,
       reference: `registry.example.test/forgetbase/${component}@${digest}`,
@@ -351,7 +386,7 @@ class FakeExecutor implements UpdateExecutor {
       backupWritable: true,
       freeBytes: 10_000,
       requiredBytes: 1_000,
-      attachmentSnapshotAvailable: false,
+      attachmentSnapshotAvailable: true,
       details: {}
     };
   }
@@ -367,7 +402,7 @@ class FakeExecutor implements UpdateExecutor {
       imageReferences: ["registry.example.test/forgetbase/api@sha256:test"],
       backupPath: "/safe/forgetbase.dump",
       configurationPath: "/safe/release.env",
-      attachmentSnapshotId: null,
+      attachmentSnapshotId: "/safe/attachments.tar",
       verified: true,
       protected: false,
       sizeBytes: 100
@@ -376,6 +411,7 @@ class FakeExecutor implements UpdateExecutor {
 
   async stage(): Promise<void> { this.step("stage"); }
   async enterMaintenance(): Promise<void> { this.step("maintenance"); }
+  async resumeCurrent(): Promise<void> { this.step("resume-current"); }
   async migrate(): Promise<void> { this.step("migrate"); }
   async startCandidate(): Promise<void> { this.step("start"); }
   async verifyCandidate(): Promise<void> { this.step("verify"); }

@@ -138,6 +138,10 @@ export function ReaderSurface({ principal, route, request, requestBinary, onLogo
   }, [expandedNavSections, isNavCollapsed, navWidth]);
 
   useEffect(() => {
+    if (searchHasFreshResponse) scrollReaderRegionIntoView("reader-search-results");
+  }, [searchHasFreshResponse, searchResponse]);
+
+  useEffect(() => {
     void request<{ assets: AssetRecord[] }>("/assets")
       .then((response) => setAssets(response.assets))
       .catch((loadError) => setError(loadError instanceof Error ? loadError.message : String(loadError)));
@@ -205,7 +209,6 @@ export function ReaderSurface({ principal, route, request, requestBinary, onLogo
       const params = new URLSearchParams({ query, limit: "8" });
       const response = await request<SearchResponse>(`/search?${params.toString()}`);
       setSearchResponse(response);
-      scrollReaderRegionIntoView("reader-search-results");
     } catch (searchError) {
       setError(searchError instanceof Error ? searchError.message : String(searchError));
     }

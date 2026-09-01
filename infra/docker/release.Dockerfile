@@ -16,6 +16,8 @@ FROM node:22-alpine AS node-runtime
 WORKDIR /app
 RUN npm install --global pnpm@11.7.0
 COPY --from=build --chown=node:node /app /app
+RUN mkdir -p /var/lib/forgetbase/attachments \
+  && chown -R node:node /var/lib/forgetbase
 USER node
 
 FROM node-runtime AS api

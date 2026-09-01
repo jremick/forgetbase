@@ -265,7 +265,7 @@ export function UpdateManagementPanel({ request, onAvailabilityChange }: UpdateM
         <div className="grid gap-4">
           <label className="checkbox-row">
             <Checkbox checked={rollbackConfirmed} onCheckedChange={(value) => setRollbackConfirmed(value === true)} />
-            <span>I understand that a database restore can discard writes made after the recovery-point timestamp.</span>
+            <span>I understand that restoring this recovery set can discard database writes and attachment changes made after its timestamp.</span>
           </label>
           <Table>
             <TableHeader><TableRow><TableHead>Created</TableHead><TableHead>Version</TableHead><TableHead>Schema</TableHead><TableHead>State</TableHead><TableHead>Action</TableHead></TableRow></TableHeader>
