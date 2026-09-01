@@ -5,7 +5,7 @@ import { Button } from "./components/ui/button.js";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./components/ui/card.js";
 import { Input } from "./components/ui/input.js";
 import { Label } from "./components/ui/label.js";
-import { createAppRequest, shouldProbeAuthenticatedSession } from "./lib/app-api.js";
+import { createAppBinaryRequest, createAppRequest, shouldProbeAuthenticatedSession } from "./lib/app-api.js";
 import { canUseAdministration, canonicalAppHash, isAdminRoute, isReaderRoute, normalizeAppRoute, type AppRoute } from "./lib/app-routing.js";
 import {
   apiUrlStorageKey,
@@ -96,6 +96,7 @@ export function App() {
   apiUrlRef.current = apiUrl;
   apiKeyRef.current = apiKey;
   const request = useMemo(() => createAppRequest(() => apiUrlRef.current, () => apiKeyRef.current), []);
+  const requestBinary = useMemo(() => createAppBinaryRequest(() => apiUrlRef.current, () => apiKeyRef.current), []);
   const administrator = principal ? canUseAdministration(principal) : false;
 
   useEffect(() => {
@@ -264,7 +265,7 @@ export function App() {
 
   if (authState === "authenticated" && principal) {
     if (isReaderRoute(route)) {
-      return <ReaderSurface principal={principal} route={route as Extract<AppRoute, "reader" | "account-settings">} request={request} onLogout={logout} onNavigate={navigate} canUseAdministration={administrator} />;
+      return <ReaderSurface principal={principal} route={route as Extract<AppRoute, "reader" | "account-settings">} request={request} requestBinary={requestBinary} onLogout={logout} onNavigate={navigate} canUseAdministration={administrator} />;
     }
 
     if (administrator) {

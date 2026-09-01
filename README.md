@@ -89,6 +89,8 @@ Included now:
 - admin console for content, reviews, access, exports, settings, and system health
 - local users, groups, service accounts, API keys, password login, and OIDC setup
 - permission-aware search, citations, question answering, and exports
+- permission-aware page attachments with bounded local storage, download-only reader access, and admin lifecycle controls
+- lean 7/30/90-day admin analytics for search quality, page activity, content health, and daily trends
 - REST/OpenAPI, CLI, MCP server, worker, and Docker Compose setup
 - synthetic demo corpus and validation checks
 - restricted-content leakage checks and backup/restore verification helpers
@@ -99,7 +101,7 @@ Still future work:
 - hosted service packaging
 - npm package publishing
 - SCIM, MFA enforcement, and remembered-device policy
-- richer analytics dashboards
+- advanced analytics warehousing, alerts, and long-range reporting
 - advanced approval workflows
 - connector credential management
 - external side-effecting action adapters

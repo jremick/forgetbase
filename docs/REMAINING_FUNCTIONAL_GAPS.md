@@ -28,8 +28,8 @@ This document records what is not actually complete after the early functional c
 - Full quality-based model routing, budgets, LLM-as-judge automation, raw transcript review, and semantic caching.
 - External side-effecting action adapters, connector credential governance, sandboxing, rollback semantics, and richer multi-step approvals.
 - SCIM, MFA enforcement/reporting, remembered-device trust policy, richer Entra lifecycle mapping, and hosted identity hardening.
-- Advanced analytics warehouse, long-range dashboards, alerting/escalation preferences, and ACME/managed ingress automation.
-- Object storage adapters for attachments, generated export artifacts, large logs, and their backup/restore path.
+- Advanced analytics warehouse, long-range dashboards, alerting/escalation preferences, and ACME/managed ingress automation. The bounded 7/30/90-day operational dashboard is implemented without a warehouse.
+- S3-compatible object storage for attachments, plus storage adapters for generated export artifacts, large logs, and hosted backup orchestration. The local attachment adapter and coordinated self-hosted backup/restore path are implemented.
 
 ## Deferred: Repo-Local Hardening Still Worth Doing
 

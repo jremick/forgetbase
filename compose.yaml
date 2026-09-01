@@ -47,8 +47,12 @@ services:
       FORGETBASE_LOGIN_THROTTLE_WINDOW_MS: ${FORGETBASE_LOGIN_THROTTLE_WINDOW_MS:-60000}
       FORGETBASE_LOGIN_THROTTLE_BLOCK_MS: ${FORGETBASE_LOGIN_THROTTLE_BLOCK_MS:-60000}
       FORGETBASE_LOGIN_THROTTLE_MAX_ENTRIES: ${FORGETBASE_LOGIN_THROTTLE_MAX_ENTRIES:-10000}
+      FORGETBASE_ATTACHMENT_STORAGE_ROOT: /var/lib/forgetbase/attachments
+      FORGETBASE_ATTACHMENT_MAX_BYTES: ${FORGETBASE_ATTACHMENT_MAX_BYTES:-10485760}
     ports:
       - "${FORGETBASE_API_PORT:-127.0.0.1:3000}:3000"
+    volumes:
+      - attachment-data:/var/lib/forgetbase/attachments
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -108,3 +112,4 @@ services:
 
 volumes:
   postgres-data:
+  attachment-data:

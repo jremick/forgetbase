@@ -3003,3 +3003,66 @@ Authenticate each request once, defer browser-session activity updates until CSR
 ### Follow-Ups / Review
 
 Review when adding MFA steps, remembered-device trust, transaction outbox events, tenant-wide session controls, or a distributed authentication cache.
+
+## 0099: Keep Attachment Metadata Governed And Blob Storage Replaceable
+
+### Context
+
+Readers need files linked to governed pages, but storing file bodies in Postgres would couple database growth and recovery to binary payloads. Direct filesystem paths in API records would also leak deployment detail and make a later object-store adapter disruptive.
+
+### Options Considered
+
+- store attachment bodies in Postgres
+- expose filesystem paths and manage files directly in routes
+- keep tenant/asset-scoped metadata in Postgres and opaque bytes behind a storage adapter
+- require S3-compatible infrastructure for every self-hosted install
+
+### Decision And Rationale
+
+Store attachment ownership, lifecycle, filename, media type, byte size, SHA-256, and actor references in Postgres. Keep only an opaque validated storage key in the persistence record. The API returns a public projection without that key. Use a bounded local filesystem adapter for development and self-hosted Compose, with an S3-compatible implementation deferred behind the same `put/get/delete` contract.
+
+Authorize the parent governed asset before resolving attachment metadata. Carry the display filename and media type in dedicated request headers so routine access logs do not retain them in request URLs. Force downloads rather than previews. Delete in two phases: mark `deleting`, remove the blob, then tombstone metadata as `deleted`. A failed blob deletion leaves a non-readable state that a later delete can retry. If metadata persistence fails after a blob write, attempt immediate orphan cleanup and record only the cleanup result in audit metadata.
+
+### Consequences
+
+- Readers inherit the exact parent asset permission boundary.
+- Upload and deletion require maintainer/admin role, `asset:write`, and parent write access.
+- Blob paths do not become part of the API contract.
+- Attachment display metadata does not become part of the request URL.
+- Database and blob backups must be captured and restored as one recovery point.
+- Local files remain a self-hosted operational responsibility; hosted object storage is not implied.
+- Delete removes bytes immediately and retains tombstone metadata until a later explicit purge policy exists.
+
+### Follow-Ups / Review
+
+Review when adding S3-compatible storage, malware scanning, legal hold, delayed purge, quotas, attachment versioning, inline preview, or hosted backup orchestration.
+
+## 0100: Derive Lean Admin Analytics From Bounded Operational Telemetry
+
+### Context
+
+Admins need quick answers about search gaps, useful pages, and content review health. A separate analytics database or warehouse would add ingestion, retention, and operating complexity before usage warrants it. Existing telemetry also did not distinguish page views from pages merely returned by search.
+
+### Options Considered
+
+- build a warehouse and event pipeline now
+- count returned search results as page views
+- add a separate analytics table
+- extend the bounded telemetry summary with explicit permitted result IDs and asset-view events
+
+### Decision And Rationale
+
+Extend `/telemetry/summary` with unanswered and low-result search counts, popular search queries, pages returned by search, authorized asset views, current content review health, and daily trends for 7/30/90-day admin windows. Apply time filters before the row limit, exclude evaluation traffic, and persist only stable/asset IDs that survived permission filtering. Record successful governed asset reads as `asset-view` retrieval events so actual views remain distinct from search exposure.
+
+### Consequences
+
+- One bounded operational endpoint serves the first analytics dashboard.
+- Search-return frequency and page views have separate labels and meaning.
+- Content health is current registry state, not a historical warehouse snapshot.
+- The 200-event bound makes the dashboard operational rather than exhaustive at high volume.
+- No new raw transcripts, external processors, or hosted analytics dependencies are introduced.
+- The dashboard labels when its bounded content sample reaches the selected limit instead of presenting the sample as an exhaustive tenant count.
+
+### Follow-Ups / Review
+
+Review when the event bound hides material trends, when retention-specific historical analysis is required, or when alerting, tenant exports, warehouse ingestion, or hosted analytics become explicit product needs.

@@ -71,6 +71,15 @@ The MVP proves the open-source core of a knowledge system for people and AI tool
 - configurable managed-query prompt/response capture posture, disabled by default
 - opt-in scheduled expired-cache cleanup
 
+### Page Attachments
+
+- bounded file upload for maintainers and admins with `asset:write`
+- active attachment metadata on each governed page without exposing storage keys
+- permission-aware download for the same readers who can read the parent page
+- download-only rendering with no inline preview or execution
+- retryable delete lifecycle and coordinated database/blob backup guidance
+- local filesystem storage for self-hosted development and Compose; S3-compatible storage remains later work
+
 ### Demo Corpus
 
 - synthetic open-source corpus for AI-native users
@@ -105,6 +114,9 @@ The MVP is acceptable when:
 - the AI export package contains stable IDs, titles, hierarchy, audience, status, sensitivity, and URLs or source references
 - the OKF export package declares `okfVersion`, source asset version metadata, source content hashes, and a projection hash
 - telemetry captures operational events without storing unmitigated PII by default
+- readers can list and download active attachments only when they can read the parent page
+- maintainers/admins can upload and delete bounded attachments, and deleted files stop being readable
+- admins can compare 7, 30, and 90-day search quality, page activity, content health, and daily trends without a separate warehouse
 - provider prompt/response capture defaults to disabled or metadata-only rather than raw transcript storage
 - provider and OIDC config can reference only env-var names allowed by tenant secret-reference policy
 - admins can preview and execute telemetry retention purges without direct database access

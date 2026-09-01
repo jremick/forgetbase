@@ -27,6 +27,7 @@ count_sql="SELECT jsonb_build_object(
   'asset_versions', (SELECT count(*) FROM asset_versions),
   'instruction_objects', (SELECT count(*) FROM instruction_objects),
   'human_documents', (SELECT count(*) FROM human_documents),
+  'attachments', (SELECT count(*) FROM attachments),
   'users', (SELECT count(*) FROM users),
   'service_accounts', (SELECT count(*) FROM service_accounts),
   'service_account_policies', (SELECT count(*) FROM service_account_policies),

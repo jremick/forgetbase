@@ -349,6 +349,68 @@ export function buildOpenApiDocument() {
           }
         }
       },
+      "/assets/{stableId}/attachments": {
+        get: {
+          summary: "List active attachments for a visible governed asset",
+          parameters: [pathParameter("stableId")],
+          responses: {
+            "200": jsonResponse("Active attachment metadata"),
+            "401": jsonResponse("Authentication required"),
+            "403": jsonResponse("Access denied"),
+            "404": jsonResponse("Asset not found")
+          }
+        },
+        post: {
+          summary: "Upload a bounded attachment to a governed asset",
+          parameters: [
+            pathParameter("stableId"),
+            headerParameter("x-forgetbase-attachment-filename-encoded", true),
+            headerParameter("x-forgetbase-attachment-media-type", true)
+          ],
+          requestBody: {
+            required: true,
+            content: {
+              "application/octet-stream": {
+                schema: { type: "string", format: "binary" }
+              }
+            }
+          },
+          responses: {
+            "201": jsonResponse("Created attachment metadata"),
+            "400": jsonResponse("Validation error"),
+            "401": jsonResponse("Authentication required"),
+            "403": jsonResponse("Access denied"),
+            "413": jsonResponse("Attachment exceeds configured byte limit"),
+            "415": jsonResponse("Attachment media type not allowed")
+          }
+        }
+      },
+      "/assets/{stableId}/attachments/{attachmentId}/download": {
+        get: {
+          summary: "Download an authorized active attachment",
+          parameters: [pathParameter("stableId"), pathParameter("attachmentId")],
+          responses: {
+            "200": binaryResponse("Attachment content"),
+            "401": jsonResponse("Authentication required"),
+            "403": jsonResponse("Access denied"),
+            "404": jsonResponse("Asset or attachment not found"),
+            "503": jsonResponse("Attachment storage unavailable or integrity check failed")
+          }
+        }
+      },
+      "/assets/{stableId}/attachments/{attachmentId}": {
+        delete: {
+          summary: "Delete an attachment and tombstone its metadata",
+          parameters: [pathParameter("stableId"), pathParameter("attachmentId")],
+          responses: {
+            "200": jsonResponse("Deleted attachment metadata"),
+            "401": jsonResponse("Authentication required"),
+            "403": jsonResponse("Access denied"),
+            "404": jsonResponse("Asset or attachment not found"),
+            "503": jsonResponse("Attachment storage unavailable")
+          }
+        }
+      },
       "/assets/{stableId}/review": {
         post: {
           summary: "Mark an asset reviewed by updating review metadata",
@@ -901,6 +963,17 @@ function queryParameter(name: string, required: boolean) {
   };
 }
 
+function headerParameter(name: string, required: boolean) {
+  return {
+    name,
+    in: "header",
+    required,
+    schema: {
+      type: "string"
+    }
+  };
+}
+
 function jsonResponse(description: string) {
   return {
     description,
@@ -908,6 +981,20 @@ function jsonResponse(description: string) {
       "application/json": {
         schema: {
           type: "object"
+        }
+      }
+    }
+  };
+}
+
+function binaryResponse(description: string) {
+  return {
+    description,
+    content: {
+      "application/octet-stream": {
+        schema: {
+          type: "string",
+          format: "binary"
         }
       }
     }

@@ -1,4 +1,4 @@
-import type { AssetDetail, AssetRecord, AuthPrincipal, ManagedQueryResponse, SearchResponse } from "@forgetbase/schema";
+import type { AssetDetail, AssetRecord, Attachment, AuthPrincipal, ManagedQueryResponse, SearchResponse } from "@forgetbase/schema";
 import { BookOpen } from "@phosphor-icons/react/dist/icons/BookOpen";
 import { ClipboardText } from "@phosphor-icons/react/dist/icons/ClipboardText";
 import { GearSix } from "@phosphor-icons/react/dist/icons/GearSix";
@@ -13,7 +13,8 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem,
 import { Input } from "./components/ui/input.js";
 import { Label } from "./components/ui/label.js";
 import { NativeSelect } from "./components/ui/native-select.js";
-import type { AppRequest } from "./lib/app-api.js";
+import { AttachmentsPanel } from "./components/domain/attachments-panel.js";
+import type { AppBinaryRequest, AppRequest } from "./lib/app-api.js";
 import type { AppRoute } from "./lib/app-routing.js";
 import { formatList, stateBadgeVariant } from "./lib/asset-ui.js";
 import { groupReaderSearchResults } from "./lib/reader-search-results.js";
@@ -46,11 +47,13 @@ const navWidthDefault = 280;
 const navWidthMin = 240;
 const navWidthMax = 420;
 const navCollapsedWidth = 64;
+const attachmentMaxBytes = 10 * 1024 * 1024;
 
 type ReaderSurfaceProps = {
   principal: AuthPrincipal;
   route: Extract<AppRoute, "reader" | "account-settings">;
   request: AppRequest;
+  requestBinary: AppBinaryRequest;
   onLogout: () => Promise<void>;
   onNavigate: (route: string) => void;
   canUseAdministration: boolean;
@@ -88,10 +91,13 @@ function scrollReaderRegionIntoView(id: string): void {
   window.requestAnimationFrame(() => document.getElementById(id)?.scrollIntoView({ block: "start" }));
 }
 
-export function ReaderSurface({ principal, route, request, onLogout, onNavigate, canUseAdministration }: ReaderSurfaceProps) {
+export function ReaderSurface({ principal, route, request, requestBinary, onLogout, onNavigate, canUseAdministration }: ReaderSurfaceProps) {
   const [assets, setAssets] = useState<AssetRecord[]>([]);
   const [selectedStableId, setSelectedStableId] = useState(readInitialPageId);
   const [assetDetail, setAssetDetail] = useState<AssetDetail | null>(null);
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [attachmentsLoading, setAttachmentsLoading] = useState(false);
+  const [attachmentsError, setAttachmentsError] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [libraryQuery, setLibraryQuery] = useState("");
   const [searchResponse, setSearchResponse] = useState<SearchResponse | null>(null);
@@ -147,11 +153,20 @@ export function ReaderSurface({ principal, route, request, onLogout, onNavigate,
   }, [publishedAssets, selectedStableId]);
 
   useEffect(() => {
-    if (accountSettings || !selectedAsset) return;
+    if (accountSettings || !selectedAsset) {
+      setAttachments([]);
+      return;
+    }
     let active = true;
+    setAttachmentsLoading(true);
+    setAttachmentsError("");
     void request<AssetDetail>(`/assets/${encodeURIComponent(selectedAsset.stableId)}`)
       .then((detail) => { if (active) setAssetDetail(detail); })
       .catch((loadError) => { if (active) { setAssetDetail(null); setError(loadError instanceof Error ? loadError.message : String(loadError)); } });
+    void request<{ attachments: Attachment[] }>(`/assets/${encodeURIComponent(selectedAsset.stableId)}/attachments`)
+      .then((response) => { if (active) setAttachments(response.attachments); })
+      .catch((loadError) => { if (active) { setAttachments([]); setAttachmentsError(loadError instanceof Error ? loadError.message : String(loadError)); } })
+      .finally(() => { if (active) setAttachmentsLoading(false); });
     return () => { active = false; };
   }, [accountSettings, request, selectedAsset?.stableId]);
 
@@ -211,6 +226,22 @@ export function ReaderSurface({ principal, route, request, onLogout, onNavigate,
       setReaderAskError(queryError instanceof Error ? queryError.message : String(queryError));
     } finally {
       setIsReaderAskRunning(false);
+    }
+  }
+
+  async function downloadAttachment(attachment: Attachment): Promise<void> {
+    if (!selectedAsset) return;
+    setAttachmentsError("");
+    try {
+      const response = await requestBinary(`/assets/${encodeURIComponent(selectedAsset.stableId)}/attachments/${encodeURIComponent(attachment.id)}/download`);
+      const url = URL.createObjectURL(await response.blob());
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = attachment.filename;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (downloadError) {
+      setAttachmentsError(downloadError instanceof Error ? downloadError.message : String(downloadError));
     }
   }
 
@@ -298,6 +329,17 @@ export function ReaderSurface({ principal, route, request, onLogout, onNavigate,
           {assetDetail && selectedAsset ? <><header className="reader-article-header"><div><p className="eyebrow">{formatAssetTypeLabel(assetDetail.asset.type)}</p><h1 tabIndex={-1}>{assetDetail.asset.title}</h1>{assetDetail.asset.summary ? <p>{assetDetail.asset.summary}</p> : null}</div><div className="reader-status"><Badge variant={stateBadgeVariant(assetDetail.asset.lifecycleState)}>{formatReaderLifecycle(assetDetail.asset.lifecycleState)}</Badge><Badge variant={stateBadgeVariant(assetDetail.asset.status)}>{formatReaderStatus(assetDetail.asset.status)}</Badge></div></header>
             {sectionHeadings.length ? <nav className="reader-section-nav" aria-label="Page sections"><p>On this page</p><div>{sectionHeadings.map((heading) => <button type="button" className={heading.level === 3 ? "is-nested" : ""} key={heading.id} onClick={() => document.getElementById(heading.id)?.scrollIntoView({ block: "start" })}>{heading.text}</button>)}</div></nav> : null}
             <div className="reader-document">{humanBody ? <div className="reader-document-body">{renderMarkdownDocument(humanBody, assetDetail.asset.title)}</div> : <div className="reader-empty-state"><h3>No readable page yet</h3><p>This item is published, but it does not have a human-readable page body yet.</p></div>}</div>
+            <AttachmentsPanel
+              attachments={attachments}
+              canManage={false}
+              loading={attachmentsLoading}
+              uploading={false}
+              maxBytes={attachmentMaxBytes}
+              error={attachmentsError}
+              onUpload={() => undefined}
+              onDownload={(attachment) => void downloadAttachment(attachment)}
+              onDelete={() => undefined}
+            />
             <section className="reader-ask-panel" aria-labelledby="reader-ask-title"><div className="reader-ask-heading"><div><p className="eyebrow">Ask</p><h2 id="reader-ask-title">Ask this knowledge base</h2><p>Get an answer with citations from pages available to your account.</p></div>{readerAskResponse ? <Badge variant={readerAskResponse.checks.deniedCount ? "warning" : "success"}>{readerAskResponse.checks.deniedCount ? "Limited results" : "Sources checked"}</Badge> : null}</div>
               <form className="reader-ask-form" onSubmit={(event) => void runAsk(event)}><Label htmlFor="reader-ask-input" className="sr-only">Ask a question</Label><Input id="reader-ask-input" value={readerAskText} onChange={(event) => setReaderAskText(event.target.value)} placeholder="Ask about these pages" aria-describedby="reader-ask-help" /><p id="reader-ask-help" className="reader-ask-note">Answers only use content your account can read.</p><Button type="submit" disabled={isReaderAskRunning || !readerAskText.trim()}>{isReaderAskRunning ? "Finding sources…" : "Ask"}</Button></form>
               {isReaderAskRunning ? <div className="reader-ask-loading" role="status" aria-live="polite"><span className="reader-loading-dot" aria-hidden="true" />Finding an answer and checking accessible sources.</div> : null}

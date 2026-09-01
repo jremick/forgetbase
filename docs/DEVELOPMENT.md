@@ -400,7 +400,7 @@ curl --insecure --silent --show-error --fail https://127.0.0.1:8443/api/health
 https://127.0.0.1:8443/
 ```
 
-The UI defaults to `http://127.0.0.1:3000` on the local `5175` preview and to `/api` through the same-origin proxy. The UI should show API status, password/OIDC cookie-backed login controls, a sign-out control, manual API key entry, visible assets, asset detail, release controls, current-versus-selected version previews, citation-backed search results, a compact managed-query runner, and the public `demo-agent-pack` export summary. With an admin key, manual API key, or CSRF-protected browser session, the Operations panel can also load a review queue, mark selected assets reviewed, load a telemetry summary, retrieval telemetry, audit events, create/list/update/disable users and service accounts, configure service-account policy, configure retrieval ranking weights, configure managed-query mode/citation/grounding policy, configure managed-query cache policy, configure managed-query prompt/response retention posture, configure eval schedule policy, configure action execution policy including the tenant hourly request cap and approval-expiry window, request internal action records with optional idempotency keys using admin or `agent:execute`, approve/deny pending non-expired action requests, configure secret-reference policy, inspect and delete cache metadata, create/list/delete groups, add/list/remove group members, list/create/rotate/revoke user-owned or service-owned API keys, list/revoke browser login sessions, inspect managed-query feedback, run deterministic demo evals, and manage provider/auth-provider configuration including OIDC account-linking and group-sync settings.
+The UI defaults to `http://127.0.0.1:3000` on the local `5175` preview and to `/api` through the same-origin proxy. The UI should show API status, password/OIDC cookie-backed login controls, a sign-out control, manual API key entry, visible assets, asset detail, downloadable page attachments, release controls, current-versus-selected version previews, citation-backed search results, a compact managed-query runner, and the public `demo-agent-pack` export summary. With an admin key, manual API key, or CSRF-protected browser session, the Operations panel can also upload/delete bounded attachments, compare 7/30/90-day search quality, page activity, content health, and daily trends, load a review queue, mark selected assets reviewed, load retrieval telemetry and audit events, create/list/update/disable users and service accounts, configure service-account policy, configure retrieval ranking weights, configure managed-query mode/citation/grounding policy, configure managed-query cache policy, configure managed-query prompt/response retention posture, configure eval schedule policy, configure action execution policy including the tenant hourly request cap and approval-expiry window, request internal action records with optional idempotency keys using admin or `agent:execute`, approve/deny pending non-expired action requests, configure secret-reference policy, inspect and delete cache metadata, create/list/delete groups, add/list/remove group members, list/create/rotate/revoke user-owned or service-owned API keys, list/revoke browser login sessions, inspect managed-query feedback, run deterministic demo evals, and manage provider/auth-provider configuration including OIDC account-linking and group-sync settings.
 
 ## Worker Smoke Check
 
@@ -428,11 +428,13 @@ Action approval expiry maintenance finds `approval-required` action requests who
 
 ## Backup And Restore Smoke Check
 
-With Docker Compose Postgres running:
+With the Docker Compose API and Postgres running, stop attachment writes before taking the coordinated database and blob snapshots:
 
 ```bash
 npx -y pnpm@11.7.0 db:backup
+npx -y pnpm@11.7.0 attachments:backup
 npx -y pnpm@11.7.0 db:verify-backup-restore
+npx -y pnpm@11.7.0 attachments:verify-backup-restore
 ```
 
 Operational runbooks:
@@ -444,7 +446,7 @@ Operational runbooks:
 - [Restricted Leakage Investigation Runbook](runbooks/RESTRICTED_LEAKAGE_INVESTIGATION.md)
 - [Railway Private Alpha Template](runbooks/DEPLOY_RAILWAY_PRIVATE_TEMPLATE.md)
 
-The restore verifier creates a backup, restores it into a temporary `forgetbase_restore_*` database, compares core table counts, and drops the temporary database. See [Backup And Restore Runbook](runbooks/BACKUP_RESTORE.md) and [Rollback Runbook](runbooks/ROLLBACK.md).
+The database restore verifier restores into a temporary `forgetbase_restore_*` database, compares core table counts including attachment metadata, and drops the temporary database. The attachment verifier checks the archive manifest and extracts into a temporary directory without overwriting the live volume. Restore the database and matching attachment archive as one recovery point. See [Backup And Restore Runbook](runbooks/BACKUP_RESTORE.md) and [Rollback Runbook](runbooks/ROLLBACK.md).
 
 ## MCP Smoke Check
 

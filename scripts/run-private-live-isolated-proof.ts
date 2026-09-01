@@ -124,6 +124,7 @@ try {
     { ...composeEnv, FORGETBASE_API_KEY: adminKey },
     5 * 60 * 1_000
   );
+  await verifySyntheticAttachment(apiUrl, adminKey);
 
   run(
     "run Compose smoke and restricted-leakage proof",
@@ -140,6 +141,13 @@ try {
     10 * 60 * 1_000
   );
   run(
+    "run attachment backup and restore proof",
+    "npx",
+    ["-y", "pnpm@11.7.0", "attachments:verify-backup-restore"],
+    composeEnv,
+    10 * 60 * 1_000
+  );
+  run(
     "run authenticated admin browser UAT",
     "npx",
     ["-y", "pnpm@11.7.0", "test:uat"],
@@ -152,6 +160,7 @@ try {
       UAT_TENANT_ID: tenantId,
       UAT_EMAIL: adminEmail,
       UAT_PASSWORD: password,
+      UAT_EXPECT_ATTACHMENT_FILENAME: "private-live-proof.txt",
       UAT_OUTPUT_DIR: `${outputDir}/uat-admin`
     },
     10 * 60 * 1_000
@@ -168,6 +177,7 @@ try {
       UAT_TENANT_ID: tenantId,
       UAT_EMAIL: readerEmail,
       UAT_PASSWORD: password,
+      UAT_EXPECT_ATTACHMENT_FILENAME: "private-live-proof.txt",
       UAT_OUTPUT_DIR: `${outputDir}/uat-reader`
     },
     10 * 60 * 1_000
@@ -385,6 +395,70 @@ async function requestJson(
     throw new Error(`${input.method} ${url} did not return a JSON object`);
   }
   return parsed as Record<string, unknown>;
+}
+
+async function verifySyntheticAttachment(apiUrl: string, apiKey: string): Promise<void> {
+  const startedAt = Date.now();
+  const stableId = "playbook.public-demo-no-export";
+  const content = Buffer.from("ForgetBase synthetic attachment proof\n", "utf8");
+  const uploadUrl = new URL(`/assets/${encodeURIComponent(stableId)}/attachments`, apiUrl);
+
+  const upload = await fetch(uploadUrl, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${apiKey}`,
+      "content-type": "application/octet-stream",
+      "x-forgetbase-attachment-filename-encoded": encodeURIComponent("private-live-proof.txt"),
+      "x-forgetbase-attachment-media-type": "text/plain"
+    },
+    body: content
+  });
+  const uploadText = await upload.text();
+  if (!upload.ok) {
+    throw new Error(`Synthetic attachment upload failed with HTTP ${upload.status}: ${sanitize(uploadText)}`);
+  }
+  const metadata = JSON.parse(uploadText) as Record<string, unknown>;
+  const attachmentId = readRequiredString(metadata, "id", "synthetic attachment ID");
+  if ("storageKey" in metadata || "tenantId" in metadata || "uploadedByApiKeyId" in metadata) {
+    throw new Error("Synthetic attachment upload exposed private persistence metadata");
+  }
+
+  const list = await requestJson(`${apiUrl}/assets/${encodeURIComponent(stableId)}/attachments`, {
+    method: "GET",
+    apiKey
+  });
+  const listed = Array.isArray(list.attachments) ? list.attachments : [];
+  if (!listed.some((attachment) => attachment && typeof attachment === "object" && (attachment as Record<string, unknown>).id === attachmentId)) {
+    throw new Error("Synthetic attachment was missing from the authorized list response");
+  }
+
+  const download = await fetch(`${apiUrl}/assets/${encodeURIComponent(stableId)}/attachments/${encodeURIComponent(attachmentId)}/download`, {
+    headers: { authorization: `Bearer ${apiKey}` }
+  });
+  if (!download.ok) {
+    throw new Error(`Synthetic attachment download failed with HTTP ${download.status}`);
+  }
+  const downloaded = Buffer.from(await download.arrayBuffer());
+  if (!downloaded.equals(content)) {
+    throw new Error("Synthetic attachment download bytes did not match the upload");
+  }
+  if (
+    download.headers.get("x-content-type-options") !== "nosniff" ||
+    download.headers.get("cache-control") !== "private, no-store" ||
+    !download.headers.get("content-disposition")?.startsWith("attachment;")
+  ) {
+    throw new Error("Synthetic attachment download security headers were incomplete");
+  }
+
+  steps.push({
+    name: "verify synthetic attachment upload and download",
+    command: "HTTP attachment lifecycle proof",
+    ok: true,
+    status: 0,
+    durationMs: Date.now() - startedAt,
+    stdout: `verified ${content.byteLength} synthetic bytes`,
+    stderr: ""
+  });
 }
 
 function readRequiredString(value: Record<string, unknown>, key: string, description: string): string {

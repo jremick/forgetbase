@@ -85,6 +85,8 @@ export interface BootstrapAdminResult extends ApiKeyCreated {
 
 export interface AuditEventListOptions {
   tenantId?: string;
+  since?: string;
+  until?: string;
   limit?: number;
 }
 
@@ -2295,10 +2297,12 @@ export class PostgresAuthRepository implements AuthRepository {
         SELECT *
         FROM audit_events
         WHERE tenant_id = $1
+          AND ($2::timestamptz IS NULL OR created_at >= $2::timestamptz)
+          AND ($3::timestamptz IS NULL OR created_at <= $3::timestamptz)
         ORDER BY created_at DESC
-        LIMIT $2
+        LIMIT $4
       `,
-      [tenantId, limit]
+      [tenantId, options.since ?? null, options.until ?? null, limit]
     );
 
     return result.rows.map(mapAuditEventRow);
@@ -3698,7 +3702,13 @@ export class InMemoryAuthRepository implements AuthRepository {
   async listAuditEvents(options: AuditEventListOptions = {}): Promise<AuditEvent[]> {
     const tenantId = options.tenantId ?? "tenant_demo";
     const limit = Math.min(Math.max(options.limit ?? 50, 1), 200);
-    return this.auditEvents.filter((event) => event.tenantId === tenantId).slice(0, limit);
+    const since = options.since ? Date.parse(options.since) : undefined;
+    const until = options.until ? Date.parse(options.until) : undefined;
+
+    return this.auditEvents
+      .filter((event) => event.tenantId === tenantId)
+      .filter((event) => isCreatedAtInWindow(event.createdAt, since, until))
+      .slice(0, limit);
   }
 
   async purgeAuditEvents(options: AuditEventPurgeOptions): Promise<number> {
@@ -3734,6 +3744,14 @@ export class InMemoryAuthRepository implements AuthRepository {
       }
     }
   }
+}
+
+function isCreatedAtInWindow(createdAt: string, since?: number, until?: number): boolean {
+  const value = Date.parse(createdAt);
+
+  return !Number.isNaN(value) &&
+    (since === undefined || value >= since) &&
+    (until === undefined || value <= until);
 }
 
 export function principalHasScope(principal: AuthPrincipal, scope: ApiKeyScope): boolean {

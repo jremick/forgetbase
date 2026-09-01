@@ -19,6 +19,9 @@ RUN npm install --global pnpm@11.7.0
 
 COPY --from=build --chown=node:node /app /app
 
+RUN mkdir -p /var/lib/forgetbase/attachments \
+  && chown -R node:node /var/lib/forgetbase
+
 USER node
 
 CMD ["pnpm", "--filter", "@forgetbase/api", "start"]

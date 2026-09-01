@@ -23,6 +23,7 @@ const baseUrl = process.env.UAT_BASE_URL ?? "http://127.0.0.1:4175/";
 const tenantId = process.env.UAT_TENANT_ID ?? "";
 const email = process.env.UAT_EMAIL ?? (isLocalUrl(baseUrl) ? "admin@example.test" : "");
 const password = process.env.UAT_PASSWORD ?? (isLocalUrl(baseUrl) ? "local-dev-password" : "");
+const expectedAttachmentFilename = process.env.UAT_EXPECT_ATTACHMENT_FILENAME ?? "";
 const commitSha = commandOutput("git", ["rev-parse", "HEAD"]) ?? "";
 const checks: CheckResult[] = [];
 const consoleProblems: string[] = [];
@@ -245,6 +246,10 @@ async function checkReleaseFlow(page: Page, viewportName: "desktop" | "mobile"):
   await selectReaderPageForUat(page, "Reader Access and Export Rules");
   await page.locator(".reader-article").scrollIntoViewIfNeeded();
   await expectText(page, ".reader-article-header h1", "Reader Access and Export Rules", `release ${viewportName}: reader article title`);
+  await expectVisibleText(page, "Attachments", `release ${viewportName}: reader attachments panel`);
+  if (expectedAttachmentFilename) {
+    await assertAttachmentDownload(page, expectedAttachmentFilename, `release ${viewportName}: reader attachment download`);
+  }
   await assertReaderArticleDepth(page, `release ${viewportName}: reader article depth`);
   await assertReaderSectionNavigation(page, `release ${viewportName}: reader section navigation`);
   await assertReaderPageFooter(page, `release ${viewportName}: reader page footer`);
@@ -315,6 +320,7 @@ async function checkReleaseFlow(page: Page, viewportName: "desktop" | "mobile"):
   await expectVisibleText(page, "Reviews", "release: admin reviews label");
   await expectVisibleText(page, "Exports", "release: admin exports label");
   await expectVisibleText(page, "System", "release: admin system label");
+  await expectVisibleText(page, "Page files", "release: admin attachment controls");
   await assertNoHorizontalOverflow(page, "release: admin desktop overflow");
   await assertNoClippedText(page, "release: admin desktop clipped text");
   await screenshot(page, "admin-desktop.png", "release: admin screenshot");
@@ -322,6 +328,9 @@ async function checkReleaseFlow(page: Page, viewportName: "desktop" | "mobile"):
     await checkAdminPageAuthoring(page);
   }
   await screenshotAdminRoute(page, "admin/reviews", "Review queue", "reviews.png", "release: admin reviews screenshot");
+  await screenshotAdminRoute(page, "admin/system/activity", "Search activity", "analytics.png", "release: admin analytics screenshot");
+  await expectVisibleText(page, "Content health", "release: admin analytics content health");
+  await expectVisibleText(page, "90 days", "release: admin analytics window controls");
   await screenshotAdminRoute(page, "admin/system/policies", "Telemetry retention", "policies.png", "release: admin policies screenshot");
   await screenshotAdminRoute(page, "admin/system/access", "Users", "access-management.png", "release: admin access screenshot");
   await screenshotAdminRoute(page, "admin/system/approvals", "Action execution", "approvals.png", "release: admin approvals screenshot");
@@ -437,6 +446,17 @@ async function screenshotExportRoute(page: Page): Promise<void> {
   await assertNoHorizontalOverflow(page, "release: admin exports overflow");
   await assertNoClippedText(page, "release: admin exports clipped text");
   await screenshot(page, "exports.png", "release: admin exports screenshot");
+}
+
+async function assertAttachmentDownload(page: Page, filename: string, name: string): Promise<void> {
+  await expectVisibleText(page, filename, `${name}: filename visible`);
+  const downloadPromise = page.waitForEvent("download");
+  await page.getByRole("button", { name: `Download ${filename}` }).click();
+  const download = await downloadPromise;
+  if (download.suggestedFilename() !== filename) {
+    throw new Error(`${name}: expected filename ${filename}; got ${download.suggestedFilename()}`);
+  }
+  checks.push({ name, status: "pass", detail: filename });
 }
 
 async function clickUnique(page: Page, selector: string, text: string): Promise<void> {

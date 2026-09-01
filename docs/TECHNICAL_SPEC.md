@@ -95,7 +95,11 @@ Current implementation note: the worker reindexes retrieval chunks on `--once`, 
 - local filesystem adapter for development
 - S3-compatible adapter for production
 
-Current implementation note: Phase 6 backup/restore covers Postgres only. Future object storage adapters must add their own backup and restore expectations.
+Current implementation note: page attachments use tenant/asset-scoped metadata in Postgres and opaque storage keys behind a bounded adapter. The local filesystem adapter rejects unsafe keys, traversal, symlinks, duplicate writes, and reads above the configured byte limit. Uploads accept an allowlisted media type and store SHA-256 plus byte size. Downloads authorize the parent asset first, verify metadata-to-blob integrity, and force `Content-Disposition: attachment` with `nosniff` and `no-store`. Deletion first marks metadata `deleting`, removes the blob immediately, then tombstones metadata as `deleted`; a storage failure leaves a non-readable retryable state. Deleted metadata is retained for audit/recovery context until a future operator-governed purge policy is defined. Compose uses a dedicated attachment volume. Backup and restore must capture Postgres and that volume as one coordinated recovery point. The S3-compatible adapter remains future work.
+
+Attachment API routes are `GET|POST /assets/{stableId}/attachments`, `GET /assets/{stableId}/attachments/{attachmentId}/download`, and `DELETE /assets/{stableId}/attachments/{attachmentId}`. Uploads send raw bytes as `application/octet-stream`, carry the percent-encoded UTF-8 display filename in `x-forgetbase-attachment-filename-encoded`, and carry the allowlisted media type in `x-forgetbase-attachment-media-type`. Reader and admin clients receive metadata without storage keys.
+
+The existing `/telemetry/summary` is also the source for lean admin analytics. It applies `since`/`until` before its bounded row limit, excludes evaluation traffic, aggregates unanswered and low-result searches, records only permitted returned asset IDs, separates authorized asset views from search-return frequency, reports current content review health, and produces bounded daily trends. It is not a warehouse or raw transcript store.
 
 ### Model Providers
 

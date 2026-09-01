@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { aiExportPackageSchema, healthResponseSchema, okfExportPackageSchema } from "@forgetbase/schema";
 import {
   InMemoryAgentActionExecutionRepository,
+  InMemoryAttachmentRepository,
   InMemoryAuthRepository,
   InMemoryAuthProviderConfigRepository,
   InMemoryManagedQueryEvalRunRepository,
@@ -22,6 +23,7 @@ import {
   InMemorySecretReferencePolicyRepository,
   InMemoryTelemetryRetentionPolicyRepository
 } from "@forgetbase/db";
+import { LocalFilesystemAttachmentStorage, type AttachmentStorageAdapter } from "./attachment-storage.js";
 import { buildServer, type ModelRuntimeRequest } from "./server.js";
 
 let server = buildServer({ logger: false });
@@ -439,11 +441,354 @@ describe("API health route", () => {
 });
 
 describe("API asset registry routes", () => {
-  it("creates, lists, and fetches governed assets", async () => {
+  it("runs the authenticated attachment upload, list, download, and delete lifecycle without exposing storage keys", async () => {
+    const attachmentRoot = await mkdtemp(join(tmpdir(), "forgetbase-attachments-route-"));
+    const authRepository = new InMemoryAuthRepository();
     server = buildServer({
       logger: false,
       registryRepository: new InMemoryRegistryRepository(),
-      authRepository: new InMemoryAuthRepository()
+      authRepository,
+      retrievalRepository: new InMemoryRetrievalRepository(),
+      attachmentRepository: new InMemoryAttachmentRepository(),
+      attachmentStorage: new LocalFilesystemAttachmentStorage(attachmentRoot, 1_024),
+      attachmentMaxBytes: 1_024
+    });
+
+    try {
+      const bootstrap = await server.inject({
+        method: "POST",
+        url: "/auth/bootstrap",
+        payload: { email: "attachment-admin@example.test", displayName: "Attachment Admin" }
+      });
+      const admin = bootstrap.json();
+      const authorization = { authorization: `Bearer ${admin.secret}` };
+
+      const createdAsset = await server.inject({
+        method: "POST",
+        url: "/assets",
+        headers: authorization,
+        payload: {
+          stableId: "page.attachment-lifecycle",
+          type: "human-document",
+          ownerId: admin.user.id,
+          title: "Attachment lifecycle",
+          lifecycleState: "active",
+          sensitivity: "internal",
+          audience: ["readers"],
+          status: "approved",
+          reviewDueAt: "2027-01-31",
+          allowedSurfaces: ["api", "web"],
+          humanDocument: { format: "markdown", body: "# Attachment lifecycle" }
+        }
+      });
+      expect(createdAsset.statusCode).toBe(201);
+
+      const content = Buffer.from("bounded attachment content");
+      const queryMetadataRejected = await server.inject({
+        method: "POST",
+        url: "/assets/page.attachment-lifecycle/attachments?filename=logged-name.pdf&mediaType=application%2Fpdf",
+        headers: { ...authorization, "content-type": "application/octet-stream" },
+        payload: content
+      });
+      expect(queryMetadataRejected.statusCode).toBe(400);
+
+      const uploaded = await server.inject({
+        method: "POST",
+        url: "/assets/page.attachment-lifecycle/attachments",
+        headers: {
+          ...authorization,
+          "content-type": "application/octet-stream",
+          "x-forgetbase-attachment-filename-encoded": encodeURIComponent("guide – résumé.pdf"),
+          "x-forgetbase-attachment-media-type": "application/pdf"
+        },
+        payload: content
+      });
+
+      expect(uploaded.statusCode).toBe(201);
+      expect(uploaded.json()).toMatchObject({
+        filename: "guide – résumé.pdf",
+        mediaType: "application/pdf",
+        sizeBytes: content.byteLength,
+        lifecycleState: "active"
+      });
+      expect(uploaded.body).not.toContain("storageKey");
+      expect(uploaded.body).not.toContain("uploadedBy");
+      expect(uploaded.body).not.toContain("tenantId");
+      const attachmentId = uploaded.json().id as string;
+
+      const listed = await server.inject({
+        method: "GET",
+        url: "/assets/page.attachment-lifecycle/attachments",
+        headers: authorization
+      });
+      expect(listed.statusCode).toBe(200);
+      expect(listed.json().attachments).toHaveLength(1);
+      expect(listed.body).not.toContain("storageKey");
+
+      const downloaded = await server.inject({
+        method: "GET",
+        url: `/assets/page.attachment-lifecycle/attachments/${attachmentId}/download`,
+        headers: authorization
+      });
+      expect(downloaded.statusCode).toBe(200);
+      expect(downloaded.rawPayload).toEqual(content);
+      expect(downloaded.headers["content-disposition"]).toBe(
+        "attachment; filename=\"guide _ r_sum_.pdf\"; filename*=UTF-8''guide%20%E2%80%93%20r%C3%A9sum%C3%A9.pdf"
+      );
+      expect(downloaded.headers["x-content-type-options"]).toBe("nosniff");
+      expect(downloaded.headers["cache-control"]).toBe("private, no-store");
+
+      const readOnlyKey = await server.inject({
+        method: "POST",
+        url: "/auth/api-keys",
+        headers: authorization,
+        payload: {
+          userId: admin.user.id,
+          name: "attachment-read-only",
+          scopes: ["asset:read"],
+          allowedSurfaces: ["api"]
+        }
+      });
+      const deniedUpload = await server.inject({
+        method: "POST",
+        url: "/assets/page.attachment-lifecycle/attachments",
+        headers: {
+          authorization: `Bearer ${readOnlyKey.json().secret}`,
+          "content-type": "application/octet-stream",
+          "x-forgetbase-attachment-filename-encoded": encodeURIComponent("denied.pdf"),
+          "x-forgetbase-attachment-media-type": "application/pdf"
+        },
+        payload: Buffer.from("denied")
+      });
+      expect(deniedUpload.statusCode).toBe(403);
+
+      const deleted = await server.inject({
+        method: "DELETE",
+        url: `/assets/page.attachment-lifecycle/attachments/${attachmentId}`,
+        headers: authorization
+      });
+      expect(deleted.statusCode).toBe(200);
+      expect(deleted.json().lifecycleState).toBe("deleted");
+
+      const unavailable = await server.inject({
+        method: "GET",
+        url: `/assets/page.attachment-lifecycle/attachments/${attachmentId}/download`,
+        headers: authorization
+      });
+      expect(unavailable.statusCode).toBe(404);
+
+      const auditActions = (await authRepository.listAuditEvents({ limit: 20 })).map((event) => event.action);
+      expect(auditActions).toEqual(expect.arrayContaining([
+        "attachment.upload",
+        "attachment.download",
+        "attachment.delete"
+      ]));
+    } finally {
+      await rm(attachmentRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects attachment payloads above the configured byte limit", async () => {
+    const attachmentRoot = await mkdtemp(join(tmpdir(), "forgetbase-attachments-limit-"));
+    server = buildServer({
+      logger: false,
+      registryRepository: new InMemoryRegistryRepository(),
+      authRepository: new InMemoryAuthRepository(),
+      retrievalRepository: new InMemoryRetrievalRepository(),
+      attachmentRepository: new InMemoryAttachmentRepository(),
+      attachmentStorage: new LocalFilesystemAttachmentStorage(attachmentRoot, 4),
+      attachmentMaxBytes: 4
+    });
+
+    try {
+      const bootstrap = await server.inject({
+        method: "POST",
+        url: "/auth/bootstrap",
+        payload: { email: "attachment-limit@example.test", displayName: "Attachment Limit" }
+      });
+      const admin = bootstrap.json();
+      const authorization = { authorization: `Bearer ${admin.secret}` };
+      await server.inject({
+        method: "POST",
+        url: "/assets",
+        headers: authorization,
+        payload: {
+          stableId: "page.attachment-limit",
+          type: "human-document",
+          ownerId: admin.user.id,
+          title: "Attachment limit",
+          lifecycleState: "active",
+          sensitivity: "internal",
+          audience: ["readers"],
+          status: "approved",
+          reviewDueAt: "2027-01-31",
+          allowedSurfaces: ["api", "web"],
+          humanDocument: { format: "markdown", body: "# Attachment limit" }
+        }
+      });
+
+      const response = await server.inject({
+        method: "POST",
+        url: "/assets/page.attachment-limit/attachments",
+        headers: {
+          ...authorization,
+          "content-type": "application/octet-stream",
+          "x-forgetbase-attachment-filename-encoded": encodeURIComponent("large.pdf"),
+          "x-forgetbase-attachment-media-type": "application/pdf"
+        },
+        payload: Buffer.from("12345")
+      });
+      expect(response.statusCode).toBe(413);
+    } finally {
+      await rm(attachmentRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("fails closed and audits attachment storage write failures", async () => {
+    const authRepository = new InMemoryAuthRepository();
+    const failingStorage: AttachmentStorageAdapter = {
+      async put() { throw new Error("synthetic storage failure"); },
+      async get() { return Buffer.alloc(0); },
+      async delete() { return false; }
+    };
+    server = buildServer({
+      logger: false,
+      registryRepository: new InMemoryRegistryRepository(),
+      authRepository,
+      retrievalRepository: new InMemoryRetrievalRepository(),
+      attachmentRepository: new InMemoryAttachmentRepository(),
+      attachmentStorage: failingStorage,
+      attachmentMaxBytes: 1_024
+    });
+    const bootstrap = await server.inject({
+      method: "POST",
+      url: "/auth/bootstrap",
+      payload: { email: "attachment-failure@example.test", displayName: "Attachment Failure" }
+    });
+    const admin = bootstrap.json();
+    const authorization = { authorization: `Bearer ${admin.secret}` };
+    await server.inject({
+      method: "POST",
+      url: "/assets",
+      headers: authorization,
+      payload: {
+        stableId: "human-document.attachment-storage-failure",
+        type: "human-document",
+        ownerId: admin.user.id,
+        title: "Attachment storage failure",
+        lifecycleState: "active",
+        sensitivity: "internal",
+        audience: ["readers"],
+        status: "approved",
+        reviewDueAt: "2027-01-31",
+        allowedSurfaces: ["api", "web"],
+        humanDocument: { format: "markdown", body: "# Attachment storage failure" }
+      }
+    });
+
+    const response = await server.inject({
+      method: "POST",
+      url: "/assets/human-document.attachment-storage-failure/attachments",
+      headers: {
+        ...authorization,
+        "content-type": "application/octet-stream",
+        "x-forgetbase-attachment-filename-encoded": encodeURIComponent("failure.txt"),
+        "x-forgetbase-attachment-media-type": "text/plain"
+      },
+      payload: Buffer.from("failure")
+    });
+
+    expect(response.statusCode).toBe(503);
+    expect(response.json().error).toBe("attachment_storage_unavailable");
+    expect(await authRepository.listAuditEvents({ limit: 10 })).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        action: "attachment.upload",
+        outcome: "error",
+        reason: "storage_write_failed"
+      })
+    ]));
+  });
+
+  it("removes an orphaned blob and audits attachment metadata persistence failures", async () => {
+    const authRepository = new InMemoryAuthRepository();
+    const attachmentRepository = new InMemoryAttachmentRepository();
+    vi.spyOn(attachmentRepository, "createAttachment").mockRejectedValue(new Error("synthetic metadata failure"));
+    let deletedStorageKey = "";
+    const storage: AttachmentStorageAdapter = {
+      async put() { return undefined; },
+      async get() { return Buffer.alloc(0); },
+      async delete(storageKey) {
+        deletedStorageKey = storageKey;
+        return true;
+      }
+    };
+    server = buildServer({
+      logger: false,
+      registryRepository: new InMemoryRegistryRepository(),
+      authRepository,
+      retrievalRepository: new InMemoryRetrievalRepository(),
+      attachmentRepository,
+      attachmentStorage: storage,
+      attachmentMaxBytes: 1_024
+    });
+    const bootstrap = await server.inject({
+      method: "POST",
+      url: "/auth/bootstrap",
+      payload: { email: "attachment-metadata@example.test", displayName: "Attachment Metadata" }
+    });
+    const admin = bootstrap.json();
+    const authorization = { authorization: `Bearer ${admin.secret}` };
+    await server.inject({
+      method: "POST",
+      url: "/assets",
+      headers: authorization,
+      payload: {
+        stableId: "human-document.attachment-metadata-failure",
+        type: "human-document",
+        ownerId: admin.user.id,
+        title: "Attachment metadata failure",
+        lifecycleState: "active",
+        sensitivity: "internal",
+        audience: ["readers"],
+        status: "approved",
+        reviewDueAt: "2027-01-31",
+        allowedSurfaces: ["api", "web"],
+        humanDocument: { format: "markdown", body: "# Attachment metadata failure" }
+      }
+    });
+
+    const response = await server.inject({
+      method: "POST",
+      url: "/assets/human-document.attachment-metadata-failure/attachments",
+      headers: {
+        ...authorization,
+        "content-type": "application/octet-stream",
+        "x-forgetbase-attachment-filename-encoded": encodeURIComponent("metadata.txt"),
+        "x-forgetbase-attachment-media-type": "text/plain"
+      },
+      payload: Buffer.from("metadata")
+    });
+
+    expect(response.statusCode).toBe(503);
+    expect(response.json().error).toBe("attachment_metadata_unavailable");
+    expect(deletedStorageKey).toMatch(/^[0-9a-f]{2}\/[0-9a-f-]{36}$/);
+    expect(await authRepository.listAuditEvents({ limit: 10 })).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        action: "attachment.upload",
+        outcome: "error",
+        reason: "metadata_write_failed",
+        metadata: expect.objectContaining({ orphanCleanupSucceeded: true })
+      })
+    ]));
+  });
+
+  it("creates, lists, and fetches governed assets", async () => {
+    const retrievalRepository = new InMemoryRetrievalRepository();
+    server = buildServer({
+      logger: false,
+      registryRepository: new InMemoryRegistryRepository(),
+      authRepository: new InMemoryAuthRepository(),
+      retrievalRepository
     });
 
     const bootstrap = await server.inject({
@@ -509,14 +854,24 @@ describe("API asset registry routes", () => {
 
     expect(fetchResponse.statusCode).toBe(200);
     expect(fetchResponse.json().instructionObjects[0].body).toContain("permitted");
+    expect((await retrievalRepository.listRetrievalEvents())[0]).toMatchObject({
+      query: "guardrail.test-context",
+      resultCount: 1,
+      metadata: {
+        queryKind: "asset-view",
+        resultStableIds: ["guardrail.test-context"]
+      }
+    });
   });
 
   it("does not trust a caller-declared surface and intersects admin access with asset surfaces", async () => {
     const authRepository = new InMemoryAuthRepository();
+    const retrievalRepository = new InMemoryRetrievalRepository();
     server = buildServer({
       logger: false,
       registryRepository: new InMemoryRegistryRepository(),
-      authRepository
+      authRepository,
+      retrievalRepository
     });
     const bootstrap = await server.inject({
       method: "POST",
@@ -590,6 +945,7 @@ describe("API asset registry routes", () => {
 
     expect(allowed.statusCode).toBe(200);
     expect(allowed.json().asset.stableId).toBe("guardrail.mcp-only");
+    expect(await retrievalRepository.listRetrievalEvents()).toHaveLength(1);
   });
 
   it("lists review queue items and marks assets reviewed", async () => {
@@ -2955,7 +3311,12 @@ describe("API asset registry routes", () => {
 
     expect(adminQuery.statusCode).toBe(200);
     expect(uniqueStableIds(adminQuery.json().results)).toContain("playbook.managed-restricted");
-    expect((await retrievalRepository.listRetrievalEvents())[0]?.metadata.queryKind).toBe("managed-query");
+    const managedEvents = await retrievalRepository.listRetrievalEvents();
+    expect(managedEvents[0]?.metadata.queryKind).toBe("managed-query");
+    expect(managedEvents[1]?.metadata).toMatchObject({
+      resultStableIds: ["playbook.managed-public"]
+    });
+    expect(JSON.stringify(managedEvents[1]?.metadata)).not.toContain("playbook.managed-restricted");
 
     const unauthenticatedFeedback = await server.inject({
       method: "POST",
@@ -3013,6 +3374,64 @@ describe("API asset registry routes", () => {
 
     expect(unauthenticatedSummary.statusCode).toBe(401);
 
+    const summaryReader = await authRepository.createUser({
+      email: "summary-reader@example.test",
+      displayName: "Summary Reader",
+      role: "reader"
+    });
+    const summaryReaderKey = await authRepository.createApiKey({
+      userId: summaryReader.id,
+      name: "summary-reader",
+      scopes: ["asset:read"]
+    });
+    const readerSummary = await server.inject({
+      method: "GET",
+      url: "/telemetry/summary",
+      headers: { authorization: `Bearer ${summaryReaderKey?.secret}` }
+    });
+    expect(readerSummary.statusCode).toBe(403);
+
+    try {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-08-31T12:00:00.000Z"));
+      await retrievalRepository.recordRetrievalEvent({
+        surface: "api",
+        query: "old [REDACTED_EMAIL] event",
+        resultCount: 0,
+        latencyMs: 1,
+        metadata: {}
+      });
+      await retrievalRepository.recordRetrievalEvent({
+        surface: "api",
+        query: "synthetic eval",
+        resultCount: 0,
+        latencyMs: 1,
+        metadata: { queryKind: "managed-query-eval" }
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+
+    const dueToday = await server.inject({
+      method: "POST",
+      url: "/assets",
+      headers: { authorization: `Bearer ${adminKey}` },
+      payload: {
+        stableId: "policy.review-due-today",
+        type: "policy",
+        ownerId: "user_admin",
+        title: "Review Due Today",
+        lifecycleState: "active",
+        sensitivity: "internal",
+        audience: ["ai-team"],
+        status: "approved",
+        reviewDueAt: "2026-09-01",
+        allowedSurfaces: ["api"],
+        instruction: { instructionKind: "policy", body: "Review on the due date boundary." }
+      }
+    });
+    expect(dueToday.statusCode).toBe(201);
+
     const summary = await server.inject({
       method: "GET",
       url: "/telemetry/summary?limit=20",
@@ -3023,9 +3442,32 @@ describe("API asset registry routes", () => {
 
     expect(summary.statusCode).toBe(200);
     expect(summary.json().retrieval).toMatchObject({
-      eventCount: 2,
+      eventCount: 4,
       deniedCount: expect.any(Number),
-      byQueryKind: [{ key: "managed-query", count: 2 }]
+      byQueryKind: expect.arrayContaining([
+        { key: "managed-query", count: 2 },
+        { key: "managed-query-eval", count: 1 },
+        { key: "search", count: 1 }
+      ])
+    });
+    expect(summary.json().searchQuality).toMatchObject({
+      lowResultThreshold: 2,
+      searchEventCount: 3,
+      unansweredSearchCount: 1,
+      lowResultSearchCount: 3
+    });
+    expect(summary.json().searchQuality.topQueries).toEqual(expect.arrayContaining([
+      expect.objectContaining({ query: "old [REDACTED_EMAIL] event", uniquePageCount: 0 })
+    ]));
+    expect(summary.json().dailyTrends.map((trend: { date: string }) => trend.date)).toEqual([
+      "2026-08-31",
+      "2026-09-01"
+    ]);
+    expect(summary.json().contentHealth).toMatchObject({
+      asOf: "2026-09-01",
+      sampleLimit: 20,
+      sampleLimitReached: false,
+      overdueCount: 1
     });
     expect(summary.json().feedback).toMatchObject({
       recordCount: 1,
@@ -6637,6 +7079,9 @@ describe("API asset registry routes", () => {
       "/auth/api-keys/rotation-due",
       "/auth/api-keys/{apiKeyId}/rotate",
       "/assets/review-queue",
+      "/assets/{stableId}/attachments",
+      "/assets/{stableId}/attachments/{attachmentId}/download",
+      "/assets/{stableId}/attachments/{attachmentId}",
       "/assets/{stableId}/review",
       "/assets/{stableId}/versions/{versionNumber}",
       "/assets/{stableId}/publish",

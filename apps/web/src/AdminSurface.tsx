@@ -12,6 +12,7 @@ import type {
   ApiKeyRotateResponse,
   AssetDetail,
   AssetRecord,
+  Attachment,
   AssetReviewQueueResponse,
   AssetVersionSnapshot,
   AuditEvent,
@@ -88,6 +89,8 @@ import {
   Toolbar
 } from "./components/app/index.js";
 import { TrustStateSummary } from "./components/domain/index.js";
+import { AnalyticsDashboard, type AnalyticsWindowDays } from "./components/domain/analytics-dashboard.js";
+import { attachmentUploadHeaders, AttachmentsPanel } from "./components/domain/attachments-panel.js";
 import {
   Command,
   CommandDialog,
@@ -186,6 +189,7 @@ import "./styles.css";
 const sessionCookieActiveStorageKey = "forgetbase-session-cookie-active";
 const csrfCookieName = "forgetbase_csrf";
 const configuredApiUrl = import.meta.env.VITE_FORGETBASE_API_URL?.trim();
+const attachmentMaxBytes = 10 * 1024 * 1024;
 const demoEvalCases = [
   {
     id: "eval.pii-redaction-citation",
@@ -792,6 +796,11 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
   const [assets, setAssets] = useState<AssetRecord[]>([]);
   const [selectedStableId, setSelectedStableId] = useState(readInitialReaderPageId);
   const [assetDetail, setAssetDetail] = useState<AssetDetail | null>(null);
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [attachmentsLoading, setAttachmentsLoading] = useState(false);
+  const [attachmentUploading, setAttachmentUploading] = useState(false);
+  const [attachmentsError, setAttachmentsError] = useState("");
+  const [pendingAttachmentDelete, setPendingAttachmentDelete] = useState<Attachment | null>(null);
   const [assetContentView, setAssetContentView] = useState<AssetContentView>("human");
   const [policySettingsView, setPolicySettingsView] = useState<PolicySettingsView>("retention");
   const [accessSettingsView, setAccessSettingsView] = useState<AccessSettingsView>("users");
@@ -823,6 +832,8 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
   const [isGeneratingExport, setIsGeneratingExport] = useState(false);
   const [telemetryEvents, setTelemetryEvents] = useState<RetrievalEvent[]>([]);
   const [telemetrySummary, setTelemetrySummary] = useState<TelemetryAnalyticsSummary | null>(null);
+  const [analyticsWindowDays, setAnalyticsWindowDays] = useState<AnalyticsWindowDays>(30);
+  const [analyticsLoading, setAnalyticsLoading] = useState(false);
   const [telemetryRetentionPolicy, setTelemetryRetentionPolicy] = useState<TelemetryRetentionPolicy | null>(null);
   const [telemetryRetentionPurgeResult, setTelemetryRetentionPurgeResult] =
     useState<TelemetryRetentionPurgeResult | null>(null);
@@ -1031,6 +1042,7 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
   const commandTriggerRef = useRef<HTMLButtonElement | null>(null);
   const loadedWorkspaceRoutesRef = useRef<Set<string>>(new Set());
   const authenticationEpochRef = useRef(0);
+  const assetLoadEpochRef = useRef(0);
   const authoringEditTargetRef = useRef<{
     stableId: string;
     metadata: Record<string, unknown>;
@@ -1435,6 +1447,32 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
     return response.json() as Promise<T>;
   }
 
+  async function requestBinary(path: string, init: RequestInit = {}, authKey = apiKey): Promise<Response> {
+    const headers = new Headers(init.headers);
+    headers.set("x-forgetbase-surface", "web");
+
+    if (authKey) {
+      headers.set("authorization", `Bearer ${authKey}`);
+    } else if (unsafeMethods.has((init.method ?? "GET").toUpperCase())) {
+      const csrfToken = readCookie(csrfCookieName);
+      if (csrfToken) headers.set("x-forgetbase-csrf", csrfToken);
+    }
+
+    let response: Response;
+    try {
+      response = await fetch(`${apiUrl.replace(/\/$/, "")}${path}`, {
+        ...init,
+        headers,
+        credentials: init.credentials ?? "include"
+      });
+    } catch (fetchError) {
+      throw new Error(`API request failed for ${apiUrl}: ${fetchError instanceof Error ? fetchError.message : String(fetchError)}`);
+    }
+
+    if (!response.ok) throw new Error(`${response.status} ${await response.text()}`);
+    return response;
+  }
+
   async function refreshHealth(authKey = apiKey) {
     try {
       const healthResponse = await request<{ status: string }>("/health", {}, authKey);
@@ -1685,15 +1723,100 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
   }
 
   async function loadAsset(stableId: string) {
+    const loadEpoch = ++assetLoadEpochRef.current;
+
     if (!stableId) {
+      setAssetDetail(null);
+      setAttachments([]);
+      setAttachmentsLoading(false);
       return;
     }
 
+    setAttachments([]);
+    setAttachmentsLoading(true);
+    setAttachmentsError("");
     try {
-      setAssetDetail(await request<AssetDetail>(`/assets/${encodeURIComponent(stableId)}`));
+      const detail = await request<AssetDetail>(`/assets/${encodeURIComponent(stableId)}`);
+      if (loadEpoch !== assetLoadEpochRef.current) return;
+      setAssetDetail(detail);
+      void loadAttachments(stableId, loadEpoch);
     } catch (loadError) {
+      if (loadEpoch !== assetLoadEpochRef.current) return;
       setAssetDetail(null);
+      setAttachments([]);
+      setAttachmentsLoading(false);
       setError(loadError instanceof Error ? loadError.message : String(loadError));
+    }
+  }
+
+  async function loadAttachments(stableId: string, loadEpoch = assetLoadEpochRef.current) {
+    setAttachmentsLoading(true);
+    setAttachmentsError("");
+    try {
+      const response = await request<{ attachments: Attachment[] }>(`/assets/${encodeURIComponent(stableId)}/attachments`);
+      if (loadEpoch !== assetLoadEpochRef.current) return;
+      setAttachments(response.attachments);
+    } catch (loadError) {
+      if (loadEpoch !== assetLoadEpochRef.current) return;
+      setAttachments([]);
+      setAttachmentsError(loadError instanceof Error ? loadError.message : String(loadError));
+    } finally {
+      if (loadEpoch === assetLoadEpochRef.current) setAttachmentsLoading(false);
+    }
+  }
+
+  async function uploadAttachment(file: File) {
+    if (!assetDetail) return;
+    const stableId = assetDetail.asset.stableId;
+    const loadEpoch = assetLoadEpochRef.current;
+    setAttachmentUploading(true);
+    setAttachmentsError("");
+    try {
+      await requestBinary(`/assets/${encodeURIComponent(stableId)}/attachments`, {
+        method: "POST",
+        headers: attachmentUploadHeaders(file),
+        body: file
+      });
+      await loadAttachments(stableId, loadEpoch);
+      setMessage(`Uploaded ${file.name}`);
+    } catch (uploadError) {
+      setAttachmentsError(uploadError instanceof Error ? uploadError.message : String(uploadError));
+    } finally {
+      setAttachmentUploading(false);
+    }
+  }
+
+  async function downloadAttachment(attachment: Attachment) {
+    if (!assetDetail) return;
+    setAttachmentsError("");
+    try {
+      const response = await requestBinary(`/assets/${encodeURIComponent(assetDetail.asset.stableId)}/attachments/${encodeURIComponent(attachment.id)}/download`);
+      const url = URL.createObjectURL(await response.blob());
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = attachment.filename;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (downloadError) {
+      setAttachmentsError(downloadError instanceof Error ? downloadError.message : String(downloadError));
+    }
+  }
+
+  async function deleteAttachment(attachment: Attachment) {
+    if (!assetDetail) return;
+    const stableId = assetDetail.asset.stableId;
+    const loadEpoch = assetLoadEpochRef.current;
+    setAttachmentsError("");
+    try {
+      await request<Attachment>(`/assets/${encodeURIComponent(stableId)}/attachments/${encodeURIComponent(attachment.id)}`, {
+        method: "DELETE"
+      });
+      await loadAttachments(stableId, loadEpoch);
+      setMessage(`Deleted ${attachment.filename}`);
+    } catch (deleteError) {
+      setAttachmentsError(deleteError instanceof Error ? deleteError.message : String(deleteError));
+    } finally {
+      setPendingAttachmentDelete(null);
     }
   }
 
@@ -2110,15 +2233,25 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
     }
   }
 
-  async function loadTelemetrySummary() {
+  async function loadTelemetrySummary(windowDays: AnalyticsWindowDays = analyticsWindowDays) {
     setError("");
+    setAnalyticsLoading(true);
 
     try {
-      const summary = await request<TelemetryAnalyticsSummary>("/telemetry/summary?limit=200");
+      const until = new Date();
+      const since = new Date(until.getTime() - windowDays * 24 * 60 * 60 * 1_000);
+      const query = new URLSearchParams({
+        limit: "200",
+        since: since.toISOString(),
+        until: until.toISOString()
+      });
+      const summary = await request<TelemetryAnalyticsSummary>(`/telemetry/summary?${query.toString()}`);
       setTelemetrySummary(summary);
       setMessage(`Summary loaded for ${summary.retrieval.eventCount} retrieval events`);
     } catch (summaryError) {
       setError(summaryError instanceof Error ? summaryError.message : String(summaryError));
+    } finally {
+      setAnalyticsLoading(false);
     }
   }
 
@@ -4833,6 +4966,43 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
                         { term: "Exports", description: assetDetail.asset.allowedExports.join(", ") || "none" }
                       ]}
                     />
+                    <SectionCard title="Page files" description="Files are stored separately from page revisions and always download as attachments." variant="tool">
+                      <AttachmentsPanel
+                        attachments={attachments}
+                        canManage
+                        loading={attachmentsLoading}
+                        uploading={attachmentUploading}
+                        maxBytes={attachmentMaxBytes}
+                        error={attachmentsError}
+                        onUpload={(file) => void uploadAttachment(file)}
+                        onDownload={(attachment) => void downloadAttachment(attachment)}
+                        onDelete={setPendingAttachmentDelete}
+                      />
+                    </SectionCard>
+                    <AlertDialog
+                      open={pendingAttachmentDelete !== null}
+                      onOpenChange={(open) => { if (!open) setPendingAttachmentDelete(null); }}
+                    >
+                      <AlertDialogContent>
+                        <AlertDialogHeader>
+                          <AlertDialogTitle>Delete this attachment?</AlertDialogTitle>
+                          <AlertDialogDescription>
+                            {pendingAttachmentDelete
+                              ? `${pendingAttachmentDelete.filename} will stop being available to readers and its stored file will be removed.`
+                              : "The attachment will be removed."}
+                          </AlertDialogDescription>
+                        </AlertDialogHeader>
+                        <AlertDialogFooter>
+                          <AlertDialogCancel>Cancel</AlertDialogCancel>
+                          <AlertDialogAction
+                            variant="danger"
+                            onClick={() => { if (pendingAttachmentDelete) void deleteAttachment(pendingAttachmentDelete); }}
+                          >
+                            Delete attachment
+                          </AlertDialogAction>
+                        </AlertDialogFooter>
+                      </AlertDialogContent>
+                    </AlertDialog>
                     <SectionCard
                       title="Release control"
                       variant="tool"
@@ -5542,6 +5712,18 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
                 </TableBody>
               </Table>
             </DataTableShell>
+          </div>
+          <div className={routePanelClass(currentPage, activityPanelRoutes, "grid gap-4")}>
+            <AnalyticsDashboard
+              summary={telemetrySummary}
+              windowDays={analyticsWindowDays}
+              loading={analyticsLoading}
+              onWindowDaysChange={(days) => {
+                setAnalyticsWindowDays(days);
+                void loadTelemetrySummary(days);
+              }}
+              onRefresh={() => void loadTelemetrySummary()}
+            />
           </div>
           <div className={routePanelClass(currentPage, activityAndHealthPanelRoutes, "grid gap-4")}>
             <SectionCard title="Telemetry summary" variant="tool">
