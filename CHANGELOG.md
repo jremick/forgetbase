@@ -18,6 +18,7 @@ All notable changes will be recorded here once public beta releases begin.
 ### Changed
 
 - Removed an invalid root Docker Dependabot update target while retaining updates for the actual Railway Dockerfiles under `infra/docker`.
+- Fixed the Railway same-origin proxy template to target the API service on Railway's injected runtime port, with a configurable `FORGETBASE_API_UPSTREAM_PORT` default of `8080`.
 
 ### Release Boundary
 

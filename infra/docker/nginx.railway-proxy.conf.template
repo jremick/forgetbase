@@ -20,7 +20,7 @@ server {
   proxy_set_header X-Forwarded-Proto $scheme;
 
   resolver [fd12::10] valid=10s ipv6=off;
-  set $api_upstream http://api.railway.internal:3000;
+  set $api_upstream http://api.railway.internal:${FORGETBASE_API_UPSTREAM_PORT};
 
   location = /api {
     return 308 /api/;

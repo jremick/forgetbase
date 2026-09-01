@@ -14,6 +14,7 @@ RUN pnpm --filter @forgetbase/web build
 FROM nginx:1.27-alpine
 
 ENV PORT=8080
+ENV FORGETBASE_API_UPSTREAM_PORT=8080
 
 COPY --from=build /app/apps/web/dist /usr/share/nginx/html
 COPY infra/docker/nginx.railway-proxy.conf.template /etc/nginx/conf.d/default.conf.template
@@ -23,4 +24,4 @@ RUN sed -i 's|^pid .*;|pid /tmp/nginx.pid;|' /etc/nginx/nginx.conf \
 
 USER nginx
 
-CMD ["sh", "-c", "envsubst '$$PORT' < /etc/nginx/conf.d/default.conf.template > /etc/nginx/conf.d/default.conf && nginx -g 'daemon off;'"]
+CMD ["sh", "-c", "envsubst '$$PORT $$FORGETBASE_API_UPSTREAM_PORT' < /etc/nginx/conf.d/default.conf.template > /etc/nginx/conf.d/default.conf && nginx -g 'daemon off;'"]

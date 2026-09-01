@@ -59,13 +59,13 @@ Prefer deploying from a clean tracked checkout or a connected repository source 
 
 ## Private Verification
 
-Use read-only service status, logs, deployment lists, and private-network shell checks first:
+Use read-only service status, logs, deployment lists, and private-network shell checks first. The Railway API service listens on the platform-injected runtime port, so the proxy template defaults `FORGETBASE_API_UPSTREAM_PORT` to `8080` unless you deliberately override it:
 
 ```bash
 railway service status --environment <environment>
 railway deployment list --service api --environment <environment> --json
 railway logs --service api --lines 100
-curl --silent --show-error --fail http://api.railway.internal:3000/health
+curl --silent --show-error --fail http://api.railway.internal:8080/health
 ```
 
 ## Public Prototype Verification

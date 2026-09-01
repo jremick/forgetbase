@@ -110,6 +110,7 @@ function checkTemplatePosture(): void {
   requireIncludes("infra/docker/nginx.tls.conf", tlsNginx, "Strict-Transport-Security", "TLS proxy sets HSTS");
   requireIncludes("infra/docker/nginx.railway-proxy.conf.template", railwayNginx, "location = /api/auth/bootstrap", "Railway proxy template gates bootstrap route");
   requireIncludes("infra/docker/nginx.railway-proxy.conf.template", railwayNginx, "return 404;", "Railway proxy template blocks bootstrap exposure");
+  requireIncludes("infra/docker/nginx.railway-proxy.conf.template", railwayNginx, "${FORGETBASE_API_UPSTREAM_PORT}", "Railway proxy template uses a configurable internal API port");
   requireIncludes("docs/runbooks/DEPLOY_RAILWAY_PRIVATE_TEMPLATE.md", railwayRunbook, "FORGETBASE_REQUIRE_AUTHENTICATION=true", "Railway public template requires auth");
   requireIncludes("docs/runbooks/DEPLOY_RAILWAY_PRIVATE_TEMPLATE.md", railwayRunbook, "FORGETBASE_SESSION_COOKIE_SECURE=true", "Railway public template requires secure cookies");
   requireIncludes("docs/runbooks/DEPLOY_RAILWAY_PRIVATE_TEMPLATE.md", railwayRunbook, "api` and `web` have no public domains", "Railway template keeps api/web private");
@@ -122,6 +123,7 @@ function checkTemplatePosture(): void {
   requireIncludes("infra/docker/railway-proxy.Dockerfile", railwayProxyDockerfile, "pnpm install --frozen-lockfile", "Railway proxy build uses the frozen lockfile");
   requireIncludes("infra/docker/railway-proxy.Dockerfile", railwayProxyDockerfile, "USER nginx", "Railway proxy image runs as non-root");
   requireIncludes("infra/docker/railway-proxy.Dockerfile", railwayProxyDockerfile, "pid /tmp/nginx.pid", "Railway proxy uses a non-root-writable PID path");
+  requireIncludes("infra/docker/railway-proxy.Dockerfile", railwayProxyDockerfile, "FORGETBASE_API_UPSTREAM_PORT=8080", "Railway proxy defaults the internal API port to Railway's runtime port");
   requireIncludes("apps/api/src/server.ts", server, "server.get(\"/ready\"", "API exposes a database-aware readiness route");
 
   const publicAuthBlockMatch = server.match(/function isPublicAuthenticationPath[\s\S]*?\n}/);
