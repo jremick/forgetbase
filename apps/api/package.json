@@ -14,7 +14,7 @@
     "@forgetbase/db": "workspace:*",
     "@forgetbase/schema": "workspace:*",
     "@forgetbase/validation": "workspace:*",
-    "fastify": "^5.8.5",
+    "fastify": "^5.12.1",
     "jose": "^6.2.3"
   },
   "devDependencies": {
