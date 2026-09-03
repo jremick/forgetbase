@@ -39,12 +39,19 @@ export const sensitivitySchema = z.enum([
   "secret"
 ]);
 
-export const surfaceSchema = z.enum(["api", "cli", "mcp", "web", "export"]);
+export const surfaceSchema = z.enum(["api", "cli", "mcp", "web", "export", "local-cache"]);
 export const aiExportFormatSchema = z.enum(["json", "okf"]);
 export const okfVersionSchema = z.enum(["0.1"]);
 export const userRoleSchema = z.enum(["admin", "maintainer", "reader"]);
 export const userStatusSchema = z.enum(["active", "disabled"]);
-export const apiKeyScopeSchema = z.enum(["admin", "asset:read", "asset:write", "permission:write", "agent:execute"]);
+export const apiKeyScopeSchema = z.enum([
+  "admin",
+  "asset:read",
+  "asset:write",
+  "permission:write",
+  "agent:execute",
+  "local:sync"
+]);
 export const permissionActionSchema = z.enum(["read", "write", "admin", "export", "execute"]);
 export const authPrincipalTypeSchema = z.enum(["user", "service-account"]);
 export const permissionPrincipalTypeSchema = z.enum(["user", "group", "service-account"]);
@@ -55,7 +62,7 @@ export const modelProviderSchema = z.enum(["openai", "anthropic", "openrouter"])
 export const externalAuthProviderSchema = z.enum(["oidc", "microsoft-entra"]);
 export const userAuthProviderSchema = z.enum(["local", "oidc", "microsoft-entra"]);
 export const accountLinkingModeSchema = z.enum(["disabled", "verified-email", "email"]);
-export const loginSessionSourceSchema = z.enum(["password", "oidc"]);
+export const loginSessionSourceSchema = z.enum(["password", "oidc", "local-device"]);
 export const agentActionTypeSchema = z.enum([
   "create-task-record",
   "http-openapi",
@@ -1550,6 +1557,143 @@ export const aiExportPackageSchema = z.object({
   assets: z.array(exportPackageAssetSchema)
 });
 
+export const localSyncProtocolVersion = "1" as const;
+export const localSyncMaxRecords = 5_000;
+export const localSyncMaxRecordsPerPage = 100;
+export const localSyncMaxRecordBytes = 2 * 1024 * 1024;
+export const localSyncMaxSnapshotBytes = 100 * 1024 * 1024;
+export const localSyncManifestModeSchema = z.enum(["full", "delta", "unchanged"]);
+export const localSyncSensitivitySchema = z.enum(["public-demo", "internal"]);
+export const localSyncDigestSchema = z.string().regex(/^sha256:[0-9a-f]{64}$/);
+
+export const localSyncRecordSchema = z.object({
+  recordId: z.string().min(1),
+  asset: assetRecordSchema,
+  version: assetVersionSchema,
+  instructionObjects: z.array(agentInstructionSchema),
+  humanDocuments: z.array(humanDocumentSchema),
+  payloadHash: localSyncDigestSchema
+});
+
+export const localSyncManifestPagePayloadSchema = z.object({
+  protocolVersion: z.literal(localSyncProtocolVersion),
+  mode: localSyncManifestModeSchema,
+  serverId: z.string().min(1),
+  tenantId: z.string().min(1),
+  principalType: authPrincipalTypeSchema,
+  principalId: z.string().min(1),
+  snapshotId: z.string().min(1),
+  authorizationEpoch: z.number().int().positive(),
+  contentGeneration: z.number().int().positive(),
+  entitlementHash: localSyncDigestSchema,
+  recordSetHash: localSyncDigestSchema,
+  baseRecordSetHash: localSyncDigestSchema.nullable(),
+  issuedAt: z.string().datetime(),
+  serverTime: z.string().datetime(),
+  leaseExpiresAt: z.string().datetime(),
+  minimumClientVersion: z.string().min(1),
+  allowedSensitivities: z.array(localSyncSensitivitySchema).min(1),
+  pageIndex: z.number().int().nonnegative(),
+  pageCount: z.number().int().positive().max(Math.ceil(localSyncMaxRecords / localSyncMaxRecordsPerPage)),
+  recordCount: z.number().int().nonnegative().max(localSyncMaxRecords),
+  changedRecordCount: z.number().int().nonnegative().max(localSyncMaxRecords),
+  removalCount: z.number().int().nonnegative().max(localSyncMaxRecords),
+  previousPageHash: localSyncDigestSchema.nullable(),
+  records: z.array(localSyncRecordSchema).max(localSyncMaxRecordsPerPage),
+  removedStableIds: z.array(z.string().min(1).max(250)).max(localSyncMaxRecords)
+});
+
+export const localSyncManifestPageSchema = localSyncManifestPagePayloadSchema.extend({
+  pageHash: localSyncDigestSchema,
+  signingKeyId: z.string().min(1),
+  signature: z.string().regex(/^[A-Za-z0-9_-]+$/)
+});
+
+export const localSyncManifestBundleSchema = z.object({
+  pages: z.array(localSyncManifestPageSchema)
+    .min(1)
+    .max(Math.ceil(localSyncMaxRecords / localSyncMaxRecordsPerPage))
+});
+
+export const localSyncConfigurationSchema = z.object({
+  protocolVersion: z.literal(localSyncProtocolVersion),
+  serverId: z.string().min(1),
+  tenantId: z.string().min(1),
+  principalType: authPrincipalTypeSchema,
+  principalId: z.string().min(1),
+  signingKeyId: z.string().min(1),
+  signingPublicKey: z.string().min(1),
+  leaseDurationSeconds: z.number().int().positive(),
+  minimumClientVersion: z.string().min(1),
+  allowedSensitivities: z.array(localSyncSensitivitySchema).min(1),
+  maxRecords: z.number().int().positive().max(localSyncMaxRecords),
+  maxRecordsPerPage: z.number().int().positive().max(localSyncMaxRecordsPerPage),
+  maxRecordBytes: z.number().int().positive().max(localSyncMaxRecordBytes),
+  maxSnapshotBytes: z.number().int().positive().max(localSyncMaxSnapshotBytes)
+});
+
+export const localSyncManifestRequestSchema = z.object({
+  knownAuthorizationEpoch: z.coerce.number().int().positive().optional(),
+  knownContentGeneration: z.coerce.number().int().positive().optional(),
+  knownRecordSetHash: localSyncDigestSchema.optional()
+});
+
+export const localDeviceNameSchema = z.string().trim().min(1).max(120);
+export const localDevicePkceValueSchema = z.string().regex(/^[A-Za-z0-9_-]{43,128}$/);
+export const localDeviceStateSchema = z.string().regex(/^[A-Za-z0-9_-]{32,128}$/);
+
+export const localDeviceAuthorizationStartInputSchema = z.object({
+  deviceName: localDeviceNameSchema,
+  redirectUri: z.string().url().max(2_048),
+  state: localDeviceStateSchema,
+  codeChallenge: localDevicePkceValueSchema,
+  codeChallengeMethod: z.literal("S256")
+});
+
+export const localDeviceAuthorizationStartResponseSchema = z.object({
+  approvalUrl: z.string().url(),
+  requestToken: z.string().min(1).max(8_192),
+  expiresAt: z.string().datetime()
+});
+
+export const localDeviceAuthorizationPreviewSchema = z.object({
+  serverId: z.string().min(1),
+  serverOrigin: z.string().url(),
+  signingKeyId: z.string().min(1),
+  deviceName: localDeviceNameSchema,
+  redirectHost: z.string().min(1),
+  expiresAt: z.string().datetime()
+});
+
+export const localDeviceAuthorizationApproveInputSchema = z.object({
+  requestToken: z.string().min(1).max(8_192)
+});
+
+export const localDeviceAuthorizationApproveResponseSchema = z.object({
+  redirectUrl: z.string().url()
+});
+
+export const localDeviceTokenExchangeInputSchema = z.object({
+  code: z.string().min(1).max(8_192),
+  codeVerifier: localDevicePkceValueSchema
+});
+
+export const localDeviceTokenRefreshInputSchema = z.object({
+  refreshToken: z.string().min(32).max(1_024)
+});
+
+export const localDeviceTokenResponseSchema = z.object({
+  accessToken: z.string().min(32),
+  accessTokenExpiresAt: z.string().datetime(),
+  refreshToken: z.string().min(32),
+  refreshTokenExpiresAt: z.string().datetime(),
+  deviceSession: loginSessionRecordSchema
+});
+
+export const localDeviceSessionListResponseSchema = z.object({
+  devices: z.array(loginSessionRecordSchema)
+});
+
 export const okfExportFileSchema = z.object({
   path: z.string().min(1),
   contentHash: z.string().min(1),
@@ -2359,6 +2503,23 @@ export type SearchResponse = z.infer<typeof searchResponseSchema>;
 export type SearchResult = z.infer<typeof searchResultSchema>;
 export type AiExportFormat = z.infer<typeof aiExportFormatSchema>;
 export type AiExportPackage = z.infer<typeof aiExportPackageSchema>;
+export type LocalSyncManifestMode = z.infer<typeof localSyncManifestModeSchema>;
+export type LocalSyncSensitivity = z.infer<typeof localSyncSensitivitySchema>;
+export type LocalSyncRecord = z.infer<typeof localSyncRecordSchema>;
+export type LocalSyncManifestPagePayload = z.infer<typeof localSyncManifestPagePayloadSchema>;
+export type LocalSyncManifestPage = z.infer<typeof localSyncManifestPageSchema>;
+export type LocalSyncManifestBundle = z.infer<typeof localSyncManifestBundleSchema>;
+export type LocalSyncConfiguration = z.infer<typeof localSyncConfigurationSchema>;
+export type LocalSyncManifestRequest = z.input<typeof localSyncManifestRequestSchema>;
+export type LocalDeviceAuthorizationStartInput = z.input<typeof localDeviceAuthorizationStartInputSchema>;
+export type LocalDeviceAuthorizationStartResponse = z.infer<typeof localDeviceAuthorizationStartResponseSchema>;
+export type LocalDeviceAuthorizationPreview = z.infer<typeof localDeviceAuthorizationPreviewSchema>;
+export type LocalDeviceAuthorizationApproveInput = z.input<typeof localDeviceAuthorizationApproveInputSchema>;
+export type LocalDeviceAuthorizationApproveResponse = z.infer<typeof localDeviceAuthorizationApproveResponseSchema>;
+export type LocalDeviceTokenExchangeInput = z.input<typeof localDeviceTokenExchangeInputSchema>;
+export type LocalDeviceTokenRefreshInput = z.input<typeof localDeviceTokenRefreshInputSchema>;
+export type LocalDeviceTokenResponse = z.infer<typeof localDeviceTokenResponseSchema>;
+export type LocalDeviceSessionListResponse = z.infer<typeof localDeviceSessionListResponseSchema>;
 export type OkfVersion = z.infer<typeof okfVersionSchema>;
 export type OkfExportFile = z.infer<typeof okfExportFileSchema>;
 export type OkfExportPackage = z.infer<typeof okfExportPackageSchema>;

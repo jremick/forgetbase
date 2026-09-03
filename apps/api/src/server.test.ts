@@ -3619,6 +3619,7 @@ describe("API asset registry routes", () => {
     });
     expect(dueToday.statusCode).toBe(201);
 
+    const summaryDate = new Date().toISOString().slice(0, 10);
     const summary = await server.inject({
       method: "GET",
       url: "/telemetry/summary?limit=20",
@@ -3648,10 +3649,10 @@ describe("API asset registry routes", () => {
     ]));
     expect(summary.json().dailyTrends.map((trend: { date: string }) => trend.date)).toEqual([
       "2026-08-31",
-      "2026-09-01"
+      summaryDate
     ]);
     expect(summary.json().contentHealth).toMatchObject({
-      asOf: "2026-09-01",
+      asOf: summaryDate,
       sampleLimit: 20,
       sampleLimitReached: false,
       overdueCount: 1

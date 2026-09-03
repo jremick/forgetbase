@@ -21,7 +21,8 @@
         "cli",
         "mcp",
         "web",
-        "export"
+        "export",
+        "local-cache"
       ],
       "allowedExports": [
         "demo-agent-pack"
@@ -103,7 +104,8 @@
         "cli",
         "mcp",
         "web",
-        "export"
+        "export",
+        "local-cache"
       ],
       "allowedExports": [
         "demo-agent-pack"
@@ -251,7 +253,8 @@
         "cli",
         "mcp",
         "web",
-        "export"
+        "export",
+        "local-cache"
       ],
       "allowedExports": [
         "demo-agent-pack"
@@ -319,7 +322,8 @@
         "cli",
         "mcp",
         "web",
-        "export"
+        "export",
+        "local-cache"
       ],
       "allowedExports": [
         "demo-agent-pack",
@@ -385,7 +389,8 @@
         "cli",
         "mcp",
         "web",
-        "export"
+        "export",
+        "local-cache"
       ],
       "allowedExports": [
         "demo-agent-pack"
@@ -460,7 +465,8 @@
         "cli",
         "mcp",
         "web",
-        "export"
+        "export",
+        "local-cache"
       ],
       "allowedExports": [
         "demo-agent-pack"
@@ -533,7 +539,8 @@
         "cli",
         "mcp",
         "web",
-        "export"
+        "export",
+        "local-cache"
       ],
       "allowedExports": [
         "demo-agent-pack"
@@ -608,7 +615,8 @@
         "cli",
         "mcp",
         "web",
-        "export"
+        "export",
+        "local-cache"
       ],
       "allowedExports": [
         "demo-agent-pack"
@@ -685,7 +693,8 @@
         "cli",
         "mcp",
         "web",
-        "export"
+        "export",
+        "local-cache"
       ],
       "allowedExports": [
         "demo-agent-pack"
@@ -765,7 +774,8 @@
         "cli",
         "mcp",
         "web",
-        "export"
+        "export",
+        "local-cache"
       ],
       "allowedExports": [
         "demo-agent-pack",
@@ -844,7 +854,8 @@
         "cli",
         "mcp",
         "web",
-        "export"
+        "export",
+        "local-cache"
       ],
       "allowedExports": [
         "demo-agent-pack"
@@ -914,7 +925,8 @@
         "cli",
         "mcp",
         "web",
-        "export"
+        "export",
+        "local-cache"
       ],
       "allowedExports": [
         "demo-agent-pack"
@@ -987,7 +999,8 @@
         "cli",
         "mcp",
         "web",
-        "export"
+        "export",
+        "local-cache"
       ],
       "allowedExports": [
         "demo-agent-pack"
@@ -1062,7 +1075,8 @@
         "cli",
         "mcp",
         "web",
-        "export"
+        "export",
+        "local-cache"
       ],
       "allowedExports": [
         "internal-ops-pack"
@@ -1203,7 +1217,8 @@
         "api",
         "cli",
         "mcp",
-        "web"
+        "web",
+        "local-cache"
       ],
       "allowedExports": [],
       "allowedActions": [],
@@ -1348,7 +1363,8 @@
         "cli",
         "mcp",
         "web",
-        "export"
+        "export",
+        "local-cache"
       ],
       "allowedExports": [
         "demo-agent-pack"
@@ -1423,7 +1439,8 @@
         "cli",
         "mcp",
         "web",
-        "export"
+        "export",
+        "local-cache"
       ],
       "allowedExports": [
         "demo-agent-pack"

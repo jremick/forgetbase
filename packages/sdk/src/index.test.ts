@@ -225,6 +225,165 @@ describe("ForgetBase SDK beta contract", () => {
       code: "access_denied"
     });
   });
+
+  it("maps local configuration and high-water manifest calls to the versioned sync API", async () => {
+    const digest = `sha256:${"a".repeat(64)}`;
+    const { fetchMock, calls } = mockFetch((call) => call.url.pathname.endsWith("configuration")
+      ? {
+          protocolVersion: "1",
+          serverId: "server_test",
+          tenantId: "tenant_demo",
+          principalType: "service-account",
+          principalId: "service_device",
+          signingKeyId: "key_1",
+          signingPublicKey: "test-public-key",
+          leaseDurationSeconds: 3_600,
+          minimumClientVersion: "0.1.0",
+          allowedSensitivities: ["public-demo"],
+          maxRecords: 5_000,
+          maxRecordsPerPage: 100,
+          maxRecordBytes: 2 * 1024 * 1024,
+          maxSnapshotBytes: 100 * 1024 * 1024
+        }
+      : {
+          pages: [{
+            protocolVersion: "1",
+            mode: "unchanged",
+            serverId: "server_test",
+            tenantId: "tenant_demo",
+            principalType: "service-account",
+            principalId: "service_device",
+            snapshotId: "snapshot_1",
+            authorizationEpoch: 4,
+            contentGeneration: 9,
+            entitlementHash: digest,
+            recordSetHash: digest,
+            baseRecordSetHash: null,
+            issuedAt: "2026-09-03T00:00:00.000Z",
+            serverTime: "2026-09-03T00:00:00.000Z",
+            leaseExpiresAt: "2026-09-03T01:00:00.000Z",
+            minimumClientVersion: "0.1.0",
+            allowedSensitivities: ["public-demo"],
+            pageIndex: 0,
+            pageCount: 1,
+            recordCount: 2,
+            changedRecordCount: 0,
+            removalCount: 0,
+            previousPageHash: null,
+            records: [],
+            removedStableIds: [],
+            pageHash: digest,
+            signingKeyId: "key_1",
+            signature: "dGVzdA"
+          }]
+        });
+    const client = new ForgetBaseClient({
+      baseUrl: "https://forgetbase.example.test",
+      apiKey: "local-secret",
+      surface: "local-cache",
+      fetchImpl: fetchMock
+    });
+
+    await client.getLocalSyncConfiguration();
+    await client.getLocalSyncManifest({
+      knownAuthorizationEpoch: 4,
+      knownContentGeneration: 9,
+      knownRecordSetHash: digest
+    });
+
+    expect(calls.map((call) => call.url.pathname)).toEqual([
+      "/local-sync/v1/configuration",
+      "/local-sync/v1/manifest"
+    ]);
+    expect(calls[1]?.url.searchParams.get("knownAuthorizationEpoch")).toBe("4");
+    expect(calls[1]?.url.searchParams.get("knownContentGeneration")).toBe("9");
+    expect(calls[1]?.url.searchParams.get("knownRecordSetHash")).toBe(digest);
+    expect(calls[1]?.headers.get("authorization")).toBe("Bearer local-secret");
+    expect(calls[1]?.headers.get("x-forgetbase-surface")).toBe("local-cache");
+  });
+
+  it("rejects an oversized local-sync body before parsing it", async () => {
+    const client = clientReturning(new Response('{"pages":[]}', {
+      status: 200,
+      headers: {
+        "content-type": "application/json",
+        "content-length": String(129 * 1024 * 1024)
+      }
+    }));
+
+    await expect(client.getLocalSyncManifest()).rejects.toThrow(/client safety limit/);
+  });
+
+  it("maps the local-device enrollment, rotation, inventory, and revocation lifecycle", async () => {
+    const token = localDeviceTokenFixture();
+    const { fetchMock, calls } = mockFetch((call) => {
+      if (call.url.pathname === "/local-sync/v1/device-sessions" && call.method === "POST") {
+        return {
+          approvalUrl: "https://forgetbase.example.test/?local-device-request=request-token",
+          requestToken: "request-token",
+          expiresAt: "2026-09-03T00:05:00.000Z"
+        };
+      }
+      if (call.url.pathname.endsWith("/authorization/preview") && call.method === "POST") {
+        return {
+          serverId: "server_test",
+          serverOrigin: "https://forgetbase.example.test",
+          signingKeyId: "key_1",
+          deviceName: "Test laptop",
+          redirectHost: "127.0.0.1:45731",
+          expiresAt: "2026-09-03T00:05:00.000Z"
+        };
+      }
+      if (call.url.pathname.endsWith("/authorization") && call.method === "POST") {
+        return { redirectUrl: "http://127.0.0.1:45731/forgetbase/local/callback?code=code&state=state" };
+      }
+      if (call.url.pathname.endsWith("/token") || call.url.pathname.endsWith("/refresh")) return token;
+      if (call.url.pathname === "/local-sync/v1/device-sessions" && call.method === "GET") {
+        return { devices: [token.deviceSession] };
+      }
+      return { session: { ...token.deviceSession, revokedAt: "2026-09-03T00:10:00.000Z" }, apiKey: apiKeyFixture() };
+    });
+    const publicClient = new ForgetBaseClient({
+      baseUrl: "https://forgetbase.example.test",
+      surface: "local-cache",
+      fetchImpl: fetchMock
+    });
+    const browserClient = new ForgetBaseClient({
+      baseUrl: "https://forgetbase.example.test",
+      apiKey: "browser-key",
+      surface: "web",
+      fetchImpl: fetchMock
+    });
+
+    await publicClient.startLocalDeviceAuthorization({
+      deviceName: "Test laptop",
+      redirectUri: "http://127.0.0.1:45731/forgetbase/local/callback",
+      state: "s".repeat(43),
+      codeChallenge: "c".repeat(43),
+      codeChallengeMethod: "S256"
+    });
+    await browserClient.getLocalDeviceAuthorizationPreview("request-token");
+    await browserClient.approveLocalDeviceAuthorization({ requestToken: "request-token" });
+    await publicClient.exchangeLocalDeviceAuthorization({ code: "authorization-code", codeVerifier: "v".repeat(43) });
+    await publicClient.refreshLocalDeviceSession({ refreshToken: "r".repeat(40) });
+    expect(await browserClient.listLocalDeviceSessions()).toEqual([token.deviceSession]);
+    await browserClient.revokeLocalDeviceSession(token.deviceSession.id);
+
+    expect(calls.map((call) => `${call.method} ${call.url.pathname}`)).toEqual([
+      "POST /local-sync/v1/device-sessions",
+      "POST /local-sync/v1/device-sessions/authorization/preview",
+      "POST /local-sync/v1/device-sessions/authorization",
+      "POST /local-sync/v1/device-sessions/token",
+      "POST /local-sync/v1/device-sessions/refresh",
+      "GET /local-sync/v1/device-sessions",
+      `DELETE /local-sync/v1/device-sessions/${token.deviceSession.id}`
+    ]);
+    expect(calls[0]?.body).toMatchObject({ deviceName: "Test laptop", codeChallengeMethod: "S256" });
+    expect(calls[1]?.body).toEqual({ requestToken: "request-token" });
+    expect(calls[4]?.body).toEqual({ refreshToken: "r".repeat(40) });
+    expect(calls[0]?.headers.get("authorization")).toBeNull();
+    expect(calls[5]?.headers.get("authorization")).toBe("Bearer browser-key");
+  });
 });
 
 function clientReturning(response: Response): ForgetBaseClient {
@@ -243,7 +402,8 @@ function mockFetch(handler: (call: FetchCall) => unknown): {
     const call: FetchCall = {
       url: new URL(String(input)),
       method: init?.method ?? "GET",
-      headers: new Headers(init?.headers)
+      headers: new Headers(init?.headers),
+      body: init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : null
     };
     calls.push(call);
 
@@ -328,4 +488,45 @@ interface FetchCall {
   url: URL;
   method: string;
   headers: Headers;
+  body: Record<string, unknown> | null;
+}
+
+function localDeviceTokenFixture() {
+  return {
+    accessToken: "access-token".padEnd(40, "x"),
+    accessTokenExpiresAt: "2026-09-03T00:30:00.000Z",
+    refreshToken: "refresh-token".padEnd(40, "x"),
+    refreshTokenExpiresAt: "2026-09-10T00:00:00.000Z",
+    deviceSession: {
+      id: "session_device",
+      tenantId: "tenant_demo",
+      userId: "user_device",
+      apiKeyId: "key_device",
+      source: "local-device",
+      deviceLabel: "Test laptop",
+      clientUserAgent: "sdk-test",
+      createdAt: "2026-09-03T00:00:00.000Z",
+      expiresAt: "2026-09-03T00:30:00.000Z",
+      absoluteExpiresAt: "2026-10-03T00:00:00.000Z",
+      lastSeenAt: null,
+      revokedAt: null
+    }
+  };
+}
+
+function apiKeyFixture() {
+  return {
+    id: "key_device",
+    tenantId: "tenant_demo",
+    userId: "user_device",
+    serviceAccountId: null,
+    name: "local-device:Test laptop",
+    secretPreview: "fbase_...test",
+    scopes: ["local:sync"],
+    allowedSurfaces: ["local-cache"],
+    expiresAt: "2026-09-03T00:30:00.000Z",
+    lastUsedAt: null,
+    revokedAt: "2026-09-03T00:10:00.000Z",
+    createdAt: "2026-09-03T00:00:00.000Z"
+  };
 }

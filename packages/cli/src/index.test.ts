@@ -1,8 +1,9 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { buildOkfExportPackage, type AiExportPackage } from "@forgetbase/schema";
+import { MemoryLocalCredentialStore } from "@forgetbase/local-runtime";
 import { main } from "./index.js";
 
 const tempDirs: string[] = [];
@@ -596,7 +597,109 @@ describe("ForgetBase CLI contract", () => {
       ]
     });
   });
+
+  it("connects through browser authorization and stores no device secret in the profile", async () => {
+    const root = await mkdtemp(join(tmpdir(), "forgetbase-cli-local-"));
+    tempDirs.push(root);
+    const credentialStore = new MemoryLocalCredentialStore();
+    const { fetchMock, calls } = mockFetch((call) => {
+      if (call.url.pathname === "/local-sync/v1/device-sessions") {
+        return mockHttp(201, {
+          approvalUrl: "https://forgetbase.example.test/?local-device-request=request-token",
+          requestToken: "request-token",
+          expiresAt: "2026-09-03T00:05:00.000Z"
+        });
+      }
+      if (call.url.pathname === "/local-sync/v1/device-sessions/token") {
+        return mockHttp(201, localDeviceTokenFixture());
+      }
+      if (call.url.pathname === "/local-sync/v1/configuration") {
+        return {
+          protocolVersion: "1",
+          serverId: "server_test",
+          tenantId: "tenant_demo",
+          principalType: "user",
+          principalId: "user_device",
+          signingKeyId: "key_1",
+          signingPublicKey: "test-public-key",
+          leaseDurationSeconds: 3_600,
+          minimumClientVersion: "0.1.0",
+          allowedSensitivities: ["public-demo"],
+          maxRecords: 5_000,
+          maxRecordsPerPage: 100,
+          maxRecordBytes: 2 * 1024 * 1024,
+          maxSnapshotBytes: 100 * 1024 * 1024
+        };
+      }
+      throw new Error(`Unexpected request ${call.method} ${call.url.pathname}`);
+    });
+    const logs = captureStdout();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const code = await main([
+      "local",
+      "connect",
+      "--api-url",
+      "https://forgetbase.example.test",
+      "--device-name",
+      "Test laptop",
+      "--profile",
+      "work",
+      "--root",
+      root
+    ], {
+      credentialStore,
+      localBrowserAuthorizer: async () => "browser-authorization-code"
+    });
+
+    expect(code).toBe(0);
+    expect(calls.map((call) => call.url.pathname)).toEqual([
+      "/local-sync/v1/device-sessions",
+      "/local-sync/v1/device-sessions/token",
+      "/local-sync/v1/configuration"
+    ]);
+    expect(calls[2]?.headers.get("authorization")).toBe(`Bearer ${localDeviceTokenFixture().accessToken}`);
+    expect(calls.every((call) => call.headers.get("x-forgetbase-surface") === "local-cache")).toBe(true);
+    expect(JSON.parse(logs[0] ?? "{}")).toMatchObject({ profile: "work", state: "not-built" });
+    const profile = await readFile(join(root, "profiles", "work", "profile.json"), "utf8");
+    expect(profile).not.toContain(localDeviceTokenFixture().refreshToken);
+    expect(profile).not.toContain(localDeviceTokenFixture().accessToken);
+  });
+
+  it("requires an explicit profile when more than one local profile exists", async () => {
+    const root = await mkdtemp(join(tmpdir(), "forgetbase-cli-profiles-"));
+    tempDirs.push(root);
+    await mkdir(join(root, "profiles", "default"), { recursive: true });
+    await mkdir(join(root, "profiles", "work"), { recursive: true });
+
+    await expect(main(["local", "status", "--root", root], {
+      credentialStore: new MemoryLocalCredentialStore()
+    })).rejects.toThrow(/select one with --profile/);
+  });
 });
+
+function localDeviceTokenFixture() {
+  return {
+    accessToken: "access-token".padEnd(40, "x"),
+    accessTokenExpiresAt: "2026-09-03T00:30:00.000Z",
+    refreshToken: "refresh-token".padEnd(40, "x"),
+    refreshTokenExpiresAt: "2026-09-10T00:00:00.000Z",
+    deviceSession: {
+      id: "session_device",
+      tenantId: "tenant_demo",
+      userId: "user_device",
+      apiKeyId: "key_device",
+      source: "local-device",
+      deviceLabel: "Test laptop",
+      clientUserAgent: "vitest",
+      createdAt: "2026-09-03T00:00:00.000Z",
+      expiresAt: "2026-09-03T00:30:00.000Z",
+      absoluteExpiresAt: "2026-10-03T00:00:00.000Z",
+      lastSeenAt: null,
+      revokedAt: null
+    }
+  };
+}
 
 function captureStdout(): string[] {
   const logs: string[] = [];

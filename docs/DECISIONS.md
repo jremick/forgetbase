@@ -2,6 +2,54 @@
 
 This log records current product and architecture decisions. Revisit dates are review prompts, not automatic expiry.
 
+## 0102: Local Agent Runtime Uses A Principal-Scoped Leased Client-Built Projection
+
+Status: accepted as a private-pilot implementation candidate; deployment, internal-content activation, package publication, and release remain approval-gated
+
+### Context
+
+Long-running AI agents may need to consult governed policy, engineering practice, and source material hundreds or thousands of times during one project. Repeating remote API calls adds latency and availability dependence. The current AI-package export is a bounded point-in-time projection and does not define incremental synchronization, authorization epochs, removals, device credentials, or offline freshness.
+
+A local cache also creates a new security boundary. Permission-filtered content persists outside the server. ForgetBase can converge after a reachable authorization check or lease expiry, but it cannot instantly revoke an offline copy or guarantee remote erasure.
+
+### Options Considered
+
+- build and distribute one SQLite database per server-side principal
+- send signed authorized record manifests and deltas, then build SQLite on the client
+- distribute one shared tenant database and enforce permissions through a local overlay
+- keep remote API/MCP access only
+
+### Decision And Rationale
+
+Use a principal-scoped, leased, client-built projection.
+
+The server evaluates current permissions and cache eligibility and sends only authorized record descriptors and bodies. Browser-approved loopback PKCE enrollment issues rotating `local-device` credentials whose complete scope set is `local:sync` and complete surface set is `local-cache`. The OS credential store holds refresh and profile-integrity material. A centralized route guard rejects local-device credentials outside `/local-sync/v1`. The client verifies signed metadata and content hashes, applies a complete full or one-generation delta projection, builds an immutable SQLite generation, and switches the active generation atomically.
+
+Expose the feature under additive `forgetbase local` commands and a separately configured persistent local MCP server. Keep Postgres and the governed asset registry canonical. Treat SQLite files as disposable read models, not portable server artifacts or writable sources of truth.
+
+Keep content synchronization separate from executable updates. Synchronized records cannot install code, skills, hooks, or agent configuration. If the managed-updates verifier is integrated, reuse its reviewed verification primitives with independent key purposes and domain separation, not its release signing keys.
+
+This option prevents unauthorized tenant content from reaching a device and avoids server build/storage fan-out for each entitlement set. It also permits local indexing and ranking to evolve behind a versioned projection contract.
+
+### Consequences
+
+- ForgetBase gains a deliberate exception to the current thin-CLI architecture.
+- The API now has additive versioned full/delta/unchanged synchronization, browser enrollment, rotating/revocable device sessions, authorization/content epochs, signed leases, and forced full-rebase behavior.
+- The client now has OS credential storage, authenticated profile isolation, SQLite generation management, writer locking, trusted-time and lease enforcement, safe rebuild/disconnect, diagnostics, and a persistent read-only MCP surface with jittered background checks.
+- Existing API, CLI, MCP, JSON export, and OKF beta contracts remain unchanged.
+- Permission contraction blocks the old private generation as soon as the client detects it; unseen offline revocation remains bounded by freshness and lease policy.
+- Version 1 may cache public-demo and internal content under policy. Restricted content waits for an encrypted-cache gate. Confidential and secret content remain live-only.
+- Raw attachments, model generation, compliance verdicts, shared caches, and unattended executable self-update remain outside version 1.
+
+### Follow-Ups / Review
+
+- Review the [feature specification](LOCAL_AGENT_RUNTIME.md) and [threat model](LOCAL_AGENT_RUNTIME_THREAT_MODEL.md) together.
+- Keep public-demo as the deployment default. Enabling internal content requires the exact-deployment checks and separate approval in the [private-pilot runbook](runbooks/LOCAL_AGENT_RUNTIME_PRIVATE_PILOT.md).
+- The runtime uses built-in `node:sqlite`, canonical JSON, SHA-256, Ed25519, and a macOS arm64 Keychain helper. The bounded pilot supports macOS arm64 with Node 22.13 or newer; broader platform and public distribution proof remain future work.
+- The pilot signing lifecycle uses a fail-closed maintenance window, device revocation, new key ID, re-enrollment, and full rebuild. Implement seamless dual-key rotation and signed counter-reset recovery before broad release.
+- Keep restricted, confidential, secret, raw-attachment, shared-cache, and unattended-service use out of the pilot.
+- Revisit this decision if the server cannot produce a complete authorized manifest/delta without material scaling problems, or if the client cannot meet the retrieval and packaging targets on supported platforms.
+
 ## 0076: Product And Codebase Name Is ForgetBase
 
 ### Context

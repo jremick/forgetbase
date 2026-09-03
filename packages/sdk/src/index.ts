@@ -48,6 +48,19 @@ import {
   groupRecordSchema,
   loginSessionListResponseSchema,
   loginSessionRevokeResponseSchema,
+  localDeviceAuthorizationApproveInputSchema,
+  localDeviceAuthorizationApproveResponseSchema,
+  localDeviceAuthorizationPreviewSchema,
+  localDeviceAuthorizationStartInputSchema,
+  localDeviceAuthorizationStartResponseSchema,
+  localDeviceSessionListResponseSchema,
+  localDeviceTokenExchangeInputSchema,
+  localDeviceTokenRefreshInputSchema,
+  localDeviceTokenResponseSchema,
+  localSyncConfigurationSchema,
+  localSyncManifestBundleSchema,
+  localSyncManifestRequestSchema,
+  localSyncMaxSnapshotBytes,
   localUserCreateInputSchema,
   localUserListResponseSchema,
   localUserSchema,
@@ -149,6 +162,17 @@ import {
   type HealthResponse,
   type LoginSessionRecord,
   type LoginSessionRevokeResponse,
+  type LocalDeviceAuthorizationApproveInput,
+  type LocalDeviceAuthorizationApproveResponse,
+  type LocalDeviceAuthorizationPreview,
+  type LocalDeviceAuthorizationStartInput,
+  type LocalDeviceAuthorizationStartResponse,
+  type LocalDeviceTokenExchangeInput,
+  type LocalDeviceTokenRefreshInput,
+  type LocalDeviceTokenResponse,
+  type LocalSyncConfiguration,
+  type LocalSyncManifestBundle,
+  type LocalSyncManifestRequest,
   type LocalUser,
   type LocalUserCreateInput,
   type LocalUserUpdateInput,
@@ -210,6 +234,7 @@ export interface ForgetBaseClientOptions {
 
 const MAX_ERROR_BODY_BYTES = 4_096;
 const MAX_ERROR_METADATA_LENGTH = 256;
+const MAX_LOCAL_SYNC_MANIFEST_RESPONSE_BYTES = localSyncMaxSnapshotBytes + 28 * 1024 * 1024;
 const SAFE_ERROR_CODE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 
 interface ForgetBaseHttpErrorOptions {
@@ -264,6 +289,107 @@ export class ForgetBaseClient {
 
   async health(): Promise<HealthResponse> {
     return this.request("/health", healthResponseSchema);
+  }
+
+  async startLocalDeviceAuthorization(
+    input: LocalDeviceAuthorizationStartInput
+  ): Promise<LocalDeviceAuthorizationStartResponse> {
+    return this.request("/local-sync/v1/device-sessions", localDeviceAuthorizationStartResponseSchema, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(localDeviceAuthorizationStartInputSchema.parse(input))
+    });
+  }
+
+  async getLocalDeviceAuthorizationPreview(requestToken: string): Promise<LocalDeviceAuthorizationPreview> {
+    return this.request(
+      "/local-sync/v1/device-sessions/authorization/preview",
+      localDeviceAuthorizationPreviewSchema,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(localDeviceAuthorizationApproveInputSchema.parse({ requestToken }))
+      }
+    );
+  }
+
+  async approveLocalDeviceAuthorization(
+    input: LocalDeviceAuthorizationApproveInput
+  ): Promise<LocalDeviceAuthorizationApproveResponse> {
+    return this.request(
+      "/local-sync/v1/device-sessions/authorization",
+      localDeviceAuthorizationApproveResponseSchema,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(localDeviceAuthorizationApproveInputSchema.parse(input))
+      }
+    );
+  }
+
+  async exchangeLocalDeviceAuthorization(input: LocalDeviceTokenExchangeInput): Promise<LocalDeviceTokenResponse> {
+    return this.request("/local-sync/v1/device-sessions/token", localDeviceTokenResponseSchema, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(localDeviceTokenExchangeInputSchema.parse(input))
+    });
+  }
+
+  async refreshLocalDeviceSession(input: LocalDeviceTokenRefreshInput): Promise<LocalDeviceTokenResponse> {
+    return this.request("/local-sync/v1/device-sessions/refresh", localDeviceTokenResponseSchema, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(localDeviceTokenRefreshInputSchema.parse(input))
+    });
+  }
+
+  async listLocalDeviceSessions(includeRevoked = false): Promise<LoginSessionRecord[]> {
+    const response = await this.request(
+      `/local-sync/v1/device-sessions?includeRevoked=${String(includeRevoked)}`,
+      localDeviceSessionListResponseSchema
+    );
+    return response.devices;
+  }
+
+  async revokeLocalDeviceSession(sessionId: string): Promise<LoginSessionRevokeResponse> {
+    return this.request(
+      `/local-sync/v1/device-sessions/${encodeURIComponent(sessionId)}`,
+      loginSessionRevokeResponseSchema,
+      { method: "DELETE" }
+    );
+  }
+
+  async revokeCurrentLocalDeviceSession(): Promise<LoginSessionRevokeResponse> {
+    return this.request(
+      "/local-sync/v1/device-sessions/current",
+      loginSessionRevokeResponseSchema,
+      { method: "DELETE" }
+    );
+  }
+
+  async getLocalSyncConfiguration(): Promise<LocalSyncConfiguration> {
+    return this.request("/local-sync/v1/configuration", localSyncConfigurationSchema);
+  }
+
+  async getLocalSyncManifest(input: LocalSyncManifestRequest = {}): Promise<LocalSyncManifestBundle> {
+    const parsed = localSyncManifestRequestSchema.parse(input);
+    const params = new URLSearchParams();
+    if (parsed.knownAuthorizationEpoch !== undefined) {
+      params.set("knownAuthorizationEpoch", String(parsed.knownAuthorizationEpoch));
+    }
+    if (parsed.knownContentGeneration !== undefined) {
+      params.set("knownContentGeneration", String(parsed.knownContentGeneration));
+    }
+    if (parsed.knownRecordSetHash !== undefined) {
+      params.set("knownRecordSetHash", parsed.knownRecordSetHash);
+    }
+    const query = params.size > 0 ? `?${params.toString()}` : "";
+    return this.request(
+      `/local-sync/v1/manifest${query}`,
+      localSyncManifestBundleSchema,
+      undefined,
+      MAX_LOCAL_SYNC_MANIFEST_RESPONSE_BYTES
+    );
   }
 
   async listAssets(): Promise<AssetRecord[]> {
@@ -956,7 +1082,12 @@ export class ForgetBaseClient {
     return this.exportAiPackage(packageName, { format: "okf", okfVersion });
   }
 
-  private async request<T>(path: string, schema: { parse(input: unknown): T }, init?: RequestInit): Promise<T> {
+  private async request<T>(
+    path: string,
+    schema: { parse(input: unknown): T },
+    init?: RequestInit,
+    maximumResponseBytes?: number
+  ): Promise<T> {
     const response = await this.fetchImpl(`${this.baseUrl}${path}`, {
       ...init,
       headers: this.authHeaders(init?.headers)
@@ -966,7 +1097,9 @@ export class ForgetBaseClient {
       throw await createHttpError(response);
     }
 
-    return schema.parse(await response.json());
+    return schema.parse(maximumResponseBytes === undefined
+      ? await response.json()
+      : await readBoundedJsonResponse(response, maximumResponseBytes));
   }
 
   private authHeaders(extra?: HeadersInit): HeadersInit {
@@ -978,6 +1111,38 @@ export class ForgetBaseClient {
     }
 
     return headers;
+  }
+}
+
+async function readBoundedJsonResponse(response: Response, maximumBytes: number): Promise<unknown> {
+  const contentLength = response.headers.get("content-length");
+  if (contentLength && /^\d+$/.test(contentLength) && Number(contentLength) > maximumBytes) {
+    await response.body?.cancel().catch(() => undefined);
+    throw new Error("ForgetBase local sync response exceeds the client safety limit");
+  }
+  if (!response.body) {
+    throw new Error("ForgetBase local sync response has no body");
+  }
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder("utf-8", { fatal: true });
+  let bytesRead = 0;
+  let body = "";
+  try {
+    while (true) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      bytesRead += chunk.value.byteLength;
+      if (bytesRead > maximumBytes) {
+        await reader.cancel().catch(() => undefined);
+        throw new Error("ForgetBase local sync response exceeds the client safety limit");
+      }
+      body += decoder.decode(chunk.value, { stream: true });
+    }
+    body += decoder.decode();
+    return JSON.parse(body) as unknown;
+  } catch (error) {
+    if (error instanceof Error && error.message.includes("client safety limit")) throw error;
+    throw new Error("ForgetBase local sync response is not valid bounded JSON", { cause: error });
   }
 }
 

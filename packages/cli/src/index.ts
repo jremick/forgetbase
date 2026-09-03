@@ -2,6 +2,7 @@
 import { mkdir, readFile } from "node:fs/promises";
 import { writeFile } from "node:fs/promises";
 import { dirname, resolve, sep } from "node:path";
+import { pathToFileURL } from "node:url";
 import {
   accountLinkingModeSchema,
   agentActionExecutionPolicyInputSchema,
@@ -45,11 +46,34 @@ import {
 } from "@forgetbase/schema";
 import { ForgetBaseClient } from "@forgetbase/sdk";
 import { validateAssetCollection } from "@forgetbase/validation";
+import {
+  assertLocalProfileSelection,
+  connectLocalProfile,
+  disconnectLocalProfile,
+  doctorLocalProfile,
+  getLocalGuidance,
+  getLocalSource,
+  getLocalStatus,
+  rebuildLocalProfile,
+  searchLocalProfile,
+  syncLocalProfile,
+  type LocalBrowserAuthorizer,
+  type LocalCredentialStore
+} from "@forgetbase/local-runtime";
+import { runLocalMcpStdio } from "@forgetbase/mcp-server/local";
 
 const DEFAULT_API_URL = "http://127.0.0.1:3000";
 const SEARCH_STRATEGIES = ["lexical", "vector", "hybrid"] as const;
 
-export async function main(argv = process.argv.slice(2)): Promise<number> {
+export interface CliRuntimeDependencies {
+  credentialStore?: LocalCredentialStore;
+  localBrowserAuthorizer?: LocalBrowserAuthorizer;
+}
+
+export async function main(
+  argv = process.argv.slice(2),
+  dependencies: CliRuntimeDependencies = {}
+): Promise<number> {
   const normalizedArgv = argv[0] === "--" ? argv.slice(1) : argv;
   const [command, ...args] = normalizedArgv;
 
@@ -97,6 +121,9 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
     case "corpus":
       return handleCorpus(args);
 
+    case "local":
+      return handleLocal(args, dependencies);
+
     case "--help":
     case "-h":
     case undefined:
@@ -107,6 +134,131 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
       console.error(`Unknown command: ${command}`);
       printHelp();
       return 1;
+  }
+}
+
+async function handleLocal(args: string[], dependencies: CliRuntimeDependencies): Promise<number> {
+  const [subcommand, ...rest] = args;
+  const profile = readOption(rest, "--profile");
+  const root = readOption(rest, "--root");
+  await assertLocalProfileSelection({ profile, root });
+
+  switch (subcommand) {
+    case "connect": {
+      const baseUrl = readOption(rest, "--api-url") ?? process.env.FORGETBASE_API_URL ?? DEFAULT_API_URL;
+      if (readOption(rest, "--api-key") || process.env.FORGETBASE_LOCAL_SYNC_API_KEY) {
+        throw new Error("Local device credentials cannot be supplied by CLI option or environment variable");
+      }
+      const connected = await connectLocalProfile({
+        baseUrl,
+        deviceName: readOption(rest, "--device-name"),
+        profile,
+        root,
+        credentialStore: dependencies.credentialStore,
+        authorizer: dependencies.localBrowserAuthorizer
+      });
+      console.log(JSON.stringify({
+        profile: connected.name,
+        serverId: connected.configuration.serverId,
+        principalType: connected.configuration.principalType,
+        state: connected.state
+      }, null, 2));
+      return 0;
+    }
+
+    case "sync": {
+      if (readOption(rest, "--api-key") || process.env.FORGETBASE_LOCAL_SYNC_API_KEY) {
+        throw new Error("Local device credentials cannot be supplied by CLI option or environment variable");
+      }
+      console.log(JSON.stringify(await syncLocalProfile({
+        profile,
+        root,
+        credentialStore: dependencies.credentialStore
+      }), null, 2));
+      return 0;
+    }
+
+    case "rebuild": {
+      console.log(JSON.stringify(await rebuildLocalProfile({
+        profile,
+        root,
+        credentialStore: dependencies.credentialStore
+      }), null, 2));
+      return 0;
+    }
+
+    case "disconnect": {
+      console.log(JSON.stringify(await disconnectLocalProfile({
+        profile,
+        root,
+        localOnly: hasFlag(rest, "--local-only"),
+        credentialStore: dependencies.credentialStore
+      }), null, 2));
+      return 0;
+    }
+
+    case "search": {
+      console.log(JSON.stringify({
+        results: await searchLocalProfile(requireOption(rest, "--query"), {
+          profile,
+          root,
+          credentialStore: dependencies.credentialStore,
+          limit: readIntegerOption(rest, "--limit", { minimum: 1, maximum: 50 })
+        })
+      }, null, 2));
+      return 0;
+    }
+
+    case "guidance": {
+      const status = await getLocalStatus({ profile, root, credentialStore: dependencies.credentialStore });
+      if (!status.lastAuthorizationCheckAt
+        || Date.now() - Date.parse(status.lastAuthorizationCheckAt) > 60 * 60 * 1_000) {
+        await syncLocalProfile({ profile, root, credentialStore: dependencies.credentialStore });
+      }
+      console.log(JSON.stringify(await getLocalGuidance(requireOption(rest, "--query"), {
+        profile,
+        root,
+        credentialStore: dependencies.credentialStore,
+        limit: readIntegerOption(rest, "--limit", { minimum: 1, maximum: 50 }),
+        maxBytes: readIntegerOption(rest, "--max-bytes", { minimum: 1_024, maximum: 1024 * 1024 })
+      }), null, 2));
+      return 0;
+    }
+
+    case "source": {
+      const source = await getLocalSource(requireOption(rest, "--stable-id"), {
+        profile,
+        root,
+        credentialStore: dependencies.credentialStore
+      });
+      if (!source) {
+        console.error("Local source not found");
+        return 2;
+      }
+      console.log(JSON.stringify(source, null, 2));
+      return 0;
+    }
+
+    case "status":
+      console.log(JSON.stringify(await getLocalStatus({
+        profile,
+        root,
+        credentialStore: dependencies.credentialStore
+      }), null, 2));
+      return 0;
+
+    case "doctor": {
+      const result = await doctorLocalProfile({ profile, root, credentialStore: dependencies.credentialStore });
+      console.log(JSON.stringify(result, null, 2));
+      return result.ok ? 0 : 1;
+    }
+
+    case "mcp":
+      await runLocalMcpStdio({ profile, root, credentialStore: dependencies.credentialStore });
+      return 0;
+
+    default:
+      throw new Error(`Unknown local command: ${subcommand ?? "(missing)"}`);
   }
 }
 
@@ -1459,6 +1611,16 @@ function printHelp(): void {
 Usage:
   forgetbase health [--api-url http://127.0.0.1:3000]
   forgetbase capabilities
+  forgetbase local connect --api-url https://forgetbase.example.test [--device-name "Work laptop"] [--profile work]
+  forgetbase local sync [--profile work]
+  forgetbase local rebuild [--profile work]
+  forgetbase local disconnect [--profile work] [--local-only]
+  forgetbase local search --query "secure release" [--limit 8] [--profile work]
+  forgetbase local guidance --query "secure release" [--limit 8] [--max-bytes 32768] [--profile work]
+  forgetbase local source --stable-id policy.example [--profile work]
+  forgetbase local status [--profile work]
+  forgetbase local doctor [--profile work]
+  forgetbase local mcp [--profile work]
   forgetbase auth bootstrap --email admin@example.test --display-name "Admin" [--tenant-id tenant_demo] [--password ...]
   forgetbase auth login --email user@example.test [--tenant-id tenant_demo] [--password ...] [--device-label "Work laptop"]
   forgetbase auth oidc-start --provider oidc|microsoft-entra [--tenant-id tenant_demo] [--redirect-uri ...]
@@ -1541,7 +1703,7 @@ Usage:
 `);
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   main().then((code) => {
     process.exitCode = code;
   }).catch((error: unknown) => {

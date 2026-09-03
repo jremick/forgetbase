@@ -201,6 +201,41 @@ Local password login issues a short-lived scoped API key; by default the key exp
 
 See [API Key Rotation Runbook](runbooks/API_KEY_ROTATION.md) for staged and emergency rotation procedures.
 
+## Local Agent Runtime Development Smoke Check
+
+This path verifies the browser-enrolled public-demo flow. It does not enable `FORGETBASE_LOCAL_SYNC_ALLOW_INTERNAL`, publish a package, deploy the feature, or authorize a live pilot. Node 22.13 or newer is required because the local runtime uses built-in `node:sqlite` with FTS5.
+
+Generate a dedicated development signer in ignored `work/`, set a random development-only enrollment secret of at least 32 bytes through your local process environment, and start the API with the browser-facing origins:
+
+```bash
+mkdir -p work/local-agent-runtime/keys
+chmod 700 work/local-agent-runtime work/local-agent-runtime/keys
+openssl genpkey -algorithm ED25519 -out work/local-agent-runtime/keys/local-sync.pem
+chmod 600 work/local-agent-runtime/keys/local-sync.pem
+export FORGETBASE_LOCAL_SYNC_SIGNING_PRIVATE_KEY_FILE="$PWD/work/local-agent-runtime/keys/local-sync.pem"
+export FORGETBASE_LOCAL_SYNC_SIGNING_KEY_ID="local-sync-development-1"
+export FORGETBASE_LOCAL_SYNC_SERVER_ID="forgetbase-local-development"
+export FORGETBASE_PUBLIC_API_URL="http://127.0.0.1:3000"
+export FORGETBASE_WEB_URL="http://127.0.0.1:5175"
+export FORGETBASE_LOCAL_SYNC_ENROLLMENT_SECRET="<random-development-value-of-at-least-32-bytes>"
+PORT=3000 node apps/api/dist/index.js
+```
+
+Start the web UI with its API URL set to the same API origin. Sign in as the intended test user in the browser, then connect. The CLI opens a loopback PKCE authorization and stores the rotating device credential in macOS Keychain or Linux Secret Service. It rejects `--api-key` and `FORGETBASE_LOCAL_SYNC_API_KEY`.
+
+```bash
+pnpm --filter @forgetbase/cli start -- local connect --api-url http://127.0.0.1:3000 --device-name "Development laptop" --profile development
+pnpm --filter @forgetbase/cli start -- local sync --profile development
+pnpm --filter @forgetbase/cli start -- local search --query "secure software" --profile development
+pnpm --filter @forgetbase/cli start -- local guidance --query "release policy" --profile development
+pnpm --filter @forgetbase/cli start -- local doctor --profile development
+pnpm --filter @forgetbase/cli start -- local mcp --profile development
+```
+
+Use `local rebuild` to force a signed full rebase. Use `local disconnect` to revoke the current device and remove its credential/cache; use `--local-only` only when the server is unavailable and an operator handles revocation separately.
+
+Stop the API after the check, unset the development signer/enrollment variables, disconnect the test profile, and remove the ignored development key when it is no longer needed. See [Local Agent Runtime](LOCAL_AGENT_RUNTIME.md), its [threat model](LOCAL_AGENT_RUNTIME_THREAT_MODEL.md), and the [private-pilot runbook](runbooks/LOCAL_AGENT_RUNTIME_PRIVATE_PILOT.md).
+
 Run the live Postgres integration test with:
 
 ```bash

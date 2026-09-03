@@ -1343,6 +1343,58 @@ pre {
   margin: 0 0 16px;
 }
 
+.local-devices-panel {
+  display: grid;
+  gap: 16px;
+  margin-bottom: 16px;
+  padding: 20px;
+  border: 1px solid var(--fb-border);
+  border-radius: 6px;
+  background: var(--fb-surface);
+}
+
+.local-devices-panel h2,
+.local-devices-panel h3,
+.local-devices-panel p {
+  margin: 0;
+}
+
+.local-devices-panel header,
+.local-device-list {
+  display: grid;
+  gap: 8px;
+}
+
+.local-devices-panel header > p:not(.eyebrow),
+.local-device-row p,
+.local-device-approval p {
+  color: var(--fb-muted);
+  line-height: 1.5;
+}
+
+.local-device-approval,
+.local-device-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: center;
+  padding: 14px;
+  border: 1px solid color-mix(in srgb, var(--fb-brand) 20%, var(--fb-border));
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--fb-brand) 5%, white);
+}
+
+.local-device-approval > div,
+.local-device-row > div {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.local-device-approval code {
+  overflow-wrap: anywhere;
+}
+
 .developer-connection {
   margin-bottom: 16px;
 }
@@ -2487,6 +2539,12 @@ pre {
   .account-settings-grid,
   .proof-product-grid {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .local-device-approval,
+  .local-device-row {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .page.active {

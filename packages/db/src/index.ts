@@ -47,6 +47,7 @@ export * from "./managed-query-cache.js";
 export * from "./managed-query-eval-schedule.js";
 export * from "./managed-query-policy.js";
 export * from "./managed-query-retention.js";
+export * from "./local-sync.js";
 export * from "./pii-redaction-policy.js";
 export * from "./provider-config.js";
 export * from "./retrieval.js";
@@ -69,6 +70,7 @@ export interface RegistryGetOptions {
 
 export interface RegistryRepository {
   listAssets(options?: RegistryListOptions): Promise<AssetRecord[]>;
+  listAssetsForLocalSync(input: RegistryLocalSyncListInput): Promise<AssetRecord[]>;
   listAssetsNeedingReview(input?: AssetReviewQueueInput): Promise<AssetReviewQueueResponse>;
   getAssetByStableId(stableId: string, options?: RegistryGetOptions): Promise<AssetDetail | null>;
   getAssetVersionSnapshot(stableId: string, input: AssetVersionSnapshotInput): Promise<AssetVersionSnapshot | null>;
@@ -77,6 +79,13 @@ export interface RegistryRepository {
   reviewAsset(stableId: string, input: AssetReviewInput): Promise<AssetDetail | null>;
   publishAsset(stableId: string, input: AssetPublishInput): Promise<AssetDetail | null>;
   restoreAssetVersion(stableId: string, input: AssetRestoreInput): Promise<AssetDetail | null>;
+}
+
+export interface RegistryLocalSyncListInput {
+  tenantId: string;
+  sensitivities: Array<"public-demo" | "internal">;
+  afterStableId?: string;
+  limit: number;
 }
 
 export interface MigrationResult {
@@ -168,6 +177,27 @@ export class PostgresRegistryRepository implements RegistryRepository {
         LIMIT $2
       `,
       [tenantId, limit]
+    );
+
+    return result.rows.map(mapAssetRow);
+  }
+
+  async listAssetsForLocalSync(input: RegistryLocalSyncListInput): Promise<AssetRecord[]> {
+    assertLocalSyncListInput(input);
+    const result = await this.pool.query<AssetRow>(
+      `
+        SELECT *
+        FROM assets
+        WHERE tenant_id = $1
+          AND lifecycle_state = 'active'
+          AND status = 'approved'
+          AND sensitivity = ANY($2::text[])
+          AND 'local-cache' = ANY(allowed_surfaces)
+          AND ($3::text IS NULL OR stable_id > $3)
+        ORDER BY stable_id ASC
+        LIMIT $4
+      `,
+      [input.tenantId, input.sensitivities, input.afterStableId ?? null, input.limit]
     );
 
     return result.rows.map(mapAssetRow);
@@ -623,6 +653,21 @@ export class InMemoryRegistryRepository implements RegistryRepository {
       .filter((asset) => asset.tenantId === tenantId)
       .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt) || left.stableId.localeCompare(right.stableId))
       .slice(0, limit);
+  }
+
+  async listAssetsForLocalSync(input: RegistryLocalSyncListInput): Promise<AssetRecord[]> {
+    assertLocalSyncListInput(input);
+
+    return Array.from(this.assets.values())
+      .map((detail) => detail.asset)
+      .filter((asset) => asset.tenantId === input.tenantId)
+      .filter((asset) => asset.lifecycleState === "active")
+      .filter((asset) => asset.status === "approved")
+      .filter((asset) => input.sensitivities.includes(asset.sensitivity as "public-demo" | "internal"))
+      .filter((asset) => asset.allowedSurfaces.includes("local-cache"))
+      .filter((asset) => !input.afterStableId || asset.stableId.localeCompare(input.afterStableId) > 0)
+      .sort((left, right) => left.stableId.localeCompare(right.stableId))
+      .slice(0, input.limit);
   }
 
   async listAssetsNeedingReview(input: AssetReviewQueueInput = {}): Promise<AssetReviewQueueResponse> {
@@ -1636,6 +1681,21 @@ function toDateOnly(value: Date | string): string {
   const month = String(value.getMonth() + 1).padStart(2, "0");
   const day = String(value.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
+}
+
+function assertLocalSyncListInput(input: RegistryLocalSyncListInput): void {
+  if (!input.tenantId || input.sensitivities.length < 1) {
+    throw new TypeError("Local sync listing requires a tenant and at least one sensitivity");
+  }
+  if (input.sensitivities.some((value) => value !== "public-demo" && value !== "internal")) {
+    throw new TypeError("Local sync listing received an unsupported sensitivity");
+  }
+  if (input.afterStableId !== undefined && !input.afterStableId) {
+    throw new TypeError("Local sync listing received an invalid stable-ID cursor");
+  }
+  if (!Number.isInteger(input.limit) || input.limit < 1 || input.limit > 1_000) {
+    throw new RangeError("Local sync list limit must be between 1 and 1000");
+  }
 }
 
 function todayDateOnly(): string {

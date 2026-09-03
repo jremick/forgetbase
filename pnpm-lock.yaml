@@ -34,6 +34,9 @@ importers:
       '@forgetbase/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@forgetbase/local-sync':
+        specifier: workspace:*
+        version: link:../../packages/local-sync
       '@forgetbase/schema':
         specifier: workspace:*
         version: link:../../packages/schema
@@ -178,6 +181,12 @@ importers:
 
   packages/cli:
     dependencies:
+      '@forgetbase/local-runtime':
+        specifier: workspace:*
+        version: link:../local-runtime
+      '@forgetbase/mcp-server':
+        specifier: workspace:*
+        version: link:../mcp-server
       '@forgetbase/schema':
         specifier: workspace:*
         version: link:../schema
@@ -188,6 +197,9 @@ importers:
         specifier: workspace:*
         version: link:../validation
     devDependencies:
+      esbuild:
+        specifier: ^0.28.1
+        version: 0.28.1
       tsx:
         specifier: ^4.21.0
         version: 4.22.4
@@ -217,8 +229,37 @@ importers:
         specifier: ^4.1.9
         version: 4.1.9(@types/node@25.9.3)(vite@8.0.16(@types/node@25.9.3)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4))
 
+  packages/local-runtime:
+    dependencies:
+      '@forgetbase/local-sync':
+        specifier: workspace:*
+        version: link:../local-sync
+      '@forgetbase/schema':
+        specifier: workspace:*
+        version: link:../schema
+      '@forgetbase/sdk':
+        specifier: workspace:*
+        version: link:../sdk
+    devDependencies:
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+
+  packages/local-sync:
+    dependencies:
+      '@forgetbase/schema':
+        specifier: workspace:*
+        version: link:../schema
+    devDependencies:
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+
   packages/mcp-server:
     dependencies:
+      '@forgetbase/local-runtime':
+        specifier: workspace:*
+        version: link:../local-runtime
       '@forgetbase/schema':
         specifier: workspace:*
         version: link:../schema
