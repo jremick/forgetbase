@@ -45,7 +45,7 @@ docker compose -f compose.yaml -f compose.same-origin.yaml config --quiet
 docker compose -f compose.yaml -f compose.same-origin.yaml -f compose.tls.yaml config --quiet
 ```
 
-The deployment-default check is a static/template gate. It preserves local Compose bootstrap defaults, verifies the same-origin/TLS/Railway public template guardrails, and only enforces public-deployment env requirements when `FORGETBASE_PUBLIC_DEPLOYMENT=true`.
+The deployment-default check inspects templates and resolved Compose configurations. It requires Docker Compose but does not require a running Docker daemon. It preserves local Compose bootstrap defaults, verifies the same-origin/TLS/Railway public template guardrails, and only enforces public-deployment env requirements when `FORGETBASE_PUBLIC_DEPLOYMENT=true`.
 
 Run the Compose/API/export/leakage smoke gate against a running local stack after importing the demo corpus:
 

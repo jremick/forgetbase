@@ -2,8 +2,10 @@ import { expect, it, vi } from "vitest";
 import { buildMaintenanceJobDefinitions } from "./index.js";
 import type { WorkerRuntime } from "./runtime.js";
 
-it("maps all five maintenance jobs to their configured cadence and startup behavior", () => {
+it("maps maintenance jobs to their configured cadence and startup behavior", () => {
   const environment = {
+    FORGETBASE_ASSET_CHANGES_ENABLED: "true",
+    FORGETBASE_ASSET_CHANGES_INTERVAL_MS: "1000",
     FORGETBASE_RETENTION_PURGE_ENABLED: "true",
     FORGETBASE_RETENTION_PURGE_INTERVAL_MS: "1001",
     FORGETBASE_RETENTION_PURGE_ON_START: "true",
@@ -33,6 +35,7 @@ it("maps all five maintenance jobs to their configured cadence and startup behav
     const definitions = buildMaintenanceJobDefinitions(runtime);
 
     expect(definitions.map(({ name, intervalMs, runOnStart }) => ({ name, intervalMs, runOnStart }))).toEqual([
+      { name: "asset-change-reconciliation", intervalMs: 1000, runOnStart: false },
       { name: "telemetry-retention", intervalMs: 1001, runOnStart: true },
       { name: "managed-query-cache-purge", intervalMs: 1002, runOnStart: false },
       { name: "api-key-rotation-reminders", intervalMs: 1003, runOnStart: true },

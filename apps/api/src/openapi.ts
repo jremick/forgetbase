@@ -310,13 +310,19 @@ export function buildOpenApiDocument() {
       },
       "/assets": {
         get: {
-          summary: "List visible governed assets",
+          summary: "List published governed assets with permission-aware continuation",
+          description: "limit is 1-200. Follow nextCursor until complete=true. Authorization is checked again on every page. preview=true selects editing heads and requires a maintainer/admin with read/write scopes and target grants.",
+          parameters: [queryParameter("limit", false), queryParameter("cursor", false), queryParameter("preview", false)],
           responses: {
-            "200": jsonResponse("Visible assets")
+            "200": jsonResponse("Visible assets, complete flag and nextCursor"),
+            "400": jsonResponse("Invalid limit or cursor"),
+            "401": jsonResponse("Authentication required"),
+            "403": jsonResponse("Preview access denied")
           }
         },
         post: {
           summary: "Create a governed asset",
+          description: "The authenticated creator receives read and write grants bounded by the key and asset surfaces in the same transaction as asset creation. ownerId remains descriptive ownership metadata, not authorization identity.",
           responses: {
             "201": jsonResponse("Created asset")
           }
@@ -339,8 +345,9 @@ export function buildOpenApiDocument() {
       },
       "/assets/{stableId}": {
         get: {
-          summary: "Fetch a visible governed asset by stable ID",
-          parameters: [pathParameter("stableId")],
+          summary: "Fetch the approved published version of a governed asset",
+          description: "Ordinary reads return published content and metadata under current access restrictions, without draft history. Set preview=true to read the editing head; preview requires a maintainer or administrator with asset:read and asset:write scopes and current target read and write permission.",
+          parameters: [pathParameter("stableId"), queryParameter("preview", false)],
           responses: {
             "200": jsonResponse("Asset detail"),
             "401": jsonResponse("Authentication required"),
@@ -352,7 +359,8 @@ export function buildOpenApiDocument() {
       "/assets/{stableId}/attachments": {
         get: {
           summary: "List active attachments for a visible governed asset",
-          parameters: [pathParameter("stableId")],
+          description: "The asset must be published unless preview=true is supplied by an authorized maintainer or administrator.",
+          parameters: [pathParameter("stableId"), queryParameter("preview", false)],
           responses: {
             "200": jsonResponse("Active attachment metadata"),
             "401": jsonResponse("Authentication required"),
@@ -362,6 +370,7 @@ export function buildOpenApiDocument() {
         },
         post: {
           summary: "Upload a bounded attachment to a governed asset",
+          description: "Publish the current asset version before uploading attachments. Attachments are asset-level resources; they are not versioned draft content. An unpublished editing head returns publication_required.",
           parameters: [
             pathParameter("stableId"),
             headerParameter("x-forgetbase-attachment-filename-encoded", true),
@@ -380,7 +389,7 @@ export function buildOpenApiDocument() {
             "400": jsonResponse("Validation error"),
             "401": jsonResponse("Authentication required"),
             "403": jsonResponse("Access denied"),
-            "409": jsonResponse("Tenant or principal attachment quota exceeded"),
+            "409": jsonResponse("Publication required, or tenant/principal attachment quota exceeded"),
             "422": jsonResponse("Attachment content or malware scan rejected the file"),
             "429": jsonResponse("Attachment upload rate or concurrency limited"),
             "413": jsonResponse("Attachment exceeds configured byte limit"),
@@ -392,7 +401,8 @@ export function buildOpenApiDocument() {
       "/assets/{stableId}/attachments/{attachmentId}/download": {
         get: {
           summary: "Download an authorized active attachment",
-          parameters: [pathParameter("stableId"), pathParameter("attachmentId")],
+          description: "The asset must be published unless preview=true is supplied by an authorized maintainer or administrator.",
+          parameters: [pathParameter("stableId"), pathParameter("attachmentId"), queryParameter("preview", false)],
           responses: {
             "200": binaryResponse("Attachment content"),
             "401": jsonResponse("Authentication required"),
@@ -405,12 +415,14 @@ export function buildOpenApiDocument() {
       "/assets/{stableId}/attachments/{attachmentId}": {
         delete: {
           summary: "Delete an attachment and tombstone its metadata",
+          description: "Publish the current asset version before deleting attachments. An unpublished editing head returns publication_required.",
           parameters: [pathParameter("stableId"), pathParameter("attachmentId")],
           responses: {
             "200": jsonResponse("Deleted attachment metadata"),
             "401": jsonResponse("Authentication required"),
             "403": jsonResponse("Access denied"),
             "404": jsonResponse("Asset or attachment not found"),
+            "409": jsonResponse("Publication required or attachment delete conflict"),
             "503": jsonResponse("Attachment storage unavailable")
           }
         }
@@ -430,9 +442,12 @@ export function buildOpenApiDocument() {
       "/assets/{stableId}/review": {
         post: {
           summary: "Mark an asset reviewed by updating review metadata",
+          description: "Requires a maintainer or administrator with current read and write permission on the request surface. Supply expectedVersionId in the JSON body to require the editing head seen by the caller; a stale base returns 409 without changing content.",
           parameters: [pathParameter("stableId")],
           responses: {
             "200": jsonResponse("Reviewed asset detail"),
+            "403": jsonResponse("Access denied"),
+            "409": jsonResponse("asset_version_conflict with expectedVersionId and currentVersionId"),
             "404": jsonResponse("Asset not found")
           }
         }
@@ -440,9 +455,12 @@ export function buildOpenApiDocument() {
       "/assets/{stableId}/versions": {
         post: {
           summary: "Create a new version for an existing asset",
+          description: "Requires a maintainer or administrator with current read and write permission on the request surface. Supply expectedVersionId in the JSON body to require the editing head seen by the caller; a stale base returns 409 without changing content.",
           parameters: [pathParameter("stableId")],
           responses: {
             "200": jsonResponse("Updated asset detail"),
+            "403": jsonResponse("Access denied"),
+            "409": jsonResponse("asset_version_conflict with expectedVersionId and currentVersionId"),
             "404": jsonResponse("Asset not found")
           }
         }
@@ -450,6 +468,7 @@ export function buildOpenApiDocument() {
       "/assets/{stableId}/versions/{versionNumber}": {
         get: {
           summary: "Fetch content for a specific asset version",
+          description: "Version history is a preview capability. Requires a maintainer or administrator with asset:read and asset:write scopes and read and write permission under the asset's current access policy.",
           parameters: [
             pathParameter("stableId"),
             pathParameter("versionNumber")
@@ -465,6 +484,7 @@ export function buildOpenApiDocument() {
       "/assets/{stableId}/versions/by-id/{versionId}": {
         get: {
           summary: "Fetch content for a specific asset version ID",
+          description: "Version history is a preview capability. Requires a maintainer or administrator with asset:read and asset:write scopes and read and write permission under the asset's current access policy.",
           parameters: [
             pathParameter("stableId"),
             pathParameter("versionId")
@@ -480,29 +500,59 @@ export function buildOpenApiDocument() {
       "/assets/{stableId}/publish": {
         post: {
           summary: "Publish an asset by setting it active and approved",
+          description: "Requires a maintainer or administrator with current read and write permission on the request surface. Supply expectedVersionId in the JSON body to require the editing head seen by the caller; a stale base returns 409 without changing content.",
           parameters: [pathParameter("stableId")],
           responses: {
             "200": jsonResponse("Published asset detail"),
+            "403": jsonResponse("Access denied"),
+            "409": jsonResponse("asset_version_conflict with expectedVersionId and currentVersionId"),
             "404": jsonResponse("Asset not found")
           }
         }
       },
       "/assets/{stableId}/restore": {
         post: {
-          summary: "Restore an existing asset version as current",
+          summary: "Restore earlier content into a new draft version",
+          description: "Requires a maintainer or administrator with current read and write permission on the request surface. Preserves current access restrictions and the previous published version; publish the restored draft explicitly to serve it to ordinary consumers. Supply expectedVersionId in the JSON body to require the editing head seen by the caller; a stale base returns 409 without changing content.",
           parameters: [pathParameter("stableId")],
           responses: {
             "200": jsonResponse("Restored asset detail"),
+            "403": jsonResponse("Access denied"),
+            "409": jsonResponse("asset_version_conflict with expectedVersionId and currentVersionId"),
             "404": jsonResponse("Asset or version not found")
           }
         }
       },
       "/assets/{stableId}/grants": {
+        get: {
+          summary: "List current asset grants with a continuation cursor (permission administrators)",
+          parameters: [pathParameter("stableId"), queryParameter("limit", false), queryParameter("cursor", false)],
+          responses: {
+            "200": jsonResponse("Permission grants and nullable nextCursor"),
+            "403": jsonResponse("Access denied"),
+            "404": jsonResponse("Asset not found")
+          }
+        },
         post: {
           summary: "Grant document-level asset permission to a user, group, or service account",
+          description: "A 201 response confirms the grant committed. reconciliation.status=pending identifies cache or audit follow-up that requires operator reconciliation; it does not undo the grant.",
           parameters: [pathParameter("stableId")],
           responses: {
-            "201": jsonResponse("Permission grant")
+            "201": jsonResponse("Permission grant"),
+            "403": jsonResponse("Access denied"),
+            "404": jsonResponse("Asset not found")
+          }
+        }
+      },
+      "/assets/{stableId}/grants/{grantId}": {
+        delete: {
+          summary: "Revoke a current grant scoped to this tenant and asset (permission administrators)",
+          description: "A 200 response confirms revocation committed. reconciliation.status=pending identifies cache or audit follow-up that requires operator reconciliation; subsequent access checks already use the revoked state.",
+          parameters: [pathParameter("stableId"), pathParameter("grantId")],
+          responses: {
+            "200": jsonResponse("Revoked permission grant"),
+            "403": jsonResponse("Access denied"),
+            "404": jsonResponse("Asset or permission grant not found")
           }
         }
       },
@@ -902,15 +952,19 @@ export function buildOpenApiDocument() {
       "/exports/ai-package": {
         get: {
           summary: "Generate permission-filtered AI export package",
+          description: "Exports only published versions under current export grants and asset policy. limit is 1-10000 (default 10000). Follow nextCursor when complete=false. A content revision change during or between pages returns export_changed_retry; discard partial pages and restart. Grants are checked on each request.",
           security: [],
           parameters: [
             queryParameter("package", false),
             queryParameter("format", false),
             queryParameter("okfVersion", false),
-            queryParameter("limit", false)
+            queryParameter("limit", false),
+            queryParameter("cursor", false)
           ],
           responses: {
-            "200": jsonResponse("AI export package")
+            "200": jsonResponse("AI export package, complete flag and nextCursor"),
+            "400": jsonResponse("Invalid export parameters or cursor"),
+            "409": jsonResponse("Content changed; restart the export")
           }
         }
       },

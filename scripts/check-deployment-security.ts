@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -12,6 +13,104 @@ interface CheckResult {
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const results: CheckResult[] = [];
+
+interface ComposeSecurityExpectation {
+  requireAuthentication: boolean;
+  secureCookies: boolean;
+  corsAllowedOrigins?: string;
+}
+
+export function resolveComposeConfiguration(
+  files: readonly string[],
+  environment: NodeJS.ProcessEnv,
+  root = repoRoot
+): unknown {
+  try {
+    const output = execFileSync("docker", [
+      "compose", "--project-directory", root,
+      ...files.flatMap((file) => ["-f", path.resolve(root, file)]),
+      "config", "--format", "json"
+    ], {
+      cwd: root,
+      env: {
+        PATH: process.env.PATH,
+        HOME: process.env.HOME,
+        ...environment,
+        COMPOSE_DISABLE_ENV_FILE: "true"
+      },
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 15_000,
+      maxBuffer: 5 * 1024 * 1024
+    });
+    return JSON.parse(output);
+  } catch {
+    // Compose errors can include interpolated secrets. Never echo its output.
+    throw new Error("Unable to resolve Compose configuration; Docker Compose must be installed and the configuration must be valid.");
+  }
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
+}
+
+export function validateComposeApiSecurity(
+  configuration: unknown,
+  expected: ComposeSecurityExpectation
+): string[] {
+  const services = asRecord(asRecord(configuration)?.services);
+  const environment = asRecord(asRecord(services?.api)?.environment);
+  const required: Record<string, string> = {
+    FORGETBASE_REQUIRE_AUTHENTICATION: String(expected.requireAuthentication),
+    FORGETBASE_SESSION_COOKIE_SECURE: String(expected.secureCookies),
+    FORGETBASE_ATTACHMENT_SCAN_REQUIRED: "true"
+  };
+  if (expected.corsAllowedOrigins !== undefined) {
+    required.FORGETBASE_CORS_ALLOWED_ORIGINS = expected.corsAllowedOrigins;
+  }
+  return Object.entries(required)
+    .filter(([name, value]) => environment?.[name] !== value)
+    .map(([name]) => `${name} is missing or differs from the required API container setting`);
+}
+
+function checkResolvedCompose(
+  name: string,
+  files: readonly string[],
+  environment: NodeJS.ProcessEnv,
+  expected: ComposeSecurityExpectation
+): void {
+  try {
+    const failures = validateComposeApiSecurity(resolveComposeConfiguration(files, environment), expected);
+    record(failures.length === 0 ? "pass" : "fail", name,
+      failures.length === 0 ? "resolved API container security settings match the required posture" : failures.join("; "));
+  } catch {
+    record("fail", name, "Compose configuration could not be resolved; no container settings were verified");
+  }
+}
+
+function checkResolvedTemplatePosture(): void {
+  checkResolvedCompose("resolved local Compose defaults", ["compose.yaml"], {}, {
+    requireAuthentication: false, secureCookies: false
+  });
+  const publicEnvironment = {
+    FORGETBASE_REQUIRE_AUTHENTICATION: "true",
+    FORGETBASE_SESSION_COOKIE_SECURE: "true",
+    FORGETBASE_CORS_ALLOWED_ORIGINS: "https://knowledge.example.test"
+  };
+  for (const files of [["compose.yaml"], ["compose.yaml", "compose.same-origin.yaml"]]) {
+    checkResolvedCompose(`resolved public ${files.join(" + ")}`, files, publicEnvironment, {
+      requireAuthentication: true,
+      secureCookies: true,
+      corsAllowedOrigins: publicEnvironment.FORGETBASE_CORS_ALLOWED_ORIGINS
+    });
+  }
+  checkResolvedCompose("resolved TLS overlay security", ["compose.yaml", "compose.same-origin.yaml", "compose.tls.yaml"], {
+    ...publicEnvironment,
+    FORGETBASE_SESSION_COOKIE_SECURE: "false"
+  }, { requireAuthentication: true, secureCookies: true });
+}
 
 function readRepoFile(relativePath: string): string {
   const absolutePath = path.join(repoRoot, relativePath);
@@ -199,6 +298,18 @@ function checkPublicEnvironment(): void {
     "FORGETBASE_CORS_ALLOWED_ORIGINS must contain only approved https origins, not localhost or wildcards"
   );
 
+  if (publicEntrypoint !== undefined && validEntrypoints.has(publicEntrypoint) && publicEntrypoint !== "railway-proxy") {
+    const files = ["compose.yaml", "compose.same-origin.yaml"];
+    if (publicEntrypoint === "compose-tls") {
+      files.push("compose.tls.yaml");
+    }
+    checkResolvedCompose("resolved public deployment API settings", files, process.env, {
+      requireAuthentication: true,
+      secureCookies: true,
+      corsAllowedOrigins: corsOrigins
+    });
+  }
+
   const directPortNames = ["FORGETBASE_API_PORT", "FORGETBASE_WEB_PORT", "FORGETBASE_POSTGRES_PORT"];
 
   if (publicEntrypoint === "railway-proxy") {
@@ -237,6 +348,7 @@ function checkPublicEnvironment(): void {
 
 function main(): void {
   checkTemplatePosture();
+  checkResolvedTemplatePosture();
   checkPublicEnvironment();
 
   const failures = results.filter((result) => result.status === "fail");
@@ -253,4 +365,6 @@ function main(): void {
   }, null, 2));
 }
 
-main();
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main();
+}

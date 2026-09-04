@@ -8,6 +8,8 @@ Teams can write and organize knowledge once. People get a clean reading UI. AI t
 
 This private repository is being prepared for public beta through controlled live user testing. The current release target is documented in [Public Beta Goal](docs/PUBLIC_BETA_GOAL.md), and the pre-release testing boundary is documented in [Private Live UAT](docs/PRIVATE_LIVE_UAT.md).
 
+For the governed authoring and publication path, see [Instructions and human documents](docs/governed-workflow.md). The current private operational release follows the [release plan](docs/OPERATIONAL_RELEASE_PLAN.md), [verification record](docs/OPERATIONAL_RELEASE_VERIFICATION.md), and [reproducible Railway procedure](docs/runbooks/REPRODUCIBLE_RAILWAY_RELEASE.md).
+
 Expected public beta limits:
 
 - API routes, CLI flags, MCP tool names, and package boundaries may change.

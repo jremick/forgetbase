@@ -58,7 +58,8 @@ describe("beta machine-consumer contract", () => {
         "package",
         "format",
         "okfVersion",
-        "limit"
+        "limit",
+        "cursor"
       ]);
 
       const fetchResponse = await server.inject({

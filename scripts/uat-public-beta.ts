@@ -286,7 +286,7 @@ async function checkReleaseFlow(page: Page, viewportName: "desktop" | "mobile"):
   if (viewportName === "desktop" && expectedRole === "reader") {
     await page.locator("#reader-ask-input").fill("credential vault escalation");
     await page.locator(".reader-ask-form button[type='submit']").click();
-    await expectVisibleText(page, "Limited results", "release desktop: restricted result badge");
+    await expectVisibleText(page, "No matching sources", "release desktop: no accessible sources badge");
     await expectVisibleText(page, "No accessible answer was found", "release desktop: restricted result note");
     await assertNoHorizontalOverflow(page, "release desktop: restricted result overflow");
     await assertNoClippedText(page, "release desktop: restricted result clipped text");
@@ -348,9 +348,14 @@ async function checkAdminPageAuthoring(page: Page): Promise<void> {
   await page.locator("#authoring-title").fill(createdTitle);
   await page.locator("#authoring-summary").fill("Synthetic page created by the isolated browser authoring proof.");
   await page.locator("#authoring-body").fill("# Browser authoring proof\n\nThis synthetic page verifies the browser create, edit, review, and publish flow.");
+  const createResponse = page.waitForResponse((response) =>
+    response.request().method() === "POST" && new URL(response.url()).pathname.endsWith("/assets")
+  );
   await page.getByRole("button", { name: "Create draft", exact: true }).click();
+  const authoringApiUrl = (await createResponse).url().replace(/\/assets(?:\?.*)?$/, "");
   await expectVisibleText(page, `Created ${stableId} as a draft`, "release: authoring draft created");
   await expectVisibleText(page, createdTitle, "release: authored page selected");
+  await assertAuthoringPublication(page, authoringApiUrl, stableId, null, "release: draft excluded from ordinary reads");
 
   await page.getByRole("button", { name: "Edit page", exact: true }).click();
   await expectVisibleText(page, `Edit ${createdTitle}`, "release: authoring edit form opened");
@@ -364,12 +369,37 @@ async function checkAdminPageAuthoring(page: Page): Promise<void> {
 
   await page.getByRole("button", { name: "Review", exact: true }).click();
   await expectVisibleText(page, `Reviewed ${stableId}`, "release: authored page reviewed");
+  await assertAuthoringPublication(page, authoringApiUrl, stableId, null, "release: review does not publish draft");
   await page.getByRole("button", { name: "Publish", exact: true }).click();
   await page.getByRole("button", { name: "Publish page", exact: true }).click();
   await expectVisibleText(page, `Published ${stableId}`, "release: authored page published");
+  await assertAuthoringPublication(page, authoringApiUrl, stableId, updatedTitle, "release: published content available to ordinary reads");
   await assertNoHorizontalOverflow(page, "release: authoring desktop overflow");
   await assertNoClippedText(page, "release: authoring desktop clipped text");
   await screenshot(page, "authoring-flow.png", "release: authoring flow screenshot");
+}
+
+async function assertAuthoringPublication(page: Page, apiUrl: string, stableId: string, title: string | null, name: string): Promise<void> {
+  const response = await page.context().request.get(`${apiUrl}/assets/${encodeURIComponent(stableId)}`, {
+    headers: { "x-forgetbase-surface": "web" }
+  });
+  const payload = await response.json() as {
+    error?: string;
+    asset?: { title?: string; lifecycleState?: string; status?: string; currentVersionId?: string; publishedVersionId?: string };
+    versions?: Array<{ id?: string }>;
+    humanDocuments?: Array<{ body?: string }>;
+  };
+  if (title === null) {
+    if (response.status() !== 404 || payload.error !== "asset_not_found") {
+      throw new Error(`${name}: expected an unpublished asset to be unavailable, got HTTP ${response.status()}`);
+    }
+  } else if (response.status() !== 200 || payload.asset?.title !== title ||
+    payload.asset.lifecycleState !== "active" || payload.asset.status !== "approved" ||
+    !payload.asset.publishedVersionId || payload.asset.currentVersionId !== payload.asset.publishedVersionId ||
+    payload.versions?.length !== 1 || !payload.humanDocuments?.[0]?.body?.includes("updated synthetic page")) {
+    throw new Error(`${name}: ordinary read did not match the approved authored version`);
+  }
+  checks.push({ name, status: "pass" });
 }
 
 async function applyTenantOverride(page: Page): Promise<void> {
