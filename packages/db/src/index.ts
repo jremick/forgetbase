@@ -19,6 +19,9 @@ import {
   assetVersionSchema,
   agentInstructionSchema,
   humanDocumentSchema,
+  permissionGrantCreateInputSchema,
+  type AuthPrincipal,
+  type PermissionGrantCreateInput,
   type AssetCreateInput,
   type AssetDetail,
   type AssetPublishInput,
@@ -36,10 +39,13 @@ import {
   type HumanDocumentInput
 } from "@forgetbase/schema";
 
+import { createPermissionGrantInTransaction } from "./auth.js";
+
 export * from "./auth.js";
 export * from "./attachments.js";
 export * from "./auth-provider-config.js";
 export * from "./action-execution.js";
+export * from "./asset-change-outbox.js";
 export * from "./embeddings.js";
 export * from "./eval-runs.js";
 export * from "./feedback.js";
@@ -61,18 +67,30 @@ const MIGRATION_LOCK_OBJECT_ID = 20260617;
 export interface RegistryListOptions {
   tenantId?: string;
   limit?: number;
+  afterStableId?: string;
+  view?: "current" | "published";
 }
 
 export interface RegistryGetOptions {
   tenantId?: string;
+  /** Current is the editing/authorization view. Consumers must request published. */
+  view?: "current" | "published";
+}
+
+/** Internal server context. Never populated from an asset request body or ownerId. */
+export interface AssetCreateContext {
+  creator: Pick<AuthPrincipal, "tenantId" | "principalType" | "principalId" | "allowedSurfaces">;
+  /** The synthetic adapter has a separate auth store; this hook must commit its batch atomically. */
+  grantCreatorPermissions?: (grants: PermissionGrantCreateInput[]) => Promise<unknown>;
 }
 
 export interface RegistryRepository {
+  getContentRevision(tenantId?: string): Promise<string>;
   listAssets(options?: RegistryListOptions): Promise<AssetRecord[]>;
   listAssetsNeedingReview(input?: AssetReviewQueueInput): Promise<AssetReviewQueueResponse>;
   getAssetByStableId(stableId: string, options?: RegistryGetOptions): Promise<AssetDetail | null>;
   getAssetVersionSnapshot(stableId: string, input: AssetVersionSnapshotInput): Promise<AssetVersionSnapshot | null>;
-  createAsset(input: AssetCreateInput): Promise<AssetDetail>;
+  createAsset(input: AssetCreateInput, context?: AssetCreateContext): Promise<AssetDetail>;
   updateAsset(stableId: string, input: AssetUpdateInput): Promise<AssetDetail | null>;
   reviewAsset(stableId: string, input: AssetReviewInput): Promise<AssetDetail | null>;
   publishAsset(stableId: string, input: AssetPublishInput): Promise<AssetDetail | null>;
@@ -88,6 +106,19 @@ export class DuplicateAssetError extends Error {
   constructor(stableId: string) {
     super(`Asset already exists for stable ID: ${stableId}`);
     this.name = "DuplicateAssetError";
+  }
+}
+
+export class AssetVersionConflictError extends Error {
+  constructor(readonly expectedVersionId: string, readonly currentVersionId: string | null) {
+    super("Asset changed. Reload the current draft before retrying.");
+    this.name = "AssetVersionConflictError";
+  }
+}
+
+function assertExpectedAssetVersion(expectedVersionId: string | undefined, currentVersionId: string | null): void {
+  if (expectedVersionId !== undefined && expectedVersionId !== currentVersionId) {
+    throw new AssetVersionConflictError(expectedVersionId, currentVersionId);
   }
 }
 
@@ -156,21 +187,50 @@ export async function runMigrations(pool: Pool, migrationsDir = DEFAULT_MIGRATIO
 export class PostgresRegistryRepository implements RegistryRepository {
   constructor(private readonly pool: Pool) {}
 
+  async getContentRevision(tenantId = "tenant_demo"): Promise<string> {
+    const result = await this.pool.query<{ revision: string }>(`
+      SELECT md5(coalesce(string_agg(
+        id::text || ':' || updated_at::text || ':' || coalesce(current_version_id::text, '') || ':' || coalesce(published_version_id::text, ''),
+        ',' ORDER BY stable_id COLLATE "C"
+      ), '')) AS revision FROM assets WHERE tenant_id = $1
+    `, [tenantId]);
+    return result.rows[0]!.revision;
+  }
+
   async listAssets(options: RegistryListOptions = {}): Promise<AssetRecord[]> {
     const tenantId = options.tenantId ?? "tenant_demo";
     const limit = Math.min(Math.max(options.limit ?? 50, 1), 200);
-    const result = await this.pool.query<AssetRow>(
+    const published = options.view === "published";
+    const result = await this.pool.query<AssetRow & { published_version: AssetVersionRow | null }>(
       `
-        SELECT *
+        SELECT assets.*, to_jsonb(published_version) AS published_version
         FROM assets
-        WHERE tenant_id = $1
-        ORDER BY updated_at DESC, stable_id ASC
+        LEFT JOIN asset_versions published_version ON published_version.id = assets.published_version_id
+        WHERE assets.tenant_id = $1
+          AND ($3::text IS NULL OR assets.stable_id COLLATE "C" > $3)
+          AND ($4::boolean = false OR (
+            published_version.asset_id = assets.id
+            AND assets.lifecycle_state IN ('active', 'draft')
+            AND published_version.asset_snapshot->>'lifecycleState' = 'active'
+            AND published_version.asset_snapshot->>'status' = 'approved'
+            AND EXISTS (
+              SELECT 1 FROM jsonb_array_elements_text(published_version.asset_snapshot->'allowedSurfaces') surface
+              WHERE surface = ANY(assets.allowed_surfaces)
+            )
+          ))
+        ORDER BY assets.stable_id COLLATE "C" ASC
         LIMIT $2
       `,
-      [tenantId, limit]
+      [tenantId, limit, options.afterStableId ?? null, published]
     );
 
-    return result.rows.map(mapAssetRow);
+    return result.rows.flatMap((row) => {
+      const asset = mapAssetRow(row);
+      const projection = published
+        ? projectPublishedAssetRecord(asset, row.published_version ? mapAssetVersionRow(row.published_version) : undefined)
+        : asset;
+      return projection ? [projection] : [];
+    });
   }
 
   async listAssetsNeedingReview(input: AssetReviewQueueInput = {}): Promise<AssetReviewQueueResponse> {
@@ -216,7 +276,8 @@ export class PostgresRegistryRepository implements RegistryRepository {
       return null;
     }
 
-    return this.getAssetDetail(asset.rows[0].id);
+    const detail = await getAssetDetail(this.pool, asset.rows[0].id, options.view);
+    return options.view === "published" ? projectPublishedAssetDetail(detail) : detail;
   }
 
   async getAssetVersionSnapshot(
@@ -227,8 +288,9 @@ export class PostgresRegistryRepository implements RegistryRepository {
     return getAssetVersionSnapshot(this.pool, stableId, parsed);
   }
 
-  async createAsset(input: AssetCreateInput): Promise<AssetDetail> {
+  async createAsset(input: AssetCreateInput, context?: AssetCreateContext): Promise<AssetDetail> {
     const parsed = assetCreateInputSchema.parse(input);
+    const creatorGrants = assetCreatorGrants(parsed, context);
     const client = await this.pool.connect();
 
     try {
@@ -328,11 +390,13 @@ export class PostgresRegistryRepository implements RegistryRepository {
         await insertHumanDocument(client, assetId, versionId, parsed.humanDocument);
       }
 
-      await client.query("UPDATE assets SET current_version_id = $1, updated_at = now() WHERE id = $2", [
+      await client.query("UPDATE assets SET current_version_id = $1, published_version_id = $3, updated_at = now() WHERE id = $2", [
         versionId,
-        assetId
+        assetId,
+        parsed.lifecycleState === "active" && parsed.status === "approved" ? versionId : null
       ]);
 
+      for (const grant of creatorGrants) await createPermissionGrantInTransaction(client, grant);
       const detail = await getAssetDetail(client, assetId);
       await client.query("COMMIT");
       return detail;
@@ -361,6 +425,8 @@ export class PostgresRegistryRepository implements RegistryRepository {
         await client.query("ROLLBACK");
         return null;
       }
+      assertExpectedAssetVersion(parsed.expectedVersionId, asset.current_version_id);
+
       const nextMetadata = hasMetadataUpdate ? parsed.metadata : asset.metadata;
 
       const currentInstructions = await client.query<InstructionObjectRow>(
@@ -444,6 +510,10 @@ export class PostgresRegistryRepository implements RegistryRepository {
             allowed_actions = COALESCE($11, allowed_actions),
             metadata = $12::jsonb,
             current_version_id = $13,
+            published_version_id = CASE
+              WHEN COALESCE($3, lifecycle_state) IN ('active', 'draft') THEN published_version_id
+              ELSE NULL
+            END,
             updated_at = now()
           WHERE id = $14
         `,
@@ -486,9 +556,11 @@ export class PostgresRegistryRepository implements RegistryRepository {
         asset_id: string;
         version_id: string;
         asset_snapshot: AssetVersionAssetSnapshot;
+        current_asset: AssetRow;
       }>(
         `
-          SELECT assets.id AS asset_id, asset_versions.id AS version_id, asset_versions.asset_snapshot
+          SELECT assets.id AS asset_id, asset_versions.id AS version_id, asset_versions.asset_snapshot,
+            to_jsonb(assets) AS current_asset
           FROM assets
           JOIN asset_versions ON asset_versions.asset_id = assets.id
           WHERE assets.tenant_id = $1
@@ -509,8 +581,16 @@ export class PostgresRegistryRepository implements RegistryRepository {
         return null;
       }
 
-      const snapshot = assetVersionAssetSnapshotSchema.parse(row.asset_snapshot);
-      await updateAssetRecordFromSnapshot(client, row.asset_id, row.version_id, snapshot);
+      assertExpectedAssetVersion(parsed.expectedVersionId, row.current_asset.current_version_id);
+
+      const snapshot = buildRestoredDraftSnapshot(mapAssetRow(row.current_asset), row.asset_snapshot);
+      const versionId = await createPostgresVersionFromCurrent(
+        client,
+        { ...row.current_asset, current_version_id: row.version_id },
+        snapshot,
+        parsed.changeNote ?? "Restore version as draft"
+      );
+      await updateAssetRecordFromSnapshot(client, row.asset_id, versionId, snapshot);
 
       const detail = await getAssetDetail(client, row.asset_id);
       await client.query("COMMIT");
@@ -539,6 +619,8 @@ export class PostgresRegistryRepository implements RegistryRepository {
         await client.query("ROLLBACK");
         return null;
       }
+
+      assertExpectedAssetVersion(parsed.expectedVersionId, asset.current_version_id);
 
       const snapshot = assetVersionAssetSnapshotSchema.parse({
         ...assetRecordToVersionSnapshot(mapAssetRow(asset)),
@@ -581,6 +663,8 @@ export class PostgresRegistryRepository implements RegistryRepository {
         return null;
       }
 
+      assertExpectedAssetVersion(parsed.expectedVersionId, asset.current_version_id);
+
       const snapshot = assetVersionAssetSnapshotSchema.parse({
         ...assetRecordToVersionSnapshot(mapAssetRow(asset)),
         lifecycleState: "active",
@@ -594,6 +678,7 @@ export class PostgresRegistryRepository implements RegistryRepository {
         parsed.changeNote ?? "Publish asset"
       );
       await updateAssetRecordFromSnapshot(client, asset.id, versionId, snapshot);
+      await client.query("UPDATE assets SET published_version_id = $1 WHERE id = $2", [versionId, asset.id]);
       const detail = await getAssetDetail(client, asset.id);
       await client.query("COMMIT");
       return detail;
@@ -605,23 +690,30 @@ export class PostgresRegistryRepository implements RegistryRepository {
     }
   }
 
-  private async getAssetDetail(assetId: string): Promise<AssetDetail> {
-    return getAssetDetail(this.pool, assetId);
-  }
 }
 
 export class InMemoryRegistryRepository implements RegistryRepository {
   private readonly assets = new Map<string, AssetDetail>();
+  private readonly pendingCreates = new Set<string>();
   private sequence = 0;
+
+  async getContentRevision(tenantId = "tenant_demo"): Promise<string> {
+    return createHash("sha256").update(JSON.stringify([...this.assets.values()]
+      .map((detail) => detail.asset).filter((asset) => asset.tenantId === tenantId)
+      .sort((a, b) => a.stableId < b.stableId ? -1 : a.stableId > b.stableId ? 1 : 0))).digest("hex");
+  }
 
   async listAssets(options: RegistryListOptions = {}): Promise<AssetRecord[]> {
     const tenantId = options.tenantId ?? "tenant_demo";
     const limit = Math.min(Math.max(options.limit ?? 50, 1), 200);
-
-    return Array.from(this.assets.values())
-      .map((detail) => detail.asset)
-      .filter((asset) => asset.tenantId === tenantId)
-      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt) || left.stableId.localeCompare(right.stableId))
+    return [...this.assets.values()]
+      .filter((detail) => detail.asset.tenantId === tenantId)
+      .filter((detail) => !options.afterStableId || detail.asset.stableId > options.afterStableId)
+      .map((detail) => options.view === "published"
+        ? projectPublishedAssetRecord(detail.asset, detail.versions.find((version) => version.id === detail.asset.publishedVersionId))
+        : detail.asset)
+      .filter((asset): asset is AssetRecord => asset !== null)
+      .sort((left, right) => left.stableId < right.stableId ? -1 : left.stableId > right.stableId ? 1 : 0)
       .slice(0, limit);
   }
 
@@ -659,7 +751,7 @@ export class InMemoryRegistryRepository implements RegistryRepository {
   async getAssetByStableId(stableId: string, options: RegistryGetOptions = {}): Promise<AssetDetail | null> {
     const tenantId = options.tenantId ?? "tenant_demo";
     const detail = this.assets.get(`${tenantId}:${stableId}`);
-    return detail ? filterCurrentDetail(detail) : null;
+    return detail ? options.view === "published" ? projectPublishedAssetDetail(detail) : filterCurrentDetail(detail) : null;
   }
 
   async getAssetVersionSnapshot(
@@ -690,11 +782,12 @@ export class InMemoryRegistryRepository implements RegistryRepository {
     });
   }
 
-  async createAsset(input: AssetCreateInput): Promise<AssetDetail> {
+  async createAsset(input: AssetCreateInput, context?: AssetCreateContext): Promise<AssetDetail> {
     const parsed = assetCreateInputSchema.parse(input);
+    const creatorGrants = assetCreatorGrants(parsed, context);
     const key = `${parsed.tenantId}:${parsed.stableId}`;
 
-    if (this.assets.has(key)) {
+    if (this.assets.has(key) || this.pendingCreates.has(key)) {
       throw new DuplicateAssetError(parsed.stableId);
     }
 
@@ -728,6 +821,7 @@ export class InMemoryRegistryRepository implements RegistryRepository {
       allowedExports: parsed.allowedExports,
       allowedActions: parsed.allowedActions,
       currentVersionId: versionId,
+      publishedVersionId: parsed.lifecycleState === "active" && parsed.status === "approved" ? versionId : null,
       metadata: parsed.metadata,
       createdAt: now,
       updatedAt: now
@@ -773,8 +867,16 @@ export class InMemoryRegistryRepository implements RegistryRepository {
       humanDocuments
     });
 
-    this.assets.set(key, detail);
-    return filterCurrentDetail(detail);
+    const currentDetail = filterCurrentDetail(detail);
+    if (creatorGrants.length > 0 && !context?.grantCreatorPermissions) {
+      throw new Error("Creator permission store is required for in-memory asset creation");
+    }
+    this.pendingCreates.add(key);
+    try {
+      if (creatorGrants.length > 0) await context!.grantCreatorPermissions!(creatorGrants);
+      this.assets.set(key, detail);
+      return currentDetail;
+    } finally { this.pendingCreates.delete(key); }
   }
 
   async updateAsset(stableId: string, input: AssetUpdateInput): Promise<AssetDetail | null> {
@@ -786,6 +888,8 @@ export class InMemoryRegistryRepository implements RegistryRepository {
     if (!detail) {
       return null;
     }
+
+    assertExpectedAssetVersion(parsed.expectedVersionId, detail.asset.currentVersionId);
 
     this.sequence += 1;
     const now = new Date().toISOString();
@@ -809,6 +913,9 @@ export class InMemoryRegistryRepository implements RegistryRepository {
       allowedExports: parsed.allowedExports ?? detail.asset.allowedExports,
       allowedActions: parsed.allowedActions ?? detail.asset.allowedActions,
       currentVersionId: versionId,
+      publishedVersionId: ["active", "draft"].includes(parsed.lifecycleState ?? detail.asset.lifecycleState)
+        ? detail.asset.publishedVersionId ?? null
+        : null,
       metadata: nextMetadata,
       updatedAt: now
     });
@@ -881,6 +988,8 @@ export class InMemoryRegistryRepository implements RegistryRepository {
       return null;
     }
 
+    assertExpectedAssetVersion(parsed.expectedVersionId, detail.asset.currentVersionId);
+
     const version = detail.versions.find((candidate) =>
       (parsed.versionId && candidate.id === parsed.versionId) ||
       (parsed.versionNumber && candidate.versionNumber === parsed.versionNumber)
@@ -890,10 +999,14 @@ export class InMemoryRegistryRepository implements RegistryRepository {
       return null;
     }
 
-    const restored = assetDetailSchema.parse({
-      ...detail,
-      asset: assetRecordFromVersionSnapshot(detail.asset, version, new Date().toISOString())
-    });
+    this.sequence += 1;
+    const restored = createInMemoryVersionFromCurrent(
+      { ...detail, asset: { ...detail.asset, currentVersionId: version.id } },
+      buildRestoredDraftSnapshot(detail.asset, version.assetSnapshot),
+      `version_${this.sequence}`,
+      this.sequence,
+      parsed.changeNote ?? "Restore version as draft"
+    );
 
     this.assets.set(key, restored);
     return filterCurrentDetail(restored);
@@ -907,6 +1020,8 @@ export class InMemoryRegistryRepository implements RegistryRepository {
     if (!detail) {
       return null;
     }
+
+    assertExpectedAssetVersion(parsed.expectedVersionId, detail.asset.currentVersionId);
 
     this.sequence += 1;
     const reviewed = createInMemoryVersionFromCurrent(
@@ -935,6 +1050,8 @@ export class InMemoryRegistryRepository implements RegistryRepository {
       return null;
     }
 
+    assertExpectedAssetVersion(parsed.expectedVersionId, detail.asset.currentVersionId);
+
     this.sequence += 1;
     const published = createInMemoryVersionFromCurrent(
       detail,
@@ -948,6 +1065,7 @@ export class InMemoryRegistryRepository implements RegistryRepository {
       this.sequence,
       parsed.changeNote ?? "Publish asset"
     );
+    published.asset.publishedVersionId = published.asset.currentVersionId;
 
     this.assets.set(key, published);
     return filterCurrentDetail(published);
@@ -1135,20 +1253,25 @@ async function ensureTenant(client: Queryable, tenantId: string): Promise<void> 
   );
 }
 
-async function getAssetDetail(client: Queryable, assetId: string): Promise<AssetDetail> {
+async function getAssetDetail(
+  client: Queryable,
+  assetId: string,
+  view: RegistryGetOptions["view"] = "current"
+): Promise<AssetDetail> {
   const asset = await client.query<AssetRow>("SELECT * FROM assets WHERE id = $1", [assetId]);
   const assetRow = requireRow(asset);
+  const versionId = view === "published" ? assetRow.published_version_id : assetRow.current_version_id;
   const versions = await client.query<AssetVersionRow>(
-    "SELECT * FROM asset_versions WHERE asset_id = $1 ORDER BY version_number DESC",
-    [assetId]
+    "SELECT * FROM asset_versions WHERE asset_id = $1 AND ($2::boolean = false OR id = $3::uuid) ORDER BY version_number DESC",
+    [assetId, view === "published", versionId]
   );
   const instructions = await client.query<InstructionObjectRow>(
     "SELECT * FROM instruction_objects WHERE asset_id = $1 AND version_id = $2 ORDER BY created_at ASC",
-    [assetId, assetRow.current_version_id]
+    [assetId, versionId]
   );
   const humanDocuments = await client.query<HumanDocumentRow>(
     "SELECT * FROM human_documents WHERE asset_id = $1 AND version_id = $2 ORDER BY created_at ASC",
-    [assetId, assetRow.current_version_id]
+    [assetId, versionId]
   );
 
   return assetDetailSchema.parse({
@@ -1355,6 +1478,63 @@ function filterCurrentDetail(detail: AssetDetail): AssetDetail {
   });
 }
 
+/** Published content metadata is immutable; current policy can only narrow its exposure. */
+export function projectPublishedAssetRecord(
+  current: AssetRecord,
+  version: AssetVersion | undefined
+): AssetRecord | null {
+  const snapshot = version?.assetSnapshot;
+  if (!version || !snapshot || current.publishedVersionId !== version.id ||
+    version.assetId !== current.id || !["active", "draft"].includes(current.lifecycleState) ||
+    snapshot.lifecycleState !== "active" || snapshot.status !== "approved") {
+    return null;
+  }
+
+  const allowedSurfaces = snapshot.allowedSurfaces.filter((surface) => current.allowedSurfaces.includes(surface));
+  if (allowedSurfaces.length === 0) return null;
+  const sensitivities: AssetRecord["sensitivity"][] = ["public-demo", "internal", "restricted", "confidential", "secret"];
+  const sensitivity = sensitivities[Math.max(sensitivities.indexOf(snapshot.sensitivity), sensitivities.indexOf(current.sensitivity))];
+
+  return assetRecordSchema.parse({
+    ...assetRecordFromVersionSnapshot(current, version),
+    publishedVersionId: version.id,
+    sensitivity,
+    allowedSurfaces,
+    allowedExports: snapshot.allowedExports.filter((name) => current.allowedExports.includes(name)),
+    allowedActions: snapshot.allowedActions.filter((name) => current.allowedActions.includes(name))
+  });
+}
+
+/** The input must contain the selected version's content, not only the draft head. */
+export function projectPublishedAssetDetail(detail: AssetDetail): AssetDetail | null {
+  const version = detail.versions.find((candidate) => candidate.id === detail.asset.publishedVersionId);
+  const asset = projectPublishedAssetRecord(detail.asset, version);
+  if (!asset || !version) return null;
+  return assetDetailSchema.parse({
+    asset,
+    versions: [version],
+    instructionObjects: detail.instructionObjects.filter((instruction) => instruction.versionId === version.id),
+    humanDocuments: detail.humanDocuments.filter((document) => document.versionId === version.id)
+  });
+}
+
+function buildRestoredDraftSnapshot(
+  current: AssetRecord,
+  target: AssetVersion["assetSnapshot"]
+): AssetVersionAssetSnapshot {
+  return assetVersionAssetSnapshotSchema.parse({
+    ...assetVersionAssetSnapshotSchema.parse(target),
+    lifecycleState: "draft",
+    status: "draft",
+    ownerId: current.ownerId,
+    sensitivity: current.sensitivity,
+    audience: current.audience,
+    allowedSurfaces: current.allowedSurfaces,
+    allowedExports: current.allowedExports,
+    allowedActions: current.allowedActions
+  });
+}
+
 function requireRow<T extends QueryResultRow>(result: QueryResult<T>): T {
   const row = result.rows[0];
 
@@ -1367,6 +1547,22 @@ function requireRow<T extends QueryResultRow>(result: QueryResult<T>): T {
 
 type ParsedAssetCreateInput = ReturnType<typeof assetCreateInputSchema.parse>;
 type ParsedAssetUpdateInput = ReturnType<typeof assetUpdateInputSchema.parse>;
+
+function assetCreatorGrants(input: ParsedAssetCreateInput, context?: AssetCreateContext): PermissionGrantCreateInput[] {
+  if (!context) return [];
+  if (context.creator.tenantId !== input.tenantId) throw new Error("Asset creator tenant mismatch");
+  const surfaces = [...new Set(input.allowedSurfaces.filter((surface) => context.creator.allowedSurfaces.includes(surface)))];
+  if (surfaces.length === 0) throw new Error("Asset creator has no permitted surface");
+  return (["read", "write"] as const).map((action) => permissionGrantCreateInputSchema.parse({
+    tenantId: input.tenantId,
+    stableId: input.stableId,
+    principalType: context.creator.principalType,
+    principalId: context.creator.principalId,
+    action,
+    surfaces,
+    createdBy: context.creator.principalId
+  }));
+}
 
 interface GovernedVersionContent {
   instructionObjects: AgentInstructionInput[];
@@ -1572,6 +1768,7 @@ function mapAssetRow(row: AssetRow): AssetRecord {
     allowedExports: row.allowed_exports,
     allowedActions: row.allowed_actions,
     currentVersionId: row.current_version_id,
+    publishedVersionId: row.published_version_id,
     metadata: row.metadata,
     createdAt: toIso(row.created_at),
     updatedAt: toIso(row.updated_at)
@@ -1666,6 +1863,7 @@ interface AssetRow extends QueryResultRow {
   allowed_actions: string[];
   metadata: Record<string, unknown>;
   current_version_id: string | null;
+  published_version_id: string | null;
   created_at: Date | string;
   updated_at: Date | string;
 }

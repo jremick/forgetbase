@@ -198,7 +198,7 @@ describe("InMemoryRegistryRepository", () => {
     expect(fetched?.humanDocuments[0]?.format).toBe("markdown");
   });
 
-  it("creates complete governed snapshots and restores prior state and content", async () => {
+  it("creates complete governed snapshots and restores content as a draft under current permissions", async () => {
     const repository: RegistryRepository = new InMemoryRegistryRepository();
     await repository.createAsset({
       ...sampleAsset,
@@ -278,20 +278,20 @@ describe("InMemoryRegistryRepository", () => {
       versionNumber: 1
     });
 
-    expect(restored?.asset.currentVersionId).toBe(restored?.versions.find((version) => version.versionNumber === 1)?.id);
+    expect(restored?.asset.currentVersionId).not.toBe(restored?.versions.find((version) => version.versionNumber === 1)?.id);
     expect(restored?.instructionObjects[0]?.body).toContain("Keep model context");
     expect(restored?.asset).toMatchObject({
       title: "Context Boundary Guardrail",
       summary: "Original summary",
-      lifecycleState: "active",
-      sensitivity: "internal",
-      audience: ["ai-team"],
-      status: "approved",
+      lifecycleState: "draft",
+      sensitivity: "restricted",
+      audience: ["security-team"],
+      status: "draft",
       reviewDueAt: "2027-01-31",
       sourceRef: "source://original",
-      allowedSurfaces: ["api", "cli", "mcp", "web"],
-      allowedExports: ["internal-pack"],
-      allowedActions: ["original-action"],
+      allowedSurfaces: ["api", "web"],
+      allowedExports: [],
+      allowedActions: ["updated-action"],
       metadata: { readerIcon: "policy", readerNavOrder: 10 }
     });
   });
@@ -2075,12 +2075,12 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("PostgresRegistryRepository", ()
       versionNumber: 1
     });
 
-    expect(restored?.asset.currentVersionId).toBe(restored?.versions.find((version) => version.versionNumber === 1)?.id);
+    expect(restored?.asset.currentVersionId).not.toBe(restored?.versions.find((version) => version.versionNumber === 1)?.id);
     expect(restored?.instructionObjects[0]?.body).toContain("Keep model context");
     expect(restored?.asset).toMatchObject({
       title: "Context Boundary Guardrail",
-      lifecycleState: "active",
-      sensitivity: "internal",
+      lifecycleState: "draft",
+      sensitivity: "restricted",
       metadata: {}
     });
 
@@ -2861,7 +2861,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("PostgresRegistryRepository", ()
     expect((await retrievalRepository.listRetrievalEvents({ tenantId }))[0]?.id).toBe(event.id);
   });
 
-  it("never returns chunks from a non-current asset version", async () => {
+  it("retains published chunks through draft edits and excludes the old version immediately after publication", async () => {
     const registryRepository = new PostgresRegistryRepository(pool);
     const retrievalRepository = new PostgresRetrievalRepository(pool);
     const tenantId = `tenant_retrieval_version_${Date.now()}`;
@@ -2892,12 +2892,29 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("PostgresRegistryRepository", ()
     });
 
     expect(versionTwo).not.toBeNull();
+    expect(versionTwo!.asset.publishedVersionId).toBe(versionOne.asset.currentVersionId);
+    expect(await retrievalRepository.indexAsset(versionTwo!)).toMatchObject({ chunksIndexed: 0 });
+    const retained = await retrievalRepository.search({ tenantId, query: oldToken });
+    expect(retained).toHaveLength(1);
+    expect(retained[0]?.asset.currentVersionId).toBe(versionOne.asset.currentVersionId);
+    expect(retained[0]?.citation.versionId).toBe(versionOne.asset.currentVersionId);
+    expect(await retrievalRepository.search({ tenantId, query: newToken })).toEqual([]);
+
+    const published = await registryRepository.publishAsset(stableId, { tenantId });
+    expect(published?.asset.publishedVersionId).toBe(published?.asset.currentVersionId);
+    expect(published?.asset.publishedVersionId).not.toBe(versionOne.asset.currentVersionId);
+    // The publication pointer changes before asynchronous indexing completes.
+    // Old chunks must be excluded during that gap and stale jobs must not restore them.
     expect(await retrievalRepository.search({ tenantId, query: oldToken })).toEqual([]);
+    expect(await retrievalRepository.search({ tenantId, query: newToken })).toEqual([]);
     await expect(retrievalRepository.indexAsset(versionOne)).rejects.toThrow("Refusing to index stale asset detail");
-    await retrievalRepository.indexAsset(versionTwo!);
+    await retrievalRepository.indexAsset(published!);
     expect(await retrievalRepository.search({ tenantId, query: oldToken })).toEqual([]);
-    expect((await retrievalRepository.search({ tenantId, query: newToken })).map((result) => result.asset.stableId))
-      .toContain(stableId);
+    const refreshed = await retrievalRepository.search({ tenantId, query: newToken });
+    expect(refreshed).toHaveLength(1);
+    expect(refreshed[0]?.asset.stableId).toBe(stableId);
+    expect(refreshed[0]?.asset.currentVersionId).toBe(published?.asset.currentVersionId);
+    expect(refreshed[0]?.citation.versionId).toBe(published?.asset.currentVersionId);
   });
 
   it("persists weighted ranking metadata for Postgres search results", async () => {

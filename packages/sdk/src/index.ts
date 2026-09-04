@@ -79,7 +79,9 @@ import {
   modelProviderConfigSchema,
   modelProviderHealthListResponseSchema,
   permissionGrantCreateInputSchema,
-  permissionGrantSchema,
+  permissionGrantListInputSchema,
+  permissionGrantListResponseSchema,
+  permissionGrantMutationResponseSchema,
   piiRedactionPolicyInputSchema,
   piiRedactionPolicySchema,
   retrievalRankingPolicyInputSchema,
@@ -178,8 +180,10 @@ import {
   type ModelProviderHealth,
   type OkfExportPackage,
   type OkfVersion,
-  type PermissionGrant,
   type PermissionGrantCreateInput,
+  type PermissionGrantListInput,
+  type PermissionGrantListResponse,
+  type PermissionGrantMutationResponse,
   type PiiRedactionPolicy,
   type PiiRedactionPolicyInput,
   type RetrievalRankingPolicy,
@@ -266,9 +270,28 @@ export class ForgetBaseClient {
     return this.request("/health", healthResponseSchema);
   }
 
-  async listAssets(): Promise<AssetRecord[]> {
-    const response = await this.request("/assets", assetListResponseSchema);
-    return response.assets;
+  async listAssetsPage(options: { limit?: number; cursor?: string; preview?: boolean } = {}) {
+    const params = new URLSearchParams();
+    if (options.limit !== undefined) params.set("limit", String(options.limit));
+    if (options.cursor) params.set("cursor", options.cursor);
+    if (options.preview) params.set("preview", "true");
+    return this.request(`/assets${params.size ? `?${params}` : ""}`, assetListResponseSchema);
+  }
+
+  async listAssets(options: { preview?: boolean } = {}): Promise<AssetRecord[]> {
+    const assets = new Map<string, AssetRecord>();
+    const seen = new Set<string>();
+    let cursor: string | undefined;
+    do {
+      const page = await this.listAssetsPage({ ...options, cursor });
+      for (const asset of page.assets) assets.set(asset.id, asset);
+      cursor = page.nextCursor ?? undefined;
+      if ((cursor && seen.has(cursor)) || (!cursor && page.complete === false)) {
+        throw new Error("Asset listing did not complete");
+      }
+      if (cursor) seen.add(cursor);
+    } while (cursor);
+    return [...assets.values()];
   }
 
   async listAssetsNeedingReview(input: AssetReviewQueueInput = {}): Promise<AssetReviewQueueResponse> {
@@ -285,9 +308,9 @@ export class ForgetBaseClient {
     return this.request(`/assets/review-queue?${params.toString()}`, assetReviewQueueResponseSchema);
   }
 
-  async getAsset(stableId: string): Promise<AssetDetail | null> {
+  async getAsset(stableId: string, options: { preview?: boolean } = {}): Promise<AssetDetail | null> {
     try {
-      return await this.request(`/assets/${encodeURIComponent(stableId)}`, assetDetailSchema);
+      return await this.request(`/assets/${encodeURIComponent(stableId)}${options.preview ? "?preview=true" : ""}`, assetDetailSchema);
     } catch (error) {
       if (error instanceof ForgetBaseHttpError && error.status === 404) {
         return null;
@@ -601,13 +624,33 @@ export class ForgetBaseClient {
     return response.events;
   }
 
-  async grantAssetPermission(input: PermissionGrantCreateInput): Promise<PermissionGrant> {
+  async grantAssetPermission(input: PermissionGrantCreateInput): Promise<PermissionGrantMutationResponse> {
     const parsed = permissionGrantCreateInputSchema.parse(input);
-    return this.request(`/assets/${encodeURIComponent(parsed.stableId)}/grants`, permissionGrantSchema, {
+    return this.request(`/assets/${encodeURIComponent(parsed.stableId)}/grants`, permissionGrantMutationResponseSchema, {
       method: "POST",
       headers: this.authHeaders({ "content-type": "application/json" }),
       body: JSON.stringify(parsed)
     });
+  }
+
+  async listAssetPermissionGrants(
+    stableId: string,
+    input: PermissionGrantListInput = {}
+  ): Promise<PermissionGrantListResponse> {
+    const parsed = permissionGrantListInputSchema.parse(input);
+    const params = new URLSearchParams({ limit: String(parsed.limit) });
+    if (parsed.cursor) {
+      params.set("cursor", parsed.cursor);
+    }
+    return this.request(`/assets/${encodeURIComponent(stableId)}/grants?${params.toString()}`, permissionGrantListResponseSchema);
+  }
+
+  async revokeAssetPermissionGrant(stableId: string, grantId: string): Promise<PermissionGrantMutationResponse> {
+    return this.request(
+      `/assets/${encodeURIComponent(stableId)}/grants/${encodeURIComponent(grantId)}`,
+      permissionGrantMutationResponseSchema,
+      { method: "DELETE" }
+    );
   }
 
   async search(input: SearchInput): Promise<SearchResponse> {

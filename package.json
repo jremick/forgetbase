@@ -27,6 +27,7 @@
     "github:public-beta:check": "tsx scripts/check-public-beta-github.ts",
     "public-beta:check": "tsx scripts/check-public-beta-ui.ts",
     "release-proof:collect": "tsx scripts/collect-public-beta-release-proof.ts",
+    "release:prepare": "node scripts/prepare-release.mjs",
     "release-proof:check": "tsx scripts/check-public-beta-release-proof.ts",
     "public-beta:proof-gates": "tsx scripts/run-public-beta-proof-gates.ts",
     "private-live:isolated-proof": "tsx scripts/run-private-live-isolated-proof.ts",

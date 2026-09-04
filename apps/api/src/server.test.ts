@@ -1067,10 +1067,10 @@ describe("API asset registry routes", () => {
     });
     const bootstrapBody = bootstrap.json();
     const apiKey = bootstrapBody.secret;
-    await server.inject({
+    const created = await server.inject({
       method: "POST",
       url: "/assets",
-      headers: { authorization: `Bearer ${apiKey}` },
+      headers: { authorization: `Bearer ${apiKey}`, "x-forgetbase-surface": "mcp" },
       payload: {
         stableId: "guardrail.mcp-only",
         type: "guardrail",
@@ -1085,6 +1085,9 @@ describe("API asset registry routes", () => {
         instruction: { instructionKind: "guardrail", body: "Only MCP may read this." }
       }
     });
+    expect(created.statusCode, created.body).toBe(201);
+    expect(created.json().asset.publishedVersionId).toBeTruthy();
+    expect(created.json().asset.publishedVersionId).toBe(created.json().asset.currentVersionId);
 
     const apiOnlyKeyResponse = await server.inject({
       method: "POST",
@@ -2960,6 +2963,14 @@ describe("API asset registry routes", () => {
     expect(updateResponse.json().instructionObjects[0].body).toContain("rollbackupdatedtoken");
     expect(updateResponse.json().humanDocuments[0].body).toContain("Original rollback-safe document");
 
+    const unpublishedSearch = await server.inject({
+      method: "GET", url: "/search?query=rollbackupdatedtoken", headers: { authorization: `Bearer ${adminKey}` }
+    });
+    expect(unpublishedSearch.json().results).toHaveLength(0);
+    expect((await server.inject({
+      method: "POST", url: "/assets/guardrail.rollback-test/publish", headers: { authorization: `Bearer ${adminKey}` }, payload: {}
+    })).statusCode).toBe(200);
+
     const updatedSearch = await server.inject({
       method: "GET",
       url: "/search?query=rollbackupdatedtoken",
@@ -3004,10 +3015,18 @@ describe("API asset registry routes", () => {
     });
 
     expect(restoreResponse.statusCode).toBe(200);
-    expect(restoreResponse.json().asset.currentVersionId).toBe(restoreResponse.json().versions.find(
+    expect(restoreResponse.json().asset.currentVersionId).not.toBe(restoreResponse.json().versions.find(
       (version: { versionNumber: number }) => version.versionNumber === 1
     ).id);
     expect(restoreResponse.json().instructionObjects[0].body).toContain("Original rollback-safe instruction");
+    expect(restoreResponse.json().asset.lifecycleState).toBe("draft");
+    const beforeRestorePublication = await server.inject({
+      method: "GET", url: "/search?query=rollbackupdatedtoken", headers: { authorization: `Bearer ${adminKey}` }
+    });
+    expect(uniqueStableIds(beforeRestorePublication.json().results)).toEqual(["guardrail.rollback-test"]);
+    expect((await server.inject({
+      method: "POST", url: "/assets/guardrail.rollback-test/publish", headers: { authorization: `Bearer ${adminKey}` }, payload: {}
+    })).statusCode).toBe(200);
 
     const restoredSearch = await server.inject({
       method: "GET",
@@ -3086,7 +3105,7 @@ describe("API asset registry routes", () => {
       url: "/exports/ai-package?package=demo-agent-pack"
     });
 
-    expect(draftFetch.statusCode).toBe(401);
+    expect(draftFetch.statusCode).toBe(404);
     expect(draftSearch.statusCode).toBe(200);
     expect(draftSearch.json().results).toHaveLength(0);
     expect(draftExport.statusCode).toBe(200);
@@ -3210,7 +3229,9 @@ describe("API asset registry routes", () => {
     expect(uniqueStableIds(publicSearch.json().results)).toEqual(["guardrail.public-search"]);
     expect(publicSearch.json().results[0].citation.stableId).toBe("guardrail.public-search");
     const publicTelemetryEvent = (await retrievalRepository.listRetrievalEvents())[0];
-    expect(publicTelemetryEvent?.deniedCount).toBeGreaterThan(0);
+    // Ineligible assets are excluded before ranking, so none become candidates
+    // for the final permission check or reveal a restricted-corpus hit count.
+    expect(publicTelemetryEvent?.deniedCount).toBe(0);
     expect(publicTelemetryEvent?.query).toBe(
       "PII redaction for [REDACTED_EMAIL] from [REDACTED_IP_ADDRESS] with code=[REDACTED_URL_SECRET] and token [REDACTED_API_KEY]"
     );
@@ -3381,6 +3402,8 @@ describe("API asset registry routes", () => {
   });
 
   it("runs deterministic managed query with permission-filtered citations", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-09-01T12:00:00.000Z"));
     const registryRepository = new InMemoryRegistryRepository();
     const authRepository = new InMemoryAuthRepository();
     const retrievalRepository = new InMemoryRetrievalRepository();
@@ -3482,7 +3505,7 @@ describe("API asset registry routes", () => {
     expect(uniqueStableIds(publicQuery.json().results)).toEqual(["playbook.managed-public"]);
     expect(publicQuery.json().citations[0].stableId).toBe("playbook.managed-public");
     expect(publicQuery.json().checks.grounded).toBe(true);
-    expect(publicQuery.json().checks.deniedCount).toBeGreaterThan(0);
+    expect(publicQuery.json().checks.deniedCount).toBe(0);
 
     const adminQuery = await server.inject({
       method: "POST",
@@ -3579,7 +3602,6 @@ describe("API asset registry routes", () => {
     expect(readerSummary.statusCode).toBe(403);
 
     try {
-      vi.useFakeTimers();
       vi.setSystemTime(new Date("2026-08-31T12:00:00.000Z"));
       await retrievalRepository.recordRetrievalEvent({
         surface: "api",
@@ -3596,7 +3618,7 @@ describe("API asset registry routes", () => {
         metadata: { queryKind: "managed-query-eval" }
       });
     } finally {
-      vi.useRealTimers();
+      vi.setSystemTime(new Date("2026-09-01T12:00:00.000Z"));
     }
 
     const dueToday = await server.inject({
@@ -5109,7 +5131,7 @@ describe("API asset registry routes", () => {
       });
       expect(providerResponse.json().generation.latencyMs).toEqual(expect.any(Number));
       expect(uniqueStableIds(providerResponse.json().results)).toEqual(["playbook.provider-public"]);
-      expect(providerResponse.json().checks.deniedCount).toBeGreaterThan(0);
+      expect(providerResponse.json().checks.deniedCount).toBe(0);
       expect(capturedRequests[0]).toMatchObject({
         provider: "openai",
         model: "gpt-test",
@@ -6022,6 +6044,14 @@ describe("API asset registry routes", () => {
 	        event.action === "asset.update" &&
 	        event.metadata.managedQueryCacheInvalidatedCount === 1
 	      )).toBe(true);
+
+          const publishedUpdate = await server.inject({
+            method: "POST",
+            url: "/assets/playbook.provider-cache/publish",
+            headers: { authorization: `Bearer ${adminKey}` },
+            payload: {}
+          });
+          expect(publishedUpdate.statusCode).toBe(200);
 
 	      const refreshed = await server.inject({
 	        method: "POST",

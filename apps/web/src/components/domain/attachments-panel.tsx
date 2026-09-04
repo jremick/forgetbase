@@ -95,6 +95,9 @@ export function attachmentSecurityPresentation(attachment: Attachment): {
 
 export function attachmentUploadErrorMessage(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
+  if (message.includes("publication_required")) {
+    return "Publish this version before adding or deleting attachments.";
+  }
   if (message.includes("attachment_content_rejected")) {
     return "The file extension, declared type, and file contents do not match.";
   }

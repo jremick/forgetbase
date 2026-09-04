@@ -1,3 +1,6 @@
+import { PostgresAssetChangeOutboxRepository, type AssetChangeOutboxRepository, type AssetChangeWork } from "@forgetbase/db";
+import { readReleaseIdentity } from "./release-identity.js";
+import { InvalidAssetCursorError, readAccessibleAssetPage, readAllAccessibleAssets } from "./asset-collections.js";
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { isAbsolute } from "node:path";
@@ -94,6 +97,7 @@ import {
   modelProviderHealthListResponseSchema,
   modelProviderSchema,
   permissionGrantCreateInputSchema,
+  permissionGrantListInputSchema,
   piiRedactionPolicyInputSchema,
   piiRedactionPolicySchema,
   retrievalEventSchema,
@@ -147,6 +151,8 @@ import {
   type ModelProviderConfig,
   type ModelProviderHealth,
   type PiiRedactionPolicy,
+  type PermissionGrant,
+  type PermissionGrantMutationResponse,
   type RetrievalEvent,
   type SearchInput,
   type SearchResult,
@@ -176,6 +182,7 @@ import {
   createPool,
   createEmbeddingProviderFromEnv,
   DuplicateAssetError,
+  AssetVersionConflictError,
   PostgresRegistryRepository,
   defaultManagedQueryCachePolicy,
 	  defaultManagedQueryPolicy,
@@ -396,6 +403,7 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
     ? undefined
     : createPool(databaseUrl);
   const registryRepository = options.registryRepository ?? (pool ? new PostgresRegistryRepository(pool) : undefined);
+  const assetChangeOutbox = pool ? new PostgresAssetChangeOutboxRepository(pool) : undefined;
   const attachmentRepository = options.attachmentRepository ?? (pool ? new PostgresAttachmentRepository(pool) : undefined);
   const authRepository = options.authRepository ?? (pool ? new PostgresAuthRepository(pool) : undefined);
   const retrievalRankingPolicyRepository = options.retrievalRankingPolicyRepository ??
@@ -674,8 +682,9 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
     });
   }
 
+  const releaseIdentity = readReleaseIdentity();
   server.get("/health", async () => {
-    return healthResponseSchema.parse(createHealthResponse("forgetbase-api"));
+    return { ...healthResponseSchema.parse(createHealthResponse("forgetbase-api")), ...(releaseIdentity ? { release: releaseIdentity } : {}) };
   });
 
   server.get("/ready", async (_request, reply) => {
@@ -705,12 +714,17 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
         await attachmentMalwareScanner.checkReady();
       }
 
+      const indexing = assetChangeOutbox ? await assetChangeOutbox.getHealth() : null;
+      if (indexing && (indexing.failed > 0 || (indexing.oldestPendingAgeMs ?? 0) > 15 * 60 * 1000)) {
+        return reply.code(503).send({ status: "not-ready", service: "forgetbase-api", checks: { database: "ok", migrations: "ok", indexing: "lagging" } });
+      }
       return {
         status: "ready",
         service: "forgetbase-api",
         checks: {
           database: pool || options.readinessCheck ? "ok" : "not-configured",
-          migrations: pool ? "ok" : "not-configured"
+          migrations: pool ? "ok" : "not-configured",
+          ...(indexing ? { indexing: indexing.pending || indexing.processing ? "processing" : "ok" } : {})
         }
       };
     } catch (error) {
@@ -2143,25 +2157,30 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
       return reply.code(503).send({ error: "registry_unavailable" });
     }
 
-    const query = request.query as { limit?: string };
-    const limit = query.limit ? Number.parseInt(query.limit, 10) : undefined;
+    const query = request.query as { limit?: string; cursor?: string; preview?: string };
+    const limit = query.limit === undefined ? 50 : Number(query.limit);
+    if (!Number.isInteger(limit) || limit < 1 || limit > 200 ||
+        (query.preview !== undefined && !["true", "false"].includes(query.preview))) {
+      return reply.code(400).send({ error: "invalid_asset_list" });
+    }
     const principal = await authenticateOptionalPrincipal(request, reply, authRepository, loginSessionIdleTimeoutSeconds);
-
-    if (principal === undefined) {
-      return;
+    if (principal === undefined) return;
+    const surface = readSurface(request, principal);
+    const preview = query.preview === "true";
+    if (preview && authRepository && (!principal || !roleCanWriteAssets(principal) || !principalHasScope(principal, "asset:read") || !principalHasScope(principal, "asset:write"))) {
+      return reply.code(403).send({ error: "access_denied" });
+    }
+    try {
+      const page = await readAccessibleAssetPage({
+        registryRepository, authRepository, principal, surface,
+        view: preview ? "current" : "published", limit, cursor: query.cursor
+      });
+      return assetListResponseSchema.parse(page);
+    } catch (error) {
+      if (error instanceof InvalidAssetCursorError) return reply.code(400).send({ error: "invalid_asset_cursor" });
+      throw error;
     }
 
-    const surface = readSurface(request, principal);
-
-    const assets = await registryRepository.listAssets({
-      tenantId: principal?.tenantId,
-      limit
-    });
-    const visibleAssets = authRepository
-      ? await filterReadableAssets(authRepository, principal, assets, surface)
-      : assets;
-
-    return assetListResponseSchema.parse({ assets: visibleAssets });
   });
 
   server.get("/assets/review-queue", async (request, reply) => {
@@ -2178,7 +2197,7 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
     if (
       authRepository &&
       principal &&
-      (!roleCanWriteAssets(principal) || !principalHasScope(principal, "asset:write"))
+      (!roleCanWriteAssets(principal) || !principalHasScope(principal, "asset:read") || !principalHasScope(principal, "asset:write"))
     ) {
       await recordDenied(authRepository, principal, principal.tenantId, "asset.review_queue", "asset", undefined, {});
       return reply.code(403).send({ error: "access_denied" });
@@ -2196,8 +2215,17 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
       return sendValidationError(reply, parsed.error.issues);
     }
 
-    const queue = await registryRepository.listAssetsNeedingReview(parsed.data);
-    return assetReviewQueueResponseSchema.parse(queue);
+    const asOf = parsed.data.asOf ?? new Date().toISOString().slice(0, 10);
+    const assets = await readAllAccessibleAssets({
+      registryRepository, authRepository, principal, surface: readSurface(request, principal), view: "current"
+    });
+    return assetReviewQueueResponseSchema.parse({
+      asOf, includeApproved: parsed.data.includeApproved,
+      assets: assets.filter((asset) => parsed.data.includeApproved || asset.lifecycleState !== "active" ||
+        asset.status !== "approved" || asset.reviewDueAt <= asOf)
+        .sort((a, b) => a.reviewDueAt.localeCompare(b.reviewDueAt) || a.stableId.localeCompare(b.stableId))
+        .slice(0, parsed.data.limit)
+    });
   });
 
   server.get("/assets/:stableId", async (request, reply) => {
@@ -2214,9 +2242,8 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
 
     const surface = readSurface(request, principal);
 
-    const detail = await registryRepository.getAssetByStableId(params.stableId, {
-      tenantId: principal?.tenantId
-    });
+    const detail = await getAssetReadView(request, reply, registryRepository, authRepository, principal, params.stableId);
+    if (detail === undefined) return;
 
     if (!detail) {
       return reply.code(404).send({ error: "asset_not_found" });
@@ -2269,9 +2296,8 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
     const principal = await authenticateOptionalPrincipal(request, reply, authRepository, loginSessionIdleTimeoutSeconds);
     if (principal === undefined) return;
 
-    const detail = await registryRepository.getAssetByStableId(params.stableId, {
-      tenantId: principal?.tenantId
-    });
+    const detail = await getAssetReadView(request, reply, registryRepository, authRepository, principal, params.stableId);
+    if (detail === undefined) return;
     if (!detail) return reply.code(404).send({ error: "asset_not_found" });
 
     const surface = readSurface(request, principal);
@@ -2317,6 +2343,8 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
       });
       return reply.code(403).send({ error: "access_denied" });
     }
+
+    if (!requirePublishedAttachmentTarget(detail, reply)) return;
 
     const metadata = attachmentUploadMetadataSchema.safeParse({
       filename: decodeAttachmentFilenameHeader(request.headers["x-forgetbase-attachment-filename-encoded"]),
@@ -2541,7 +2569,8 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
     const params = request.params as { stableId: string; attachmentId: string };
     const principal = await authenticateOptionalPrincipal(request, reply, authRepository, loginSessionIdleTimeoutSeconds);
     if (principal === undefined) return;
-    const detail = await registryRepository.getAssetByStableId(params.stableId, { tenantId: principal?.tenantId });
+    const detail = await getAssetReadView(request, reply, registryRepository, authRepository, principal, params.stableId);
+    if (detail === undefined) return;
     if (!detail) return reply.code(404).send({ error: "asset_not_found" });
 
     const surface = readSurface(request, principal);
@@ -2646,6 +2675,8 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
       });
       return reply.code(403).send({ error: "access_denied" });
     }
+
+    if (!requirePublishedAttachmentTarget(detail, reply)) return;
 
     const existing = await attachmentRepository.getAttachment(params.attachmentId, {
       tenantId: detail.asset.tenantId,
@@ -2818,30 +2849,23 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
       return sendValidationError(reply, parsed.error.issues);
     }
 
+    if (principal) {
+      const surface = readSurface(request, principal);
+      if (!principal.allowedSurfaces.includes(surface) || !parsed.data.allowedSurfaces.includes(surface)) {
+        return reply.code(403).send({ error: "access_denied" });
+      }
+    }
+
     try {
-      const detail = await registryRepository.createAsset(parsed.data);
-      if (retrievalRepository) {
-        await retrievalRepository.indexAsset(detail);
-      }
-      const managedQueryCacheInvalidatedCount = await invalidateManagedQueryCacheForAssetChange(
-        cacheRepository,
-        detail.asset.tenantId
-      );
-      if (authRepository && principal) {
-        await authRepository.recordAuditEvent({
-          tenantId: detail.asset.tenantId,
-          ...auditActor(principal),
-          action: "asset.create",
-          targetType: "asset",
-          targetId: detail.asset.id,
-          outcome: "success",
-          metadata: {
-            stableId: detail.asset.stableId,
-            managedQueryCacheInvalidatedCount
-          }
-        });
-      }
-      return reply.code(201).send(assetDetailSchema.parse(detail));
+      const detail = await registryRepository.createAsset(parsed.data, principal && authRepository ? {
+        creator: principal,
+        grantCreatorPermissions: (grants) => authRepository.createPermissionGrants(grants)
+      } : undefined);
+      const processing = await finishAssetChange({
+        detail, registryRepository, retrievalRepository, cacheRepository, authRepository, principal, assetChangeOutbox,
+        action: "asset.create", reply
+      });
+      return reply.code(201).send(assetDetailSchema.parse({ ...detail, processing }));
     } catch (error) {
       if (error instanceof DuplicateAssetError) {
         return reply.code(409).send({ error: "asset_already_exists", message: error.message });
@@ -2862,15 +2886,6 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
       return;
     }
 
-    if (
-      authRepository &&
-      principal &&
-      (!roleCanWriteAssets(principal) || !principalHasScope(principal, "asset:write"))
-    ) {
-      await recordDenied(authRepository, principal, principal.tenantId, "asset.update", "asset", undefined, {});
-      return reply.code(403).send({ error: "access_denied" });
-    }
-
     const params = request.params as { stableId: string };
     const parsed = assetUpdateInputSchema.safeParse({
       ...(request.body as Record<string, unknown>),
@@ -2881,36 +2896,25 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
       return sendValidationError(reply, parsed.error.issues);
     }
 
-    const detail = await registryRepository.updateAsset(params.stableId, parsed.data);
+    if (!(await authorizeAssetCommand(
+      request, reply, registryRepository, authRepository, principal,
+      params.stableId, parsed.data.tenantId, "asset.update"
+    ))) {
+      return;
+    }
+
+    const detail = await runVersionedAssetMutation(reply, () => registryRepository.updateAsset(params.stableId, parsed.data));
+    if (detail === undefined) return;
 
     if (!detail) {
       return reply.code(404).send({ error: "asset_not_found" });
     }
 
-    if (retrievalRepository) {
-      await retrievalRepository.indexAsset(detail);
-    }
-    const managedQueryCacheInvalidatedCount = await invalidateManagedQueryCacheForAssetChange(
-      cacheRepository,
-      detail.asset.tenantId
-    );
-    if (authRepository && principal) {
-      await authRepository.recordAuditEvent({
-        tenantId: detail.asset.tenantId,
-        ...auditActor(principal),
-        action: "asset.update",
-        targetType: "asset",
-        targetId: detail.asset.id,
-        outcome: "success",
-        metadata: {
-          stableId: detail.asset.stableId,
-          currentVersionId: detail.asset.currentVersionId,
-          managedQueryCacheInvalidatedCount
-        }
-      });
-    }
-
-    return assetDetailSchema.parse(detail);
+    const processing = await finishAssetChange({
+      detail, registryRepository, retrievalRepository, cacheRepository, authRepository, principal, assetChangeOutbox,
+      action: "asset.update", reply
+    });
+    return assetDetailSchema.parse({ ...detail, processing });
   });
 
   server.post("/assets/:stableId/review", async (request, reply) => {
@@ -2924,15 +2928,6 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
       return;
     }
 
-    if (
-      authRepository &&
-      principal &&
-      (!roleCanWriteAssets(principal) || !principalHasScope(principal, "asset:write"))
-    ) {
-      await recordDenied(authRepository, principal, principal.tenantId, "asset.review", "asset", undefined, {});
-      return reply.code(403).send({ error: "access_denied" });
-    }
-
     const params = request.params as { stableId: string };
     const parsed = assetReviewInputSchema.safeParse({
       ...(request.body as Record<string, unknown>),
@@ -2943,40 +2938,25 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
       return sendValidationError(reply, parsed.error.issues);
     }
 
-    const detail = await registryRepository.reviewAsset(params.stableId, parsed.data);
+    if (!(await authorizeAssetCommand(
+      request, reply, registryRepository, authRepository, principal,
+      params.stableId, parsed.data.tenantId, "asset.review"
+    ))) {
+      return;
+    }
+
+    const detail = await runVersionedAssetMutation(reply, () => registryRepository.reviewAsset(params.stableId, parsed.data));
+    if (detail === undefined) return;
 
     if (!detail) {
       return reply.code(404).send({ error: "asset_not_found" });
     }
 
-    if (retrievalRepository) {
-      await retrievalRepository.indexAsset(detail);
-    }
-    const managedQueryCacheInvalidatedCount = await invalidateManagedQueryCacheForAssetChange(
-      cacheRepository,
-      detail.asset.tenantId
-    );
-    if (authRepository && principal) {
-      await authRepository.recordAuditEvent({
-        tenantId: detail.asset.tenantId,
-        ...auditActor(principal),
-        action: "asset.review",
-        targetType: "asset",
-        targetId: detail.asset.id,
-        outcome: "success",
-        metadata: {
-          stableId: detail.asset.stableId,
-          currentVersionId: detail.asset.currentVersionId,
-          status: detail.asset.status,
-          reviewDueAt: detail.asset.reviewDueAt,
-          sourceRef: detail.asset.sourceRef,
-          changeNote: parsed.data.changeNote ?? null,
-          managedQueryCacheInvalidatedCount
-        }
-      });
-    }
-
-    return assetDetailSchema.parse(detail);
+    const processing = await finishAssetChange({
+      detail, registryRepository, retrievalRepository, cacheRepository, authRepository, principal, assetChangeOutbox,
+      action: "asset.review", reply
+    });
+    return assetDetailSchema.parse({ ...detail, processing });
   });
 
   server.post("/assets/:stableId/publish", async (request, reply) => {
@@ -2990,15 +2970,6 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
       return;
     }
 
-    if (
-      authRepository &&
-      principal &&
-      (!roleCanWriteAssets(principal) || !principalHasScope(principal, "asset:write"))
-    ) {
-      await recordDenied(authRepository, principal, principal.tenantId, "asset.publish", "asset", undefined, {});
-      return reply.code(403).send({ error: "access_denied" });
-    }
-
     const params = request.params as { stableId: string };
     const parsed = assetPublishInputSchema.safeParse({
       ...(request.body as Record<string, unknown>),
@@ -3009,40 +2980,25 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
       return sendValidationError(reply, parsed.error.issues);
     }
 
-    const detail = await registryRepository.publishAsset(params.stableId, parsed.data);
+    if (!(await authorizeAssetCommand(
+      request, reply, registryRepository, authRepository, principal,
+      params.stableId, parsed.data.tenantId, "asset.publish"
+    ))) {
+      return;
+    }
+
+    const detail = await runVersionedAssetMutation(reply, () => registryRepository.publishAsset(params.stableId, parsed.data));
+    if (detail === undefined) return;
 
     if (!detail) {
       return reply.code(404).send({ error: "asset_not_found" });
     }
 
-    if (retrievalRepository) {
-      await retrievalRepository.indexAsset(detail);
-    }
-    const managedQueryCacheInvalidatedCount = await invalidateManagedQueryCacheForAssetChange(
-      cacheRepository,
-      detail.asset.tenantId
-    );
-    if (authRepository && principal) {
-      await authRepository.recordAuditEvent({
-        tenantId: detail.asset.tenantId,
-        ...auditActor(principal),
-        action: "asset.publish",
-        targetType: "asset",
-        targetId: detail.asset.id,
-        outcome: "success",
-        metadata: {
-          stableId: detail.asset.stableId,
-          currentVersionId: detail.asset.currentVersionId,
-          lifecycleState: detail.asset.lifecycleState,
-          status: detail.asset.status,
-          reviewDueAt: detail.asset.reviewDueAt,
-          changeNote: parsed.data.changeNote ?? null,
-          managedQueryCacheInvalidatedCount
-        }
-      });
-    }
-
-    return assetDetailSchema.parse(detail);
+    const processing = await finishAssetChange({
+      detail, registryRepository, retrievalRepository, cacheRepository, authRepository, principal, assetChangeOutbox,
+      action: "asset.publish", reply
+    });
+    return assetDetailSchema.parse({ ...detail, processing });
   });
 
   server.post("/assets/:stableId/restore", async (request, reply) => {
@@ -3056,15 +3012,6 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
       return;
     }
 
-    if (
-      authRepository &&
-      principal &&
-      (!roleCanWriteAssets(principal) || !principalHasScope(principal, "asset:write"))
-    ) {
-      await recordDenied(authRepository, principal, principal.tenantId, "asset.restore", "asset", undefined, {});
-      return reply.code(403).send({ error: "access_denied" });
-    }
-
     const params = request.params as { stableId: string };
     const parsed = assetRestoreInputSchema.safeParse({
       ...(request.body as Record<string, unknown>),
@@ -3075,43 +3022,30 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
       return sendValidationError(reply, parsed.error.issues);
     }
 
-    const detail = await registryRepository.restoreAssetVersion(params.stableId, parsed.data);
+    if (!(await authorizeAssetCommand(
+      request, reply, registryRepository, authRepository, principal,
+      params.stableId, parsed.data.tenantId, "asset.restore"
+    ))) {
+      return;
+    }
+
+    const detail = await runVersionedAssetMutation(reply, () => registryRepository.restoreAssetVersion(params.stableId, parsed.data));
+    if (detail === undefined) return;
 
     if (!detail) {
       return reply.code(404).send({ error: "asset_or_version_not_found" });
     }
 
-    if (retrievalRepository) {
-      await retrievalRepository.indexAsset(detail);
-    }
-    const managedQueryCacheInvalidatedCount = await invalidateManagedQueryCacheForAssetChange(
-      cacheRepository,
-      detail.asset.tenantId
-    );
-    if (authRepository && principal) {
-      await authRepository.recordAuditEvent({
-        tenantId: detail.asset.tenantId,
-        ...auditActor(principal),
-        action: "asset.restore",
-        targetType: "asset",
-        targetId: detail.asset.id,
-        outcome: "success",
-        metadata: {
-          stableId: detail.asset.stableId,
-          currentVersionId: detail.asset.currentVersionId,
-          requestedVersionId: parsed.data.versionId ?? null,
-          requestedVersionNumber: parsed.data.versionNumber ?? null,
-          managedQueryCacheInvalidatedCount
-        }
-      });
-    }
-
-    return assetDetailSchema.parse(detail);
+    const processing = await finishAssetChange({
+      detail, registryRepository, retrievalRepository, cacheRepository, authRepository, principal, assetChangeOutbox,
+      action: "asset.restore", reply
+    });
+    return assetDetailSchema.parse({ ...detail, processing });
   });
 
   server.post("/assets/:stableId/grants", async (request, reply) => {
-    if (!authRepository) {
-      return reply.code(503).send({ error: "auth_unavailable" });
+    if (!authRepository || !registryRepository) {
+      return reply.code(503).send({ error: !authRepository ? "auth_unavailable" : "registry_unavailable" });
     }
 
     const principal = await requirePermissionAdminPrincipal(request, reply, authRepository, loginSessionIdleTimeoutSeconds);
@@ -3132,24 +3066,68 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
       return sendValidationError(reply, parsed.error.issues);
     }
 
+    const asset = await requirePermissionTarget(request, reply, registryRepository, authRepository, principal, params.stableId);
+    if (!asset) {
+      return;
+    }
     const grant = await authRepository.createPermissionGrant(parsed.data);
-    await authRepository.recordAuditEvent({
-      tenantId: grant.tenantId,
-      ...auditActor(principal),
-      action: "permission.grant",
-      targetType: "asset",
-      targetId: grant.assetId,
-      outcome: "success",
-      metadata: {
-        stableId: grant.stableId,
-        principalType: grant.principalType,
-        principalId: grant.principalId,
-        permissionAction: grant.action,
-        surfaces: grant.surfaces
-      }
+    const result = await finishPermissionGrantChange({
+      request, authRepository, cacheRepository, principal, grant, action: "permission.grant"
     });
+    return reply.code(201).send(result);
+  });
 
-    return reply.code(201).send(grant);
+  server.get("/assets/:stableId/grants", async (request, reply) => {
+    if (!authRepository || !registryRepository) {
+      return reply.code(503).send({ error: !authRepository ? "auth_unavailable" : "registry_unavailable" });
+    }
+    const principal = await requirePermissionAdminPrincipal(request, reply, authRepository, loginSessionIdleTimeoutSeconds);
+    if (!principal) {
+      return;
+    }
+    const params = request.params as { stableId: string };
+    const query = request.query as { limit?: string; cursor?: string };
+    const parsed = permissionGrantListInputSchema.safeParse({
+      limit: query.limit === undefined ? undefined : Number(query.limit),
+      cursor: query.cursor
+    });
+    if (!parsed.success) {
+      return sendValidationError(reply, parsed.error.issues);
+    }
+    if (!(await requirePermissionTarget(request, reply, registryRepository, authRepository, principal, params.stableId))) {
+      return;
+    }
+    return authRepository.listPermissionGrants({
+      ...parsed.data,
+      tenantId: principal.tenantId,
+      stableId: params.stableId
+    });
+  });
+
+  server.delete("/assets/:stableId/grants/:grantId", async (request, reply) => {
+    if (!authRepository || !registryRepository) {
+      return reply.code(503).send({ error: !authRepository ? "auth_unavailable" : "registry_unavailable" });
+    }
+    const principal = await requirePermissionAdminPrincipal(request, reply, authRepository, loginSessionIdleTimeoutSeconds);
+    if (!principal) {
+      return;
+    }
+    const params = request.params as { stableId: string; grantId: string };
+    if (!(await requirePermissionTarget(request, reply, registryRepository, authRepository, principal, params.stableId))) {
+      return;
+    }
+    const grant = await authRepository.revokePermissionGrant({
+      tenantId: principal.tenantId,
+      stableId: params.stableId,
+      grantId: params.grantId
+    });
+    if (!grant) {
+      return reply.code(404).send({ error: "permission_grant_not_found" });
+    }
+    const result = await finishPermissionGrantChange({
+      request, authRepository, cacheRepository, principal, grant, action: "permission.revoke"
+    });
+    return reply.code(200).send(result);
   });
 
   server.get("/audit/events", async (request, reply) => {
@@ -3204,6 +3182,7 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
     }
 
     const { allowedResults, telemetryEventId } = await runPermissionedSearch({
+      registryRepository,
       retrievalRepository,
       authRepository,
       piiRedactionPolicyRepository,
@@ -3260,6 +3239,7 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
     }
 
     const { allowedResults, deniedCount, telemetryEventId } = await runPermissionedSearch({
+      registryRepository,
       retrievalRepository,
       authRepository,
       piiRedactionPolicyRepository,
@@ -3551,6 +3531,7 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
 
     for (const evalCase of parsed.data.cases) {
       const { allowedResults, deniedCount, telemetryEventId } = await runPermissionedSearch({
+      registryRepository,
         retrievalRepository,
         authRepository,
         piiRedactionPolicyRepository,
@@ -4391,9 +4372,12 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
       return reply.code(503).send({ error: "registry_unavailable" });
     }
 
-    const query = request.query as { package?: string; limit?: string; format?: string; okfVersion?: string };
+    const query = request.query as { package?: string; limit?: string; cursor?: string; format?: string; okfVersion?: string };
     const packageName = query.package || "demo-agent-pack";
-    const limit = query.limit ? Number.parseInt(query.limit, 10) : 200;
+    const limit = query.limit === undefined ? 10000 : Number(query.limit);
+    if (!Number.isInteger(limit) || limit < 1 || limit > 10000) {
+      return reply.code(400).send({ error: "invalid_export_limit" });
+    }
     const formatResult = aiExportFormatSchema.safeParse(query.format ?? "json");
 
     if (!formatResult.success) {
@@ -4415,12 +4399,36 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
       return;
     }
 
-    const assets = await registryRepository.listAssets({
-      tenantId: principal?.tenantId,
-      limit
-    });
+    const contentRevision = await registryRepository.getContentRevision(principal?.tenantId);
+    let assetCursor: string | undefined;
+    if (query.cursor) {
+      try {
+        if (query.cursor.length > 8192) throw new Error("Invalid export cursor");
+        const continuation = JSON.parse(Buffer.from(query.cursor, "base64url").toString("utf8"));
+        if (continuation.version !== 1 || typeof continuation.revision !== "string" || typeof continuation.cursor !== "string") {
+          throw new Error("Invalid export cursor");
+        }
+        if (continuation.revision !== contentRevision) {
+          return reply.code(409).send({ error: "export_changed_retry", message: "Content changed between export pages. Restart the export." });
+        }
+        assetCursor = continuation.cursor;
+      } catch {
+        return reply.code(400).send({ error: "invalid_export_cursor" });
+      }
+    }
+    let page;
+    try {
+      page = await readAccessibleAssetPage({
+        registryRepository, authRepository, principal, surface, action: "export",
+        packageName, view: "published", limit, cursor: assetCursor
+      });
+    } catch (error) {
+      if (error instanceof InvalidAssetCursorError) return reply.code(400).send({ error: "invalid_asset_cursor" });
+      throw error;
+    }
+    const assets = page.assets;
     const exportAssets = [];
-    let deniedCount = 0;
+    let deniedCount = page.deniedCount;
 
     for (const asset of assets) {
       if (!asset.allowedExports.includes(packageName)) {
@@ -4428,7 +4436,7 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
       }
 
       const detail = await registryRepository.getAssetByStableId(asset.stableId, {
-        tenantId: asset.tenantId
+        tenantId: asset.tenantId, view: "published"
       });
 
       if (!detail) {
@@ -4447,12 +4455,17 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
       exportAssets.push(toExportPackageAsset(detail));
     }
 
+    if (contentRevision !== await registryRepository.getContentRevision(principal?.tenantId)) {
+      return reply.code(409).send({ error: "export_changed_retry", message: "Content changed during export. Retry the export." });
+    }
     const exportPackage = aiExportPackageSchema.parse({
       packageName,
       generatedAt: new Date().toISOString(),
       tenantId: principal?.tenantId ?? "tenant_demo",
       assetCount: exportAssets.length,
       deniedCount,
+      complete: page.complete,
+      nextCursor: page.nextCursor ? Buffer.from(JSON.stringify({ version: 1, revision: contentRevision, cursor: page.nextCursor })).toString("base64url") : null,
       assets: exportAssets
     });
     const okfPackage = format === "okf"
@@ -5011,6 +5024,183 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
   return server;
 }
 
+function requirePublishedAttachmentTarget(detail: AssetDetail, reply: FastifyReply): boolean {
+  if (!detail.asset.publishedVersionId || detail.asset.currentVersionId !== detail.asset.publishedVersionId ||
+      detail.asset.lifecycleState !== "active" || detail.asset.status !== "approved") {
+    reply.code(409).send({
+      error: "publication_required",
+      message: "Publish the current page before adding or deleting attachments. Attachments belong to the published page."
+    });
+    return false;
+  }
+  return true;
+}
+
+async function authorizeAssetCommand(
+  request: FastifyRequest,
+  reply: FastifyReply,
+  registryRepository: RegistryRepository,
+  authRepository: AuthRepository | undefined,
+  principal: AuthPrincipal | null,
+  stableId: string,
+  tenantId: string,
+  command: string
+): Promise<boolean> {
+  const current = await registryRepository.getAssetByStableId(stableId, { tenantId });
+  if (!current) {
+    reply.code(404).send({ error: "asset_not_found" });
+    return false;
+  }
+  if (!authRepository) {
+    return true;
+  }
+  const surface = readSurface(request, principal);
+  // These commands return full content. A write grant alone must not disclose it.
+  const allowed = principal && roleCanWriteAssets(principal) &&
+    principalHasScope(principal, "asset:read") && principalHasScope(principal, "asset:write") &&
+    await authRepository.canAccessAsset({ principal, asset: current.asset, action: "read", surface }) &&
+    await authRepository.canAccessAsset({ principal, asset: current.asset, action: "write", surface });
+  if (!allowed) {
+    await recordDenied(authRepository, principal, tenantId, command, "asset", current.asset.id, { stableId, surface });
+    reply.code(403).send({ error: "access_denied" });
+    return false;
+  }
+  return true;
+}
+
+async function finishPermissionGrantChange(input: {
+  request: FastifyRequest;
+  authRepository: AuthRepository;
+  cacheRepository: ManagedQueryCacheRepository | undefined;
+  principal: AuthPrincipal;
+  grant: PermissionGrant;
+  action: "permission.grant" | "permission.revoke";
+}): Promise<PermissionGrantMutationResponse> {
+  const pendingActions: Array<"cache-invalidation" | "audit-recording"> = [];
+  let managedQueryCacheInvalidatedCount: number | null = null;
+  try {
+    managedQueryCacheInvalidatedCount = await invalidateManagedQueryCacheForAssetChange(input.cacheRepository, input.grant.tenantId);
+  } catch {
+    pendingActions.push("cache-invalidation");
+  }
+  try {
+    await input.authRepository.recordAuditEvent({
+      tenantId: input.grant.tenantId,
+      ...auditActor(input.principal),
+      action: input.action,
+      targetType: "asset",
+      targetId: input.grant.assetId,
+      outcome: "success",
+      metadata: {
+        stableId: input.grant.stableId,
+        grantId: input.grant.id,
+        principalType: input.grant.principalType,
+        principalId: input.grant.principalId,
+        permissionAction: input.grant.action,
+        surfaces: input.grant.surfaces,
+        managedQueryCacheInvalidatedCount,
+        reconciliationPending: [...pendingActions]
+      }
+    });
+  } catch {
+    pendingActions.push("audit-recording");
+  }
+  if (pendingActions.length > 0) {
+    // The canonical grant already committed and all subsequent access checks read it.
+    // Report follow-up failures separately so callers do not mistake this for a failed write.
+    input.request.log.error({ tenantId: input.grant.tenantId, grantId: input.grant.id, action: input.action, pendingActions },
+      "Permission change committed; operator reconciliation required");
+  }
+  return {
+    ...input.grant,
+    reconciliation: { status: pendingActions.length > 0 ? "pending" : "complete", pendingActions }
+  };
+}
+
+async function requirePermissionTarget(
+  request: FastifyRequest,
+  reply: FastifyReply,
+  registryRepository: RegistryRepository,
+  authRepository: AuthRepository,
+  principal: AuthPrincipal,
+  stableId: string
+): Promise<AssetDetail | null> {
+  const detail = await registryRepository.getAssetByStableId(stableId, { tenantId: principal.tenantId });
+  if (!detail) {
+    reply.code(404).send({ error: "asset_not_found" });
+    return null;
+  }
+  const surface = readSurface(request, principal);
+  // Permission administrators still obey both the key and asset surface bindings.
+  if (!principal.allowedSurfaces.includes(surface) || !detail.asset.allowedSurfaces.includes(surface)) {
+    await recordDenied(authRepository, principal, principal.tenantId, "permission.manage", "asset", detail.asset.id, { stableId, surface });
+    reply.code(403).send({ error: "access_denied" });
+    return null;
+  }
+  return detail;
+}
+
+async function runVersionedAssetMutation(
+  reply: FastifyReply,
+  mutate: () => Promise<AssetDetail | null>
+): Promise<AssetDetail | null | undefined> {
+  try {
+    return await mutate();
+  } catch (error) {
+    if (!(error instanceof AssetVersionConflictError)) throw error;
+    reply.code(409).send({
+      error: "asset_version_conflict",
+      message: error.message,
+      expectedVersionId: error.expectedVersionId,
+      currentVersionId: error.currentVersionId
+    });
+    return undefined;
+  }
+}
+
+async function canPreviewAsset(
+  authRepository: AuthRepository | undefined,
+  principal: AuthPrincipal | null,
+  detail: AssetDetail,
+  surface: Surface
+): Promise<boolean> {
+  return Boolean(authRepository && principal && roleCanWriteAssets(principal) &&
+    principalHasScope(principal, "asset:read") && principalHasScope(principal, "asset:write") &&
+    await authRepository.canAccessAsset({ principal, asset: detail.asset, action: "read", surface }) &&
+    await authRepository.canAccessAsset({ principal, asset: detail.asset, action: "write", surface }));
+}
+
+async function getAssetReadView(
+  request: FastifyRequest,
+  reply: FastifyReply,
+  registryRepository: RegistryRepository,
+  authRepository: AuthRepository | undefined,
+  principal: AuthPrincipal | null,
+  stableId: string
+): Promise<AssetDetail | null | undefined> {
+  const query = request.query as { preview?: string };
+  if (query.preview !== undefined && query.preview !== "true" && query.preview !== "false") {
+    reply.code(400).send({ error: "invalid_preview" });
+    return undefined;
+  }
+  const preview = query.preview === "true";
+  const detail = await registryRepository.getAssetByStableId(stableId, {
+    tenantId: principal?.tenantId,
+    view: preview ? "current" : "published"
+  });
+  if (!detail || !preview) return detail;
+  const surface = readSurface(request, principal);
+  if (!await canPreviewAsset(authRepository, principal, detail, surface)) {
+    if (authRepository) await recordDenied(authRepository, principal, detail.asset.tenantId, "asset.preview", "asset", detail.asset.id, {
+      stableId,
+      surface
+    });
+    reply.code(principal ? 403 : 401).send({ error: "access_denied" });
+    return undefined;
+  }
+  return detail;
+}
+
 async function sendAssetVersionSnapshot(
   request: FastifyRequest,
   reply: FastifyReply,
@@ -5035,31 +5225,22 @@ async function sendAssetVersionSnapshot(
     return sendValidationError(reply, parsed.error.issues);
   }
 
-  const snapshot = await registryRepository.getAssetVersionSnapshot(stableId, parsed.data);
-
-  if (!snapshot) {
+  const current = await registryRepository.getAssetByStableId(stableId, { tenantId: principal?.tenantId, view: "current" });
+  if (!current) {
     return reply.code(404).send({ error: "asset_or_version_not_found" });
   }
-
-  if (authRepository) {
-    const surface = readSurface(request, principal);
-    const allowed = await authRepository.canAccessAsset({
-      principal,
-      asset: snapshot.asset,
-      action: "read",
+  const surface = readSurface(request, principal);
+  if (!await canPreviewAsset(authRepository, principal, current, surface)) {
+    if (authRepository) await recordDenied(authRepository, principal, current.asset.tenantId, "asset.version.read", "asset", current.asset.id, {
+      stableId,
+      ...versionSelector,
       surface
     });
-
-    if (!allowed) {
-      await recordDenied(authRepository, principal, snapshot.asset.tenantId, "asset.version.read", "asset", snapshot.asset.id, {
-        stableId: snapshot.asset.stableId,
-        versionId: snapshot.version.id,
-        versionNumber: snapshot.version.versionNumber,
-        surface
-      });
-      return reply.code(403).send({ error: "access_denied" });
-    }
+    return reply.code(principal ? 403 : 401).send({ error: "access_denied" });
   }
+
+  const snapshot = await registryRepository.getAssetVersionSnapshot(stableId, parsed.data);
+  if (!snapshot) return reply.code(404).send({ error: "asset_or_version_not_found" });
 
   return assetVersionSnapshotSchema.parse(snapshot);
 }
@@ -5071,25 +5252,12 @@ async function canExportAsset(
   packageName: string,
   surface: Surface
 ): Promise<boolean> {
-  if (
-    isPublishedAsset(detail) &&
-    detail.asset.sensitivity === "public-demo" &&
-    detail.asset.allowedSurfaces.includes(surface) &&
-    detail.asset.allowedExports.includes(packageName)
-  ) {
-    return true;
-  }
-
-  return authRepository.canAccessAsset({
+  return detail.asset.allowedExports.includes(packageName) && authRepository.canAccessAsset({
     principal,
     asset: detail.asset,
     action: "export",
     surface
   });
-}
-
-function isPublishedAsset(detail: AssetDetail): boolean {
-  return detail.asset.lifecycleState === "active" && detail.asset.status === "approved";
 }
 
 function toExportPackageAsset(detail: AssetDetail) {
@@ -5153,23 +5321,6 @@ function toExportPackageAsset(detail: AssetDetail) {
   };
 }
 
-async function filterReadableAssets(
-  authRepository: AuthRepository,
-  principal: AuthPrincipal | null,
-  assets: Awaited<ReturnType<RegistryRepository["listAssets"]>>,
-  surface: Surface
-) {
-  const visible = [];
-
-  for (const asset of assets) {
-    if (await authRepository.canAccessAsset({ principal, asset, action: "read", surface })) {
-      visible.push(asset);
-    }
-  }
-
-  return visible;
-}
-
 async function filterSearchResults(
   authRepository: AuthRepository,
   principal: AuthPrincipal | null,
@@ -5191,6 +5342,7 @@ async function filterSearchResults(
 }
 
 async function runPermissionedSearch(input: {
+  registryRepository?: RegistryRepository;
   retrievalRepository: RetrievalRepository;
   authRepository: AuthRepository | undefined;
   piiRedactionPolicyRepository: PiiRedactionPolicyRepository | undefined;
@@ -5200,10 +5352,32 @@ async function runPermissionedSearch(input: {
   queryKind: "search" | "managed-query" | "managed-query-eval";
 }) {
   const startedAt = Date.now();
-  const candidates = await input.retrievalRepository.search(input.input);
-  const { allowedResults, deniedCount } = input.authRepository
-    ? await filterSearchResults(input.authRepository, input.principal, candidates, input.surface)
-    : { allowedResults: candidates, deniedCount: 0 };
+  const readableAssets = input.registryRepository
+    ? await readAllAccessibleAssets({
+        registryRepository: input.registryRepository, authRepository: input.authRepository,
+        principal: input.principal, surface: input.surface, view: "published"
+      })
+    : undefined;
+  const candidates = await input.retrievalRepository.search(input.input, {
+    eligibleAssetIds: readableAssets?.map((asset) => asset.id)
+  });
+  const currentReadableAssets = input.registryRepository
+    ? await readAllAccessibleAssets({ registryRepository: input.registryRepository, authRepository: input.authRepository,
+        principal: input.principal, surface: input.surface, view: "published" })
+    : readableAssets;
+  const readableById = currentReadableAssets ? new Map(currentReadableAssets.map((asset) => [asset.id, asset])) : undefined;
+  // Replace index metadata with the authoritative published projection. A stale
+  // version may never become context while an indexing job is outstanding.
+  const currentCandidates = readableById ? candidates.flatMap((result) => {
+    const asset = readableById.get(result.asset.id);
+    return asset && result.citation.versionId === asset.currentVersionId ? [{ ...result, asset }] : [];
+  }) : candidates;
+  const { allowedResults, deniedCount: permissionDeniedCount } = input.authRepository
+    ? await filterSearchResults(input.authRepository, input.principal, currentCandidates, input.surface)
+    : { allowedResults: currentCandidates, deniedCount: 0 };
+  // Count only retrieved candidates rejected at the final visibility check.
+  // Pre-filtered restricted inventory is never scored or disclosed as hit counts.
+  const deniedCount = candidates.length - currentCandidates.length + permissionDeniedCount;
   const tenantId = input.principal?.tenantId ?? input.input.tenantId ?? "tenant_demo";
   const piiRedactionPolicy = await readPiiRedactionPolicy(input.piiRedactionPolicyRepository, tenantId);
   const redactedQuery = redactText(input.input.query, piiRedactionPolicy);
@@ -6224,6 +6398,77 @@ async function readManagedQueryCachePolicy(
   } catch {
     return null;
   }
+}
+
+/** Canonical changes have committed here. Infrastructure follow-ups must never
+ * turn that successful save into a false failure. The database outbox owns retry.
+ */
+async function finishAssetChange(input: {
+  detail: AssetDetail;
+  registryRepository: RegistryRepository;
+  retrievalRepository?: RetrievalRepository;
+  cacheRepository?: ManagedQueryCacheRepository;
+  authRepository?: AuthRepository;
+  principal: AuthPrincipal | null;
+  action: string;
+  reply: FastifyReply;
+  assetChangeOutbox?: AssetChangeOutboxRepository;
+}) {
+  let work: AssetChangeWork | undefined;
+  if (input.assetChangeOutbox) {
+    try {
+      [work] = await input.assetChangeOutbox.claim({ tenantId: input.detail.asset.tenantId, assetId: input.detail.asset.id, limit: 1 });
+    } catch { /* The committed job remains durable for the worker. */ }
+  }
+  const workerOwnsReconciliation = Boolean(input.assetChangeOutbox && !work);
+  let index: "ready" | "pending" | "unavailable" = workerOwnsReconciliation ? "pending" : input.retrievalRepository ? "ready" : "unavailable";
+  let reconciliation: "complete" | "pending" = workerOwnsReconciliation ? "pending" : "complete";
+  let managedQueryCacheInvalidatedCount = 0;
+  if (input.retrievalRepository && !workerOwnsReconciliation) {
+    try {
+      const published = await input.registryRepository.getAssetByStableId(input.detail.asset.stableId, {
+        tenantId: input.detail.asset.tenantId, view: "published"
+      });
+      if (published) await input.retrievalRepository.indexAsset(published, { assetChangeWork: work });
+      else {
+        const cleared = await input.retrievalRepository.clearAssetIndex({
+          tenantId: input.detail.asset.tenantId, assetId: input.detail.asset.id,
+          expectedPublishedVersionId: input.detail.asset.publishedVersionId ?? null, assetChangeWork: work
+        });
+        if (!cleared) throw new Error("Asset changed during reconciliation");
+      }
+    } catch {
+      index = "pending";
+      reconciliation = "pending";
+    }
+  }
+  try {
+    managedQueryCacheInvalidatedCount = await invalidateManagedQueryCacheForAssetChange(input.cacheRepository, input.detail.asset.tenantId);
+  } catch { reconciliation = "pending"; }
+  if (input.authRepository && input.principal) {
+    try {
+      await input.authRepository.recordAuditEvent({
+        tenantId: input.detail.asset.tenantId, ...auditActor(input.principal),
+        action: input.action, targetType: "asset", targetId: input.detail.asset.id, outcome: "success",
+        metadata: {
+          stableId: input.detail.asset.stableId, currentVersionId: input.detail.asset.currentVersionId,
+          publishedVersionId: input.detail.asset.publishedVersionId, managedQueryCacheInvalidatedCount,
+          status: input.detail.asset.status, lifecycleState: input.detail.asset.lifecycleState,
+          reviewDueAt: input.detail.asset.reviewDueAt, indexingState: index
+        }
+      });
+    } catch { reconciliation = "pending"; }
+  }
+  if (work && input.assetChangeOutbox) {
+    try {
+      if (reconciliation === "complete") {
+        if (!(await input.assetChangeOutbox.complete(work))) reconciliation = "pending";
+      } else await input.assetChangeOutbox.fail(work, "asset_reconciliation_failed");
+    } catch { reconciliation = "pending"; }
+  }
+  input.reply.header("x-forgetbase-index-state", index);
+  input.reply.header("x-forgetbase-reconciliation", reconciliation);
+  return { index, reconciliation };
 }
 
 async function invalidateManagedQueryCacheForAssetChange(
@@ -8279,6 +8524,10 @@ async function authenticateOptionalRequest(
   const authenticatedRequest = await authenticate(request, authRepository, loginSessionIdleTimeoutSeconds);
 
   if (!authenticatedRequest) {
+    if (request.headers.authorization !== undefined || readSessionCookieToken(request) !== undefined) {
+      reply.code(401).send({ error: "authentication_required" });
+      return undefined;
+    }
     return null;
   }
 

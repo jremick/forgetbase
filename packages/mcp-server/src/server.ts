@@ -1389,15 +1389,16 @@ export function createMcpServer(options: CreateMcpServerOptions = {}): McpServer
       description: "Publish a governed asset by setting it active and approved through the ForgetBase API.",
       inputSchema: z.object({
         stableId: z.string().min(1),
+        expectedVersionId: z.string().uuid().optional(),
         reviewDueAt: z.string().min(1).optional(),
         changeNote: z.string().min(1).optional()
       })
     },
-    async ({ stableId, reviewDueAt, changeNote }) => ({
+    async ({ stableId, expectedVersionId, reviewDueAt, changeNote }) => ({
       content: [
         {
           type: "text",
-          text: JSON.stringify(await client.publishAsset(stableId, { reviewDueAt, changeNote }), null, 2)
+          text: JSON.stringify(await client.publishAsset(stableId, { expectedVersionId, reviewDueAt, changeNote }), null, 2)
         }
       ]
     })
@@ -1410,17 +1411,18 @@ export function createMcpServer(options: CreateMcpServerOptions = {}): McpServer
       description: "Mark a governed asset reviewed by updating status, next review date, and optional source reference. Requires a write-capable API key.",
       inputSchema: z.object({
         stableId: z.string().min(1),
+        expectedVersionId: z.string().uuid().optional(),
         status: z.string().min(1).default("approved"),
         reviewDueAt: z.string().min(1),
         sourceRef: z.string().min(1).optional(),
         changeNote: z.string().min(1).optional()
       })
     },
-    async ({ stableId, status, reviewDueAt, sourceRef, changeNote }) => ({
+    async ({ stableId, expectedVersionId, status, reviewDueAt, sourceRef, changeNote }) => ({
       content: [
         {
           type: "text",
-          text: JSON.stringify(await client.reviewAsset(stableId, { status, reviewDueAt, sourceRef, changeNote }), null, 2)
+          text: JSON.stringify(await client.reviewAsset(stableId, { expectedVersionId, status, reviewDueAt, sourceRef, changeNote }), null, 2)
         }
       ]
     })

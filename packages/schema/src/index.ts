@@ -145,6 +145,7 @@ export const assetRecordSchema = assetSchema.extend({
   sourceKind: z.string().nullable(),
   sourceRef: z.string().nullable(),
   currentVersionId: z.string().nullable(),
+  publishedVersionId: z.string().nullable().optional(),
   metadata: assetMetadataSchema.default({}),
   createdAt: z.string().min(1),
   updatedAt: z.string().min(1)
@@ -302,6 +303,7 @@ export const assetCreateInputSchema = z.object({
 
 export const assetUpdateInputSchema = z.object({
   tenantId: z.string().min(1).default("tenant_demo"),
+  expectedVersionId: z.string().min(1).optional(),
   title: z.string().min(1).optional(),
   summary: z.string().optional(),
   lifecycleState: lifecycleStateSchema.optional(),
@@ -324,6 +326,7 @@ export const assetUpdateInputSchema = z.object({
 
 export const assetRestoreInputSchema = z.object({
   tenantId: z.string().min(1).default("tenant_demo"),
+  expectedVersionId: z.string().min(1).optional(),
   versionId: z.string().min(1).optional(),
   versionNumber: z.number().int().positive().optional(),
   changeNote: z.string().optional()
@@ -334,12 +337,14 @@ export const assetRestoreInputSchema = z.object({
 
 export const assetPublishInputSchema = z.object({
   tenantId: z.string().min(1).default("tenant_demo"),
+  expectedVersionId: z.string().min(1).optional(),
   reviewDueAt: z.string().min(1).optional(),
   changeNote: z.string().optional()
 });
 
 export const assetReviewInputSchema = z.object({
   tenantId: z.string().min(1).default("tenant_demo"),
+  expectedVersionId: z.string().min(1).optional(),
   status: z.string().min(1).default("approved"),
   reviewDueAt: z.string().min(1),
   sourceRef: z.string().optional(),
@@ -403,7 +408,11 @@ export const assetDetailSchema = z.object({
   asset: assetRecordSchema,
   versions: z.array(assetVersionSchema),
   instructionObjects: z.array(agentInstructionSchema),
-  humanDocuments: z.array(humanDocumentSchema)
+  humanDocuments: z.array(humanDocumentSchema),
+  processing: z.object({
+    index: z.enum(["ready", "pending", "unavailable"]),
+    reconciliation: z.enum(["complete", "pending"])
+  }).optional()
 });
 
 export const assetVersionSnapshotInputSchema = z.object({
@@ -423,7 +432,9 @@ export const assetVersionSnapshotSchema = z.object({
 });
 
 export const assetListResponseSchema = z.object({
-  assets: z.array(assetRecordSchema)
+  assets: z.array(assetRecordSchema),
+  nextCursor: z.string().nullable().optional(),
+  complete: z.boolean().optional()
 });
 
 export const assetReviewQueueResponseSchema = z.object({
@@ -815,6 +826,23 @@ export const permissionGrantSchema = z.object({
   surfaces: z.array(surfaceSchema).min(1),
   createdBy: z.string().nullable(),
   createdAt: z.string().min(1)
+});
+
+export const permissionGrantListInputSchema = z.object({
+  limit: z.number().int().min(1).max(200).default(100),
+  cursor: z.string().min(1).max(200).optional()
+});
+
+export const permissionGrantListResponseSchema = z.object({
+  grants: z.array(permissionGrantSchema),
+  nextCursor: z.string().nullable()
+});
+
+export const permissionGrantMutationResponseSchema = permissionGrantSchema.extend({
+  reconciliation: z.object({
+    status: z.enum(["complete", "pending"]),
+    pendingActions: z.array(z.enum(["cache-invalidation", "audit-recording"]))
+  }).optional()
 });
 
 export const auditEventCreateInputSchema = z.object({
@@ -1547,6 +1575,8 @@ export const aiExportPackageSchema = z.object({
   tenantId: z.string().min(1),
   assetCount: z.number().int().nonnegative(),
   deniedCount: z.number().int().nonnegative(),
+  complete: z.boolean().optional(),
+  nextCursor: z.string().nullable().optional(),
   assets: z.array(exportPackageAssetSchema)
 });
 
@@ -1571,6 +1601,8 @@ export const okfExportPackageSchema = z.object({
   }),
   assetCount: z.number().int().nonnegative(),
   deniedCount: z.number().int().nonnegative(),
+  complete: z.boolean().optional(),
+  nextCursor: z.string().nullable().optional(),
   sourcePackageHash: z.string().min(1),
   projectionHash: z.string().min(1),
   rootIndexPath: z.literal("index.md"),
@@ -1612,6 +1644,8 @@ export function buildOkfExportPackage(
     },
     assetCount: sourcePackage.assetCount,
     deniedCount: sourcePackage.deniedCount,
+    complete: sourcePackage.complete,
+    nextCursor: sourcePackage.nextCursor,
     sourcePackageHash: hashText(stableJson(sourcePackage)),
     projectionHash: hashFiles(files),
     rootIndexPath: "index.md",
@@ -2339,6 +2373,9 @@ export type ExternalAuthProvider = z.infer<typeof externalAuthProviderSchema>;
 export type PermissionAction = z.infer<typeof permissionActionSchema>;
 export type PermissionGrant = z.infer<typeof permissionGrantSchema>;
 export type PermissionGrantCreateInput = z.input<typeof permissionGrantCreateInputSchema>;
+export type PermissionGrantListInput = z.input<typeof permissionGrantListInputSchema>;
+export type PermissionGrantListResponse = z.infer<typeof permissionGrantListResponseSchema>;
+export type PermissionGrantMutationResponse = z.infer<typeof permissionGrantMutationResponseSchema>;
 export type PermissionPrincipalType = z.infer<typeof permissionPrincipalTypeSchema>;
 export type RetrievalEvent = z.infer<typeof retrievalEventSchema>;
 export type RetrievalEventCreateInput = z.input<typeof retrievalEventCreateInputSchema>;

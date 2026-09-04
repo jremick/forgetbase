@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { loadAssetCollection } from "./lib/asset-collection.js";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import type {
   AccountLinkingMode,
   AgentActionExecutionPolicy,
@@ -90,7 +91,7 @@ import {
   Toolbar
 } from "./components/app/index.js";
 import { TrustStateSummary } from "./components/domain/index.js";
-import { AnalyticsDashboard, type AnalyticsWindowDays } from "./components/domain/analytics-dashboard.js";
+import type { AnalyticsWindowDays } from "./components/domain/analytics-dashboard.js";
 import {
   attachmentUploadErrorMessage,
   attachmentUploadHeaders,
@@ -190,6 +191,9 @@ import {
   readInitialLoginTenantId
 } from "./local-dev-auth.js";
 import "./styles.css";
+
+const AnalyticsDashboard = lazy(() => import("./components/domain/analytics-dashboard.js")
+  .then((module) => ({ default: module.AnalyticsDashboard })));
 
 const sessionCookieActiveStorageKey = "forgetbase-session-cookie-active";
 const csrfCookieName = "forgetbase_csrf";
@@ -637,6 +641,13 @@ function canonicalRouteHash(route: string): string {
   return canonicalRouteHashes[normalizedRoute] ?? normalizedRoute;
 }
 
+function assetMutationErrorMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes("asset_version_conflict")
+    ? "This page changed since it was loaded. Reload it and review the latest draft before retrying."
+    : message;
+}
+
 function isPublishedReaderAsset(asset: AssetRecord): boolean {
   return asset.lifecycleState === "active" &&
     asset.status === "approved" &&
@@ -1051,6 +1062,7 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
   const assetLoadEpochRef = useRef(0);
   const authoringEditTargetRef = useRef<{
     stableId: string;
+    currentVersionId: string | null;
     metadata: Record<string, unknown>;
     humanDocument?: AssetDetail["humanDocuments"][number];
   } | null>(null);
@@ -1714,7 +1726,7 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
       setSessionCookieActive(!authKey);
       const healthResponse = await request<{ status: string }>("/health", {}, authKey);
       setHealth(healthResponse.status);
-      const assetResponse = await request<{ assets: AssetRecord[] }>("/assets?limit=200", {}, authKey);
+      const assetResponse = { assets: await loadAssetCollection(request, { preview: true, authKey }) };
       const nextSelectedStableId = assetResponse.assets.some((asset) => asset.stableId === selectedStableId)
         ? selectedStableId
         : assetResponse.assets[0]?.stableId ?? "";
@@ -1754,7 +1766,7 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
     setAttachmentsLoading(true);
     setAttachmentsError("");
     try {
-      const detail = await request<AssetDetail>(`/assets/${encodeURIComponent(stableId)}`);
+      const detail = await request<AssetDetail>(`/assets/${encodeURIComponent(stableId)}?preview=true`);
       if (loadEpoch !== assetLoadEpochRef.current) return;
       setAssetDetail(detail);
       void loadAttachments(stableId, loadEpoch);
@@ -1771,7 +1783,7 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
     setAttachmentsLoading(true);
     setAttachmentsError("");
     try {
-      const response = await request<{ attachments: Attachment[] }>(`/assets/${encodeURIComponent(stableId)}/attachments`);
+      const response = await request<{ attachments: Attachment[] }>(`/assets/${encodeURIComponent(stableId)}/attachments?preview=true`);
       if (loadEpoch !== assetLoadEpochRef.current) return;
       setAttachments(response.attachments);
     } catch (loadError) {
@@ -1808,7 +1820,7 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
     if (!assetDetail) return;
     setAttachmentsError("");
     try {
-      const response = await requestBinary(`/assets/${encodeURIComponent(assetDetail.asset.stableId)}/attachments/${encodeURIComponent(attachment.id)}/download`);
+      const response = await requestBinary(`/assets/${encodeURIComponent(assetDetail.asset.stableId)}/attachments/${encodeURIComponent(attachment.id)}/download?preview=true`);
       const url = URL.createObjectURL(await response.blob());
       const link = document.createElement("a");
       link.href = url;
@@ -1832,7 +1844,7 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
       await loadAttachments(stableId, loadEpoch);
       setMessage(`Deleted ${attachment.filename}`);
     } catch (deleteError) {
-      setAttachmentsError(deleteError instanceof Error ? deleteError.message : String(deleteError));
+      setAttachmentsError(attachmentUploadErrorMessage(deleteError));
     } finally {
       setPendingAttachmentDelete(null);
     }
@@ -1869,6 +1881,7 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
       const detail = await request<AssetDetail>(`/assets/${encodeURIComponent(assetDetail.asset.stableId)}/publish`, {
         method: "POST",
         body: JSON.stringify({
+          expectedVersionId: assetDetail.asset.currentVersionId ?? undefined,
           reviewDueAt: publishReviewDueAt || undefined,
           changeNote: workflowNote || undefined
         })
@@ -1878,7 +1891,7 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
       setVersionSnapshot(null);
       setMessage(`Published ${detail.asset.stableId}`);
     } catch (publishError) {
-      setError(publishError instanceof Error ? publishError.message : String(publishError));
+      setError(assetMutationErrorMessage(publishError));
     } finally {
       setPendingReleaseAction(null);
     }
@@ -1913,6 +1926,7 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
       const detail = await request<AssetDetail>(`/assets/${encodeURIComponent(assetDetail.asset.stableId)}/review`, {
         method: "POST",
         body: JSON.stringify({
+          expectedVersionId: assetDetail.asset.currentVersionId ?? undefined,
           status: "approved",
           reviewDueAt: publishReviewDueAt || assetDetail.asset.reviewDueAt,
           changeNote: workflowNote || undefined
@@ -1926,7 +1940,7 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
       } : current);
       setMessage(`Reviewed ${detail.asset.stableId}`);
     } catch (reviewError) {
-      setError(reviewError instanceof Error ? reviewError.message : String(reviewError));
+      setError(assetMutationErrorMessage(reviewError));
     } finally {
       setPendingReleaseAction(null);
     }
@@ -1944,6 +1958,7 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
       const detail = await request<AssetDetail>(`/assets/${encodeURIComponent(assetDetail.asset.stableId)}/restore`, {
         method: "POST",
         body: JSON.stringify({
+          expectedVersionId: assetDetail.asset.currentVersionId ?? undefined,
           versionNumber: Number.parseInt(selectedVersionNumber, 10),
           changeNote: workflowNote || undefined
         })
@@ -1953,7 +1968,7 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
       setVersionSnapshot(null);
       setMessage(`Restored ${detail.asset.stableId} to v${selectedVersionNumber}`);
     } catch (restoreError) {
-      setError(restoreError instanceof Error ? restoreError.message : String(restoreError));
+      setError(assetMutationErrorMessage(restoreError));
     } finally {
       setPendingReleaseAction(null);
     }
@@ -2007,6 +2022,7 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
     setAuthoringSubmitError("");
     authoringEditTargetRef.current = {
       stableId: assetDetail.asset.stableId,
+      currentVersionId: assetDetail.asset.currentVersionId,
       metadata: assetDetail.asset.metadata,
       humanDocument: currentDocument
     };
@@ -2071,11 +2087,10 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
           })
         : await request<AssetDetail>(`/assets/${encodeURIComponent(editTarget!.stableId)}/versions`, {
             method: "POST",
-            body: JSON.stringify(buildAssetUpdateInput(
-              authoringForm,
-              editTarget!.metadata,
-              editTarget!.humanDocument
-            ))
+            body: JSON.stringify({
+              ...buildAssetUpdateInput(authoringForm, editTarget!.metadata, editTarget!.humanDocument),
+              expectedVersionId: editTarget!.currentVersionId ?? undefined
+            })
           });
       const savedMode = authoringMode;
 
@@ -2091,9 +2106,10 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
       setAuthoringErrors({});
       authoringEditTargetRef.current = null;
       navigatePage("asset-read");
-      setMessage(savedMode === "create"
+      setMessage((savedMode === "create"
         ? `Created ${detail.asset.stableId} as a draft`
-        : `Saved ${detail.asset.stableId} as a new draft version`
+        : `Saved ${detail.asset.stableId} as a new draft version`) +
+        (detail.processing?.reconciliation === "pending" ? ". Saved successfully; background reconciliation is pending." : "")
       );
     } catch (saveError) {
       if (authenticationEpoch !== authenticationEpochRef.current) {
@@ -2102,7 +2118,9 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
 
       const saveErrorMessage = saveError instanceof Error ? saveError.message : String(saveError);
 
-      if (saveErrorMessage.startsWith("409 ")) {
+      if (saveErrorMessage.includes("asset_version_conflict")) {
+        setAuthoringSubmitError("This page changed while you were editing. Your text is still here. Copy your changes, reload the page, and compare the latest draft before saving again.");
+      } else if (authoringMode === "create" && saveErrorMessage.startsWith("409 ")) {
         setAuthoringErrors((current) => ({ ...current, stableId: "This stable ID is already in use." }));
         setAuthoringSubmitError("Choose a different stable ID, then save again.");
       } else {
@@ -4985,10 +5003,12 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
                         { term: "Exports", description: assetDetail.asset.allowedExports.join(", ") || "none" }
                       ]}
                     />
-                    <SectionCard title="Page files" description="Files are stored separately from page revisions and always download as attachments." variant="tool">
+                    <SectionCard title="Page files" description={assetDetail.asset.publishedVersionId === assetDetail.asset.currentVersionId
+                      ? "Files are stored separately from page revisions and always download as attachments."
+                      : "Publish this version before adding or deleting files. Existing attachments remain available to readers."} variant="tool">
                       <AttachmentsPanel
                         attachments={attachments}
-                        canManage
+                        canManage={Boolean(assetDetail.asset.publishedVersionId && assetDetail.asset.publishedVersionId === assetDetail.asset.currentVersionId)}
                         loading={attachmentsLoading}
                         uploading={attachmentUploading}
                         maxBytes={attachmentMaxBytes}
@@ -5749,6 +5769,7 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
             </DataTableShell>
           </div>
           <div className={routePanelClass(currentPage, activityPanelRoutes, "grid gap-4")}>
+            {activityPanelRoutes.includes(currentPage) && <Suspense fallback={<p role="status">Loading activity…</p>}>
             <AnalyticsDashboard
               summary={telemetrySummary}
               windowDays={analyticsWindowDays}
@@ -5759,6 +5780,7 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
               }}
               onRefresh={() => void loadTelemetrySummary()}
             />
+            </Suspense>}
           </div>
           <div className={routePanelClass(currentPage, activityAndHealthPanelRoutes, "grid gap-4")}>
             <SectionCard title="Telemetry summary" variant="tool">

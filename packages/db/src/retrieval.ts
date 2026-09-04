@@ -1,3 +1,5 @@
+import type { AssetChangeWork } from "./asset-change-outbox.js";
+import { projectPublishedAssetDetail, projectPublishedAssetRecord } from "./index.js";
 import type { Pool, QueryResult, QueryResultRow } from "pg";
 import {
   assetRecordSchema,
@@ -7,6 +9,7 @@ import {
   searchResultSchema,
   type AssetDetail,
   type AssetRecord,
+  type AssetVersion,
   type AssetVersionAssetSnapshot,
   type ChunkSourceKind,
   type RetrievalEvent,
@@ -54,10 +57,23 @@ export interface RetrievalEventPurgeOptions {
   dryRun?: boolean;
 }
 
+export interface RetrievalSearchOptions {
+  /** Server-derived eligibility, applied before ranking limits. Never taken from a request body. */
+  eligibleAssetIds?: string[];
+}
+
+export interface ClearAssetIndexInput {
+  tenantId: string;
+  assetId: string;
+  expectedPublishedVersionId: string | null;
+  assetChangeWork?: AssetChangeWork;
+}
+
 export interface RetrievalRepository {
-  indexAsset(detail: AssetDetail): Promise<IndexAssetResult>;
+  clearAssetIndex(input: ClearAssetIndexInput): Promise<boolean>;
+  indexAsset(detail: AssetDetail, options?: { assetChangeWork?: AssetChangeWork }): Promise<IndexAssetResult>;
   indexAllAssets(tenantId?: string): Promise<IndexAllAssetsResult>;
-  search(input: SearchInput): Promise<SearchResult[]>;
+  search(input: SearchInput, options?: RetrievalSearchOptions): Promise<SearchResult[]>;
   recordRetrievalEvent(input: RetrievalEventCreateInput): Promise<RetrievalEvent>;
   listRetrievalEvents(options?: RetrievalEventListOptions): Promise<RetrievalEvent[]>;
   purgeRetrievalEvents(options: RetrievalEventPurgeOptions): Promise<number>;
@@ -70,23 +86,52 @@ export class PostgresRetrievalRepository implements RetrievalRepository {
     private readonly embeddingProvider: EmbeddingProvider = new LocalHashEmbeddingProvider()
   ) {}
 
-  async indexAsset(detail: AssetDetail): Promise<IndexAssetResult> {
-    const chunks = buildChunks(detail);
+  async clearAssetIndex(input: ClearAssetIndexInput): Promise<boolean> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const current = await client.query<{ published_version_id: string | null }>(
+        "SELECT published_version_id FROM assets WHERE tenant_id = $1 AND id = $2 FOR UPDATE",
+        [input.tenantId, input.assetId]
+      );
+      if ((!current.rows[0] && input.expectedPublishedVersionId !== null) ||
+          (current.rows[0] && current.rows[0].published_version_id !== input.expectedPublishedVersionId)) {
+        await client.query("ROLLBACK");
+        return false;
+      }
+      await requireAssetChangeLease(client, input.tenantId, input.assetId, input.assetChangeWork);
+      await client.query("DELETE FROM asset_chunks WHERE tenant_id = $1 AND asset_id = $2", [input.tenantId, input.assetId]);
+      await client.query("COMMIT");
+      return true;
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally { client.release(); }
+  }
+
+  async indexAsset(detail: AssetDetail, options: { assetChangeWork?: AssetChangeWork } = {}): Promise<IndexAssetResult> {
+    // A draft save must not evict the previous published index. The outbox
+    // fetches that published version explicitly when reconciliation is needed.
+    if (detail.asset.publishedVersionId && detail.asset.publishedVersionId !== detail.asset.currentVersionId) {
+      return { assetId: detail.asset.id, chunksIndexed: 0 };
+    }
+    const chunks = detail.asset.publishedVersionId ? buildChunks(detail) : [];
     const embeddings = await this.embeddingProvider.embedTexts(chunks.map((chunk) => chunkEmbeddingText(chunk)));
     const client = await this.pool.connect();
 
     try {
       await client.query("BEGIN");
-      const current = await client.query<{ current_version_id: string | null }>(
-        "SELECT current_version_id FROM assets WHERE tenant_id = $1 AND id = $2 FOR UPDATE",
+      const current = await client.query<{ published_version_id: string | null }>(
+        "SELECT published_version_id FROM assets WHERE tenant_id = $1 AND id = $2 FOR UPDATE",
         [detail.asset.tenantId, detail.asset.id]
       );
-      const currentVersionId = current.rows[0]?.current_version_id ?? null;
+      const currentVersionId = current.rows[0]?.published_version_id ?? null;
 
-      if (!currentVersionId || currentVersionId !== detail.asset.currentVersionId) {
+      if (!current.rows[0] || currentVersionId !== detail.asset.publishedVersionId) {
         throw new Error(`Refusing to index stale asset detail for ${detail.asset.stableId}`);
       }
 
+      await requireAssetChangeLease(client, detail.asset.tenantId, detail.asset.id, options.assetChangeWork);
       await client.query("DELETE FROM asset_chunks WHERE asset_id = $1", [detail.asset.id]);
 
       for (const [embeddingIndex, chunk] of chunks.entries()) {
@@ -150,7 +195,7 @@ export class PostgresRetrievalRepository implements RetrievalRepository {
 
     for (const asset of assets.rows) {
       const detail = await getAssetDetail(this.pool, asset.id);
-      const result = await this.indexAsset(detail);
+      const result = await this.indexAsset(projectPublishedAssetDetail(detail) ?? detail);
       chunksIndexed += result.chunksIndexed;
     }
 
@@ -160,7 +205,7 @@ export class PostgresRetrievalRepository implements RetrievalRepository {
     };
   }
 
-  async search(input: SearchInput): Promise<SearchResult[]> {
+  async search(input: SearchInput, options: RetrievalSearchOptions = {}): Promise<SearchResult[]> {
     const tenantId = input.tenantId ?? "tenant_demo";
     const limit = Math.min(Math.max(input.limit ?? 10, 1), 50);
     const strategy = input.strategy ?? "lexical";
@@ -213,12 +258,23 @@ export class PostgresRetrievalRepository implements RetrievalRepository {
             CASE WHEN $9 = 'lexical' THEN NULL ELSE search_query.query_embedding_provider END AS ranking_embedding_provider,
             CASE WHEN $9 = 'lexical' THEN NULL ELSE search_query.query_embedding_model END AS ranking_embedding_model,
             CASE WHEN $9 = 'lexical' THEN NULL ELSE search_query.query_embedding_dimensions END AS ranking_embedding_dimensions,
-            assets.*
+            assets.*,
+            to_jsonb(published_version) AS published_version
           FROM asset_chunks
           JOIN assets ON assets.id = asset_chunks.asset_id
+          JOIN asset_versions published_version
+            ON published_version.id = assets.published_version_id AND published_version.asset_id = assets.id
           CROSS JOIN search_query
           WHERE asset_chunks.tenant_id = $1
-            AND asset_chunks.version_id = assets.current_version_id
+            AND asset_chunks.version_id = assets.published_version_id
+            AND assets.lifecycle_state IN ('active', 'draft')
+            AND published_version.asset_snapshot->>'lifecycleState' = 'active'
+            AND published_version.asset_snapshot->>'status' = 'approved'
+            AND EXISTS (
+              SELECT 1 FROM jsonb_array_elements_text(published_version.asset_snapshot->'allowedSurfaces') surface
+              WHERE surface = ANY(assets.allowed_surfaces)
+            )
+            AND ($14::uuid[] IS NULL OR assets.id = ANY($14::uuid[]))
             AND (
               ($9 = 'lexical' AND asset_chunks.search_vector @@ search_query.query)
               OR ($9 = 'vector'
@@ -263,7 +319,7 @@ export class PostgresRetrievalRepository implements RetrievalRepository {
       [
         tenantId,
         input.query,
-        limit * 5,
+        limit,
         rankingPolicy.agentInstructionWeight,
         rankingPolicy.assetSummaryWeight,
         rankingPolicy.humanDocumentWeight,
@@ -273,11 +329,15 @@ export class PostgresRetrievalRepository implements RetrievalRepository {
         DEFAULT_HYBRID_VECTOR_WEIGHT,
         this.embeddingProvider.provider,
         this.embeddingProvider.model,
-        this.embeddingProvider.dimensions
+        this.embeddingProvider.dimensions,
+        options.eligibleAssetIds ?? null
       ]
     );
 
-    return result.rows.slice(0, limit).map(mapSearchRow);
+    return result.rows.flatMap((row) => {
+      const result = mapSearchRow(row);
+      return result ? [result] : [];
+    });
   }
 
   async recordRetrievalEvent(input: RetrievalEventCreateInput): Promise<RetrievalEvent> {
@@ -358,13 +418,30 @@ export class PostgresRetrievalRepository implements RetrievalRepository {
 
 export class InMemoryRetrievalRepository implements RetrievalRepository {
   private readonly chunks: SearchResult[] = [];
+  // Keep the latest policy supplied during reconciliation even when a draft
+  // leaves the published chunks unchanged.
+  private readonly publishedAssets = new Map<string, AssetRecord | null>();
   private readonly events: RetrievalEvent[] = [];
   private sequence = 0;
 
   constructor(private readonly rankingPolicyRepository?: RetrievalRankingPolicyRepository) {}
 
+  async clearAssetIndex(input: ClearAssetIndexInput): Promise<boolean> {
+    const kept = this.chunks.filter((chunk) => chunk.asset.tenantId !== input.tenantId || chunk.asset.id !== input.assetId);
+    this.chunks.splice(0, this.chunks.length, ...kept);
+    if (this.publishedAssets.get(input.assetId)?.tenantId === input.tenantId) {
+      this.publishedAssets.delete(input.assetId);
+    }
+    return true;
+  }
+
   async indexAsset(detail: AssetDetail): Promise<IndexAssetResult> {
-    const chunks = buildChunks(detail).map((chunk) => {
+    const published = projectPublishedAssetDetail(detail);
+    this.publishedAssets.set(detail.asset.id, published?.asset ?? null);
+    if (detail.asset.publishedVersionId && detail.asset.publishedVersionId !== detail.asset.currentVersionId) {
+      return { assetId: detail.asset.id, chunksIndexed: 0 };
+    }
+    const chunks = (published ? buildChunks(published) : []).map((chunk) => {
       const ranking = buildSearchRanking({
         lexicalRank: 1,
         sourceKind: chunk.sourceKind,
@@ -372,7 +449,7 @@ export class InMemoryRetrievalRepository implements RetrievalRepository {
       });
 
       return searchResultSchema.parse({
-        asset: detail.asset,
+        asset: published!.asset,
         chunkId: `${detail.asset.id}:${chunk.sourceKind}:${chunk.sourceId ?? "asset"}:${chunk.chunkIndex}`,
         sourceKind: chunk.sourceKind,
         title: chunk.title,
@@ -399,7 +476,7 @@ export class InMemoryRetrievalRepository implements RetrievalRepository {
     };
   }
 
-  async search(input: SearchInput): Promise<SearchResult[]> {
+  async search(input: SearchInput, options: RetrievalSearchOptions = {}): Promise<SearchResult[]> {
     const tenantId = input.tenantId ?? "tenant_demo";
     const limit = Math.min(Math.max(input.limit ?? 10, 1), 50);
     const strategy = input.strategy ?? "lexical";
@@ -411,7 +488,13 @@ export class InMemoryRetrievalRepository implements RetrievalRepository {
 
     return this.chunks
       .filter((chunk) => chunk.asset.tenantId === tenantId)
-      .filter((chunk) => chunk.citation.versionId === chunk.asset.currentVersionId)
+      .filter((chunk) => options.eligibleAssetIds === undefined || options.eligibleAssetIds.includes(chunk.asset.id))
+      .flatMap((chunk) => {
+        const asset = this.publishedAssets.get(chunk.asset.id);
+        return asset?.tenantId === tenantId && chunk.citation.versionId === asset.publishedVersionId
+          ? [{ ...chunk, asset }]
+          : [];
+      })
       .map((chunk) => {
         const lexicalRank = scoreChunk(chunk, terms);
         const exactPhraseBoost = exactPhraseMatches(chunk, input.query) ? rankingPolicy.exactPhraseBoost : 0;
@@ -613,8 +696,21 @@ function splitIntoChunks(input: {
   });
 }
 
-function mapSearchRow(row: SearchRow): SearchResult {
-  const asset = mapAssetRow(row);
+async function requireAssetChangeLease(client: Queryable, tenantId: string, assetId: string, work?: AssetChangeWork): Promise<void> {
+  if (!work) return;
+  if (work.tenantId !== tenantId || work.assetId !== assetId) throw new Error("Asset change lease scope mismatch");
+  const lease = await client.query(`
+    SELECT 1 FROM asset_change_outbox
+    WHERE tenant_id = $1 AND asset_id = $2 AND generation = $3::bigint
+      AND lease_token = $4::uuid AND state = 'processing' AND lease_expires_at > clock_timestamp()
+    FOR UPDATE
+  `, [tenantId, assetId, work.generation, work.leaseToken]);
+  if (lease.rowCount !== 1) throw new Error("Asset change lease expired or superseded");
+}
+
+function mapSearchRow(row: SearchRow): SearchResult | null {
+  const asset = projectPublishedAssetRecord(mapAssetRow(row), mapAssetVersionRow(row.published_version));
+  if (!asset) return null;
   const citation = citationSchema.parse({
     ...row.citation,
     chunkId: row.chunk_id
@@ -669,26 +765,16 @@ async function getAssetDetail(client: Queryable, assetId: string): Promise<Asset
   );
   const instructions = await client.query<InstructionObjectRow>(
     "SELECT * FROM instruction_objects WHERE asset_id = $1 AND version_id = $2 ORDER BY created_at ASC",
-    [assetId, assetRow.current_version_id]
+    [assetId, assetRow.published_version_id ?? assetRow.current_version_id]
   );
   const humanDocuments = await client.query<HumanDocumentRow>(
     "SELECT * FROM human_documents WHERE asset_id = $1 AND version_id = $2 ORDER BY created_at ASC",
-    [assetId, assetRow.current_version_id]
+    [assetId, assetRow.published_version_id ?? assetRow.current_version_id]
   );
 
   return {
     asset: mapAssetRow(assetRow),
-    versions: versions.rows.map((row) => ({
-      id: row.id,
-      assetId: row.asset_id,
-      versionNumber: row.version_number,
-      contentHash: row.content_hash,
-      metadata: row.metadata,
-      assetSnapshot: row.asset_snapshot,
-      createdBy: row.created_by,
-      createdAt: toIso(row.created_at),
-      changeNote: row.change_note
-    })),
+    versions: versions.rows.map(mapAssetVersionRow),
     instructionObjects: instructions.rows.map((row) => ({
       id: row.id,
       assetId: row.asset_id,
@@ -737,10 +823,25 @@ function mapAssetRow(row: AssetRow): AssetRecord {
     allowedExports: row.allowed_exports,
     allowedActions: row.allowed_actions,
     currentVersionId: row.current_version_id,
+    publishedVersionId: row.published_version_id,
     metadata: row.metadata,
     createdAt: toIso(row.created_at),
     updatedAt: toIso(row.updated_at)
   });
+}
+
+function mapAssetVersionRow(row: AssetVersionRow): AssetVersion {
+  return {
+    id: row.id,
+    assetId: row.asset_id,
+    versionNumber: row.version_number,
+    contentHash: row.content_hash,
+    metadata: row.metadata,
+    assetSnapshot: row.asset_snapshot,
+    createdBy: row.created_by,
+    createdAt: new Date(row.created_at).toISOString(),
+    changeNote: row.change_note
+  };
 }
 
 function scoreChunk(chunk: SearchResult, terms: string[]): number {
@@ -918,6 +1019,7 @@ interface Queryable {
 }
 
 interface SearchRow extends AssetRow {
+  published_version: AssetVersionRow;
   chunk_id: string;
   chunk_source_kind: ChunkSourceKind;
   chunk_title: string;
@@ -969,6 +1071,7 @@ interface AssetRow extends QueryResultRow {
   allowed_actions: string[];
   metadata: Record<string, unknown>;
   current_version_id: string | null;
+  published_version_id: string | null;
   created_at: Date | string;
   updated_at: Date | string;
 }

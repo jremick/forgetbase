@@ -1,3 +1,4 @@
+import { loadAssetCollection } from "./lib/asset-collection.js";
 import type { AssetDetail, AssetRecord, Attachment, AuthPrincipal, ManagedQueryResponse, SearchResponse } from "@forgetbase/schema";
 import { BookOpen } from "@phosphor-icons/react/dist/icons/BookOpen";
 import { ClipboardText } from "@phosphor-icons/react/dist/icons/ClipboardText";
@@ -121,10 +122,9 @@ export function ReaderSurface({ principal, route, request, requestBinary, onLogo
     : [], [assetDetail, humanBody]);
   const normalizedSearchQuery = normalizeReaderQuery(libraryQuery);
   const searchHasFreshResponse = Boolean(normalizedSearchQuery && searchResponse && normalizeReaderQuery(searchResponse.query) === normalizedSearchQuery);
-  const publishedAssetIds = useMemo(() => new Set(publishedAssets.map((asset) => asset.id)), [publishedAssets]);
   const searchPageResults = useMemo(
-    () => groupReaderSearchResults((searchResponse?.results ?? []).filter((result) => publishedAssetIds.has(result.asset.id))),
-    [publishedAssetIds, searchResponse]
+    () => groupReaderSearchResults((searchResponse?.results ?? []).filter((result) => isPublishedReaderAsset(result.asset))),
+    [searchResponse]
   );
   const displayIdentity = principal.displayName || principal.email || "Guest";
   const accountSettings = route === "account-settings";
@@ -138,9 +138,11 @@ export function ReaderSurface({ principal, route, request, requestBinary, onLogo
   }, [expandedNavSections, isNavCollapsed, navWidth]);
 
   useEffect(() => {
-    void request<{ assets: AssetRecord[] }>("/assets")
-      .then((response) => setAssets(response.assets))
-      .catch((loadError) => setError(loadError instanceof Error ? loadError.message : String(loadError)));
+    const controller = new AbortController();
+    void loadAssetCollection(request, { signal: controller.signal })
+      .then((collection) => { if (!controller.signal.aborted) setAssets(collection); })
+      .catch((loadError) => { if (!controller.signal.aborted) setError(loadError instanceof Error ? loadError.message : String(loadError)); });
+    return () => controller.abort();
   }, [request]);
 
   useEffect(() => {
@@ -158,6 +160,7 @@ export function ReaderSurface({ principal, route, request, requestBinary, onLogo
       return;
     }
     let active = true;
+    setAssetDetail(null);
     setAttachmentsLoading(true);
     setAttachmentsError("");
     void request<AssetDetail>(`/assets/${encodeURIComponent(selectedAsset.stableId)}`)
@@ -340,11 +343,11 @@ export function ReaderSurface({ principal, route, request, requestBinary, onLogo
               onDownload={(attachment) => void downloadAttachment(attachment)}
               onDelete={() => undefined}
             />
-            <section className="reader-ask-panel" aria-labelledby="reader-ask-title"><div className="reader-ask-heading"><div><p className="eyebrow">Ask</p><h2 id="reader-ask-title">Ask this knowledge base</h2><p>Get an answer with citations from pages available to your account.</p></div>{readerAskResponse ? <Badge variant={readerAskResponse.checks.deniedCount ? "warning" : "success"}>{readerAskResponse.checks.deniedCount ? "Limited results" : "Sources checked"}</Badge> : null}</div>
+            <section className="reader-ask-panel" aria-labelledby="reader-ask-title"><div className="reader-ask-heading"><div><p className="eyebrow">Ask</p><h2 id="reader-ask-title">Ask this knowledge base</h2><p>Get an answer with citations from pages available to your account.</p></div>{readerAskResponse ? <Badge variant={!readerAskResponse.citations.length || readerAskResponse.checks.deniedCount ? "warning" : "success"}>{!readerAskResponse.citations.length ? "No matching sources" : readerAskResponse.checks.deniedCount ? "Limited results" : "Sources checked"}</Badge> : null}</div>
               <form className="reader-ask-form" onSubmit={(event) => void runAsk(event)}><Label htmlFor="reader-ask-input" className="sr-only">Ask a question</Label><Input id="reader-ask-input" value={readerAskText} onChange={(event) => setReaderAskText(event.target.value)} placeholder="Ask about these pages" aria-describedby="reader-ask-help" /><p id="reader-ask-help" className="reader-ask-note">Answers only use content your account can read.</p><Button type="submit" disabled={isReaderAskRunning || !readerAskText.trim()}>{isReaderAskRunning ? "Finding sources…" : "Ask"}</Button></form>
               {isReaderAskRunning ? <div className="reader-ask-loading" role="status" aria-live="polite"><span className="reader-loading-dot" aria-hidden="true" />Finding an answer and checking accessible sources.</div> : null}
               {readerAskError ? <Alert variant="destructive" className="reader-ask-error"><AlertTitle>Could not answer this question</AlertTitle><AlertDescription>{readerAskError}</AlertDescription></Alert> : null}
-              {readerAskResponse && !isReaderAskRunning ? <div className="reader-ask-answer" aria-live="polite"><div><h3>Answer</h3>{readerAskResponse.checks.deniedCount && !readerAskResponse.citations.length ? <div className="reader-no-access-state"><strong>No accessible answer was found.</strong><p>Try another question or ask an admin for access to the matching pages.</p></div> : renderReaderAnswer(readerAskResponse.answer)}{readerAskResponse.checks.deniedCount && readerAskResponse.citations.length ? <p className="reader-ask-note">Some matching pages are not available to your account.</p> : null}</div><div className="reader-citations" aria-label="Sources"><h3>Sources</h3>{readerAskResponse.citations.length ? readerAskResponse.citations.slice(0, 5).map((citation, index) => <details className="reader-citation" key={`${citation.assetId}:${citation.chunkId}`} open={index === 0}><summary><strong>{citation.title}</strong><span>Source {index + 1}</span></summary><p>{formatReaderSnippet(citation.snippet, 180)}</p><Button type="button" size="sm" variant="ghost" onClick={() => { selectPage(citation.stableId); scrollReaderRegionIntoView("reader-article"); }}>Open source page</Button></details>) : <p className="reader-ask-note">No accessible sources matched this question.</p>}</div></div> : !isReaderAskRunning ? <div className="reader-ask-empty"><p>Try asking “What should be redacted?”</p></div> : null}
+              {readerAskResponse && !isReaderAskRunning ? <div className="reader-ask-answer" aria-live="polite"><div><h3>Answer</h3>{!readerAskResponse.citations.length ? <div className="reader-no-access-state"><strong>No accessible answer was found.</strong><p>Try another question or ask an admin to check your access.</p></div> : renderReaderAnswer(readerAskResponse.answer)}{readerAskResponse.checks.deniedCount && readerAskResponse.citations.length ? <p className="reader-ask-note">Some matching pages are not available to your account.</p> : null}</div><div className="reader-citations" aria-label="Sources"><h3>Sources</h3>{readerAskResponse.citations.length ? readerAskResponse.citations.slice(0, 5).map((citation, index) => <details className="reader-citation" key={`${citation.assetId}:${citation.chunkId}`} open={index === 0}><summary><strong>{citation.title}</strong><span>Source {index + 1}</span></summary><p>{formatReaderSnippet(citation.snippet, 180)}</p><Button type="button" size="sm" variant="ghost" onClick={() => { selectPage(citation.stableId); scrollReaderRegionIntoView("reader-article"); }}>Open source page</Button></details>) : <p className="reader-ask-note">No accessible sources matched this question.</p>}</div></div> : !isReaderAskRunning ? <div className="reader-ask-empty"><p>Try asking “What should be redacted?”</p></div> : null}
             </section>
             <footer className="reader-page-footer" aria-label="Page details"><dl>{readerPageInfoItems(assetDetail.asset).map((item) => <div key={item.key}><dt>{item.term}</dt><dd>{item.description}</dd></div>)}</dl></footer>
           </> : <div className="reader-empty-state reader-empty-state--large"><h2>No page selected</h2><p>Select a page from the list after it loads.</p></div>}

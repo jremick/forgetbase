@@ -21,6 +21,7 @@ import {
   localUserSchema,
   localUserUpdateInputSchema,
   permissionGrantCreateInputSchema,
+  permissionGrantListInputSchema,
   permissionGrantSchema,
   serviceAccountCreateInputSchema,
   serviceAccountPolicyInputSchema,
@@ -53,6 +54,8 @@ import {
   type PermissionAction,
   type PermissionGrant,
   type PermissionGrantCreateInput,
+  type PermissionGrantListInput,
+  type PermissionGrantListResponse,
   type ServiceAccount,
   type ServiceAccountCreateInput,
   type ServiceAccountPolicy,
@@ -69,6 +72,21 @@ export interface AccessCheckInput {
   asset: AssetRecord;
   action: PermissionAction;
   surface: Surface;
+}
+
+export interface AssetAccessFilterInput extends Omit<AccessCheckInput, "asset"> {
+  assets: AssetRecord[];
+}
+
+export interface PermissionGrantListOptions extends PermissionGrantListInput {
+  tenantId?: string;
+  stableId: string;
+}
+
+export interface PermissionGrantRevokeInput {
+  tenantId?: string;
+  stableId: string;
+  grantId: string;
 }
 
 export interface BootstrapAdminInput {
@@ -372,7 +390,11 @@ export interface AuthRepository {
   authenticateApiKey(secret: string): Promise<AuthPrincipal | null>;
   authenticateLocalUser(tenantId: string, email: string, password: string): Promise<LocalUser | null>;
   createPermissionGrant(input: PermissionGrantCreateInput): Promise<PermissionGrant>;
+  createPermissionGrants(inputs: PermissionGrantCreateInput[]): Promise<PermissionGrant[]>;
+  listPermissionGrants(input: PermissionGrantListOptions): Promise<PermissionGrantListResponse>;
+  revokePermissionGrant(input: PermissionGrantRevokeInput): Promise<PermissionGrant | null>;
   canAccessAsset(input: AccessCheckInput): Promise<boolean>;
+  filterAccessibleAssets(input: AssetAccessFilterInput): Promise<AssetRecord[]>;
   recordAuditEvent(input: AuditEventCreateInput): Promise<AuditEvent>;
   listAuditEvents(options?: AuditEventListOptions): Promise<AuditEvent[]>;
   purgeAuditEvents(options: AuditEventPurgeOptions): Promise<number>;
@@ -2157,99 +2179,106 @@ export class PostgresAuthRepository implements AuthRepository {
   }
 
   async createPermissionGrant(input: PermissionGrantCreateInput): Promise<PermissionGrant> {
-    const parsed = permissionGrantCreateInputSchema.parse(input);
-    const asset = await this.pool.query<{ id: string; stable_id: string }>(
-      "SELECT id, stable_id FROM assets WHERE tenant_id = $1 AND stable_id = $2",
-      [parsed.tenantId, parsed.stableId]
-    );
-    const assetRow = asset.rows[0];
+    return createPermissionGrantInTransaction(this.pool, input);
+  }
 
-    if (!assetRow) {
-      throw new Error(`Asset not found: ${parsed.stableId}`);
-    }
+  async createPermissionGrants(inputs: PermissionGrantCreateInput[]): Promise<PermissionGrant[]> {
+    const parsed = inputs.map((input) => permissionGrantCreateInputSchema.parse(input));
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const grants: PermissionGrant[] = [];
+      for (const input of parsed) grants.push(await createPermissionGrantInTransaction(client, input));
+      await client.query("COMMIT");
+      return grants;
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally { client.release(); }
+  }
 
-    const result = await this.pool.query<PermissionGrantRow>(
+  async listPermissionGrants(input: PermissionGrantListOptions): Promise<PermissionGrantListResponse> {
+    const parsed = permissionGrantListInputSchema.parse(input);
+    const result = await this.pool.query<PermissionGrantRow & { stable_id: string }>(
       `
-        INSERT INTO permission_grants (
-          tenant_id,
-          asset_id,
-          principal_type,
-          principal_id,
-          action,
-          surfaces,
-          created_by
-        )
-        VALUES ($1, $2, $3, $4, $5, $6, $7)
-        ON CONFLICT (tenant_id, asset_id, principal_type, principal_id, action)
-        DO UPDATE SET surfaces = EXCLUDED.surfaces, created_by = EXCLUDED.created_by
-        RETURNING *
+        SELECT grants.*, assets.stable_id
+        FROM permission_grants AS grants
+        JOIN assets ON assets.id = grants.asset_id AND assets.tenant_id = grants.tenant_id
+        WHERE grants.tenant_id = $1
+          AND assets.stable_id = $2
+          AND ($3::text IS NULL OR grants.id::text > $3)
+        ORDER BY grants.id::text
+        LIMIT $4
       `,
-      [
-        parsed.tenantId,
-        assetRow.id,
-        parsed.principalType,
-        parsed.principalId,
-        parsed.action,
-        parsed.surfaces,
-        parsed.createdBy ?? null
-      ]
+      [input.tenantId ?? "tenant_demo", input.stableId, parsed.cursor ?? null, parsed.limit + 1]
     );
+    const grants = result.rows.slice(0, parsed.limit).map((row) => mapPermissionGrantRow(row, row.stable_id));
+    return {
+      grants,
+      nextCursor: result.rows.length > parsed.limit ? grants.at(-1)?.id ?? null : null
+    };
+  }
 
-    return mapPermissionGrantRow(requireRow(result), assetRow.stable_id);
+  async revokePermissionGrant(input: PermissionGrantRevokeInput): Promise<PermissionGrant | null> {
+    const result = await this.pool.query<PermissionGrantRow & { stable_id: string }>(
+      `
+        DELETE FROM permission_grants AS grants
+        USING assets
+        WHERE grants.asset_id = assets.id
+          AND grants.tenant_id = assets.tenant_id
+          AND grants.tenant_id = $1
+          AND assets.stable_id = $2
+          AND grants.id::text = $3
+        RETURNING grants.*, assets.stable_id
+      `,
+      [input.tenantId ?? "tenant_demo", input.stableId, input.grantId]
+    );
+    const row = result.rows[0];
+    return row ? mapPermissionGrantRow(row, row.stable_id) : null;
   }
 
   async canAccessAsset(input: AccessCheckInput): Promise<boolean> {
-    if (!input.asset.allowedSurfaces.includes(input.surface)) {
-      return false;
+    return (await this.filterAccessibleAssets({ ...input, assets: [input.asset] })).length === 1;
+  }
+
+  async filterAccessibleAssets(input: AssetAccessFilterInput): Promise<AssetRecord[]> {
+    const decisions = input.assets.map((asset) => accessBeforeGrant({ ...input, asset }));
+    const candidates = input.assets.filter((_, index) => decisions[index] === null);
+    const grantedIds = new Set<string>();
+
+    if (candidates.length > 0 && input.principal) {
+      const result = await this.pool.query<{ asset_id: string }>(
+        `
+          SELECT DISTINCT asset_id
+          FROM permission_grants
+          WHERE tenant_id = $1
+            AND asset_id = ANY($2::uuid[])
+            AND action = $3
+            AND $4 = ANY(surfaces)
+            AND (
+              (principal_type = 'user' AND principal_id = $5)
+              OR (principal_type = 'group' AND principal_id = ANY($6::text[]))
+              OR (principal_type = 'service-account' AND principal_id = $7)
+            )
+        `,
+        [
+          input.principal.tenantId,
+          candidates.map((asset) => asset.id),
+          input.action,
+          input.surface,
+          input.principal.userId,
+          input.principal.groupIds,
+          input.principal.serviceAccountId
+        ]
+      );
+      for (const row of result.rows) {
+        grantedIds.add(row.asset_id);
+      }
     }
 
-    if (input.principal && !input.principal.allowedSurfaces.includes(input.surface)) {
-      return false;
-    }
-
-    if (hasPublicReadAccess(input)) {
-      return true;
-    }
-
-    if (!input.principal || input.principal.tenantId !== input.asset.tenantId) {
-      return false;
-    }
-
-    if (!principalHasScope(input.principal, scopeForAction(input.action))) {
-      return false;
-    }
-
-    if (input.principal.role === "admin") {
-      return true;
-    }
-
-    const result = await this.pool.query(
-      `
-        SELECT id
-        FROM permission_grants
-        WHERE tenant_id = $1
-          AND asset_id = $2
-          AND action = $3
-          AND $4 = ANY(surfaces)
-          AND (
-            (principal_type = 'user' AND principal_id = $5)
-            OR (principal_type = 'group' AND principal_id = ANY($6::text[]))
-            OR (principal_type = 'service-account' AND principal_id = $7)
-          )
-        LIMIT 1
-      `,
-      [
-        input.asset.tenantId,
-        input.asset.id,
-        input.action,
-        input.surface,
-        input.principal.userId,
-        input.principal.groupIds,
-        input.principal.serviceAccountId
-      ]
+    return input.assets.filter((asset, index) =>
+      decisions[index] === true || (decisions[index] === null && grantedIds.has(asset.id))
     );
-
-    return Boolean(result.rowCount && result.rowCount > 0);
   }
 
   async recordAuditEvent(input: AuditEventCreateInput): Promise<AuditEvent> {
@@ -3605,76 +3634,84 @@ export class InMemoryAuthRepository implements AuthRepository {
   }
 
   async createPermissionGrant(input: PermissionGrantCreateInput): Promise<PermissionGrant> {
-    const parsed = permissionGrantCreateInputSchema.parse(input);
-    this.sequence += 1;
-    const grant = permissionGrantSchema.parse({
-      id: `grant_${this.sequence}`,
-      tenantId: parsed.tenantId,
-      assetId: parsed.stableId,
-      stableId: parsed.stableId,
-      principalType: parsed.principalType,
-      principalId: parsed.principalId,
-      action: parsed.action,
-      surfaces: parsed.surfaces,
-      createdBy: parsed.createdBy ?? null,
-      createdAt: new Date().toISOString()
+    return (await this.createPermissionGrants([input]))[0]!;
+  }
+
+  async createPermissionGrants(inputs: PermissionGrantCreateInput[]): Promise<PermissionGrant[]> {
+    const parsed = inputs.map((input) => permissionGrantCreateInputSchema.parse(input));
+    const staged = [...this.grants];
+    let sequence = this.sequence;
+    const grants = parsed.map((input) => {
+      sequence += 1;
+      const index = staged.findIndex((existing) =>
+        existing.tenantId === input.tenantId && existing.stableId === input.stableId &&
+        existing.principalType === input.principalType && existing.principalId === input.principalId &&
+        existing.action === input.action
+      );
+      const existing = staged[index];
+      const grant = permissionGrantSchema.parse({
+        id: existing?.id ?? `grant_${sequence}`,
+        tenantId: input.tenantId,
+        assetId: input.stableId,
+        stableId: input.stableId,
+        principalType: input.principalType,
+        principalId: input.principalId,
+        action: input.action,
+        surfaces: input.surfaces,
+        createdBy: input.createdBy ?? null,
+        createdAt: existing?.createdAt ?? new Date().toISOString()
+      });
+      if (existing) staged[index] = grant;
+      else staged.push(grant);
+      return grant;
     });
-    const index = this.grants.findIndex((existing) =>
-      existing.tenantId === grant.tenantId &&
-      existing.assetId === grant.assetId &&
-      existing.principalType === grant.principalType &&
-      existing.principalId === grant.principalId &&
-      existing.action === grant.action
+    // Validate and stage the whole batch before changing the shared store.
+    this.grants.splice(0, this.grants.length, ...staged);
+    this.sequence = sequence;
+    return grants;
+  }
+
+  async listPermissionGrants(input: PermissionGrantListOptions): Promise<PermissionGrantListResponse> {
+    const parsed = permissionGrantListInputSchema.parse(input);
+    const matches = this.grants
+      .filter((grant) => grant.tenantId === (input.tenantId ?? "tenant_demo") && grant.stableId === input.stableId)
+      .filter((grant) => !parsed.cursor || grant.id > parsed.cursor)
+      .sort((left, right) => left.id < right.id ? -1 : left.id > right.id ? 1 : 0);
+    const grants = matches.slice(0, parsed.limit);
+    return {
+      grants,
+      nextCursor: matches.length > parsed.limit ? grants.at(-1)?.id ?? null : null
+    };
+  }
+
+  async revokePermissionGrant(input: PermissionGrantRevokeInput): Promise<PermissionGrant | null> {
+    const index = this.grants.findIndex((grant) =>
+      grant.tenantId === (input.tenantId ?? "tenant_demo") &&
+      grant.stableId === input.stableId &&
+      grant.id === input.grantId
     );
-
-    if (index >= 0) {
-      this.grants[index] = grant;
-    } else {
-      this.grants.push(grant);
-    }
-
-    return grant;
+    return index < 0 ? null : this.grants.splice(index, 1)[0] ?? null;
   }
 
   async canAccessAsset(input: AccessCheckInput): Promise<boolean> {
-    if (!input.asset.allowedSurfaces.includes(input.surface)) {
-      return false;
-    }
+    return (await this.filterAccessibleAssets({ ...input, assets: [input.asset] })).length === 1;
+  }
 
-    if (input.principal && !input.principal.allowedSurfaces.includes(input.surface)) {
-      return false;
-    }
-
-    if (hasPublicReadAccess(input)) {
-      return true;
-    }
-
-    if (!input.principal || input.principal.tenantId !== input.asset.tenantId) {
-      return false;
-    }
-
-    if (!principalHasScope(input.principal, scopeForAction(input.action))) {
-      return false;
-    }
-
-    if (input.principal.role === "admin") {
-      return true;
-    }
-
-    return this.grants.some((grant) =>
-      grant.tenantId === input.asset.tenantId &&
-      grant.assetId === input.asset.stableId &&
+  async filterAccessibleAssets(input: AssetAccessFilterInput): Promise<AssetRecord[]> {
+    const grantedStableIds = new Set(this.grants.filter((grant) =>
+      grant.tenantId === input.principal?.tenantId &&
       grant.action === input.action &&
       grant.surfaces.includes(input.surface) &&
       (
         (grant.principalType === "user" && grant.principalId === input.principal?.userId) ||
         (grant.principalType === "group" && input.principal?.groupIds.includes(grant.principalId)) ||
-        (
-          grant.principalType === "service-account" &&
-          grant.principalId === input.principal?.serviceAccountId
-        )
+        (grant.principalType === "service-account" && grant.principalId === input.principal?.serviceAccountId)
       )
-    );
+    ).map((grant) => grant.stableId));
+    return input.assets.filter((asset) => {
+      const decision = accessBeforeGrant({ ...input, asset });
+      return decision ?? grantedStableIds.has(asset.stableId);
+    });
   }
 
   async recordAuditEvent(input: AuditEventCreateInput): Promise<AuditEvent> {
@@ -3752,6 +3789,71 @@ function isCreatedAtInWindow(createdAt: string, since?: number, until?: number):
   return !Number.isNaN(value) &&
     (since === undefined || value >= since) &&
     (until === undefined || value <= until);
+}
+
+/** Internal helper for permission writes in an existing asset transaction. */
+export async function createPermissionGrantInTransaction(client: Queryable, input: PermissionGrantCreateInput): Promise<PermissionGrant> {
+  const parsed = permissionGrantCreateInputSchema.parse(input);
+  const asset = await client.query<{ id: string; stable_id: string }>(
+    "SELECT id, stable_id FROM assets WHERE tenant_id = $1 AND stable_id = $2",
+    [parsed.tenantId, parsed.stableId]
+  );
+  const assetRow = asset.rows[0];
+
+  if (!assetRow) {
+    throw new Error(`Asset not found: ${parsed.stableId}`);
+  }
+
+  const result = await client.query<PermissionGrantRow>(
+    `
+      INSERT INTO permission_grants (
+        tenant_id,
+        asset_id,
+        principal_type,
+        principal_id,
+        action,
+        surfaces,
+        created_by
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7)
+      ON CONFLICT (tenant_id, asset_id, principal_type, principal_id, action)
+      DO UPDATE SET surfaces = EXCLUDED.surfaces, created_by = EXCLUDED.created_by
+      RETURNING *
+    `,
+    [
+      parsed.tenantId,
+      assetRow.id,
+      parsed.principalType,
+      parsed.principalId,
+      parsed.action,
+      parsed.surfaces,
+      parsed.createdBy ?? null
+    ]
+  );
+
+  return mapPermissionGrantRow(requireRow(result), assetRow.stable_id);
+}
+
+
+// A null decision means that the caller must evaluate a current explicit grant.
+// Single-asset and batched checks share these surface, tenant, role, and scope rules.
+function accessBeforeGrant(input: AccessCheckInput): boolean | null {
+  if (!input.asset.allowedSurfaces.includes(input.surface)) {
+    return false;
+  }
+  if (input.principal && !input.principal.allowedSurfaces.includes(input.surface)) {
+    return false;
+  }
+  if (hasPublicAssetAccess(input)) {
+    return true;
+  }
+  if (!input.principal || input.principal.tenantId !== input.asset.tenantId) {
+    return false;
+  }
+  if (!principalHasScope(input.principal, scopeForAction(input.action))) {
+    return false;
+  }
+  return input.principal.role === "admin" ? true : null;
 }
 
 export function principalHasScope(principal: AuthPrincipal, scope: ApiKeyScope): boolean {
@@ -3844,8 +3946,8 @@ function scopeForAction(action: PermissionAction): ApiKeyScope {
   }
 }
 
-function hasPublicReadAccess(input: AccessCheckInput): boolean {
-  return input.action === "read" &&
+function hasPublicAssetAccess(input: AccessCheckInput): boolean {
+  return (input.action === "read" || (input.action === "export" && input.asset.allowedExports.length > 0)) &&
     input.asset.sensitivity === "public-demo" &&
     input.asset.lifecycleState === "active" &&
     input.asset.status === "approved" &&

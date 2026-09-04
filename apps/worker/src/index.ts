@@ -29,6 +29,7 @@ import {
   type ManagedQueryCacheTenantPurgeResult
 } from "@forgetbase/db";
 import { redactText } from "@forgetbase/validation";
+import { logAssetChangeMaintenance, runAssetChangeMaintenance } from "./asset-changes.js";
 import {
   createWorkerRuntime,
   startScheduledJobs,
@@ -189,10 +190,12 @@ export async function runOnce(runtime?: WorkerRuntime): Promise<void> {
     return;
   }
 
-  await withWorkerRuntime(runtime, async (activeRuntime, pool) => {
-    const retrievalRepository = new PostgresRetrievalRepository(pool, undefined, createEmbeddingProviderFromEnv());
-    const result = await retrievalRepository.indexAllAssets();
-    console.log(`Indexed ${result.assetsIndexed} assets into ${result.chunksIndexed} retrieval chunks.`);
+  await withWorkerRuntime(runtime, async (activeRuntime) => {
+    // Migration backfill and every canonical asset commit enqueue this work.
+    // Startup processes a bounded batch; failures remain available to the loop.
+    if (readBooleanEnv("FORGETBASE_ASSET_CHANGES_ENABLED", true)) {
+      logAssetChangeMaintenance(await runAssetChangeMaintenance({}, activeRuntime));
+    }
 
     if (readBooleanEnv("FORGETBASE_RETENTION_PURGE_RUN_ONCE", false)) {
       const retention = await runRetentionMaintenance({
@@ -775,6 +778,23 @@ export function buildMaintenanceJobDefinitions(runtime: WorkerRuntime): Schedule
   const actionApprovalExpiryLimit = readPositiveIntegerEnv("FORGETBASE_ACTION_APPROVAL_EXPIRY_LIMIT", 500);
   const definitions: ScheduledJobDefinition[] = [];
 
+  if (readBooleanEnv("FORGETBASE_ASSET_CHANGES_ENABLED", true)) {
+    const intervalMs = readPositiveIntegerEnv("FORGETBASE_ASSET_CHANGES_INTERVAL_MS", 5_000);
+    definitions.push({
+      name: "asset-change-reconciliation",
+      intervalMs,
+      runOnStart: false,
+      scheduleMessage: `Asset change reconciliation scheduled every ${intervalMs}ms.`,
+      overlapMessage: "Asset change reconciliation already running; skipping overlapping tick.",
+      failureMessage: "Asset change reconciliation failed.",
+      async run() {
+        logAssetChangeMaintenance(await runAssetChangeMaintenance({
+          limit: readPositiveIntegerEnv("FORGETBASE_ASSET_CHANGES_BATCH_SIZE", 25)
+        }, runtime));
+      }
+    });
+  }
+
   if (retentionEnabled) {
     definitions.push({
       name: "telemetry-retention",
@@ -906,7 +926,12 @@ export async function startWorker(): Promise<void> {
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
-  if (process.argv.includes("--retention-once")) {
+  if (process.argv.includes("--asset-change-once")) {
+    logAssetChangeMaintenance(await runAssetChangeMaintenance({
+      tenantId: readStringArg("--tenant-id"),
+      limit: readPositiveIntegerArg("--limit", 25)
+    }));
+  } else if (process.argv.includes("--retention-once")) {
     const result = await runRetentionMaintenance({
       dryRun: !process.argv.includes("--execute")
     });

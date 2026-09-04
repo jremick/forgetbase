@@ -676,7 +676,7 @@ async function handleAssets(args: string[]): Promise<number> {
 
   switch (subcommand) {
     case "list": {
-      console.log(JSON.stringify({ assets: await client.listAssets() }, null, 2));
+      console.log(JSON.stringify({ assets: await client.listAssets({ preview: hasFlag(args, "--preview") }) }, null, 2));
       return 0;
     }
 
@@ -694,7 +694,7 @@ async function handleAssets(args: string[]): Promise<number> {
         throw new Error("Stable ID is required: forgetbase assets get <stable-id>");
       }
 
-      const asset = await client.getAsset(stableId);
+      const asset = await client.getAsset(stableId, { preview: hasFlag(args, "--preview") });
 
       if (!asset) {
         console.error(`Asset not found: ${stableId}`);
@@ -719,7 +719,10 @@ async function handleAssets(args: string[]): Promise<number> {
 
       const file = requireOption(args, "--file");
       const update = await readAssetUpdateFile(file);
-      console.log(JSON.stringify(await client.updateAsset(stableId, update), null, 2));
+      console.log(JSON.stringify(await client.updateAsset(stableId, {
+        ...update,
+        expectedVersionId: readOption(args, "--expected-version-id") ?? update.expectedVersionId
+      }), null, 2));
       return 0;
     }
 
@@ -730,6 +733,7 @@ async function handleAssets(args: string[]): Promise<number> {
 
       const versionId = readOption(args, "--version-id");
       console.log(JSON.stringify(await client.restoreAssetVersion(stableId, {
+        expectedVersionId: readOption(args, "--expected-version-id"),
         versionId,
         versionNumber: readPositiveIntegerOption(args, "--version-number"),
         changeNote: readOption(args, "--change-note")
@@ -756,6 +760,7 @@ async function handleAssets(args: string[]): Promise<number> {
       }
 
       const publish = assetPublishInputSchema.parse({
+        expectedVersionId: readOption(args, "--expected-version-id"),
         reviewDueAt: readOption(args, "--review-due-at"),
         changeNote: readOption(args, "--change-note")
       }) satisfies AssetPublishInput;
@@ -769,6 +774,7 @@ async function handleAssets(args: string[]): Promise<number> {
       }
 
       const review = assetReviewInputSchema.parse({
+        expectedVersionId: readOption(args, "--expected-version-id"),
         status: readOption(args, "--status"),
         reviewDueAt: requireOption(args, "--review-due-at"),
         sourceRef: readOption(args, "--source-ref"),
@@ -797,7 +803,7 @@ async function handleCorpus(args: string[]): Promise<number> {
   let skipped = 0;
 
   for (const asset of assets) {
-    const existing = await client.getAsset(asset.stableId);
+    const existing = await client.getAsset(asset.stableId, { preview: true });
 
     if (existing) {
       skipped += 1;
@@ -1528,15 +1534,15 @@ Usage:
   forgetbase telemetry retention-set [--retrieval-event-days 30|forever] [--audit-event-days 365|forever] [--feedback-days 90|forever] [--api-key ...]
   forgetbase telemetry purge [--execute] [--api-key ...]
   forgetbase exports ai-package [--package demo-agent-pack] [--format json|okf] [--okf-version 0.1] [--output export.json] [--output-dir okf-bundle] [--api-key ...]
-  forgetbase assets list [--api-key ...] [--api-url http://127.0.0.1:3000]
+  forgetbase assets list [--preview] [--api-key ...] [--api-url http://127.0.0.1:3000]
   forgetbase assets review-queue [--as-of 2026-06-16] [--include-approved true|false] [--limit 50] [--api-key ...]
-  forgetbase assets get <stable-id> [--api-key ...] [--api-url http://127.0.0.1:3000]
+  forgetbase assets get <stable-id> [--preview] [--api-key ...] [--api-url http://127.0.0.1:3000]
   forgetbase assets create --file asset.json [--api-key ...] [--api-url http://127.0.0.1:3000]
-  forgetbase assets update <stable-id> --file update.json [--api-key ...] [--api-url http://127.0.0.1:3000]
+  forgetbase assets update <stable-id> --file update.json [--expected-version-id version-id] [--api-key ...] [--api-url http://127.0.0.1:3000]
   forgetbase assets version <stable-id> --version-number 1 [--api-key ...] [--api-url http://127.0.0.1:3000]
-  forgetbase assets review <stable-id> --review-due-at 2027-01-31 [--status approved] [--source-ref ...] [--change-note "..."] [--api-key ...]
-  forgetbase assets publish <stable-id> [--review-due-at 2027-01-31] [--change-note "..."] [--api-key ...] [--api-url http://127.0.0.1:3000]
-  forgetbase assets restore <stable-id> --version-number 1 [--api-key ...] [--api-url http://127.0.0.1:3000]
+  forgetbase assets review <stable-id> --review-due-at 2027-01-31 [--expected-version-id version-id] [--status approved] [--source-ref ...] [--change-note "..."] [--api-key ...]
+  forgetbase assets publish <stable-id> [--expected-version-id version-id] [--review-due-at 2027-01-31] [--change-note "..."] [--api-key ...] [--api-url http://127.0.0.1:3000]
+  forgetbase assets restore <stable-id> --version-number 1 [--expected-version-id version-id] [--api-key ...] [--api-url http://127.0.0.1:3000]
   forgetbase corpus import [--file corpus/demo/assets.json] [--api-key ...] [--api-url http://127.0.0.1:3000]
 `);
 }

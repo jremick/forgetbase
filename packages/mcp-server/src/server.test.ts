@@ -77,6 +77,35 @@ describe("ForgetBase MCP server contract", () => {
     }
   });
 
+  it.each([
+    { toolName: "publish_asset", route: "publish", fields: { changeNote: "Publish reviewed content" } },
+    { toolName: "review_asset", route: "review", fields: { reviewDueAt: "2027-01-31", sourceRef: "synthetic-review" } }
+  ])("exposes and forwards the optional expected version for $toolName", async ({ toolName, route, fields }) => {
+    const expectedVersionId = "9e3b4b55-846a-4484-a1b0-745b2f8bfd71";
+    const stableId = "policy.beta-public-export";
+    const { fetchMock, calls } = mockFetch(() => betaAssetDetailFixture());
+    const { client, server } = await connectMcp(fetchMock);
+
+    try {
+      const tools = await client.listTools();
+      const tool = tools.tools.find((entry) => entry.name === toolName);
+      expect(tool?.inputSchema.properties?.expectedVersionId).toMatchObject({ type: "string", format: "uuid" });
+      expect(tool?.inputSchema.required).not.toContain("expectedVersionId");
+
+      const result = await client.callTool({ name: toolName, arguments: { stableId, expectedVersionId, ...fields } });
+
+      expect(calls).toHaveLength(1);
+      expect(calls[0]?.method).toBe("POST");
+      expect(calls[0]?.url.pathname).toBe(`/assets/${stableId}/${route}`);
+      expect(calls[0]?.headers.get("x-forgetbase-surface")).toBe("mcp");
+      expect(calls[0]?.body).toMatchObject({ expectedVersionId, ...fields });
+      expect(parseToolText(result)).toMatchObject({ asset: { stableId } });
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+
   it("forwards fetch and OKF export tool calls through the canonical API path", async () => {
     const jsonPackage = betaJsonExportPackage();
     const okfPackage = buildOkfExportPackage(jsonPackage, { okfVersion: "0.1" });
