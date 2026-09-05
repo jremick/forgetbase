@@ -1,11 +1,11 @@
 # Public Beta Goal
 
-Status: active implementation target
-Date: 2026-06-29
+Status: public self-hosted trial target
+Date: 2026-09-05
 
 ## Current Phase
 
-The repository remains private while the candidate is hardened and tested on a controlled live instance. This phase follows [Private Live UAT](PRIVATE_LIVE_UAT.md). It does not authorize changing repository visibility, creating a release, pushing a new tag, or announcing public beta.
+The beta.3 baseline completed its private operational gates. Public promotion follows [Publication](PUBLICATION.md) and the [release runbook](runbooks/PUBLIC_BETA_RELEASE.md). Controlled live testing still follows [Private Live UAT](PRIVATE_LIVE_UAT.md); passing tests alone does not authorize publication.
 
 ## Goal
 

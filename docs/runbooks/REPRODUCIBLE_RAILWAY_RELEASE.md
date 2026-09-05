@@ -1,7 +1,8 @@
-# Reproducible private Railway release
+# Reproducible Railway release
 
-Use the existing personal project and its approved HTTPS origin. Keep the
-repository private. This procedure releases the single-instance core; it does
+Use the existing personal project and its approved HTTPS origin. Repository
+publication follows the separate [public release gates](PUBLIC_BETA_RELEASE.md).
+This procedure releases the single-instance core; it does
 not activate the managed-upgrade or local-agent candidate branches.
 
 ## Release inputs
@@ -20,7 +21,7 @@ database and attachment recovery.
 Prepare artifacts from the clean release commit:
 
 ```bash
-pnpm release:prepare 0.1.0-beta.3 work/releases/0.1.0-beta.3
+pnpm release:prepare 0.1.0-beta.4 work/releases/0.1.0-beta.4
 ```
 
 The command produces a Git source archive, `release-manifest.json` and
@@ -112,7 +113,7 @@ Do not expose the scanner publicly or disable scanning to make readiness pass.
    identifiable synthetic fixtures created for the check.
 6. Capture and verify the post-release database/blob recovery set. Publish the
    source archive, manifest, checksums and concise verification record on the
-   private prerelease. Preserve all prior immutable tags and release assets.
+   prerelease after its disclosure review. Preserve all prior immutable tags and release assets.
 
 ## Rollback boundary
 

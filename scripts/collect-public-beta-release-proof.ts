@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, relative, resolve } from "node:path";
+import { findReleaseCiRun } from "./github-release-policy.js";
 
 type EvidenceRef = {
   kind: "file" | "text" | "url";
@@ -29,11 +30,11 @@ const gateResultsDir = process.env.PUBLIC_BETA_PROOF_GATE_DIR ?? "work/public-be
 const githubCheck = run("tsx", ["scripts/check-public-beta-github.ts"]);
 const githubCheckPayload = parseJson(githubCheck.stdout);
 const githubMetadata = readGithubMetadata(repo);
-const latestCi = readLatestSuccessfulCi(repo, githubMetadata.defaultBranch || "main");
 const commitSha = commandOutput("git", ["rev-parse", "HEAD"]) ?? "<40-character git commit SHA>";
-const ciHeadSha = process.env.PUBLIC_BETA_CI_HEAD_SHA ?? latestCi.headSha ?? "<40-character CI head SHA>";
+const latestCi = readLatestSuccessfulCi(repo, githubMetadata.defaultBranch || "main", commitSha);
+const ciHeadSha = latestCi.headSha || "<40-character CI head SHA>";
 const releaseTag = process.env.PUBLIC_BETA_TAG;
-const ciRunUrl = process.env.PUBLIC_BETA_CI_RUN_URL ?? latestCi.url ?? `https://github.com/${repo}/actions/runs/<run-id>`;
+const ciRunUrl = latestCi.url || `https://github.com/${repo}/actions/runs/<run-id>`;
 const liveDemoUrl = process.env.PUBLIC_BETA_LIVE_DEMO_URL ?? "https://<public-demo-host>";
 const releaseUatTenantId = process.env.PUBLIC_BETA_RELEASE_UAT_TENANT_ID;
 const releaseAdminEmail = process.env.PUBLIC_BETA_RELEASE_ADMIN_EMAIL ?? "admin-public-beta@example.test";
@@ -494,7 +495,7 @@ function summarizeLiveDemoRoot(
   };
 }
 
-function readLatestSuccessfulCi(targetRepo: string, branch: string): { url: string; headSha: string; status: "passed" | "unknown" } {
+function readLatestSuccessfulCi(targetRepo: string, branch: string, sourceRevision: string): { url: string; headSha: string; status: "passed" | "unknown" } {
   const result = run("gh", [
     "run",
     "list",
@@ -504,6 +505,10 @@ function readLatestSuccessfulCi(targetRepo: string, branch: string): { url: stri
     branch,
     "--workflow",
     "CI",
+    "--commit",
+    sourceRevision,
+    "--event",
+    "push",
     "--limit",
     "10",
     "--json",
@@ -516,7 +521,7 @@ function readLatestSuccessfulCi(targetRepo: string, branch: string): { url: stri
 
   try {
     const runs = JSON.parse(result.stdout) as Array<Record<string, unknown>>;
-    const success = runs.find((run) => run.status === "completed" && run.conclusion === "success");
+    const success = findReleaseCiRun(runs, sourceRevision);
     return typeof success?.url === "string"
       ? {
         url: success.url,

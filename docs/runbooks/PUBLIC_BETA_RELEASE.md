@@ -2,7 +2,7 @@
 
 Use this runbook for the final promotion from public beta candidate to public beta release.
 
-The next candidate tag is `v0.1.0-beta.2`. The existing `v0.1.0-beta.1` tag is a private beta snapshot and must not be moved or reused.
+The public candidate tag is `v0.1.0-beta.4`. Tags `v0.1.0-beta.1` through `v0.1.0-beta.3` are historical private-beta snapshots. Preserve their tags, source identity and release assets.
 
 ## Scope
 
@@ -26,6 +26,7 @@ Record these before running the final gates:
 - reader UAT account for the demo
 - support contact path
 - security reporting path
+- completed disclosure review from [Publication](../PUBLICATION.md)
 
 Do not store account passwords, API keys, or provider secrets in the proof bundle.
 
@@ -133,7 +134,7 @@ npx -y pnpm@11.7.0 security:check-deployment-defaults
 
 ## GitHub Release Settings
 
-After explicit owner approval to make the repository public, confirm these settings:
+Prepare the settings before publication. On GitHub Free, branch protection and private vulnerability reporting may be unavailable for private repositories. After the disclosure and source checks pass and the owner authorizes publication, change visibility and immediately apply and read back these settings:
 
 - repository visibility is public
 - Apache-2.0 license is detected
@@ -142,7 +143,11 @@ After explicit owner approval to make the repository public, confirm these setti
 - security policy is present
 - private vulnerability reporting is enabled
 - default branch is `main`
-- default branch requires CI through branch protection or rulesets
+- `main` requires the real `Verify` CI check with up-to-date branches
+- pull requests and conversation resolution are required; zero outside approvals are required for the solo-maintainer workflow
+- branch protection applies to administrators; force pushes and deletion are blocked
+- secret scanning and push protection are enabled
+- CodeQL default setup is configured for JavaScript/TypeScript and GitHub Actions
 - repo description and topics match the reader-first product scope
 
 Run:
@@ -153,13 +158,15 @@ npx -y pnpm@11.7.0 github:public-beta:check
 
 Stop if this command fails.
 
+The check verifies that the local release commit is the remote `main` commit and that its latest push-triggered CI run passed. An older successful run or an unrelated ruleset is not sufficient. This runbook uses classic branch protection; changing to rulesets requires an equivalent verified policy and an updated checker.
+
 ## Release Proof
 
 Collect and validate the proof manifest after the live demo, UAT reports, stack gates, CI, and GitHub read-back are ready:
 
 ```bash
 PUBLIC_BETA_LIVE_DEMO_URL=https://demo.example.com \
-PUBLIC_BETA_TAG=v0.1.0-beta.2 \
+PUBLIC_BETA_TAG=v0.1.0-beta.4 \
 npx -y pnpm@11.7.0 release-proof:collect
 
 npx -y pnpm@11.7.0 release-proof:check work/public-beta-proof/public-beta-release-proof.json
@@ -172,8 +179,8 @@ The proof check must pass before tagging or announcing public beta. A failing re
 Only after the proof check passes:
 
 ```bash
-git tag -a v0.1.0-beta.2 -m "ForgetBase v0.1.0-beta.2"
-git push origin v0.1.0-beta.2
+git tag -a v0.1.0-beta.4 -m "ForgetBase v0.1.0-beta.4"
+git push origin v0.1.0-beta.4
 ```
 
 Create the GitHub release from the tag. Keep the release notes plain:
@@ -197,7 +204,7 @@ Stop the release if any of these are true:
 - The live demo does not reflect the release commit.
 - Reader/admin UAT evidence is missing or stale.
 - Private vulnerability reporting is not enabled after public visibility.
-- Branch protection or a ruleset cannot require CI on `main`.
+- The documented branch protection or GitHub security settings cannot be verified.
 - Restricted content appears in reader search, ask, or export output.
 - The UI has obvious mobile overflow, clipped text, or admin actions visible to regular readers.
 - Any release note or README claim goes beyond the documented public beta scope.

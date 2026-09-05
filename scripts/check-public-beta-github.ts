@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { findReleaseCiRun, validateReleaseBranchProtection, validateReleaseCodeScanning } from "./github-release-policy.js";
 
 type GhResult = {
   ok: boolean;
@@ -17,6 +18,9 @@ const repo = process.env.PUBLIC_BETA_REPO ?? "jremick/forgetbase";
 const expectedDescription = "Self-hosted knowledge base for people and AI tools";
 const expectedTopics = ["forgetbase", "knowledge-base", "ai-tools", "self-hosted", "docker-compose"];
 const findings: Finding[] = [];
+const localRevision = spawnSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" });
+const commitSha = localRevision.status === 0 ? localRevision.stdout.trim() : "";
+record(/^[a-f0-9]{40}$/.test(commitSha), "release source commit", `commitSha=${commitSha || "unavailable"}`);
 
 const repoView = gh([
   "repo",
@@ -49,6 +53,9 @@ const metadata = parseJson<Record<string, unknown>>(repoView.stdout, "repo metad
 const defaultBranch = readNestedString(metadata, ["defaultBranchRef", "name"]);
 const license = readNestedString(metadata, ["licenseInfo", "key"]);
 const topics = readTopics(metadata.repositoryTopics);
+const mainCommit = gh(["api", `repos/${repo}/commits/${encodeURIComponent(defaultBranch || "main")}`]);
+const mainCommitPayload = mainCommit.ok ? parseJson<Record<string, unknown>>(mainCommit.stdout, "main commit") : {};
+record(mainCommitPayload.sha === commitSha, "release source matches main", `local=${commitSha}; main=${String(mainCommitPayload.sha ?? "unavailable")}`);
 
 record(metadata.nameWithOwner === repo, "repo identity", `expected ${repo}, got ${String(metadata.nameWithOwner)}`);
 record(metadata.visibility === "PUBLIC" && metadata.isPrivate === false, "repo visibility", `visibility=${String(metadata.visibility)}`);
@@ -79,20 +86,31 @@ if (privateVulnerability.ok) {
   record(false, "private vulnerability reporting", summarizeGhFailure(privateVulnerability));
 }
 
-const rulesets = gh(["api", `repos/${repo}/rulesets`]);
 const branchProtection = defaultBranch
   ? gh(["api", `repos/${repo}/branches/${defaultBranch}/protection`])
   : { ok: false, status: null, stdout: "", stderr: "default branch unavailable" };
 
-const rulesetCount = rulesets.ok ? readArray(parseJson<unknown>(rulesets.stdout, "rulesets")).length : 0;
-const hasBranchProtection = branchProtection.ok;
+const protectionIssues = validateReleaseBranchProtection(branchProtection.ok
+  ? parseJson<unknown>(branchProtection.stdout, "branch protection")
+  : undefined);
 record(
-  rulesetCount > 0 || hasBranchProtection,
-  "default branch protection or rulesets",
-  rulesets.ok
-    ? `rulesets=${rulesetCount}; branchProtection=${hasBranchProtection ? "available" : "unavailable"}`
-    : `rulesets unavailable: ${summarizeGhFailure(rulesets)}; branchProtection=${hasBranchProtection ? "available" : summarizeGhFailure(branchProtection)}`
+  protectionIssues.length === 0,
+  "default branch protection",
+  branchProtection.ok ? protectionIssues.join("; ") || "Verify required; strict PRs, conversation resolution and admin enforcement; force pushes/deletions blocked"
+    : summarizeGhFailure(branchProtection)
 );
+
+const repositorySettings = gh(["api", `repos/${repo}`]);
+const settings = repositorySettings.ok ? parseJson<Record<string, unknown>>(repositorySettings.stdout, "repository settings") : {};
+for (const feature of ["secret_scanning", "secret_scanning_push_protection"]) {
+  const status = readNestedString(settings, ["security_and_analysis", feature, "status"]);
+  record(status === "enabled", feature, `status=${status || "unavailable"}`);
+}
+const codeScanning = gh(["api", `repos/${repo}/code-scanning/default-setup`]);
+const codeScanningSettings = codeScanning.ok ? parseJson<Record<string, unknown>>(codeScanning.stdout, "code scanning setup") : {};
+const codeScanningIssues = validateReleaseCodeScanning(codeScanningSettings);
+record(codeScanningIssues.length === 0, "code scanning configured", codeScanning.ok
+  ? codeScanningIssues.join("; ") || "CodeQL configured for JavaScript/TypeScript and GitHub Actions" : summarizeGhFailure(codeScanning));
 
 const recentRuns = gh([
   "run",
@@ -103,29 +121,29 @@ const recentRuns = gh([
   defaultBranch || "main",
   "--workflow",
   "CI",
+  "--commit",
+  commitSha,
+  "--event",
+  "push",
   "--limit",
   "10",
   "--json",
-  "databaseId,status,conclusion,headBranch,workflowName,url,createdAt"
+  "databaseId,status,conclusion,headBranch,headSha,workflowName,url,createdAt"
 ]);
 
 if (recentRuns.ok) {
   const runs = readArray(parseJson<unknown>(recentRuns.stdout, "recent CI runs"));
-  const successfulCi = runs.find((run) =>
-    isRecord(run) &&
-    run.workflowName === "CI" &&
-    run.status === "completed" &&
-    run.conclusion === "success"
-  );
-  record(Boolean(successfulCi), "recent default-branch CI", successfulCi ? `success=${String((successfulCi as Record<string, unknown>).url)}` : "no successful CI run found");
+  const successfulCi = findReleaseCiRun(runs, commitSha);
+  record(Boolean(successfulCi), "release commit CI", successfulCi ? `success=${String(successfulCi.url)}` : "latest CI for the release commit has not passed");
 } else {
-  record(false, "recent default-branch CI", summarizeGhFailure(recentRuns));
+  record(false, "release commit CI", summarizeGhFailure(recentRuns));
 }
 
 const failures = findings.filter((finding) => finding.status === "fail");
 console.log(JSON.stringify({
   ok: failures.length === 0,
   repo,
+  commitSha,
   checkedAt: new Date().toISOString(),
   findings
 }, null, 2));

@@ -4,13 +4,13 @@
 
 ForgetBase is pre-release software. Public beta builds are intended for inspection and trial use, not production workloads with sensitive data.
 
-Security fixes will target the latest beta branch or tag once the first public beta is created.
+Security fixes target the latest published beta. Older beta tags are historical snapshots and do not receive separate backports.
 
 ## Reporting A Vulnerability
 
 Do not open a public issue for a suspected vulnerability.
 
-For the public beta, use GitHub private vulnerability reporting for this repository when it is available. Until public visibility and private reporting are enabled, report security concerns through the maintainer's private project channel.
+Use [Report a vulnerability](https://github.com/jremick/forgetbase/security/advisories/new) to send a private report to the maintainer. This channel is enabled when the repository is published. If GitHub cannot accept your report, open an issue asking only for a private contact method; include no vulnerability details or sensitive data.
 
 Please include:
 

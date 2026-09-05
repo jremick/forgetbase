@@ -1,8 +1,26 @@
 # Changelog
 
-All notable changes will be recorded here once public beta releases begin.
+Published tags are immutable. Beta releases support self-hosted trials with synthetic data; they do not promise stable APIs or production support.
 
-## Unreleased - 0.1.0-beta.2 candidate
+## Unreleased - 0.1.0-beta.4 public candidate
+
+- Update installation, compatibility, support and security-reporting instructions for public trials.
+- Require the intended source commit's latest CI result during release checks and collection.
+- Verify the actual `main` protection and GitHub security settings before declaring public readiness.
+- Complete disclosure review and public promotion as separate gates from the operational release.
+
+## 0.1.0-beta.3 - 2026-09-05
+
+- Separate private drafts from immutable published versions across reader, API, CLI, SDK and MCP paths.
+- Enforce lifecycle and grant authorization, individual revocation, and optional stale-edit conflict checks.
+- Return complete permission-aware collections, search results and paged exports.
+- Persist content and indexing work together, with recoverable worker processing and readiness reporting.
+- Add governed attachments, persistent scanned storage and bounded operational analytics.
+- Produce reproducible source archives, embedded release identity, checksums and deployment/recovery evidence.
+
+This was a private operational release. Its [release assets](https://github.com/jremick/forgetbase/releases/tag/v0.1.0-beta.3) record 414 tests, 58 machine-consumer contract checks, 228 authenticated browser checks, and verified recovery. One API replica and filesystem attachments remain the supported deployment boundary.
+
+## 0.1.0-beta.2 - 2026-09-01
 
 ### Added
 
@@ -22,13 +40,11 @@ All notable changes will be recorded here once public beta releases begin.
 
 ### Release Boundary
 
-- The candidate is undergoing controlled live UAT while the repository remains private.
-- No `v0.1.0-beta.2` tag or GitHub release exists yet.
-- Public visibility, tagging, release creation, and announcement require explicit owner approval after the evidence gates pass.
+- Published as a private prerelease after controlled live UAT.
+- This historical snapshot does not carry the later beta.3 publication and attachment guarantees.
 
 ### Not Yet Included
 
-- Public release tag.
 - npm package publishing workflow.
 - Full quality-based orchestration.
 - External side-effecting action adapters.
