@@ -298,7 +298,7 @@ async function checkReleaseFlow(page: Page, viewportName: "desktop" | "mobile"):
 
   if (expectedRole === "reader") {
     await assertReaderHasNoAdminControls(page, `release ${viewportName}: reader has no admin controls`);
-    await page.goto(`${baseUrl.replace(/#.*$/, "")}#admin/system/settings`, { waitUntil: "domcontentloaded" });
+    await page.goto(routeUrl(page, "admin/system/settings"), { waitUntil: "domcontentloaded" });
     await page.waitForSelector(".reader-article", { timeout: 10000 });
     const hash = await page.evaluate(() => window.location.hash);
     if (hash !== "#reader") {
@@ -313,7 +313,7 @@ async function checkReleaseFlow(page: Page, viewportName: "desktop" | "mobile"):
     return;
   }
 
-  await page.goto(routeUrl("admin/content"), { waitUntil: "domcontentloaded" });
+  await page.goto(routeUrl(page, "admin/content"), { waitUntil: "domcontentloaded" });
   await page.waitForSelector(".side-nav", { timeout: 10000 });
   await expectHash(page, "#admin/content", "release: admin canonical content route");
   await expectVisibleText(page, "Manage ForgetBase", "release: admin console shell title");
@@ -426,7 +426,7 @@ async function applyTenantOverride(page: Page): Promise<void> {
 }
 
 async function checkBrowserCredentialLifetime(page: Page, viewportName: string): Promise<void> {
-  await page.goto(routeUrl("reader"), { waitUntil: "domcontentloaded" });
+  await page.goto(routeUrl(page, "reader"), { waitUntil: "domcontentloaded" });
   await page.waitForSelector(".reader-article", { timeout: 15000 });
   const hasStoredKey = await page.evaluate(() =>
     window.localStorage.getItem("forgetbase-api-key") !== null ||
@@ -442,14 +442,14 @@ async function checkBrowserCredentialLifetime(page: Page, viewportName: string):
   checks.push({ name: `release ${viewportName}: ${splitOrigin ? "reload discards development bearer credential" : "cookie session survives reload"}`, status: "pass" });
 }
 
-function routeUrl(route: string): string {
-  const url = new URL(baseUrl);
+function routeUrl(page: Page, route: string): string {
+  const url = new URL(page.url());
   url.hash = route;
   return url.toString();
 }
 
 async function checkMobileAdminShell(page: Page): Promise<void> {
-  await page.goto(routeUrl("admin/content"), { waitUntil: "domcontentloaded" });
+  await page.goto(routeUrl(page, "admin/content"), { waitUntil: "domcontentloaded" });
   await page.waitForSelector(".app-shell.admin-shell", { timeout: 10000 });
   await expectHash(page, "#admin/content", "release mobile: admin canonical content route");
   await page.getByRole("button", { name: "Open navigation" }).click();
@@ -460,13 +460,13 @@ async function checkMobileAdminShell(page: Page): Promise<void> {
 }
 
 async function assertLegacyAdminHashCanonicalizes(page: Page): Promise<void> {
-  await page.goto(routeUrl("settings"), { waitUntil: "domcontentloaded" });
+  await page.goto(routeUrl(page, "settings"), { waitUntil: "domcontentloaded" });
   await expectVisibleText(page, "Settings", "release: legacy settings route loaded");
   await expectHash(page, "#admin/system/settings", "release: legacy settings route canonicalized");
-  await page.goto(routeUrl("exports"), { waitUntil: "domcontentloaded" });
+  await page.goto(routeUrl(page, "exports"), { waitUntil: "domcontentloaded" });
   await expectVisibleText(page, "Package builder", "release: legacy exports route loaded");
   await expectHash(page, "#admin/exports", "release: legacy exports route canonicalized");
-  await page.goto(routeUrl("admin/content"), { waitUntil: "domcontentloaded" });
+  await page.goto(routeUrl(page, "admin/content"), { waitUntil: "domcontentloaded" });
   await expectHash(page, "#admin/content", "release: admin content route restored");
 }
 
@@ -477,7 +477,7 @@ async function screenshotAdminRoute(
   fileName: string,
   name: string
 ): Promise<void> {
-  await page.goto(routeUrl(route), { waitUntil: "domcontentloaded" });
+  await page.goto(routeUrl(page, route), { waitUntil: "domcontentloaded" });
   await expectVisibleText(page, expectedText, `${name}: route loaded`);
   if (route.startsWith("admin/")) {
     await expectHash(page, `#${route}`, `${name}: canonical hash`);
@@ -492,7 +492,7 @@ async function screenshotAdminRoute(
 }
 
 async function screenshotExportRoute(page: Page): Promise<void> {
-  await page.goto(routeUrl("admin/exports"), { waitUntil: "domcontentloaded" });
+  await page.goto(routeUrl(page, "admin/exports"), { waitUntil: "domcontentloaded" });
   await expectVisibleText(page, "Package builder", "release: admin exports route loaded");
   await page.getByRole("button", { name: /^Generate$/ }).click();
   await expectVisibleText(page, "Included stable IDs", "release: admin export generated");
@@ -935,7 +935,9 @@ async function assertElementInViewport(page: Page, selector: string, name: strin
 }
 
 async function assertProtectedSessionApiRequiresAuthentication(page: Page, name: string): Promise<void> {
-  const response = await page.context().request.get(new URL("/api/auth/me", baseUrl).toString(), {
+  const apiBase = await page.evaluate(() => window.localStorage.getItem("forgetbase-api-url") ?? "/api");
+  const apiUrl = new URL(apiBase.endsWith("/") ? apiBase : `${apiBase}/`, baseUrl);
+  const response = await page.context().request.get(new URL("auth/me", apiUrl).toString(), {
     headers: { accept: "application/json" }
   });
   let error = "";
@@ -948,7 +950,7 @@ async function assertProtectedSessionApiRequiresAuthentication(page: Page, name:
   }
 
   if (response.status() !== 401 || error !== "authentication_required") {
-    throw new Error(`${name}: expected 401 authentication_required from /api/auth/me, got ${JSON.stringify({
+    throw new Error(`${name}: expected 401 authentication_required from auth/me, got ${JSON.stringify({
       status: response.status(),
       error
     })}`);
