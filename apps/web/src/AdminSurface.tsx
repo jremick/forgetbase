@@ -1,4 +1,5 @@
 import { loadAssetCollection } from "./lib/asset-collection.js";
+import { useBrowserApiKey } from "./lib/browser-auth.js";
 import { lazy, Suspense, useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import type {
   AccountLinkingMode,
@@ -800,7 +801,7 @@ function defaultAuthoringReviewDate(): string {
 
 export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void } = {}) {
   const [apiUrl, setApiUrl] = useState(() => readInitialApiUrl(configuredApiUrl));
-  const [apiKey, setApiKey] = useState(() => localStorage.getItem("forgetbase-api-key") ?? "");
+  const [apiKey, setApiKey] = useBrowserApiKey();
   const [sessionCookieActive, setSessionCookieActive] = useState(
     () => localStorage.getItem(sessionCookieActiveStorageKey) === "true"
   );
@@ -1216,14 +1217,6 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
   useEffect(() => {
     localStorage.setItem(apiUrlStorageKey, apiUrl);
   }, [apiUrl]);
-
-  useEffect(() => {
-    if (apiKey) {
-      localStorage.setItem("forgetbase-api-key", apiKey);
-    } else {
-      localStorage.removeItem("forgetbase-api-key");
-    }
-  }, [apiKey]);
 
   useEffect(() => {
     if (sessionCookieActive) {

@@ -88,6 +88,12 @@ reviewed capacity change requires different limits. The API has one replica;
 the filesystem quota implementation is not a multi-replica reservation system.
 Do not expose the scanner publicly or disable scanning to make readiness pass.
 
+The API's general request limit defaults to 1,000 requests/minute per socket IP.
+Forwarded IP headers remain untrusted, so public traffic shares the proxy bucket.
+Readiness has an independent 60-request/minute limit. Retain these defaults for
+this beta and record any later capacity adjustment. See the bounded configuration
+in [Development](../DEVELOPMENT.md#request-limits-and-browser-credentials).
+
 ## Backup and deployment sequence
 
 1. Restore the pre-release database into an isolated target. Apply the candidate

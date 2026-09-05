@@ -50,10 +50,12 @@ try {
 
   if (mode === "release") {
     await checkReleaseFlow(desktop, "desktop");
+    await checkBrowserCredentialLifetime(desktop, "desktop");
 
     const releaseMobile = await browser.newPage({ viewport: { width: 390, height: 844 } });
     trackConsole(releaseMobile);
     await checkReleaseFlow(releaseMobile, "mobile");
+    await checkBrowserCredentialLifetime(releaseMobile, "mobile");
     await releaseMobile.close();
   }
 
@@ -411,7 +413,7 @@ async function applyTenantOverride(page: Page): Promise<void> {
     }
 
     window.sessionStorage.setItem("forgetbase-uat-storage-initialized", "true");
-    window.localStorage.removeItem("forgetbase-api-key");
+    window.localStorage.setItem("forgetbase-api-key", "legacy-uat-token");
     window.localStorage.removeItem("forgetbase-session-cookie-active");
     window.localStorage.removeItem("forgetbase-login-email");
 
@@ -421,6 +423,23 @@ async function applyTenantOverride(page: Page): Promise<void> {
       window.localStorage.removeItem("forgetbase-login-tenant");
     }
   }, tenantId);
+}
+
+async function checkBrowserCredentialLifetime(page: Page, viewportName: string): Promise<void> {
+  await page.goto(routeUrl("reader"), { waitUntil: "domcontentloaded" });
+  await page.waitForSelector(".reader-article", { timeout: 15000 });
+  const hasStoredKey = await page.evaluate(() =>
+    window.localStorage.getItem("forgetbase-api-key") !== null ||
+    window.sessionStorage.getItem("forgetbase-api-key") !== null
+  );
+  if (hasStoredKey) throw new Error("Browser bearer credential persisted after login or navigation");
+  checks.push({ name: `release ${viewportName}: reader return and no persisted bearer credential`, status: "pass" });
+
+  await page.reload({ waitUntil: "domcontentloaded" });
+  const url = new URL(baseUrl);
+  const splitOrigin = isLocalUrl(baseUrl) && ["5173", "5175"].includes(url.port);
+  await page.waitForSelector(splitOrigin ? "#login-email" : ".reader-article", { timeout: 15000 });
+  checks.push({ name: `release ${viewportName}: ${splitOrigin ? "reload discards development bearer credential" : "cookie session survives reload"}`, status: "pass" });
 }
 
 function routeUrl(route: string): string {
@@ -462,6 +481,10 @@ async function screenshotAdminRoute(
   await expectVisibleText(page, expectedText, `${name}: route loaded`);
   if (route.startsWith("admin/")) {
     await expectHash(page, `#${route}`, `${name}: canonical hash`);
+  }
+  if (route === "admin/system/access") {
+    await page.locator("strong").filter({ hasText: email }).first().waitFor({ state: "visible", timeout: 15000 });
+    checks.push({ name: `${name}: user records loaded`, status: "pass" });
   }
   await assertNoHorizontalOverflow(page, `${name}: overflow`);
   await assertNoClippedText(page, `${name}: clipped text`);
@@ -956,6 +979,7 @@ async function assertHeroFits(page: Page, name: string): Promise<void> {
 
 async function screenshot(page: Page, fileName: string, name: string): Promise<void> {
   const filePath = join(outputDir, fileName);
+  await page.evaluate(() => window.scrollTo(0, 0));
   await page.screenshot({ path: filePath, fullPage: true });
   checks.push({ name, status: "pass", detail: filePath });
 }
