@@ -2,12 +2,26 @@
 
 Published tags are immutable. Beta releases support self-hosted trials with synthetic data; they do not promise stable APIs or production support.
 
-## Unreleased - 0.1.0-beta.4 public candidate
+## 0.1.0-beta.5 - 2026-09-05
+
+- Reject redirects on credential-bearing SDK, model, embedding, OIDC and worker requests.
+- Validate the configured OIDC issuer, endpoint transport, required token claims and response size.
+- Exclude query strings, credentials and exception details from API responses and proxy logs.
+- Reject unsafe requests from disallowed browser origins before session mutation.
+- Inspect Office ZIP metadata with bounded decompression and reject concealed macros or malformed archives.
+- Reject binary request bodies outside the attachment-upload route before parsing or authentication.
+
+Provider and API URLs must identify their final endpoint. OIDC requires the exact issuer and HTTPS outside loopback development. Office uploads reject encrypted, ZIP64 and unsupported archives. No database migration or dependency change is required. See the [security review](docs/SECURITY_REVIEW_2026-09-05.md) for findings, regression evidence and limits.
+
+## 0.1.0-beta.4 - 2026-09-05
 
 - Update installation, compatibility, support and security-reporting instructions for public trials.
 - Require the intended source commit's latest CI result during release checks and collection.
 - Verify the actual `main` protection and GitHub security settings before declaring public readiness.
 - Complete disclosure review and public promotion as separate gates from the operational release.
+- Limit requests before authentication and parsing, keep browser bearer credentials in tab memory, and harden Markdown exports.
+
+The [published release](https://github.com/jremick/forgetbase/releases/tag/v0.1.0-beta.4) includes CI, hosted browser, source identity and recovery evidence.
 
 ## 0.1.0-beta.3 - 2026-09-05
 

@@ -1,6 +1,6 @@
 # Publication checklist
 
-The public candidate is `v0.1.0-beta.4`. It builds on the verified beta.3 operational
+The public candidate is `v0.1.0-beta.5`. It builds on the verified beta.4 public
 release and supports self-hosted trials with synthetic data. The final release
 assets record the candidate commit, CI, runtime identity and completed gates.
 
