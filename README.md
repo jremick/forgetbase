@@ -6,9 +6,9 @@ Teams can write and organize knowledge once. People get a clean reading UI. AI t
 
 ## Current Status
 
-This private repository is being prepared for public beta through controlled live user testing. The current release target is documented in [Public Beta Goal](docs/PUBLIC_BETA_GOAL.md), and the pre-release testing boundary is documented in [Private Live UAT](docs/PRIVATE_LIVE_UAT.md).
+ForgetBase is experimental software for self-hosted trials with synthetic data. The public release candidate is `v0.1.0-beta.4`. API and data formats may change, and support is best effort. See [Public Beta Compatibility](docs/PUBLIC_BETA_COMPATIBILITY.md) for the supported scope and [Releases](https://github.com/jremick/forgetbase/releases) for published builds and verification evidence.
 
-For the governed authoring and publication path, see [Instructions and human documents](docs/governed-workflow.md). The current private operational release follows the [release plan](docs/OPERATIONAL_RELEASE_PLAN.md), [verification record](docs/OPERATIONAL_RELEASE_VERIFICATION.md), and [reproducible Railway procedure](docs/runbooks/REPRODUCIBLE_RAILWAY_RELEASE.md).
+For the governed authoring and publication path, see [Instructions and human documents](docs/governed-workflow.md). The beta.3 operational baseline has passing build, contract, browser, deployment and recovery evidence. The [publication checklist](docs/PUBLICATION.md) records the separate public-release gates.
 
 Expected public beta limits:
 
@@ -17,14 +17,23 @@ Expected public beta limits:
 - Supported trial paths and volatile surfaces are documented in [Public Beta Compatibility](docs/PUBLIC_BETA_COMPATIBILITY.md).
 - Full quality-based orchestration, external side-effecting action adapters, connector credential governance, SCIM, hosted service features, and advanced analytics are future work.
 - Current packages are private workspace packages; no npm publishing workflow is defined yet.
-- Repository visibility, tags, and releases remain unchanged until explicit owner approval after the private-live evidence gates pass.
+- A release is verified only when its source, CI, runtime identity and attached evidence agree.
 
 ## Quick Start
 
 Prerequisites: Node.js 22, Docker, and Docker Compose.
 
+Check out a published release from [Releases](https://github.com/jremick/forgetbase/releases), then run the commands below from its root directory. For the public candidate:
+
 ```bash
-npx -y pnpm@11.7.0 install
+git clone --branch v0.1.0-beta.4 https://github.com/jremick/forgetbase.git
+cd forgetbase
+```
+
+This starts a local trial with loopback-only ports and sample credentials. Use the [deployment runbook](docs/runbooks/DEPLOY_DOCKER_COMPOSE.md) before exposing an installation beyond your computer.
+
+```bash
+npx -y pnpm@11.7.0 install --frozen-lockfile
 npx -y pnpm@11.7.0 typecheck
 npx -y pnpm@11.7.0 build
 npx -y pnpm@11.7.0 --filter @forgetbase/cli start -- validate --file corpus/demo/assets.json --as-of 2026-06-16 --fail-on-warnings
@@ -51,7 +60,7 @@ npx -y pnpm@11.7.0 --filter @forgetbase/cli start -- corpus import --api-url htt
 curl --silent --show-error --fail "http://127.0.0.1:3000/search?query=personal%20data&limit=3"
 ```
 
-Open the split-origin web UI at `http://127.0.0.1:5175/` or the same-origin proxy at `http://127.0.0.1:8080/`.
+Open the same-origin UI at `http://127.0.0.1:8080/`. Sign in with tenant `tenant_demo`, email `admin@example.test`, and password `local-dev-password`. The alternative split-origin UI is at `http://127.0.0.1:5175/`.
 
 ## Product Thesis
 
@@ -83,7 +92,7 @@ The full managed agent orchestration layer is core to the architecture but not t
 
 ## Repository Status
 
-ForgetBase is past the initial scaffold and is being prepared for public beta.
+The self-hosted core supports the following trial workflows.
 
 Included now:
 
@@ -111,7 +120,7 @@ Still future work:
 
 ## Docs
 
-- [Legacy Alpha Release Checklist](docs/ALPHA_RELEASE_CHECKLIST.md)
+- [Publication Checklist](docs/PUBLICATION.md)
 - [Public Beta Goal](docs/PUBLIC_BETA_GOAL.md)
 - [Public Beta Compatibility](docs/PUBLIC_BETA_COMPATIBILITY.md)
 - [Private Live UAT](docs/PRIVATE_LIVE_UAT.md)
@@ -148,7 +157,7 @@ The open-core boundary is still being refined, but the default position is that 
 
 ## Community And Support
 
-- Use GitHub issues for reproducible bugs and concrete feature requests after the repo is public.
+- Use GitHub issues for reproducible bugs and concrete feature requests.
 - Use the security policy for vulnerability reports.
 - See [Public Beta Compatibility](docs/PUBLIC_BETA_COMPATIBILITY.md) for supported trial paths and beta limits.
 - Public beta support is best effort; compatibility guarantees start later.

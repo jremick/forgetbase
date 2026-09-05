@@ -1,6 +1,6 @@
 # Support
 
-ForgetBase is a public-beta candidate. Support is best effort until a stable release exists.
+ForgetBase is experimental self-hosted software. Support is best effort until a stable release exists.
 
 ## Use GitHub Issues For
 
@@ -23,7 +23,7 @@ Include the version or commit, the surface involved, reproduction steps, environ
 
 Do not open a public issue for a suspected vulnerability.
 
-Use GitHub private vulnerability reporting once it is enabled for the repository. Until public visibility and private reporting are enabled, use the maintainer's private project channel.
+Use [Report a vulnerability](https://github.com/jremick/forgetbase/security/advisories/new). See [the security policy](SECURITY.md) for the private reporting process and fallback.
 
 ## Beta Boundaries
 

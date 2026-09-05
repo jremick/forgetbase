@@ -1,7 +1,7 @@
 # Public Beta Compatibility
 
 Status: public beta target
-Date: 2026-06-29
+Date: 2026-09-05
 
 This document defines what public beta users can reasonably expect from ForgetBase. It is not a stable compatibility promise.
 
@@ -31,6 +31,15 @@ Expected to work for beta trials:
 - JSON and OKF export package generation
 - restricted-content leakage verifier
 - backup and restore verifier
+
+Operational limits:
+
+- One API replica with filesystem attachment storage.
+- Publish the current page version before adding or deleting attachments.
+- Browser authoring edits Markdown; structured instructions use CLI or SDK JSON.
+- Clients must send `expectedVersionId` to receive stale-edit protection. The browser does so.
+- Local-agent runtime, managed upgrades and import-planner branches are separate development candidates.
+- External identity providers and paid model quality have not been verified by the operational release evidence.
 
 Still volatile:
 
@@ -79,7 +88,7 @@ Do not use GitHub issues for:
 - production incident support
 - secrets, raw logs with tokens, database dumps, or confidential content
 
-Use GitHub private vulnerability reporting for suspected vulnerabilities once it is enabled. Until then, use the maintainer's private project channel.
+Use [Report a vulnerability](https://github.com/jremick/forgetbase/security/advisories/new) for suspected vulnerabilities. See [the security policy](../SECURITY.md) for the reporting process and fallback.
 
 ## Release Proof
 
