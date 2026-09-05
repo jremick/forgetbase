@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { findReleaseCiRun, validateReleaseBranchProtection } from "./github-release-policy.js";
+import { findReleaseCiRun, validateReleaseBranchProtection, validateReleaseCodeScanning } from "./github-release-policy.js";
 
 type GhResult = {
   ok: boolean;
@@ -108,8 +108,9 @@ for (const feature of ["secret_scanning", "secret_scanning_push_protection"]) {
 }
 const codeScanning = gh(["api", `repos/${repo}/code-scanning/default-setup`]);
 const codeScanningSettings = codeScanning.ok ? parseJson<Record<string, unknown>>(codeScanning.stdout, "code scanning setup") : {};
-record(codeScanningSettings.state === "configured", "code scanning configured", codeScanning.ok
-  ? `state=${String(codeScanningSettings.state)}` : summarizeGhFailure(codeScanning));
+const codeScanningIssues = validateReleaseCodeScanning(codeScanningSettings);
+record(codeScanningIssues.length === 0, "code scanning configured", codeScanning.ok
+  ? codeScanningIssues.join("; ") || "CodeQL configured for JavaScript/TypeScript and GitHub Actions" : summarizeGhFailure(codeScanning));
 
 const recentRuns = gh([
   "run",

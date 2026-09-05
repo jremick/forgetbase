@@ -2,13 +2,18 @@ export function validateReleaseBranchProtection(value: unknown): string[] {
   if (!isRecord(value)) return ["main branch protection could not be read"];
   const issues: string[] = [];
   const statusChecks = isRecord(value.required_status_checks) ? value.required_status_checks : {};
-  const contexts = [
-    ...(Array.isArray(statusChecks.contexts) ? statusChecks.contexts : []),
-    ...(Array.isArray(statusChecks.checks) ? statusChecks.checks.map((check) => isRecord(check) ? check.context : undefined) : [])
-  ];
-  if (!contexts.includes("Verify")) issues.push("main must require the CI Verify check");
+  const checks = Array.isArray(statusChecks.checks) ? statusChecks.checks : [];
+  // GitHub.com's GitHub Actions app ID, verified from this repository's Verify check run.
+  if (!checks.some((check) => isRecord(check) && check.context === "Verify" && check.app_id === 15368)) {
+    issues.push("main must require the CI Verify check from the GitHub Actions app");
+  }
   if (statusChecks.strict !== true) issues.push("main must require branches to be up to date");
-  if (!isRecord(value.required_pull_request_reviews)) issues.push("main must require pull requests");
+  const reviews = value.required_pull_request_reviews;
+  if (!isRecord(reviews)) {
+    issues.push("main must require pull requests");
+  } else if (reviews.required_approving_review_count !== 0 || reviews.require_code_owner_reviews !== false || reviews.require_last_push_approval !== false) {
+    issues.push("the solo-maintainer policy must require zero outside approvals");
+  }
   for (const setting of ["enforce_admins", "required_conversation_resolution"]) {
     if (!isRecord(value[setting]) || value[setting].enabled !== true) issues.push(`${setting} must be enabled`);
   }
@@ -16,6 +21,13 @@ export function validateReleaseBranchProtection(value: unknown): string[] {
     if (!isRecord(value[setting]) || value[setting].enabled !== false) issues.push(`${setting} must be disabled`);
   }
   return issues;
+}
+
+export function validateReleaseCodeScanning(value: unknown): string[] {
+  if (!isRecord(value) || value.state !== "configured") return ["CodeQL default setup must be configured"];
+  const languages = Array.isArray(value.languages) ? value.languages : [];
+  return ["javascript-typescript", "actions"].filter((language) => !languages.includes(language))
+    .map((language) => `CodeQL must analyze ${language}`);
 }
 
 /** GitHub returns runs newest first. A failed rerun must not fall back to an older success. */

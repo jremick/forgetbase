@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { findReleaseCiRun, validateReleaseBranchProtection } from "./github-release-policy.js";
+import { findReleaseCiRun, validateReleaseBranchProtection, validateReleaseCodeScanning } from "./github-release-policy.js";
 
 const commit = "a".repeat(40);
 const protectedBranch = {
   required_status_checks: { strict: true, checks: [{ context: "Verify", app_id: 15368 }] },
-  required_pull_request_reviews: { required_approving_review_count: 0 },
+  required_pull_request_reviews: { required_approving_review_count: 0, require_code_owner_reviews: false, require_last_push_approval: false },
   enforce_admins: { enabled: true },
   required_conversation_resolution: { enabled: true },
   allow_force_pushes: { enabled: false },
@@ -45,7 +45,30 @@ describe("public release eligibility", () => {
   it("rejects a branch that requires an unrelated check", () => {
     expect(validateReleaseBranchProtection({
       ...protectedBranch, required_status_checks: { strict: true, contexts: ["Unrelated"] }
-    })).toContain("main must require the CI Verify check");
+    })).toContain("main must require the CI Verify check from the GitHub Actions app");
+  });
+
+  it.each([undefined, -1, 12345])("rejects a Verify status bound to app %s", (appId) => {
+    expect(validateReleaseBranchProtection({ ...protectedBranch,
+      required_status_checks: { strict: true, contexts: ["Verify"], checks: [{ context: "Verify", app_id: appId }] }
+    })).toContain("main must require the CI Verify check from the GitHub Actions app");
+  });
+
+  it.each([
+    { required_approving_review_count: 1 },
+    { require_code_owner_reviews: true },
+    { require_last_push_approval: true }
+  ])("rejects an approval requirement that blocks the solo-maintainer policy: %j", (override) => {
+    expect(validateReleaseBranchProtection({ ...protectedBranch,
+      required_pull_request_reviews: { ...protectedBranch.required_pull_request_reviews, ...override }
+    })).toContain("the solo-maintainer policy must require zero outside approvals");
+  });
+
+  it("requires CodeQL coverage of both application and workflow code", () => {
+    expect(validateReleaseCodeScanning({ state: "configured", languages: ["javascript-typescript", "actions"] })).toEqual([]);
+    expect(validateReleaseCodeScanning({ state: "configured", languages: ["javascript-typescript"] })).toEqual(["CodeQL must analyze actions"]);
+    expect(validateReleaseCodeScanning({ state: "configured", languages: ["python"] })).toHaveLength(2);
+    expect(validateReleaseCodeScanning({ state: "not-configured" })).not.toEqual([]);
   });
 
   it.each([
