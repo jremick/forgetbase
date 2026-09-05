@@ -10,6 +10,7 @@ import fastify, {
   type FastifyRequest,
   type FastifyServerOptions
 } from "fastify";
+import rateLimit from "@fastify/rate-limit";
 import { createRemoteJWKSet, jwtVerify, type JWTPayload } from "jose";
 import {
 	  aiExportPackageSchema,
@@ -318,6 +319,9 @@ export interface BuildServerOptions extends FastifyServerOptions {
   loginThrottleWindowMs?: number;
   loginThrottleBlockMs?: number;
   loginThrottleMaxEntries?: number;
+  requestRateLimitMax?: number;
+  requestRateLimitWindowMs?: number;
+  requestRateLimitMaxEntries?: number;
   requireAuthentication?: boolean;
   readinessCheck?: () => Promise<void>;
 }
@@ -377,7 +381,24 @@ export interface ModelRuntimeUsage {
 
 export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
   const server = fastify({
-    logger: options.logger ?? true
+    logger: options.logger ?? true,
+    // Forwarded headers must not let clients choose a fresh rate-limit bucket.
+    trustProxy: false
+  });
+  server.register(rateLimit, {
+    // The synchronous builder declares routes before plugins finish loading.
+    // Apply the plugin's limiter through a root hook, including unknown routes.
+    global: false,
+    hook: "onRequest",
+    max: readRateLimitOption(options.requestRateLimitMax, "FORGETBASE_REQUEST_RATE_LIMIT_MAX", 1000, 100_000),
+    timeWindow: readRateLimitOption(options.requestRateLimitWindowMs, "FORGETBASE_REQUEST_RATE_LIMIT_WINDOW_MS", 60_000, 3_600_000),
+    cache: readRateLimitOption(options.requestRateLimitMaxEntries, "FORGETBASE_REQUEST_RATE_LIMIT_MAX_ENTRIES", 5000, 100_000)
+  });
+  let limitRequest: ReturnType<FastifyInstance["rateLimit"]>;
+  let limitReadiness: ReturnType<FastifyInstance["rateLimit"]>;
+  server.after(() => {
+    limitRequest = server.rateLimit();
+    limitReadiness = server.rateLimit({ max: 60, timeWindow: 60_000 });
   });
   const databaseUrl = options.databaseUrl ?? process.env.DATABASE_URL;
   const pool = (
@@ -611,6 +632,14 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
     if (request.method === "OPTIONS") {
       return reply.code(204).send();
     }
+  });
+
+  server.addHook("onRequest", async (request, reply) => {
+    // Only the cheap liveness route is exempt. Readiness has a separate budget.
+    if (request.routeOptions.url === "/health") return;
+    return request.routeOptions.url === "/ready"
+      ? limitReadiness.call(server, request, reply)
+      : limitRequest.call(server, request, reply);
   });
 
   server.addHook("preHandler", async (request, reply) => {
@@ -9011,6 +9040,14 @@ function readIntegerEnv(name: string): number | undefined {
   }
 
   return Number.parseInt(value.trim(), 10);
+}
+
+function readRateLimitOption(configured: number | undefined, name: string, fallback: number, maximum: number): number {
+  const value = readPositiveIntegerOption(configured, process.env[name], fallback, name);
+  if (!Number.isSafeInteger(value) || value > maximum) {
+    throw new Error(`${name} must be an integer between 1 and ${maximum}.`);
+  }
+  return value;
 }
 
 function readPositiveIntegerOption(

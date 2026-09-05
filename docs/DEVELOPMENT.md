@@ -426,6 +426,29 @@ Managed-query eval schedule maintenance runs due tenant schedule policies and de
 
 Action approval expiry maintenance finds `approval-required` action requests whose `approvalExpiresAt` is in the past and defaults to dry-run. Add `--execute` after reviewing candidate counts. Execution marks each stale request `expired`, records `agent.action.approval_expiry` audit evidence without executing the action, and leaves non-expired pending requests untouched. For the long-running worker, scheduled action approval expiry is disabled by default; set `FORGETBASE_ACTION_APPROVAL_EXPIRY_ENABLED=true` to schedule it, keep `FORGETBASE_ACTION_APPROVAL_EXPIRY_DRY_RUN=true` for previews, set `FORGETBASE_ACTION_APPROVAL_EXPIRY_LIMIT`, and set `FORGETBASE_ACTION_APPROVAL_EXPIRY_INTERVAL_MS`.
 
+## Request Limits And Browser Credentials
+
+The API limits requests before body parsing and database-backed authentication.
+Each API process allows 1,000 requests per socket IP in a 60-second window. The
+general counter keeps at most 5,000 IP buckets. IPv6 addresses share a /64 bucket. The API ignores
+forwarded client-IP headers, so callers behind the same reverse proxy share its
+bucket. Keep the API private behind the existing proxy. This conservative limit
+is for the single-instance beta; it is not a distributed abuse-control service.
+
+Use `FORGETBASE_REQUEST_RATE_LIMIT_MAX` (1–100,000),
+`FORGETBASE_REQUEST_RATE_LIMIT_WINDOW_MS` (1–3,600,000), and
+`FORGETBASE_REQUEST_RATE_LIMIT_MAX_ENTRIES` (1–100,000) to size the bounded limit.
+Exhausted requests receive HTTP 429 and `Retry-After`. `/health` is exempt because
+it only reports process identity. `/ready` has its own 60-request/minute budget.
+Login-failure and attachment limits still apply. CORS preflight performs no
+database work and does not consume the general budget.
+
+Same-origin browser login uses the existing HttpOnly session cookie. The local
+split-origin Vite fallback holds its bearer credential only in memory shared by
+the reader and admin surfaces. Reloading that page requires signing in again.
+Startup removes legacy `forgetbase-api-key` localStorage entries without reading
+them. A legacy bearer-only session must sign in again after upgrading.
+
 ## Attachment Safety Configuration
 
 Docker Compose requires its internal ClamAV service with `FORGETBASE_ATTACHMENT_SCAN_REQUIRED=true`, `FORGETBASE_ATTACHMENT_CLAMD_HOST=clamav`, port `3310`, and a 15-second default scan timeout. Do not expose the ClamD port outside the Compose network. A deployment that requires scanning is not ready and does not accept uploads when the scanner is unavailable.

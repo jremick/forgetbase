@@ -35,6 +35,10 @@ Expected to work for beta trials:
 Operational limits:
 
 - One API replica with filesystem attachment storage.
+- Requests share a bounded per-process socket-IP limit. Reverse-proxy users share
+  the proxy's bucket; see [configuration and retry behavior](DEVELOPMENT.md#request-limits-and-browser-credentials).
+- Local split-origin browser credentials last until page reload. Same-origin
+  installations use HttpOnly session cookies; legacy stored bearer keys are cleared.
 - Publish the current page version before adding or deleting attachments.
 - Browser authoring edits Markdown; structured instructions use CLI or SDK JSON.
 - Clients must send `expectedVersionId` to receive stale-edit protection. The browser does so.

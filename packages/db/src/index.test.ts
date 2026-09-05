@@ -144,6 +144,26 @@ class TestEmbeddingProvider implements EmbeddingProvider {
 }
 
 describe("OpenAiEmbeddingProvider", () => {
+  it.each([
+    ["https://provider.example.test/v1", "https://provider.example.test/v1/embeddings"],
+    ["https://provider.example.test/v1///", "https://provider.example.test/v1/embeddings"],
+    ["/".repeat(200_000) + "x///", "/".repeat(200_000) + "x/embeddings"],
+    ["/".repeat(200_000), "/embeddings"],
+    ["", "/embeddings"]
+  ])("normalizes trailing slashes without changing the request prefix (case %#)", async (baseUrl, expectedUrl) => {
+    const requests: string[] = [];
+    const provider = new OpenAiEmbeddingProvider({
+      apiKey: "test-openai-key",
+      baseUrl,
+      fetchImpl: async (input) => {
+        requests.push(String(input));
+        return new Response(JSON.stringify({ data: [{ index: 0, embedding: Array(DEFAULT_EMBEDDING_DIMENSIONS).fill(0) }] }));
+      }
+    });
+    await provider.embedTexts(["synthetic input"]);
+    expect(requests).toEqual([expectedUrl]);
+  });
+
   it("posts embedding batches to the OpenAI-compatible embeddings endpoint", async () => {
     const embedding = Array.from({ length: DEFAULT_EMBEDDING_DIMENSIONS }, (_, index) => index / 1000);
     const requests: Array<{
