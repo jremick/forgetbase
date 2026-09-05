@@ -48,4 +48,4 @@ Durable regression coverage is in [security-boundaries.test.ts](../scripts/secur
 - This was a source and isolated-runtime review. Production configuration, infrastructure/network penetration tests, live identity-provider compatibility, actual ClamAV signature freshness, and container OS CVE scanning were not performed. No local container vulnerability scanner was available.
 - Existing authorization, published-version isolation, CSRF, session revocation, storage traversal, attachment quotas/scanner-failure handling, and SDK/CLI/MCP contract tests passed. Passing these checks does not prove the absence of all vulnerabilities.
 
-Release verification must include GitHub CodeQL for the patched source and the documented authenticated UAT and recovery gates. Report container scanning coverage explicitly in the release evidence.
+Release verification must include GitHub CodeQL for the patched source and the documented authenticated UAT and recovery gates. The subsequent [container security review](CONTAINER_SECURITY_2026-09-05.md) records patched OS packages, scanning coverage and remaining upstream advisories.
