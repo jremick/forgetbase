@@ -1,4 +1,8 @@
 services:
+  api:
+    environment:
+      FORGETBASE_CORS_ALLOWED_ORIGINS: ${FORGETBASE_CORS_ALLOWED_ORIGINS:-http://127.0.0.1:8080,http://localhost:8080,http://127.0.0.1:5175,http://localhost:5175}
+
   proxy:
     image: nginx:1.30.4-alpine@sha256:dc5069ad14f19660b141b21236140b91656bf89bbc3e2417c70ae650cd66104c
     depends_on:

@@ -1,4 +1,5 @@
 import { createConnection } from "node:net";
+import { isOpenXmlPackage } from "./openxml-inspection.js";
 
 export type AttachmentInspection = {
   detectedMediaType: string;
@@ -277,14 +278,4 @@ function contentMatchesMediaType(content: Buffer, mediaType: string): boolean {
 function decodeText(content: Buffer): string {
   if (content.includes(0)) throw new Error("Text attachment contains NUL bytes.");
   return UTF8_DECODER.decode(content);
-}
-
-function isOpenXmlPackage(content: Buffer, expectedRoot: string): boolean {
-  if (content.byteLength < 4 || content[0] !== 0x50 || content[1] !== 0x4b ||
-    !((content[2] === 0x03 && content[3] === 0x04) || (content[2] === 0x05 && content[3] === 0x06))) {
-    return false;
-  }
-
-  const names = content.toString("latin1");
-  return names.includes("[Content_Types].xml") && names.includes(expectedRoot) && !names.includes("vbaProject.bin");
 }

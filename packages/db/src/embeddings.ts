@@ -84,14 +84,13 @@ export class OpenAiEmbeddingProvider implements EmbeddingProvider {
           model: this.model,
           dimensions: this.dimensions
         }),
-        signal: controller.signal
+        signal: controller.signal,
+        redirect: "error"
       });
 
       if (!response.ok) {
-        const errorText = await response.text().catch(() => "");
-        throw new Error(
-          `OpenAI embeddings request failed with HTTP ${response.status}${errorText ? `: ${errorText.slice(0, 200)}` : ""}`
-        );
+        await response.body?.cancel();
+        throw new Error(`OpenAI embeddings request failed with HTTP ${response.status}`);
       }
 
       const payload = await response.json() as OpenAiEmbeddingResponse;

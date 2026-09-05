@@ -2,7 +2,7 @@
 
 Use this runbook for the final promotion from public beta candidate to public beta release.
 
-The public candidate tag is `v0.1.0-beta.4`. Tags `v0.1.0-beta.1` through `v0.1.0-beta.3` are historical private-beta snapshots. Preserve their tags, source identity and release assets.
+The public candidate tag is `v0.1.0-beta.5`. Tags `v0.1.0-beta.1` through `v0.1.0-beta.3` are historical private-beta snapshots. Preserve their tags, source identity and release assets.
 
 ## Scope
 
@@ -166,7 +166,7 @@ Collect and validate the proof manifest after the live demo, UAT reports, stack 
 
 ```bash
 PUBLIC_BETA_LIVE_DEMO_URL=https://demo.example.com \
-PUBLIC_BETA_TAG=v0.1.0-beta.4 \
+PUBLIC_BETA_TAG=v0.1.0-beta.5 \
 npx -y pnpm@11.7.0 release-proof:collect
 
 npx -y pnpm@11.7.0 release-proof:check work/public-beta-proof/public-beta-release-proof.json
@@ -179,8 +179,8 @@ The proof check must pass before tagging or announcing public beta. A failing re
 Only after the proof check passes:
 
 ```bash
-git tag -a v0.1.0-beta.4 -m "ForgetBase v0.1.0-beta.4"
-git push origin v0.1.0-beta.4
+git tag -a v0.1.0-beta.5 -m "ForgetBase v0.1.0-beta.5"
+git push origin v0.1.0-beta.5
 ```
 
 Create the GitHub release from the tag. Keep the release notes plain:
