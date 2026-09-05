@@ -2,7 +2,7 @@ import { createServer, type Server } from "node:http";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { extname, join, normalize, resolve } from "node:path";
-import { chromium, type Browser, type Page } from "@playwright/test";
+import { chromium, type Browser, type Page, type Request } from "@playwright/test";
 
 type UatMode = "public" | "release";
 type ExpectedRole = "admin" | "reader";
@@ -27,6 +27,7 @@ const expectedAttachmentFilename = process.env.UAT_EXPECT_ATTACHMENT_FILENAME ??
 const commitSha = commandOutput("git", ["rev-parse", "HEAD"]) ?? "";
 const checks: CheckResult[] = [];
 const consoleProblems: string[] = [];
+const pageTraffic = new WeakMap<Page, { pending: Set<Request>; changedAt: number }>();
 let server: Server | undefined;
 let browser: Browser | undefined;
 
@@ -173,6 +174,18 @@ async function startStaticDistServer(urlString: string): Promise<Server> {
 }
 
 function trackConsole(page: Page): void {
+  const traffic = { pending: new Set<Request>(), changedAt: Date.now() };
+  pageTraffic.set(page, traffic);
+  page.on("request", (request) => {
+    traffic.pending.add(request);
+    traffic.changedAt = Date.now();
+  });
+  const finished = (request: Request) => {
+    traffic.pending.delete(request);
+    traffic.changedAt = Date.now();
+  };
+  page.on("requestfinished", finished);
+  page.on("requestfailed", finished);
   page.on("console", (message) => {
     if (message.type() === "error" || message.type() === "warning") {
       consoleProblems.push(`${message.type()}: ${message.text()}`);
@@ -435,11 +448,25 @@ async function checkBrowserCredentialLifetime(page: Page, viewportName: string):
   if (hasStoredKey) throw new Error("Browser bearer credential persisted after login or navigation");
   checks.push({ name: `release ${viewportName}: reader return and no persisted bearer credential`, status: "pass" });
 
+  // Finish background reads before deliberately replacing the document. Otherwise
+  // this test creates ERR_ABORTED failures in its own request-failure gate.
+  await waitForSettledRequests(page);
   await page.reload({ waitUntil: "domcontentloaded" });
   const url = new URL(baseUrl);
   const splitOrigin = isLocalUrl(baseUrl) && ["5173", "5175"].includes(url.port);
   await page.waitForSelector(splitOrigin ? "#login-email" : ".reader-article", { timeout: 15000 });
+  await waitForSettledRequests(page);
   checks.push({ name: `release ${viewportName}: ${splitOrigin ? "reload discards development bearer credential" : "cookie session survives reload"}`, status: "pass" });
+}
+
+async function waitForSettledRequests(page: Page): Promise<void> {
+  const traffic = pageTraffic.get(page);
+  if (!traffic) throw new Error("Page request tracking was not initialized");
+  const deadline = Date.now() + 15000;
+  while (traffic.pending.size || Date.now() - traffic.changedAt < 500) {
+    if (Date.now() >= deadline) throw new Error("Background requests did not settle before the credential reload check");
+    await new Promise((resolveWait) => setTimeout(resolveWait, 50));
+  }
 }
 
 function routeUrl(page: Page, route: string): string {
