@@ -58,7 +58,8 @@ try {
     FORGETBASE_POSTGRES_PORT: `127.0.0.1:${postgresPort}`,
     FORGETBASE_API_PORT: `127.0.0.1:${apiPort}`,
     FORGETBASE_WEB_PORT: `127.0.0.1:${webPort}`,
-    FORGETBASE_PROXY_PORT: `127.0.0.1:${proxyPort}`
+    FORGETBASE_PROXY_PORT: `127.0.0.1:${proxyPort}`,
+    FORGETBASE_CORS_ALLOWED_ORIGINS: `http://127.0.0.1:${proxyPort},http://127.0.0.1:${webPort}`
   };
   const apiUrl = `http://127.0.0.1:${apiPort}`;
   const webUrl = `http://127.0.0.1:${proxyPort}/`;

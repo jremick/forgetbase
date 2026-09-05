@@ -1,5 +1,7 @@
 FROM node:22.23.2-alpine@sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32 AS build
 
+RUN apk add --upgrade --no-cache 'libcrypto3>=3.5.8-r0' 'libssl3>=3.5.8-r0'
+
 WORKDIR /app
 
 RUN npm install --global pnpm@11.7.0
@@ -18,7 +20,7 @@ RUN node scripts/write-build-manifest.mjs
 RUN pnpm install --frozen-lockfile
 RUN pnpm --filter @forgetbase/web build
 
-FROM nginx:1.30.4-alpine@sha256:dc5069ad14f19660b141b21236140b91656bf89bbc3e2417c70ae650cd66104c
+FROM nginx:1.30.4-alpine-slim@sha256:77da26c31397bf6694b4bf93275f5b40b0b120ba1b8f114264b603e592c561d6
 
 ENV PORT=8080
 ENV FORGETBASE_API_UPSTREAM_PORT=8080

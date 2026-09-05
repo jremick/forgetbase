@@ -10,8 +10,10 @@ Published tags are immutable. Beta releases support self-hosted trials with synt
 - Reject unsafe requests from disallowed browser origins before session mutation.
 - Inspect Office ZIP metadata with bounded decompression and reject concealed macros or malformed archives.
 - Reject binary request bodies outside the attachment-upload route before parsing or authentication.
+- Patch the Node image OpenSSL packages, use the smaller Nginx image without the flagged optional-module libraries, and refresh the PostgreSQL 17 image.
+- Configure isolated browser tests with their selected origin ports.
 
-Provider and API URLs must identify their final endpoint. OIDC requires the exact issuer and HTTPS outside loopback development. Office uploads reject encrypted, ZIP64 and unsupported archives. No database migration or dependency change is required. See the [security review](docs/SECURITY_REVIEW_2026-09-05.md) for findings, regression evidence and limits.
+Provider and API URLs must identify their final endpoint. OIDC requires the exact issuer and HTTPS outside loopback development. Office uploads reject encrypted, ZIP64 and unsupported archives. No database migration or JavaScript dependency change is required. Container OS packages change; see the [container security record](docs/CONTAINER_SECURITY_2026-09-05.md) for remaining vendor advisories. See the [security review](docs/SECURITY_REVIEW_2026-09-05.md) for findings, regression evidence and limits.
 
 ## 0.1.0-beta.4 - 2026-09-05
 

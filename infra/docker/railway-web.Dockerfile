@@ -1,5 +1,7 @@
 FROM node:22.23.2-alpine@sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32 AS build
 
+RUN apk add --upgrade --no-cache 'libcrypto3>=3.5.8-r0' 'libssl3>=3.5.8-r0'
+
 WORKDIR /app
 
 RUN npm install --global pnpm@11.7.0
@@ -19,6 +21,8 @@ RUN pnpm install --frozen-lockfile
 RUN pnpm build
 
 FROM node:22.23.2-alpine@sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32 AS runtime
+
+RUN apk add --upgrade --no-cache 'libcrypto3>=3.5.8-r0' 'libssl3>=3.5.8-r0'
 
 WORKDIR /app
 
