@@ -335,7 +335,10 @@ async function checkReleaseFlow(page: Page, viewportName: "desktop" | "mobile"):
   await expectVisibleText(page, "Reviews", "release: admin reviews label");
   await expectVisibleText(page, "Exports", "release: admin exports label");
   await expectVisibleText(page, "System", "release: admin system label");
-  await expectVisibleText(page, "Page files", "release: admin attachment controls");
+  await page.getByRole("searchbox", { name: "Search pages", exact: true }).fill("Reader Access and Export Rules");
+  await page.getByRole("button", { name: "Reader Access and Export Rules", exact: true }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Open page", exact: true }).click();
+  await expectVisibleText(page, "Page files", "release: content drawer opens governed page and attachment controls");
   await assertNoHorizontalOverflow(page, "release: admin desktop overflow");
   await assertNoClippedText(page, "release: admin desktop clipped text");
   await screenshot(page, "admin-desktop.png", "release: admin screenshot");
@@ -359,10 +362,11 @@ async function checkAdminPageAuthoring(page: Page): Promise<void> {
 
   await page.getByRole("button", { name: "New page", exact: true }).click();
   await expectVisibleText(page, "Create page", "release: authoring create form opened");
+  await page.locator("#authoring-settings > summary").click();
   await page.locator("#authoring-stable-id").fill(stableId);
   await page.locator("#authoring-title").fill(createdTitle);
   await page.locator("#authoring-summary").fill("Synthetic page created by the isolated browser authoring proof.");
-  await page.locator("#authoring-body").fill("# Browser authoring proof\n\nThis synthetic page verifies the browser create, edit, review, and publish flow.");
+  await fillAuthoringBody(page, "# Browser authoring proof\n\nThis synthetic page verifies the browser create, edit, review, and publish flow.");
   const createResponse = page.waitForResponse((response) =>
     response.request().method() === "POST" && new URL(response.url()).pathname.endsWith("/assets")
   );
@@ -375,8 +379,9 @@ async function checkAdminPageAuthoring(page: Page): Promise<void> {
   await page.getByRole("button", { name: "Edit page", exact: true }).click();
   await expectVisibleText(page, `Edit ${createdTitle}`, "release: authoring edit form opened");
   await page.locator("#authoring-title").fill(updatedTitle);
+  await page.locator("#authoring-settings > summary").click();
   await page.locator("#authoring-change-note").fill("Verify browser version authoring");
-  await page.locator("#authoring-body").fill("# Browser authoring proof\n\nThis updated synthetic page verifies that browser edits create a governed version before publishing.");
+  await fillAuthoringBody(page, "# Browser authoring proof\n\nThis updated synthetic page verifies that browser edits create a governed version before publishing.");
   await page.getByRole("button", { name: "Save draft version", exact: true }).click();
   await expectVisibleText(page, `Saved ${stableId} as a new draft version`, "release: authoring draft version saved");
   await expectVisibleText(page, updatedTitle, "release: authored page title updated");
@@ -392,6 +397,16 @@ async function checkAdminPageAuthoring(page: Page): Promise<void> {
   await assertNoHorizontalOverflow(page, "release: authoring desktop overflow");
   await assertNoClippedText(page, "release: authoring desktop clipped text");
   await screenshot(page, "authoring-flow.png", "release: authoring flow screenshot");
+}
+
+async function fillAuthoringBody(page: Page, body: string): Promise<void> {
+  const textarea = page.locator("#authoring-body");
+  if (await textarea.isVisible()) {
+    await textarea.fill(body);
+  } else {
+    await page.getByRole("button", { name: "Source", exact: true }).click();
+    await page.locator(".fb-source-editor .cm-content").fill(body);
+  }
 }
 
 async function assertAuthoringPublication(page: Page, apiUrl: string, stableId: string, title: string | null, name: string): Promise<void> {
@@ -763,6 +778,7 @@ async function assertNoClippedText(page: Page, name: string): Promise<void> {
 }
 
 async function assertReaderArticleDepth(page: Page, name: string): Promise<void> {
+  await page.locator(".reader-document-body h2").first().waitFor({ state: "visible" });
   const result = await page.evaluate(() => {
     const body = document.querySelector(".reader-document-body");
     const text = (body?.textContent ?? "").replace(/\s+/g, " ").trim();
@@ -811,9 +827,12 @@ async function assertReaderNestedNavigation(page: Page, name: string): Promise<v
   if (await mobilePicker.isVisible()) {
     await mobilePicker.locator("select").selectOption({ label: "Reader Nested Navigation Example" });
   } else {
-    await clickFirstVisible(page, "button", "Reader experience");
-    await clickFirstVisible(page, "button", "Lifecycle states");
-    await clickFirstVisible(page, "button", "Nested page sample");
+    for (const label of ["Reader experience", "Lifecycle states"]) {
+      const expand = page.getByRole("button", { name: `Expand ${label} pages`, exact: true });
+      if (await expand.isVisible()) await expand.click();
+      await page.getByRole("button", { name: `Collapse ${label} pages`, exact: true }).waitFor({ state: "visible" });
+    }
+    await page.getByRole("link", { name: "Nested page sample", exact: true }).click();
   }
   await page.waitForFunction(
     () => document.querySelector(".reader-article-header h1")?.textContent?.replace(/\s+/g, " ").trim() === "Reader Nested Navigation Example",
@@ -869,6 +888,9 @@ async function assertReaderSectionNavigation(page: Page, name: string): Promise<
     throw new Error(`${name}: expected section navigation to match document headings; got ${JSON.stringify(result)}`);
   }
 
+  if (await page.locator(".reader-section-nav").getAttribute("open") === null) {
+    await page.locator(".reader-section-nav > summary").click();
+  }
   await page.locator(".reader-section-nav button").first().click();
   await assertElementInViewport(page, ".reader-document-body h2[id], .reader-document-body h3[id]", `${name}: section link scrolls to heading`);
   await page.evaluate(() => window.scrollTo(0, 0));
@@ -916,7 +938,7 @@ async function assertSearchResultOpensPage(page: Page, name: string): Promise<vo
     throw new Error(`${name}: first search result did not have a readable title`);
   }
 
-  await firstResult.getByRole("button", { name: "Open page" }).click();
+  await firstResult.getByRole("link", { name: "Open page" }).click();
   await page.waitForFunction(
     (title) => document.querySelector(".reader-article-header h1")?.textContent?.replace(/\s+/g, " ").trim() === title,
     expectedTitle,
@@ -933,7 +955,7 @@ async function selectReaderPageForUat(page: Page, title: string): Promise<void> 
   if (await mobilePicker.isVisible()) {
     await mobilePicker.locator("select").selectOption({ label: title });
   } else {
-    await clickFirstVisible(page, "button", title === "Reader Access and Export Rules" ? "Read vs export" : title);
+    await clickFirstVisible(page, "a", title === "Reader Access and Export Rules" ? "Read vs export" : title);
   }
 
   await page.waitForFunction(
