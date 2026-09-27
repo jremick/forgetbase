@@ -2,7 +2,7 @@
 
 Use this runbook for the final promotion from public beta candidate to public beta release.
 
-The public candidate tag is `v0.1.0-beta.7`. Tags `v0.1.0-beta.1` through `v0.1.0-beta.3` are historical private-beta snapshots. Preserve their tags, source identity and release assets.
+The current public beta tag is `v0.1.0-beta.7`. Tags `v0.1.0-beta.1` through `v0.1.0-beta.3` are historical private-beta snapshots. Preserve their tags, source identity and release assets.
 
 ## Scope
 
@@ -124,6 +124,7 @@ FORGETBASE_PUBLIC_DEPLOYMENT=true \
 FORGETBASE_PUBLIC_ENTRYPOINT=external-tls-proxy \
 FORGETBASE_REQUIRE_AUTHENTICATION=true \
 FORGETBASE_SESSION_COOKIE_SECURE=true \
+FORGETBASE_ATTACHMENT_SCAN_REQUIRED=true \
 FORGETBASE_CORS_ALLOWED_ORIGINS="$PUBLIC_BETA_LIVE_DEMO_URL" \
 FORGETBASE_POSTGRES_PORT=127.0.0.1:5432 \
 FORGETBASE_API_PORT=127.0.0.1:3000 \

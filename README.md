@@ -6,9 +6,9 @@ Teams can write and organize knowledge once. People get a clean reading UI. AI t
 
 ## Current Status
 
-ForgetBase is experimental software for self-hosted trials with synthetic data. The latest published release is `v0.1.0-beta.5`; `v0.1.0-beta.7` is the current release candidate. API and data formats may change, and support is best effort. See [Public Beta Compatibility](docs/PUBLIC_BETA_COMPATIBILITY.md) for the supported scope and [Releases](https://github.com/jremick/forgetbase/releases) for published builds and verification evidence.
+ForgetBase is experimental software for self-hosted trials with synthetic data. The latest published release is [v0.1.0-beta.7](https://github.com/jremick/forgetbase/releases/tag/v0.1.0-beta.7). API and data formats may change, and support is best effort. See [Public Beta Compatibility](docs/PUBLIC_BETA_COMPATIBILITY.md) for the supported scope and [Releases](https://github.com/jremick/forgetbase/releases) for published builds and verification evidence.
 
-For the governed authoring and publication path, see [Instructions and human documents](docs/governed-workflow.md). The beta.3 operational baseline has passing build, contract, browser, deployment and recovery evidence. The [publication checklist](docs/PUBLICATION.md) records the separate public-release gates.
+For the governed authoring and publication path, see [Instructions and human documents](docs/governed-workflow.md). The beta.7 release includes build, contract, browser, deployment and recovery evidence. The [publication checklist](docs/PUBLICATION.md) records the separate public-release gates.
 
 Expected public beta limits:
 
@@ -21,12 +21,12 @@ Expected public beta limits:
 
 ## Quick Start
 
-Prerequisites for published beta.5: Node.js 22, Docker, and Docker Compose. The beta.7 candidate and current `main` use Node.js 26.10.0; see [Development](docs/DEVELOPMENT.md).
+Prerequisites: Node.js 26.10.0, Docker, and Docker Compose v2. See [Development](docs/DEVELOPMENT.md).
 
-Check out a published release from [Releases](https://github.com/jremick/forgetbase/releases), then run the commands below from its root directory. For the public candidate:
+Check out a published release from [Releases](https://github.com/jremick/forgetbase/releases), then run the commands below from its root directory. For beta.7:
 
 ```bash
-git clone --branch v0.1.0-beta.5 https://github.com/jremick/forgetbase.git
+git clone --branch v0.1.0-beta.7 https://github.com/jremick/forgetbase.git
 cd forgetbase
 ```
 
