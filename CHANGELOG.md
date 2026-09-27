@@ -9,6 +9,7 @@ Published tags are immutable. Beta releases support self-hosted trials with synt
 - Restore canonical navigation URLs and exercise the governed Versions tab in release browser checks.
 - Preserve excessive Markdown nesting as escaped source and prevent successful saves from reopening the unsaved-changes dialog.
 - Verify rich-editor lifecycle behavior and exact draft and published content in the isolated browser proof.
+- Update Vitest to 4.1.11 and the MCP SDK's Hono dependency to 4.13.5 to address the reported dependency advisories.
 
 These changes are on `main`. A deployment's build version does not establish a published GitHub release; use the release tags and attached verification evidence when selecting an installable release.
 
