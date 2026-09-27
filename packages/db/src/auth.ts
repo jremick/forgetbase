@@ -174,6 +174,7 @@ export interface LoginSessionCreateInput {
   clientUserAgent?: string | null;
   expiresAt: string;
   absoluteExpiresAt?: string | null;
+  localDeviceEnrollmentId?: string | null;
 }
 
 export interface LoginSessionRefreshTokenCreateInput {
@@ -200,6 +201,7 @@ export interface LoginCredentialIssueInput {
   clientUserAgent?: string | null;
   absoluteExpiresAt?: string | null;
   refreshTokenExpiresAt?: string | null;
+  localDeviceEnrollmentId?: string | null;
   auditAction: string;
   auditMetadata?: Record<string, unknown>;
 }
@@ -247,6 +249,8 @@ export interface LoginSessionRefreshInput {
   refreshTokenExpiresAt: string;
   idleTimeoutSeconds?: number | null;
   apiKeyName?: string;
+  requiredSource?: LoginSessionSource;
+  allowedSources?: LoginSessionSource[];
 }
 
 export interface LoginSessionRefreshResult {
@@ -277,12 +281,14 @@ export interface LoginSessionListOptions {
   userId?: string;
   includeRevoked?: boolean;
   limit?: number;
+  source?: LoginSessionSource;
 }
 
 export interface LoginSessionRevokeInput {
   tenantId?: string;
   sessionId: string;
   userId?: string;
+  requiredSource?: LoginSessionSource;
 }
 
 export interface UserListOptions {
@@ -1542,7 +1548,8 @@ export class PostgresAuthRepository implements AuthRepository {
       deviceLabel: input.deviceLabel,
       clientUserAgent: input.clientUserAgent,
       expiresAt: input.expiresAt,
-      absoluteExpiresAt: input.absoluteExpiresAt
+      absoluteExpiresAt: input.absoluteExpiresAt,
+      localDeviceEnrollmentId: input.localDeviceEnrollmentId
     });
     const refreshInput = input.refreshTokenExpiresAt
       ? normalizeLoginSessionRefreshTokenCreateInput({
@@ -1606,9 +1613,10 @@ export class PostgresAuthRepository implements AuthRepository {
             device_label,
             client_user_agent,
             expires_at,
-            absolute_expires_at
+            absolute_expires_at,
+            local_device_enrollment_id
           )
-          VALUES ($1, $2, $3, $4, $5, $6, $7::timestamptz, $8::timestamptz)
+          VALUES ($1, $2, $3, $4, $5, $6, $7::timestamptz, $8::timestamptz, $9)
           RETURNING *
         `,
         [
@@ -1619,7 +1627,8 @@ export class PostgresAuthRepository implements AuthRepository {
           sessionInput.deviceLabel,
           sessionInput.clientUserAgent,
           sessionInput.expiresAt,
-          sessionInput.absoluteExpiresAt
+          sessionInput.absoluteExpiresAt,
+          sessionInput.localDeviceEnrollmentId
         ]
       );
       const sessionRow = requireRow(sessionResult);
@@ -1729,9 +1738,10 @@ export class PostgresAuthRepository implements AuthRepository {
           device_label,
           client_user_agent,
           expires_at,
-          absolute_expires_at
+          absolute_expires_at,
+          local_device_enrollment_id
         )
-        SELECT $1, users.id, api_keys.id, $4, $5, $6, $7::timestamptz, $8::timestamptz
+        SELECT $1, users.id, api_keys.id, $4, $5, $6, $7::timestamptz, $8::timestamptz, $9
         FROM users
         JOIN api_keys ON api_keys.tenant_id = users.tenant_id
           AND api_keys.user_id = users.id
@@ -1749,7 +1759,8 @@ export class PostgresAuthRepository implements AuthRepository {
         parsed.deviceLabel,
         parsed.clientUserAgent,
         parsed.expiresAt,
-        parsed.absoluteExpiresAt
+        parsed.absoluteExpiresAt,
+        parsed.localDeviceEnrollmentId
       ]
     );
     const row = result.rows[0];
@@ -1832,13 +1843,15 @@ export class PostgresAuthRepository implements AuthRepository {
             AND (sessions.absolute_expires_at IS NULL OR sessions.absolute_expires_at > now())
             AND keys.revoked_at IS NULL
             AND users.status = 'active'
+            AND ($4::text IS NULL OR sessions.source = $4)
+            AND ($5::text[] IS NULL OR sessions.source = ANY($5))
             AND (
               $3::integer IS NULL
               OR COALESCE(sessions.last_seen_at, sessions.created_at) > now() - ($3::integer * interval '1 second')
             )
           FOR UPDATE OF tokens, sessions, keys
         `,
-        [tokenHash, input.tenantId ?? null, input.idleTimeoutSeconds ?? null]
+        [tokenHash, input.tenantId ?? null, input.idleTimeoutSeconds ?? null, input.requiredSource ?? null, input.allowedSources ?? null]
       );
       const refreshableRow = refreshable.rows[0];
 
@@ -2006,10 +2019,11 @@ export class PostgresAuthRepository implements AuthRepository {
         WHERE tenant_id = $1
           AND ($2::uuid IS NULL OR user_id = $2)
           AND ($3::boolean = true OR revoked_at IS NULL)
+          AND ($5::text IS NULL OR source = $5)
         ORDER BY created_at DESC
         LIMIT $4
       `,
-      [tenantId, options.userId ?? null, options.includeRevoked ?? false, limit]
+      [tenantId, options.userId ?? null, options.includeRevoked ?? false, limit, options.source ?? null]
     );
 
     return result.rows.map(mapLoginSessionRow);
@@ -2029,9 +2043,10 @@ export class PostgresAuthRepository implements AuthRepository {
           WHERE tenant_id = $1
             AND id = $2
             AND ($3::uuid IS NULL OR user_id = $3)
+            AND ($4::text IS NULL OR source = $4)
           RETURNING *
         `,
-        [tenantId, input.sessionId, input.userId ?? null]
+        [tenantId, input.sessionId, input.userId ?? null, input.requiredSource ?? null]
       );
       const sessionRow = sessionResult.rows[0];
 
@@ -2377,14 +2392,28 @@ export class InMemoryAuthRepository implements AuthRepository {
   private readonly apiKeys = new Map<string, ApiKeyMemoryRecord>();
   private readonly loginSessions = new Map<string, LoginSessionRecord>();
   private readonly loginSessionRefreshTokens = new Map<string, LoginSessionRefreshTokenMemoryRecord>();
+  private readonly localDeviceEnrollmentIds = new Map<string, string>();
   private readonly grants: PermissionGrant[] = [];
   private readonly auditEvents: AuditEvent[] = [];
   private readonly policyMutationExecutor = new KeyedSerialExecutor();
   private sequence = 0;
+  private localSyncRevision = 0;
 
   constructor(private readonly testHooks: AuthRepositoryTestHooks = {}) {}
 
+  getLocalSyncRevision(): number {
+    return this.localSyncRevision;
+  }
+
+  private bumpLocalSyncRevision(): void {
+    if (this.localSyncRevision >= Number.MAX_SAFE_INTEGER) {
+      throw new RangeError("local sync authorization revision exceeds the supported safe integer range");
+    }
+    this.localSyncRevision += 1;
+  }
+
   async bootstrapAdmin(input: BootstrapAdminInput): Promise<BootstrapAdminResult | null> {
+    this.bumpLocalSyncRevision();
     const passwordHash = input.password ? await hashPassword(input.password) : null;
 
     if (Array.from(this.users.values()).some((user) => user.tenantId === input.tenantId)) {
@@ -2458,6 +2487,7 @@ export class InMemoryAuthRepository implements AuthRepository {
   }
 
   async createUser(input: LocalUserCreateInput): Promise<LocalUser> {
+    this.bumpLocalSyncRevision();
     const parsed = localUserCreateInputSchema.parse(input);
     this.sequence += 1;
     const now = new Date().toISOString();
@@ -2513,6 +2543,7 @@ export class InMemoryAuthRepository implements AuthRepository {
 	  }
 
 	  async createExternalUser(input: ExternalUserCreateInput): Promise<LocalUser> {
+	    this.bumpLocalSyncRevision();
 	    this.sequence += 1;
     const now = new Date().toISOString();
     const user = localUserSchema.parse({
@@ -2535,6 +2566,7 @@ export class InMemoryAuthRepository implements AuthRepository {
 	  }
 
 	  async linkExternalUserIdentity(input: ExternalUserLinkInput): Promise<LocalUser | null> {
+	    this.bumpLocalSyncRevision();
 	    const tenantId = input.tenantId ?? "tenant_demo";
 	    const existing = this.users.get(input.userId);
 
@@ -2566,6 +2598,7 @@ export class InMemoryAuthRepository implements AuthRepository {
 	  }
 
 	  async updateUser(input: LocalUserUpdateInput): Promise<LocalUser | null> {
+	    this.bumpLocalSyncRevision();
     const parsed = localUserUpdateInputSchema.parse(input);
     const existing = this.users.get(parsed.userId);
 
@@ -2600,6 +2633,7 @@ export class InMemoryAuthRepository implements AuthRepository {
   }
 
   async createServiceAccount(input: ServiceAccountCreateInput): Promise<ServiceAccount> {
+    this.bumpLocalSyncRevision();
     const parsed = serviceAccountCreateInputSchema.parse(input);
     return this.policyMutationExecutor.run(`service-accounts:${parsed.tenantId}`, async () => {
       const policy = await this.getServiceAccountPolicy(parsed.tenantId);
@@ -2647,6 +2681,7 @@ export class InMemoryAuthRepository implements AuthRepository {
   }
 
   async updateServiceAccount(input: ServiceAccountUpdateInput): Promise<ServiceAccount | null> {
+    this.bumpLocalSyncRevision();
     const parsed = serviceAccountUpdateInputSchema.parse(input);
     const existing = this.serviceAccounts.get(parsed.serviceAccountId);
 
@@ -2672,6 +2707,7 @@ export class InMemoryAuthRepository implements AuthRepository {
   }
 
   async upsertServiceAccountPolicy(input: ServiceAccountPolicyRepositoryInput): Promise<ServiceAccountPolicy> {
+    this.bumpLocalSyncRevision();
     const parsed = serviceAccountPolicyInputSchema.parse(input);
     const current = await this.getServiceAccountPolicy(parsed.tenantId);
     const now = new Date().toISOString();
@@ -2699,6 +2735,7 @@ export class InMemoryAuthRepository implements AuthRepository {
   }
 
   async createGroup(input: GroupCreateInput): Promise<GroupRecord> {
+    this.bumpLocalSyncRevision();
     const parsed = groupCreateInputSchema.parse(input);
     this.sequence += 1;
     const now = new Date().toISOString();
@@ -2728,6 +2765,7 @@ export class InMemoryAuthRepository implements AuthRepository {
   }
 
   async deleteGroup(input: GroupDeleteInput): Promise<GroupRecord | null> {
+    this.bumpLocalSyncRevision();
     const tenantId = input.tenantId ?? "tenant_demo";
     const group = this.groups.get(input.groupId);
 
@@ -2755,6 +2793,7 @@ export class InMemoryAuthRepository implements AuthRepository {
   }
 
   async addGroupMember(input: GroupMembershipInput): Promise<GroupMembership | null> {
+    this.bumpLocalSyncRevision();
     const parsed = groupMembershipInputSchema.parse(input);
     const group = this.groups.get(parsed.groupId);
     const user = this.users.get(parsed.userId);
@@ -2792,6 +2831,7 @@ export class InMemoryAuthRepository implements AuthRepository {
 	  }
 
 	  async syncExternalGroupMemberships(input: ExternalGroupSyncInput): Promise<ExternalGroupSyncResult> {
+	    this.bumpLocalSyncRevision();
 	    const tenantId = input.tenantId ?? "tenant_demo";
 	    const user = this.users.get(input.userId);
 
@@ -2897,6 +2937,7 @@ export class InMemoryAuthRepository implements AuthRepository {
   }
 
   async removeGroupMember(input: GroupMemberRemoveInput): Promise<GroupMembership | null> {
+    this.bumpLocalSyncRevision();
     const tenantId = input.tenantId ?? "tenant_demo";
     const group = this.groups.get(input.groupId);
 
@@ -2916,6 +2957,7 @@ export class InMemoryAuthRepository implements AuthRepository {
   }
 
   async createApiKey(input: ApiKeyCreateInput): Promise<ApiKeyCreated | null> {
+    this.bumpLocalSyncRevision();
     const parsed = apiKeyCreateInputSchema.parse(input);
     const insertApiKey = (expiresAt: string | null): ApiKeyCreated => {
       const secret = generateApiKeySecret();
@@ -3050,6 +3092,7 @@ export class InMemoryAuthRepository implements AuthRepository {
   }
 
   async revokeApiKey(input: ApiKeyRevokeInput): Promise<ApiKeyRecord | null> {
+    this.bumpLocalSyncRevision();
     const tenantId = input.tenantId ?? "tenant_demo";
     const record = Array.from(this.apiKeys.values()).find((apiKeyRecord) =>
       apiKeyRecord.apiKey.tenantId === tenantId &&
@@ -3079,6 +3122,7 @@ export class InMemoryAuthRepository implements AuthRepository {
   }
 
   async rotateApiKey(input: ApiKeyRotateRepositoryInput): Promise<ApiKeyRotateResponse | null> {
+    this.bumpLocalSyncRevision();
     const parsed = apiKeyRotateInputSchema.parse(input);
     const tenantId = input.tenantId ?? "tenant_demo";
     const findActiveRecord = () => Array.from(this.apiKeys.values()).find((apiKeyRecord) =>
@@ -3181,6 +3225,9 @@ export class InMemoryAuthRepository implements AuthRepository {
       }
       if (session) {
         this.loginSessions.delete(session.id);
+        if (input.localDeviceEnrollmentId) {
+          this.localDeviceEnrollmentIds.delete(input.localDeviceEnrollmentId);
+        }
       }
       if (refreshToken) {
         this.loginSessionRefreshTokens.delete(refreshToken.id);
@@ -3216,7 +3263,8 @@ export class InMemoryAuthRepository implements AuthRepository {
         deviceLabel: input.deviceLabel,
         clientUserAgent: input.clientUserAgent,
         expiresAt: input.expiresAt,
-        absoluteExpiresAt: input.absoluteExpiresAt
+        absoluteExpiresAt: input.absoluteExpiresAt,
+        localDeviceEnrollmentId: input.localDeviceEnrollmentId
       });
 
       if (!session) {
@@ -3270,6 +3318,7 @@ export class InMemoryAuthRepository implements AuthRepository {
   }
 
   async createLoginSession(input: LoginSessionCreateInput): Promise<LoginSessionRecord | null> {
+    this.bumpLocalSyncRevision();
     const parsed = normalizeLoginSessionCreateInput(input);
     const user = this.users.get(parsed.userId);
     const apiKeyRecord = Array.from(this.apiKeys.values()).find((record) =>
@@ -3280,6 +3329,9 @@ export class InMemoryAuthRepository implements AuthRepository {
     );
 
     if (!user || user.tenantId !== parsed.tenantId || !apiKeyRecord) {
+      return null;
+    }
+    if (parsed.localDeviceEnrollmentId && this.localDeviceEnrollmentIds.has(parsed.localDeviceEnrollmentId)) {
       return null;
     }
 
@@ -3301,12 +3353,16 @@ export class InMemoryAuthRepository implements AuthRepository {
     });
 
     this.loginSessions.set(session.id, session);
+    if (parsed.localDeviceEnrollmentId) {
+      this.localDeviceEnrollmentIds.set(parsed.localDeviceEnrollmentId, session.id);
+    }
     return session;
   }
 
   async createLoginSessionRefreshToken(
     input: LoginSessionRefreshTokenCreateInput
   ): Promise<LoginSessionRefreshTokenCreated | null> {
+    this.bumpLocalSyncRevision();
     const parsed = normalizeLoginSessionRefreshTokenCreateInput(input);
     const session = this.loginSessions.get(parsed.loginSessionId);
 
@@ -3343,6 +3399,7 @@ export class InMemoryAuthRepository implements AuthRepository {
   }
 
   async refreshLoginSession(input: LoginSessionRefreshInput): Promise<LoginSessionRefreshResult | null> {
+    this.bumpLocalSyncRevision();
     const nowMs = Date.now();
     const now = new Date(nowMs).toISOString();
     const refreshRecord = Array.from(this.loginSessionRefreshTokens.values()).find((candidate) =>
@@ -3361,6 +3418,8 @@ export class InMemoryAuthRepository implements AuthRepository {
 
     if (
       !session ||
+      (input.requiredSource !== undefined && session.source !== input.requiredSource) ||
+      (input.allowedSources !== undefined && !input.allowedSources.includes(session.source)) ||
       session.revokedAt !== null ||
       (session.absoluteExpiresAt !== null && Date.parse(session.absoluteExpiresAt) <= nowMs)
     ) {
@@ -3486,6 +3545,7 @@ export class InMemoryAuthRepository implements AuthRepository {
   }
 
   async touchLoginSession(input: LoginSessionTouchInput): Promise<LoginSessionRecord | null> {
+    this.bumpLocalSyncRevision();
     const tenantId = input.tenantId ?? "tenant_demo";
     const nowMs = Date.now();
     const session = this.loginSessions.get(input.sessionId);
@@ -3525,15 +3585,22 @@ export class InMemoryAuthRepository implements AuthRepository {
       .filter((session) => session.tenantId === tenantId)
       .filter((session) => !options.userId || session.userId === options.userId)
       .filter((session) => options.includeRevoked || session.revokedAt === null)
+      .filter((session) => !options.source || session.source === options.source)
       .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
       .slice(0, limit);
   }
 
   async revokeLoginSession(input: LoginSessionRevokeInput): Promise<LoginSessionRevokeResponse | null> {
+    this.bumpLocalSyncRevision();
     const tenantId = input.tenantId ?? "tenant_demo";
     const session = this.loginSessions.get(input.sessionId);
 
-    if (!session || session.tenantId !== tenantId || (input.userId && session.userId !== input.userId)) {
+    if (
+      !session ||
+      session.tenantId !== tenantId ||
+      (input.userId && session.userId !== input.userId) ||
+      (input.requiredSource && session.source !== input.requiredSource)
+    ) {
       return null;
     }
 
@@ -3638,6 +3705,7 @@ export class InMemoryAuthRepository implements AuthRepository {
   }
 
   async createPermissionGrants(inputs: PermissionGrantCreateInput[]): Promise<PermissionGrant[]> {
+    this.bumpLocalSyncRevision();
     const parsed = inputs.map((input) => permissionGrantCreateInputSchema.parse(input));
     const staged = [...this.grants];
     let sequence = this.sequence;
@@ -3690,7 +3758,9 @@ export class InMemoryAuthRepository implements AuthRepository {
       grant.stableId === input.stableId &&
       grant.id === input.grantId
     );
-    return index < 0 ? null : this.grants.splice(index, 1)[0] ?? null;
+    if (index < 0) return null;
+    this.bumpLocalSyncRevision();
+    return this.grants.splice(index, 1)[0] ?? null;
   }
 
   async canAccessAsset(input: AccessCheckInput): Promise<boolean> {
@@ -3844,15 +3914,16 @@ function accessBeforeGrant(input: AccessCheckInput): boolean | null {
   if (input.principal && !input.principal.allowedSurfaces.includes(input.surface)) {
     return false;
   }
-  if (hasPublicAssetAccess(input)) {
+  if (input.surface !== "local-cache" && hasPublicAssetAccess(input)) {
     return true;
   }
   if (!input.principal || input.principal.tenantId !== input.asset.tenantId) {
     return false;
   }
-  if (!principalHasScope(input.principal, scopeForAction(input.action))) {
+  if (!principalHasScope(input.principal, scopeForAccess(input))) {
     return false;
   }
+  if (hasPublicAssetAccess(input)) return true;
   return input.principal.role === "admin" ? true : null;
 }
 
@@ -3946,6 +4017,12 @@ function scopeForAction(action: PermissionAction): ApiKeyScope {
   }
 }
 
+function scopeForAccess(input: AccessCheckInput): ApiKeyScope {
+  return input.action === "read" && input.surface === "local-cache"
+    ? "local:sync"
+    : scopeForAction(input.action);
+}
+
 function hasPublicAssetAccess(input: AccessCheckInput): boolean {
   return (input.action === "read" || (input.action === "export" && input.asset.allowedExports.length > 0)) &&
     input.asset.sensitivity === "public-demo" &&
@@ -3977,6 +4054,10 @@ async function readServiceAccountPolicy(client: Queryable, tenantId: string): Pr
 
 function normalizeLoginSessionCreateInput(input: LoginSessionCreateInput): Required<LoginSessionCreateInput> {
   const tenantId = input.tenantId ?? "tenant_demo";
+  const localDeviceEnrollmentId = input.localDeviceEnrollmentId?.trim() || null;
+  if ((input.source === "local-device") !== Boolean(localDeviceEnrollmentId)) {
+    throw new Error("Local device sessions require one unique enrollment ID, and other sessions must not have one");
+  }
   const parsed = loginSessionRecordSchema.parse({
     id: "pending-login-session",
     tenantId,
@@ -3988,6 +4069,7 @@ function normalizeLoginSessionCreateInput(input: LoginSessionCreateInput): Requi
     createdAt: new Date().toISOString(),
     expiresAt: input.expiresAt,
     absoluteExpiresAt: input.absoluteExpiresAt ?? null,
+    localDeviceEnrollmentId,
     lastSeenAt: null,
     revokedAt: null
   });
@@ -4000,7 +4082,8 @@ function normalizeLoginSessionCreateInput(input: LoginSessionCreateInput): Requi
     deviceLabel: parsed.deviceLabel,
     clientUserAgent: parsed.clientUserAgent,
     expiresAt: parsed.expiresAt,
-    absoluteExpiresAt: parsed.absoluteExpiresAt
+    absoluteExpiresAt: parsed.absoluteExpiresAt,
+    localDeviceEnrollmentId
   };
 }
 

@@ -813,6 +813,59 @@ describe("InMemoryAuthRepository", () => {
     });
   });
 
+  it("binds local-device credentials to one enrollment and one-time refresh rotation", async () => {
+    const authRepository = new InMemoryAuthRepository();
+    const user = await authRepository.createUser({
+      email: "local-device@example.test",
+      displayName: "Local Device",
+      role: "reader",
+      password: "local-device-test-password"
+    });
+    const issue = () => authRepository.issueLoginCredentials({
+      userId: user.id,
+      keyName: "local-device:Test laptop",
+      scopes: ["local:sync"],
+      allowedSurfaces: ["local-cache"],
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      absoluteExpiresAt: new Date(Date.now() + 600_000).toISOString(),
+      refreshTokenExpiresAt: new Date(Date.now() + 300_000).toISOString(),
+      source: "local-device" as const,
+      localDeviceEnrollmentId: "enrollment_unique_1",
+      auditAction: "local_device.enroll"
+    });
+    const issued = requireTestValue(await issue());
+    expect(await issue()).toBeNull();
+    expect(await authRepository.listLoginSessions({ source: "password" })).toEqual([]);
+    expect(await authRepository.listLoginSessions({ source: "local-device" })).toEqual([issued.session]);
+    expect(await authRepository.refreshLoginSession({
+      refreshToken: issued.refreshToken!.token,
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      refreshTokenExpiresAt: new Date(Date.now() + 300_000).toISOString(),
+      requiredSource: "password"
+    })).toBeNull();
+    const refreshed = requireTestValue(await authRepository.refreshLoginSession({
+      refreshToken: issued.refreshToken!.token,
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      refreshTokenExpiresAt: new Date(Date.now() + 300_000).toISOString(),
+      requiredSource: "local-device"
+    }));
+    expect(refreshed.refreshToken).not.toBe(issued.refreshToken!.token);
+    expect(await authRepository.refreshLoginSession({
+      refreshToken: issued.refreshToken!.token,
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      refreshTokenExpiresAt: new Date(Date.now() + 300_000).toISOString(),
+      requiredSource: "local-device"
+    })).toBeNull();
+    expect(await authRepository.revokeLoginSession({
+      sessionId: refreshed.session.id,
+      requiredSource: "password"
+    })).toBeNull();
+    expect(await authRepository.revokeLoginSession({
+      sessionId: refreshed.session.id,
+      requiredSource: "local-device"
+    })).toMatchObject({ session: { revokedAt: expect.any(String) } });
+  });
+
   it("authenticates service account API keys and enforces direct service account grants", async () => {
     const registryRepository = new InMemoryRegistryRepository();
     const authRepository: AuthRepository = new InMemoryAuthRepository();
@@ -2122,6 +2175,59 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("PostgresRegistryRepository", ()
     expect(published?.versions).toHaveLength(2);
   });
 
+  it("pages only eligible local-sync assets with a stable-ID cursor", async () => {
+    const repository = new PostgresRegistryRepository(pool);
+    const suffix = randomUUID();
+    const tenantId = `tenant_local_sync_${suffix}`;
+    const publicStableId = `policy.local-sync-${suffix}.a-public`;
+    const internalStableId = `policy.local-sync-${suffix}.b-internal`;
+    await repository.createAsset({
+      ...sampleAsset,
+      tenantId,
+      stableId: publicStableId,
+      sensitivity: "public-demo",
+      allowedSurfaces: ["local-cache"]
+    });
+    await repository.createAsset({
+      ...sampleAsset,
+      tenantId,
+      stableId: internalStableId,
+      sensitivity: "internal",
+      allowedSurfaces: ["local-cache"]
+    });
+    await repository.createAsset({
+      ...sampleAsset,
+      tenantId,
+      stableId: `policy.local-sync-${suffix}.c-restricted`,
+      sensitivity: "restricted",
+      allowedSurfaces: ["local-cache"]
+    });
+    await repository.createAsset({
+      ...sampleAsset,
+      tenantId,
+      stableId: `policy.local-sync-${suffix}.d-draft`,
+      lifecycleState: "draft",
+      status: "reviewing",
+      sensitivity: "public-demo",
+      allowedSurfaces: ["local-cache"]
+    });
+
+    const firstPage = await repository.listAssetsForLocalSync({
+      tenantId,
+      sensitivities: ["public-demo", "internal"],
+      limit: 1
+    });
+    const secondPage = await repository.listAssetsForLocalSync({
+      tenantId,
+      sensitivities: ["public-demo", "internal"],
+      afterStableId: firstPage[0]?.stableId,
+      limit: 1
+    });
+
+    expect(firstPage.map((asset) => asset.stableId)).toEqual([publicStableId]);
+    expect(secondPage.map((asset) => asset.stableId)).toEqual([internalStableId]);
+  });
+
   it("atomically bootstraps one Postgres admin under concurrent attempts", async () => {
     const authRepository = new PostgresAuthRepository(pool);
     const tenantId = `tenant_bootstrap_${Date.now()}_${Math.floor(Math.random() * 1_000_000)}`;
@@ -2492,6 +2598,9 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("PostgresRegistryRepository", ()
       expiresAt: expiredApiKey.apiKey.expiresAt ?? "",
       absoluteExpiresAt: new Date(Date.now() - 1_000).toISOString()
     }));
+    // Expiry is enforced against the database clock, which can differ from a
+    // remote test runner. Make the expired-session condition deterministic.
+    await pool.query("UPDATE login_sessions SET absolute_expires_at = NOW() - INTERVAL '1 second' WHERE id = $1", [expiredSession.id]);
 
     expect(await authRepository.findActiveLoginSessionByApiKeyId({
       tenantId,

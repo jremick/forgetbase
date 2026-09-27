@@ -135,3 +135,21 @@ Restarting or redeploying the same source and compatible images preserves public
 The previous July deployment reads the current content head and does not understand publication pointers. **It is not a safe code-only fallback after new draft writes resume:** it can serve an unapproved draft as current content. Do not reopen user access on that deployment against the upgraded database.
 
 Before writers reopen after an upgrade, a return to the previous deployment requires its exact artifacts and the paired pre-upgrade database/blob backup, with proof that no later writes must be retained. After writers resume, restoring that earlier checkpoint loses later content and can reinstate revoked access. Stop writers, preserve the incident state, and obtain an explicit recovery decision covering retained changes and revocations before any database rollback. Prefer fixing forward on the compatible release when possible.
+
+## Local-Agent Rollback Compatibility
+
+Local-agent migrations 040-043 (device sessions, local-sync state, and the
+serialization boundary) are one compatibility unit. The runtime has no
+silent N-1 downgrade path. A runtime or protocol fence rejects an older
+profile until the device is re-enrolled.
+
+Restore the Postgres dump, matching attachment archive, and the signing-key
+and local-sync configuration state from the same stopped-write recovery point.
+Do not restore Postgres alone or combine independently timed database,
+attachment, and signing-state backups. The database and attachment archive
+remain one recovery point; the local credential and profile are device state.
+
+If the counters or signing-key state cannot be restored together, revoke the
+local device, use the explicit local-only disconnect to remove its profile and
+cache, and re-enroll it before rebuilding the local generation. Never make an
+older local cache readable after an incompatible rollback.

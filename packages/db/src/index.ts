@@ -38,6 +38,21 @@ import {
   type AgentInstructionInput,
   type HumanDocumentInput
 } from "@forgetbase/schema";
+import {
+  lockLocalSyncSerializationWithClient,
+  lockLocalSyncStateWithClient,
+  LocalSyncSnapshotStaleError,
+  readLocalSyncSerializationWithClient,
+  resolveLocalSyncStateWithClient,
+  type LocalSyncSnapshotAssertion,
+  type LocalSyncSnapshotInput,
+  type LocalSyncSnapshotMaterialized,
+  type LocalSyncSnapshotRepository,
+  type LocalSyncSnapshotResult,
+  type LocalSyncState,
+  type LocalSyncStateRepository
+} from "./local-sync.js";
+import type { AuthRepository } from "./auth.js";
 
 import { createPermissionGrantInTransaction } from "./auth.js";
 
@@ -53,6 +68,7 @@ export * from "./managed-query-cache.js";
 export * from "./managed-query-eval-schedule.js";
 export * from "./managed-query-policy.js";
 export * from "./managed-query-retention.js";
+export * from "./local-sync.js";
 export * from "./pii-redaction-policy.js";
 export * from "./provider-config.js";
 export * from "./retrieval.js";
@@ -87,6 +103,7 @@ export interface AssetCreateContext {
 export interface RegistryRepository {
   getContentRevision(tenantId?: string): Promise<string>;
   listAssets(options?: RegistryListOptions): Promise<AssetRecord[]>;
+  listAssetsForLocalSync(input: RegistryLocalSyncListInput): Promise<AssetRecord[]>;
   listAssetsNeedingReview(input?: AssetReviewQueueInput): Promise<AssetReviewQueueResponse>;
   getAssetByStableId(stableId: string, options?: RegistryGetOptions): Promise<AssetDetail | null>;
   getAssetVersionSnapshot(stableId: string, input: AssetVersionSnapshotInput): Promise<AssetVersionSnapshot | null>;
@@ -95,6 +112,15 @@ export interface RegistryRepository {
   reviewAsset(stableId: string, input: AssetReviewInput): Promise<AssetDetail | null>;
   publishAsset(stableId: string, input: AssetPublishInput): Promise<AssetDetail | null>;
   restoreAssetVersion(stableId: string, input: AssetRestoreInput): Promise<AssetDetail | null>;
+  /** Present on the in-memory adapter so local snapshots can detect mutation. */
+  getLocalSyncRevision?(): number;
+}
+
+export interface RegistryLocalSyncListInput {
+  tenantId: string;
+  sensitivities: Array<"public-demo" | "internal">;
+  afterStableId?: string;
+  limit: number;
 }
 
 export interface MigrationResult {
@@ -184,6 +210,19 @@ export async function runMigrations(pool: Pool, migrationsDir = DEFAULT_MIGRATIO
   }
 }
 
+// Match projectPublishedAssetRecord before applying caps or permission checks.
+// A newer draft remains separate; current policy can only narrow publication.
+const localSyncPublishedEligibility = `
+  published_version.asset_id = assets.id
+  AND assets.lifecycle_state IN ('active', 'draft')
+  AND published_version.asset_snapshot->>'lifecycleState' = 'active'
+  AND published_version.asset_snapshot->>'status' = 'approved'
+  AND assets.sensitivity = ANY($2::text[])
+  AND published_version.asset_snapshot->>'sensitivity' = ANY($2::text[])
+  AND 'local-cache' = ANY(assets.allowed_surfaces)
+  AND published_version.asset_snapshot->'allowedSurfaces' ? 'local-cache'
+`;
+
 export class PostgresRegistryRepository implements RegistryRepository {
   constructor(private readonly pool: Pool) {}
 
@@ -230,6 +269,27 @@ export class PostgresRegistryRepository implements RegistryRepository {
         ? projectPublishedAssetRecord(asset, row.published_version ? mapAssetVersionRow(row.published_version) : undefined)
         : asset;
       return projection ? [projection] : [];
+    });
+  }
+
+  async listAssetsForLocalSync(input: RegistryLocalSyncListInput): Promise<AssetRecord[]> {
+    assertLocalSyncListInput(input);
+    const result = await this.pool.query<AssetRow & { published_version: AssetVersionRow }>(
+      `
+        SELECT assets.*, to_jsonb(published_version) AS published_version
+        FROM assets
+        JOIN asset_versions published_version ON published_version.id = assets.published_version_id
+        WHERE assets.tenant_id = $1
+          AND ${localSyncPublishedEligibility}
+          AND ($3::text IS NULL OR assets.stable_id COLLATE "C" > $3)
+        ORDER BY assets.stable_id COLLATE "C" ASC
+        LIMIT $4
+      `,
+      [input.tenantId, input.sensitivities, input.afterStableId ?? null, input.limit]
+    );
+    return result.rows.flatMap((row) => {
+      const projected = projectPublishedAssetRecord(mapAssetRow(row), mapAssetVersionRow(row.published_version));
+      return projected ? [projected] : [];
     });
   }
 
@@ -703,10 +763,462 @@ export class PostgresRegistryRepository implements RegistryRepository {
 
 }
 
+/**
+ * Build the local projection from one repeatable-read authorization/content
+ * snapshot. The principal state row is locked before the snapshot is read so
+ * concurrent manifest computations cannot publish out of order state.
+ */
+export class PostgresLocalSyncSnapshotRepository implements LocalSyncSnapshotRepository {
+  constructor(private readonly pool: Pool) {}
+
+  async buildSnapshot<TRecord>(
+    input: LocalSyncSnapshotInput,
+    materialize: (detail: AssetDetail) => LocalSyncSnapshotMaterialized<TRecord>
+  ): Promise<LocalSyncSnapshotResult<TRecord>> {
+    assertLocalSyncSnapshotInput(input);
+
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const client = await this.pool.connect();
+      try {
+        await client.query("BEGIN ISOLATION LEVEL REPEATABLE READ");
+        const serializationRevision = await lockLocalSyncSerializationWithClient(client);
+        await assertCurrentLocalSyncPrincipalWithClient(client, input.principal);
+        await lockLocalSyncStateWithClient(client, {
+          tenantId: input.principal.tenantId,
+          principalType: input.principal.principalType,
+          principalId: input.principal.principalId
+        });
+        const assets = await client.query<AssetRow>(
+          `
+            SELECT assets.*
+            FROM assets
+            JOIN asset_versions published_version ON published_version.id = assets.published_version_id
+            WHERE assets.tenant_id = $1
+              AND ${localSyncPublishedEligibility}
+              AND (
+                EXISTS (
+                  SELECT 1
+                  FROM users
+                  WHERE users.id = $3::uuid
+                    AND users.tenant_id = assets.tenant_id
+                    AND users.status = 'active'
+                )
+                OR EXISTS (
+                  SELECT 1
+                  FROM service_accounts
+                  WHERE service_accounts.id = $4::uuid
+                    AND service_accounts.tenant_id = assets.tenant_id
+                    AND service_accounts.status = 'active'
+                )
+              )
+              AND (
+                (assets.sensitivity = 'public-demo' AND published_version.asset_snapshot->>'sensitivity' = 'public-demo')
+                OR EXISTS (
+                  SELECT 1
+                  FROM users
+                  WHERE users.id = $3::uuid
+                    AND users.tenant_id = assets.tenant_id
+                    AND users.status = 'active'
+                    AND users.role = 'admin'
+                )
+                OR EXISTS (
+                  SELECT 1
+                  FROM service_accounts
+                  WHERE service_accounts.id = $4::uuid
+                    AND service_accounts.tenant_id = assets.tenant_id
+                    AND service_accounts.status = 'active'
+                    AND service_accounts.role = 'admin'
+                )
+                OR EXISTS (
+                  SELECT 1
+                  FROM permission_grants
+                  WHERE permission_grants.tenant_id = assets.tenant_id
+                    AND permission_grants.asset_id = assets.id
+                    AND permission_grants.action = 'read'
+                    AND 'local-cache' = ANY(permission_grants.surfaces)
+                    AND (
+                      (permission_grants.principal_type = 'user' AND permission_grants.principal_id = $3::text)
+                      OR (
+                        permission_grants.principal_type = 'group'
+                        AND EXISTS (
+                          SELECT 1
+                          FROM group_memberships
+                          JOIN groups ON groups.id = group_memberships.group_id
+                          WHERE groups.tenant_id = assets.tenant_id
+                            AND group_memberships.group_id::text = permission_grants.principal_id
+                            AND group_memberships.user_id = $3::uuid
+                        )
+                      )
+                      OR (permission_grants.principal_type = 'service-account' AND permission_grants.principal_id = $4::text)
+                    )
+                )
+              )
+            ORDER BY assets.stable_id COLLATE "C" ASC
+            LIMIT $5
+          `,
+          [
+            input.principal.tenantId,
+            input.sensitivities,
+            input.principal.userId,
+            input.principal.serviceAccountId,
+            input.maxRecords + 1
+          ]
+        );
+        if (assets.rows.length > input.maxRecords) {
+          await client.query("ROLLBACK");
+          return {
+            records: [],
+            state: null,
+            capacityExceeded: true,
+            payloadTooLarge: false,
+            snapshotBytes: 0,
+            oversizedRecord: false,
+            serializationRevision,
+            serializationFingerprint: String(serializationRevision)
+          };
+        }
+
+        const entries: LocalSyncSnapshotMaterialized<TRecord>[] = [];
+        for (const asset of assets.rows) {
+          const detail = projectPublishedAssetDetail(await getAssetDetail(client, asset.id, "published"));
+          if (!detail) throw new LocalSyncSnapshotStaleError("Published local content is unavailable");
+          entries.push(materialize(detail));
+        }
+        let snapshotBytes = 0;
+        let oversizedRecord = false;
+        for (const entry of entries) {
+          const recordBytes = Buffer.byteLength(JSON.stringify(entry.record), "utf8");
+          snapshotBytes += recordBytes;
+          oversizedRecord ||= recordBytes > input.maxRecordBytes;
+        }
+        if (oversizedRecord || snapshotBytes > input.maxSnapshotBytes) {
+          await client.query("ROLLBACK");
+          return {
+            records: [],
+            state: null,
+            capacityExceeded: false,
+            payloadTooLarge: true,
+            snapshotBytes,
+            oversizedRecord,
+            serializationRevision,
+            serializationFingerprint: String(serializationRevision)
+          };
+        }
+        const state = await resolveLocalSyncStateWithClient(client, {
+          tenantId: input.principal.tenantId,
+          principalType: input.principal.principalType,
+          principalId: input.principal.principalId,
+          entitlementHash: computeSnapshotEntitlementHash(entries.map((entry) => entry.descriptor)),
+          recordSetHash: computeSnapshotRecordSetHash(entries.map((entry) => entry.descriptor)),
+          recordDescriptors: entries.map((entry) => entry.descriptor)
+        });
+        const finalSerializationRevision = await readLocalSyncSerializationWithClient(client);
+        await client.query("COMMIT");
+        return {
+          records: entries.map((entry) => entry.record),
+          state,
+          capacityExceeded: false,
+          payloadTooLarge: false,
+          snapshotBytes,
+          oversizedRecord,
+          serializationRevision: finalSerializationRevision,
+          serializationFingerprint: String(finalSerializationRevision)
+        };
+      } catch (error) {
+        await client.query("ROLLBACK").catch(() => undefined);
+        if (isSerializationFailure(error) && attempt < 2) {
+          continue;
+        }
+        throw error;
+      } finally {
+        client.release();
+      }
+    }
+
+    throw new Error("Local sync snapshot could not be serialized");
+  }
+
+  async assertSnapshotCurrent<T>(input: LocalSyncSnapshotAssertion, issue: () => T): Promise<T> {
+    assertLocalSyncSnapshotAssertion(input);
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const currentRevision = await lockLocalSyncSerializationWithClient(client);
+      if (currentRevision !== input.serializationRevision
+        || input.serializationFingerprint !== String(input.serializationRevision)) {
+        throw new LocalSyncSnapshotStaleError();
+      }
+      await assertCurrentLocalSyncPrincipalWithClient(client, input.principal);
+      const stateResult = await client.query<LocalSyncStateBoundaryRow>(
+        `
+          SELECT entitlement_hash, record_set_hash, authorization_epoch,
+            content_generation, record_descriptors
+          FROM local_sync_principal_state
+          WHERE tenant_id = $1 AND principal_type = $2 AND principal_id = $3
+          FOR SHARE
+        `,
+        [input.state.tenantId, input.state.principalType, input.state.principalId]
+      );
+      const state = stateResult.rows[0];
+      if (!state
+        || state.entitlement_hash !== input.state.entitlementHash
+        || state.record_set_hash !== input.state.recordSetHash
+        || Number(state.authorization_epoch) !== input.state.authorizationEpoch
+        || Number(state.content_generation) !== input.state.contentGeneration
+        || localSyncCanonicalJson(state.record_descriptors) !== localSyncCanonicalJson(input.state.recordDescriptors)) {
+        throw new LocalSyncSnapshotStaleError("The local sync counters changed before lease issuance; retry the manifest request");
+      }
+      const value = issue();
+      await client.query("COMMIT");
+      return value;
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+}
+
+/**
+ * Atomic test/local adapter. It deliberately requires mutation revisions from
+ * every backing repository; a best-effort list-then-fetch fallback would make
+ * authorization and content snapshots impossible to prove coherent.
+ */
+export class InMemoryLocalSyncSnapshotRepository implements LocalSyncSnapshotRepository {
+  private tail = Promise.resolve();
+  private serializationRevision = 0;
+  private lastFingerprint: string | null = null;
+
+  constructor(
+    private readonly registryRepository: RegistryRepository,
+    private readonly authRepository: AuthRepository,
+    private readonly stateRepository: LocalSyncStateRepository
+  ) {
+    this.assertRevisionSource(this.registryRepository);
+    this.assertRevisionSource(this.authRepository);
+    this.assertRevisionSource(this.stateRepository);
+  }
+
+  async buildSnapshot<TRecord>(
+    input: LocalSyncSnapshotInput,
+    materialize: (detail: AssetDetail) => LocalSyncSnapshotMaterialized<TRecord>
+  ): Promise<LocalSyncSnapshotResult<TRecord>> {
+    return this.runExclusive(async () => {
+      assertLocalSyncSnapshotInput(input);
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        const initialFingerprint = this.readContentAuthorizationFingerprint();
+        const records: TRecord[] = [];
+        const descriptors: LocalSyncRecordDescriptorLike[] = [];
+        let afterStableId: string | undefined;
+        let capacityExceeded = false;
+        while (!capacityExceeded) {
+          const assets = await this.registryRepository.listAssetsForLocalSync({
+            tenantId: input.principal.tenantId,
+            sensitivities: input.sensitivities,
+            afterStableId,
+            limit: Math.min(250, input.maxRecords + 1)
+          });
+          for (const asset of assets) {
+            const allowed = await this.authRepository.canAccessAsset({
+              principal: input.principal,
+              asset,
+              action: "read",
+              surface: "local-cache"
+            });
+            if (!allowed) continue;
+            const detail = await this.registryRepository.getAssetByStableId(asset.stableId, {
+              tenantId: input.principal.tenantId,
+              view: "published"
+            });
+            if (!detail) {
+              throw new LocalSyncSnapshotStaleError("An eligible local asset changed while its snapshot was being built");
+            }
+            const entry = materialize(detail);
+            records.push(entry.record);
+            descriptors.push(entry.descriptor);
+            if (records.length > input.maxRecords) {
+              capacityExceeded = true;
+              break;
+            }
+          }
+          if (capacityExceeded || assets.length < Math.min(250, input.maxRecords + 1)) break;
+          const nextCursor = assets.at(-1)?.stableId;
+          if (!nextCursor || nextCursor === afterStableId) {
+            throw new Error("Local sync in-memory asset scan did not advance");
+          }
+          afterStableId = nextCursor;
+        }
+
+        if (capacityExceeded) {
+          if (this.readContentAuthorizationFingerprint() !== initialFingerprint) {
+            if (attempt < 2) continue;
+            throw new LocalSyncSnapshotStaleError("Local sync content or authorization changed during snapshot construction");
+          }
+          const boundary = this.captureBoundary(initialFingerprint);
+          return {
+            records: [],
+            state: null,
+            capacityExceeded: true,
+            payloadTooLarge: false,
+            snapshotBytes: 0,
+            oversizedRecord: false,
+            ...boundary
+          };
+        }
+
+        let snapshotBytes = 0;
+        let oversizedRecord = false;
+        for (const record of records) {
+          const recordBytes = Buffer.byteLength(JSON.stringify(record), "utf8");
+          snapshotBytes += recordBytes;
+          oversizedRecord ||= recordBytes > input.maxRecordBytes;
+        }
+        const afterContentAuthorization = this.readContentAuthorizationFingerprint();
+        if (afterContentAuthorization !== initialFingerprint) {
+          if (attempt < 2) continue;
+          throw new LocalSyncSnapshotStaleError("Local sync content or authorization changed during snapshot construction");
+        }
+        const state = await this.stateRepository.resolveState({
+          tenantId: input.principal.tenantId,
+          principalType: input.principal.principalType,
+          principalId: input.principal.principalId,
+          entitlementHash: computeSnapshotEntitlementHash(descriptors),
+          recordSetHash: computeSnapshotRecordSetHash(descriptors),
+          recordDescriptors: descriptors
+        });
+        const boundary = this.captureBoundary(initialFingerprint, state);
+        if (this.readContentAuthorizationFingerprint() !== initialFingerprint) {
+          if (attempt < 2) continue;
+          throw new LocalSyncSnapshotStaleError("Local sync content or authorization changed before snapshot completion");
+        }
+        if (oversizedRecord || snapshotBytes > input.maxSnapshotBytes) {
+          return {
+            records: [],
+            state: null,
+            capacityExceeded: false,
+            payloadTooLarge: true,
+            snapshotBytes,
+            oversizedRecord,
+            ...boundary
+          };
+        }
+        return {
+          records,
+          state,
+          capacityExceeded: false,
+          payloadTooLarge: false,
+          snapshotBytes,
+          oversizedRecord,
+          ...boundary
+        };
+      }
+      throw new LocalSyncSnapshotStaleError();
+    });
+  }
+
+  async assertSnapshotCurrent<T>(input: LocalSyncSnapshotAssertion, issue: () => T): Promise<T> {
+    return this.runExclusive(async () => {
+      assertLocalSyncSnapshotAssertion(input);
+      const currentFingerprint = this.readBoundaryFingerprint(input.state);
+      if (currentFingerprint !== input.serializationFingerprint) {
+        throw new LocalSyncSnapshotStaleError();
+      }
+      return issue();
+    });
+  }
+
+  private readContentAuthorizationFingerprint(): string {
+    const registryRevision = this.readRevision(this.registryRepository, "registry");
+    const authRevision = this.readRevision(this.authRepository, "authorization");
+    return `${registryRevision}:${authRevision}`;
+  }
+
+  private captureBoundary(initialFingerprint: string, state?: LocalSyncState): {
+    serializationRevision: number;
+    serializationFingerprint: string;
+  } {
+    const stateRevision = this.readRevision(this.stateRepository, "sync state");
+    const fingerprint = `${initialFingerprint}:${stateRevision}`;
+    if (this.lastFingerprint !== fingerprint) {
+      if (this.serializationRevision >= Number.MAX_SAFE_INTEGER) {
+        throw new RangeError("local sync serialization revision exceeds the supported safe integer range");
+      }
+      this.serializationRevision += 1;
+      this.lastFingerprint = fingerprint;
+    }
+    // Keep state referenced so callers cannot accidentally omit it when this
+    // helper is used from a future adapter branch.
+    void state;
+    return {
+      serializationRevision: this.serializationRevision,
+      serializationFingerprint: fingerprint
+    };
+  }
+
+  private readBoundaryFingerprint(state: LocalSyncState): string {
+    void state;
+    const contentAuthorization = this.readContentAuthorizationFingerprint();
+    const stateRevision = this.readRevision(this.stateRepository, "sync state");
+    return `${contentAuthorization}:${stateRevision}`;
+  }
+
+  private readRevision(source: unknown, label: string): number {
+    const getter = (source as { getLocalSyncRevision?: unknown }).getLocalSyncRevision;
+    if (typeof getter !== "function") {
+      throw new Error(`Atomic local sync snapshots require a ${label} mutation revision source`);
+    }
+    const revision = getter.call(source);
+    if (!Number.isSafeInteger(revision) || revision < 0) {
+      throw new Error(`The ${label} mutation revision is invalid`);
+    }
+    return revision;
+  }
+
+  private assertRevisionSource(source: unknown): void {
+    if (typeof (source as { getLocalSyncRevision?: unknown }).getLocalSyncRevision !== "function") {
+      throw new Error("Atomic local sync snapshots require mutation revision sources");
+    }
+  }
+
+  private async runExclusive<T>(operation: () => Promise<T>): Promise<T> {
+    const previous = this.tail;
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    this.tail = previous.then(() => gate);
+    await previous;
+    try {
+      return await operation();
+    } finally {
+      release();
+    }
+  }
+}
+
+interface LocalSyncRecordDescriptorLike {
+  stableId: string;
+  payloadHash: string;
+  recordId?: string;
+}
+
 export class InMemoryRegistryRepository implements RegistryRepository {
   private readonly assets = new Map<string, AssetDetail>();
   private readonly pendingCreates = new Set<string>();
   private sequence = 0;
+  private localSyncRevision = 0;
+
+  getLocalSyncRevision(): number {
+    return this.localSyncRevision;
+  }
+
+  private bumpLocalSyncRevision(): void {
+    if (this.localSyncRevision >= Number.MAX_SAFE_INTEGER) {
+      throw new Error("Local-sync registry revision exhausted");
+    }
+    this.localSyncRevision += 1;
+  }
 
   async getContentRevision(tenantId = "tenant_demo"): Promise<string> {
     return createHash("sha256").update(JSON.stringify([...this.assets.values()]
@@ -726,6 +1238,20 @@ export class InMemoryRegistryRepository implements RegistryRepository {
       .filter((asset): asset is AssetRecord => asset !== null)
       .sort((left, right) => left.stableId < right.stableId ? -1 : left.stableId > right.stableId ? 1 : 0)
       .slice(0, limit);
+  }
+
+  async listAssetsForLocalSync(input: RegistryLocalSyncListInput): Promise<AssetRecord[]> {
+    assertLocalSyncListInput(input);
+    return Array.from(this.assets.values())
+      .map((detail) => projectPublishedAssetRecord(detail.asset,
+        detail.versions.find((version) => version.id === detail.asset.publishedVersionId)))
+      .filter((asset): asset is AssetRecord => asset !== null)
+      .filter((asset) => asset.tenantId === input.tenantId)
+      .filter((asset) => input.sensitivities.includes(asset.sensitivity as "public-demo" | "internal"))
+      .filter((asset) => asset.allowedSurfaces.includes("local-cache"))
+      .filter((asset) => !input.afterStableId || asset.stableId > input.afterStableId)
+      .sort((left, right) => left.stableId < right.stableId ? -1 : left.stableId > right.stableId ? 1 : 0)
+      .slice(0, input.limit);
   }
 
   async listAssetsNeedingReview(input: AssetReviewQueueInput = {}): Promise<AssetReviewQueueResponse> {
@@ -795,6 +1321,7 @@ export class InMemoryRegistryRepository implements RegistryRepository {
   }
 
   async createAsset(input: AssetCreateInput, context?: AssetCreateContext): Promise<AssetDetail> {
+    this.bumpLocalSyncRevision();
     const parsed = assetCreateInputSchema.parse(input);
     const creatorGrants = assetCreatorGrants(parsed, context);
     const key = `${parsed.tenantId}:${parsed.stableId}`;
@@ -892,6 +1419,7 @@ export class InMemoryRegistryRepository implements RegistryRepository {
   }
 
   async updateAsset(stableId: string, input: AssetUpdateInput): Promise<AssetDetail | null> {
+    this.bumpLocalSyncRevision();
     const hasMetadataUpdate = Object.hasOwn(input, "metadata");
     const parsed = assetUpdateInputSchema.parse(input);
     const key = `${parsed.tenantId}:${stableId}`;
@@ -992,6 +1520,7 @@ export class InMemoryRegistryRepository implements RegistryRepository {
   }
 
   async restoreAssetVersion(stableId: string, input: AssetRestoreInput): Promise<AssetDetail | null> {
+    this.bumpLocalSyncRevision();
     const parsed = assetRestoreInputSchema.parse(input);
     const key = `${parsed.tenantId}:${stableId}`;
     const detail = this.assets.get(key);
@@ -1025,6 +1554,7 @@ export class InMemoryRegistryRepository implements RegistryRepository {
   }
 
   async reviewAsset(stableId: string, input: AssetReviewInput): Promise<AssetDetail | null> {
+    this.bumpLocalSyncRevision();
     const parsed = assetReviewInputSchema.parse(input);
     const key = `${parsed.tenantId}:${stableId}`;
     const detail = this.assets.get(key);
@@ -1054,6 +1584,7 @@ export class InMemoryRegistryRepository implements RegistryRepository {
   }
 
   async publishAsset(stableId: string, input: AssetPublishInput): Promise<AssetDetail | null> {
+    this.bumpLocalSyncRevision();
     const parsed = assetPublishInputSchema.parse(input);
     const key = `${parsed.tenantId}:${stableId}`;
     const detail = this.assets.get(key);
@@ -1697,6 +2228,50 @@ function stableJson(value: unknown): string {
   return JSON.stringify(sortJsonValue(value));
 }
 
+function computeSnapshotEntitlementHash(
+  descriptors: Array<{ stableId: string }>
+): `sha256:${string}` {
+  const identities = descriptors
+    .map((descriptor) => descriptor.stableId)
+    .sort(compareCodeUnits);
+  return `sha256:${createHash("sha256").update(localSyncCanonicalJson(identities), "utf8").digest("hex")}`;
+}
+
+function computeSnapshotRecordSetHash(
+  descriptors: Array<{ stableId: string; recordId?: string; payloadHash: string }>
+): `sha256:${string}` {
+  const identities = descriptors
+    .map((descriptor) => ({
+      recordId: descriptor.recordId ?? descriptor.stableId,
+      payloadHash: descriptor.payloadHash
+    }))
+    .sort((left, right) => compareCodeUnits(left.recordId, right.recordId));
+  return `sha256:${createHash("sha256").update(localSyncCanonicalJson(identities), "utf8").digest("hex")}`;
+}
+
+function compareCodeUnits(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
+function localSyncCanonicalJson(value: unknown): string {
+  return JSON.stringify(sortLocalSyncJsonValue(value));
+}
+
+function sortLocalSyncJsonValue(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(sortLocalSyncJsonValue);
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .filter(([, entry]) => entry !== undefined)
+        .sort(([left], [right]) => compareCodeUnits(left, right))
+        .map(([key, entry]) => [key, sortLocalSyncJsonValue(entry)])
+    );
+  }
+  return value;
+}
+
 function sortJsonValue(value: unknown): unknown {
   if (Array.isArray(value)) {
     return value.map(sortJsonValue);
@@ -1847,12 +2422,136 @@ function toDateOnly(value: Date | string): string {
   return `${year}-${month}-${day}`;
 }
 
+function assertLocalSyncListInput(input: RegistryLocalSyncListInput): void {
+  if (!input.tenantId || input.sensitivities.length < 1) {
+    throw new TypeError("Local sync listing requires a tenant and at least one sensitivity");
+  }
+  if (input.sensitivities.some((value) => value !== "public-demo" && value !== "internal")) {
+    throw new TypeError("Local sync listing received an unsupported sensitivity");
+  }
+  if (input.afterStableId !== undefined && !input.afterStableId) {
+    throw new TypeError("Local sync listing received an invalid stable-ID cursor");
+  }
+  if (!Number.isInteger(input.limit) || input.limit < 1 || input.limit > 1_000) {
+    throw new RangeError("Local sync list limit must be between 1 and 1000");
+  }
+}
+
+function assertLocalSyncSnapshotInput(input: LocalSyncSnapshotInput): void {
+  if (!input.principal
+    || !input.principal.tenantId
+    || !input.principal.principalId
+    || input.principal.scopes.length !== 1
+    || input.principal.scopes[0] !== "local:sync"
+    || input.principal.allowedSurfaces.length !== 1
+    || input.principal.allowedSurfaces[0] !== "local-cache") {
+    throw new TypeError("Local sync snapshot requires a dedicated local-sync principal");
+  }
+  if (input.sensitivities.length < 1
+    || input.sensitivities.some((value) => value !== "public-demo" && value !== "internal")) {
+    throw new TypeError("Local sync snapshot received an unsupported sensitivity");
+  }
+  if (!Number.isSafeInteger(input.maxRecords) || input.maxRecords < 1 || input.maxRecords > 5_000) {
+    throw new RangeError("Local sync snapshot maxRecords must be between 1 and 5000");
+  }
+  if (!Number.isSafeInteger(input.maxRecordBytes) || input.maxRecordBytes < 1
+    || !Number.isSafeInteger(input.maxSnapshotBytes) || input.maxSnapshotBytes < 1) {
+    throw new RangeError("Local sync snapshot byte limits are invalid");
+  }
+}
+
+function assertLocalSyncSnapshotAssertion(input: LocalSyncSnapshotAssertion): void {
+  assertLocalSyncSnapshotInput({
+    principal: input.principal,
+    sensitivities: ["public-demo"],
+    maxRecords: 1,
+    maxRecordBytes: 1,
+    maxSnapshotBytes: 1
+  });
+  if (!Number.isSafeInteger(input.serializationRevision) || input.serializationRevision < 0
+    || typeof input.serializationFingerprint !== "string"
+    || input.serializationFingerprint.length < 1
+    || input.serializationFingerprint.length > 512) {
+    throw new TypeError("Local sync snapshot assertion has an invalid serialization boundary");
+  }
+  if (!input.state || input.state.tenantId !== input.principal.tenantId
+    || input.state.principalType !== input.principal.principalType
+    || input.state.principalId !== input.principal.principalId) {
+    throw new TypeError("Local sync snapshot assertion is not bound to its principal");
+  }
+}
+
+async function assertCurrentLocalSyncPrincipalWithClient(
+  client: Queryable,
+  principal: AuthPrincipal
+): Promise<void> {
+  const result = await client.query<{ valid: boolean }>(
+    `
+      SELECT EXISTS (
+        SELECT 1
+        FROM api_keys
+        LEFT JOIN users ON users.id = api_keys.user_id
+        LEFT JOIN service_accounts ON service_accounts.id = api_keys.service_account_id
+        LEFT JOIN login_sessions
+          ON login_sessions.api_key_id = api_keys.id
+          AND login_sessions.source = 'local-device'
+          AND login_sessions.revoked_at IS NULL
+          AND login_sessions.expires_at > now()
+          AND (login_sessions.absolute_expires_at IS NULL OR login_sessions.absolute_expires_at > now())
+        WHERE api_keys.id::text = $1
+          AND api_keys.tenant_id = $2
+          AND api_keys.revoked_at IS NULL
+          AND (api_keys.expires_at IS NULL OR api_keys.expires_at > now())
+          AND api_keys.scopes = ARRAY['local:sync']::text[]
+          AND api_keys.allowed_surfaces = ARRAY['local-cache']::text[]
+          AND (
+            (
+              $3 = 'user'
+              AND api_keys.user_id::text = $4
+              AND users.id IS NOT NULL
+              AND users.status = 'active'
+              AND login_sessions.user_id = api_keys.user_id
+            )
+            OR (
+              $3 = 'service-account'
+              AND api_keys.service_account_id::text = $5
+              AND service_accounts.id IS NOT NULL
+              AND service_accounts.status = 'active'
+            )
+          )
+      ) AS valid
+    `,
+    [
+      principal.apiKeyId,
+      principal.tenantId,
+      principal.principalType,
+      principal.userId,
+      principal.serviceAccountId
+    ]
+  );
+  if (!result.rows[0]?.valid) {
+    throw new LocalSyncSnapshotStaleError("The local device credential or session changed before local sync completed");
+  }
+}
+
+function isSerializationFailure(error: unknown): boolean {
+  return Boolean(error && typeof error === "object" && "code" in error && error.code === "40001");
+}
+
 function todayDateOnly(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
 interface Queryable {
   query<T extends QueryResultRow = QueryResultRow>(text: string, values?: unknown[]): Promise<QueryResult<T>>;
+}
+
+interface LocalSyncStateBoundaryRow extends QueryResultRow {
+  entitlement_hash: string;
+  record_set_hash: string;
+  authorization_epoch: string | number;
+  content_generation: string | number;
+  record_descriptors: unknown;
 }
 
 interface AssetRow extends QueryResultRow {

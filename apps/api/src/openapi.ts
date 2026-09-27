@@ -38,6 +38,119 @@ export function buildOpenApiDocument() {
           }
         }
       },
+      "/local-sync/v1/configuration": {
+        get: {
+          summary: "Read the pinned local-sync protocol and signing configuration",
+          responses: {
+            "200": jsonResponse("Local-sync configuration for the authenticated principal"),
+            "401": jsonResponse("Authentication required"),
+            "403": jsonResponse("Dedicated local-sync credential required"),
+            "503": jsonResponse("Local sync is not configured")
+          }
+        }
+      },
+      "/local-sync/v1/device-sessions": {
+        post: {
+          summary: "Start loopback PKCE enrollment for a named local device",
+          security: [],
+          responses: {
+            "201": jsonResponse("Browser approval URL and short-lived signed request"),
+            "400": jsonResponse("Invalid device or loopback redirect"),
+            "503": jsonResponse("Local device enrollment is not configured")
+          }
+        },
+        get: {
+          summary: "List local devices for the signed-in user",
+          parameters: [queryParameter("includeRevoked", false), queryParameter("userId", false)],
+          responses: {
+            "200": jsonResponse("Named local device sessions"),
+            "401": jsonResponse("Authentication required"),
+            "403": jsonResponse("Browser login session required")
+          }
+        }
+      },
+      "/local-sync/v1/device-sessions/authorization": {
+        post: {
+          summary: "Approve a local device and issue a one-time authorization code",
+          responses: {
+            "200": jsonResponse("Loopback redirect containing the one-time code and state"),
+            "400": jsonResponse("Approval request invalid or expired"),
+            "403": jsonResponse("Browser login session required")
+          }
+        }
+      },
+      "/local-sync/v1/device-sessions/authorization/preview": {
+        post: {
+          summary: "Preview a signed local-device approval request",
+          responses: {
+            "200": jsonResponse("Bound server, device, and loopback approval details"),
+            "400": jsonResponse("Approval request invalid or expired"),
+            "403": jsonResponse("Browser login session required")
+          }
+        }
+      },
+      "/local-sync/v1/device-sessions/token": {
+        post: {
+          summary: "Exchange a one-time PKCE authorization code for rotating local-device credentials",
+          security: [],
+          responses: {
+            "201": jsonResponse("Short-lived access token and rotating refresh token"),
+            "401": jsonResponse("Authorization code or PKCE proof invalid"),
+            "503": jsonResponse("Local device enrollment is not configured")
+          }
+        }
+      },
+      "/local-sync/v1/device-sessions/refresh": {
+        post: {
+          summary: "Rotate a local-device refresh token and short-lived access token",
+          security: [],
+          responses: {
+            "200": jsonResponse("Rotated local-device credential pair"),
+            "401": jsonResponse("Refresh token invalid, replayed, expired, disabled, or revoked")
+          }
+        }
+      },
+      "/local-sync/v1/device-sessions/current": {
+        delete: {
+          summary: "Revoke the current local device session",
+          responses: {
+            "200": jsonResponse("Revoked local device and access key"),
+            "401": jsonResponse("Authentication required"),
+            "404": jsonResponse("Local device not found")
+          }
+        }
+      },
+      "/local-sync/v1/device-sessions/{sessionId}": {
+        delete: {
+          summary: "Revoke a named local device from an authenticated browser session",
+          parameters: [pathParameter("sessionId")],
+          responses: {
+            "200": jsonResponse("Revoked local device and access key"),
+            "401": jsonResponse("Authentication required"),
+            "403": jsonResponse("Browser login session required"),
+            "404": jsonResponse("Local device not found")
+          }
+        }
+      },
+      "/local-sync/v1/manifest": {
+        get: {
+          summary: "Create a signed permission-filtered local knowledge snapshot",
+          parameters: [
+            queryParameter("knownAuthorizationEpoch", false),
+            queryParameter("knownContentGeneration", false),
+            queryParameter("knownRecordSetHash", false)
+          ],
+          responses: {
+            "200": jsonResponse("Signed full or unchanged local-sync manifest"),
+            "400": jsonResponse("Invalid high-water query"),
+            "401": jsonResponse("Authentication required"),
+            "403": jsonResponse("Dedicated local-sync credential required"),
+            "409": jsonResponse("Eligible local corpus exceeds the record cap"),
+            "413": jsonResponse("Eligible local corpus exceeds the payload cap"),
+            "503": jsonResponse("Local sync is not configured")
+          }
+        }
+      },
       "/auth/bootstrap": {
         post: {
           summary: "Create the first local admin and one-time API key",

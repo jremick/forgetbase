@@ -9,15 +9,19 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "bundle": "pnpm --filter @forgetbase/local-runtime build && node scripts/build-bundle.mjs",
     "start": "tsx src/index.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@forgetbase/local-runtime": "workspace:*",
+    "@forgetbase/mcp-server": "workspace:*",
     "@forgetbase/schema": "workspace:*",
     "@forgetbase/sdk": "workspace:*",
     "@forgetbase/validation": "workspace:*"
   },
   "devDependencies": {
+    "esbuild": "^0.28.1",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3"
   }
