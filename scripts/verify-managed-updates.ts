@@ -14,7 +14,7 @@ import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process"
 import { createHash, generateKeyPairSync, randomBytes, sign } from "node:crypto";
 import { createServer } from "node:http";
 import { copyFile, cp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { canonicalJson, computeComposeBundleDigest, initializeManagedInstallation } from "../packages/updater/src/index.js";
 import { releaseManifestSchema, type ReleaseManifest } from "../packages/schema/src/index.js";
 
@@ -292,12 +292,14 @@ fi
   }
   await restoreSeparateStack(recovery);
   await http(updater, "/v1/rollback", { method: "POST", token, body: { recoveryPointId: recovery.id }, expected: [409] });
-  await copyFile(recovery.backupPath, join(recovery.configurationPath, "..", "wrong.dump"));
+  await copyFile(recovery.backupPath, join(dirname(recovery.backupPath), "wrong.dump"));
   const corruptLedger = JSON.parse(await readFile(join(stateDir, "state.json"), "utf8"));
-  corruptLedger.recoveryPoints.find((point: Json) => point.id === recovery.id).backupPath = join(recovery.configurationPath, "..", "wrong.dump");
+  corruptLedger.recoveryPoints.find((point: Json) => point.id === recovery.id).backupPath = join(dirname(recovery.backupPath), "wrong.dump");
   await writeFile(join(stateDir, "state.json"), JSON.stringify(corruptLedger));
   const refused = await control("/v1/rollback", { recoveryPointId: recovery.id, confirmDataLossAfter: recovery.createdAt });
-  assert.equal((await waitTerminal(refused.id)).phase, "needs-attention");
+  const refusedResult = await waitTerminal(refused.id);
+  assert.equal(refusedResult.phase, "needs-attention");
+  assert.match(refusedResult.message, /canonical verified path/);
   assert.match(await sql("SELECT value FROM managed_e2e_canary WHERE id='after';"), /accepted-after-reopen/);
   const repairedLedger = JSON.parse(await readFile(join(stateDir, "state.json"), "utf8"));
   repairedLedger.recoveryPoints.find((point: Json) => point.id === recovery.id).backupPath = recovery.backupPath;
@@ -488,8 +490,12 @@ async function restoreSeparateStack(point: Json): Promise<void> {
   await scriptCommand("restore backup into new attachment volume", "restore-attachments.sh", [point.attachmentSnapshotId], restoreEnv);
   const rows = await dockerCommand("independent restored database canary", ["compose", "-p", restoreProject, "-f", restoreFile, "exec", "-T", "postgres", "psql", "-U", "forgetbase", "-d", "forgetbase", "-t", "-A", "-c", "SELECT value FROM managed_e2e_canary WHERE id='before';"], restoreEnv);
   assert.match(rows, /original/);
+  const storageKey = (await dockerCommand("independent restored attachment storage key", ["compose", "-p", restoreProject, "-f", restoreFile, "exec", "-T", "postgres", "psql", "-U", "forgetbase", "-d", "forgetbase", "-t", "-A", "-c", `SELECT storage_key FROM attachments WHERE id='${attachmentId}';`], restoreEnv)).trim();
+  assert.match(storageKey, /^[0-9a-f]{2}\/[0-9a-f-]{36}$/);
+  const restoredHash = await dockerCommand("hash actual bytes in independent attachment volume", ["compose", "-p", restoreProject, "-f", restoreFile, "run", "--rm", "--no-deps", "-T", "api", "sha256sum", `/var/lib/forgetbase/attachments/${storageKey}`], restoreEnv);
+  assert.equal(restoredHash.trim().split(/\s+/)[0], sha256(attachmentContent));
   await scriptCommand("independent coordinated backup verification", "verify-backup-set.sh", [join(point.configurationPath, "..", "backup-set")], restoreEnv);
   await dockerCommand("cleanup independent restore stack", ["compose", "-p", restoreProject, "-f", restoreFile, "down", "--volumes", "--remove-orphans"], restoreEnv);
   await rm(restoreFile, { force: true });
-  record("independent-stack restore", { distinctProject: restoreProject, originalUntouched: true, databaseCanary: "original", attachmentSetVerified: true, physicalHost: "same Docker host" });
+  record("independent-stack restore", { distinctProject: restoreProject, originalUntouched: true, databaseCanary: "original", attachmentSetVerified: true, restoredVolumeBytesSha256: sha256(attachmentContent), physicalHost: "same Docker host" });
 }
