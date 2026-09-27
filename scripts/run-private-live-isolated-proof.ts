@@ -48,9 +48,14 @@ try {
     "build host workspace for proof commands",
     "npx",
     ["-y", "pnpm@11.7.0", "build"],
-    baseEnv,
+    { ...baseEnv, VITE_ENABLE_RICH_EDITOR: "true" },
     15 * 60 * 1_000
   );
+  const browserBuildOverride = resolve(outputDir, "compose.browser-proof.json");
+  writeFileSync(browserBuildOverride, JSON.stringify({ services: { web: { volumes: [{
+    type: "bind", source: resolve(root, "apps/web/dist"), target: "/app/apps/web/dist", read_only: true
+  }] } } }, null, 2));
+  composeFiles.push("-f", browserBuildOverride);
   const ports = await reserveDistinctPorts(4);
   const [postgresPort, apiPort, webPort, proxyPort] = ports;
   composeEnv = {
@@ -174,6 +179,7 @@ try {
       UAT_MODE: "release",
       UAT_EXPECT_ROLE: "admin",
       UAT_TEST_AUTHORING: "true",
+      UAT_TEST_RICH_EDITOR: "true",
       UAT_TENANT_ID: tenantId,
       UAT_EMAIL: adminEmail,
       UAT_PASSWORD: password,
