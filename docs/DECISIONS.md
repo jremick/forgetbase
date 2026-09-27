@@ -2,6 +2,35 @@
 
 This log records current product and architecture decisions. Revisit dates are review prompts, not automatic expiry.
 
+## 0077: Managed Updates Use A Separate Host Updater
+
+### Context
+
+Self-hosted operators need update visibility, release notes, scheduling, progress, and recovery in the app. Docker control and database restore require host privileges that must not be granted to the application container.
+
+### Options Considered
+
+- Mount the Docker socket into the API container
+- Provide release information only and keep all execution in shell runbooks
+- Run a narrow authenticated updater under the host account that owns the Compose project
+- Require a hosted deployment controller for every install
+
+### Decision And Rationale
+
+Use a separate host updater for managed Docker Compose installations. The application API exposes a deployment-owner control surface, but it does not own Docker or backup privileges. Signed manifests, digest-pinned images, exact migration plans, external job state, and verified recovery points form one release contract.
+
+### Consequences
+
+- Managed installs can provide the complete in-app flow without mounting the Docker socket into application containers.
+- Source checkouts remain advisory and operator-managed. Hosted installs remain platform-managed.
+- The host updater needs its own loopback binding, strong bearer token, service supervision, public signing key, and recovery directory.
+- An updater compatibility gate can require a host updater upgrade before a product update.
+- Release publication and updater activation remain separate approval boundaries.
+
+### Follow-Ups / Review
+
+Review Unix-socket transport, updater A/B replacement, off-host recovery integration, and channel promotion policy after controlled managed-install UAT.
+
 ## 0076: Product And Codebase Name Is ForgetBase
 
 ### Context

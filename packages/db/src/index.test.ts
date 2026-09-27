@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { cp, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -45,6 +45,7 @@ import {
   OpenAiEmbeddingProvider,
   isSecretEnvVarAllowed,
   purgeTelemetryForRetentionPolicy,
+  planMigrations,
   runMigrations,
   type EmbeddingProvider,
   type AuthRepository,
@@ -2031,6 +2032,216 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("PostgresRegistryRepository", ()
       await rm(migrationsDir, { recursive: true, force: true });
     }
   });
+
+  it("plans the exact pending set and rejects applied migration checksum drift", async () => {
+    const suffix = `${Date.now()}_${Math.floor(Math.random() * 1_000_000)}`;
+    const id = `901_checksum_${suffix}`;
+    const tableName = `migration_checksum_table_${suffix}`;
+    const migrationsDir = await mkdtemp(join(tmpdir(), "forgetbase-migration-checksum-"));
+    const migrationPath = join(migrationsDir, `${id}.sql`);
+    await cp(new URL("../migrations/", import.meta.url), migrationsDir, { recursive: true });
+    await writeFile(migrationPath, `CREATE TABLE ${tableName} (id text PRIMARY KEY);\n`);
+
+    try {
+      const pending = await planMigrations(pool, migrationsDir, [id]);
+      expect(pending.pending).toEqual([id]);
+      expect(pending.expectedPendingMatches).toBe(true);
+      await runMigrations(pool, migrationsDir, { releaseVersion: "0.2.0", expectedPendingIds: [id] });
+      const current = await planMigrations(pool, migrationsDir, []);
+      expect(current.pending).toEqual([]);
+      expect(current.checksumMismatches).toEqual([]);
+
+      await writeFile(migrationPath, `CREATE TABLE ${tableName} (id text PRIMARY KEY, changed text);\n`);
+      const drifted = await planMigrations(pool, migrationsDir, []);
+      expect(drifted.checksumMismatches).toEqual([id]);
+      await expect(runMigrations(pool, migrationsDir)).rejects.toThrow(`Applied migration checksum mismatch: ${id}`);
+    } finally {
+      await pool.query(`DROP TABLE IF EXISTS ${tableName}`);
+      await pool.query("DELETE FROM schema_migrations WHERE id = $1", [id]);
+      await rm(migrationsDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects late migration checksum drift before applying pending SQL or adopting legacy checksums", async () => {
+    const suffix = `${Date.now()}_${Math.floor(Math.random() * 1_000_000)}`;
+    const legacyId = `897_legacy_${suffix}`;
+    const pendingId = `898_pending_${suffix}`;
+    const driftedId = `899_drifted_${suffix}`;
+    const tableName = `migration_preflight_${suffix}`;
+    const migrationsDir = await mkdtemp(join(tmpdir(), "forgetbase-migration-preflight-"));
+    await writeFile(join(migrationsDir, `${legacyId}.sql`), "SELECT 1;\n");
+    await writeFile(join(migrationsDir, `${driftedId}.sql`), "SELECT 1;\n");
+
+    try {
+      await runMigrations(pool, migrationsDir);
+      await pool.query("UPDATE schema_migrations SET checksum = NULL WHERE id = $1", [legacyId]);
+      await writeFile(join(migrationsDir, `${pendingId}.sql`), `CREATE TABLE ${tableName} (id text PRIMARY KEY);\n`);
+      await writeFile(join(migrationsDir, `${driftedId}.sql`), "SELECT 2;\n");
+
+      await expect(runMigrations(pool, migrationsDir)).rejects.toThrow(`Applied migration checksum mismatch: ${driftedId}`);
+      const table = await pool.query("SELECT to_regclass($1) AS name", [`public.${tableName}`]);
+      expect(table.rows[0]?.name).toBeNull();
+      const pending = await pool.query("SELECT id FROM schema_migrations WHERE id = $1", [pendingId]);
+      expect(pending.rows).toEqual([]);
+      const legacy = await pool.query("SELECT checksum FROM schema_migrations WHERE id = $1", [legacyId]);
+      expect(legacy.rows[0]?.checksum).toBeNull();
+
+      await writeFile(join(migrationsDir, `${driftedId}.sql`), "SELECT 1;\n");
+      expect((await runMigrations(pool, migrationsDir)).applied).toEqual([pendingId]);
+      const adopted = await pool.query("SELECT checksum FROM schema_migrations WHERE id = $1", [legacyId]);
+      expect(adopted.rows[0]?.checksum).toMatch(/^[a-f0-9]{64}$/);
+    } finally {
+      await pool.query(`DROP TABLE IF EXISTS ${tableName}`);
+      await pool.query("DELETE FROM schema_migrations WHERE id = ANY($1::text[])", [[legacyId, pendingId, driftedId]]);
+      await rm(migrationsDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a signed migration candidate missing applied files but permits additive application rollback", async () => {
+    const suffix = `${Date.now()}_${Math.floor(Math.random() * 1_000_000)}`;
+    const appliedId = `897_applied_${suffix}`;
+    const pendingId = `898_candidate_${suffix}`;
+    const tableName = `migration_missing_${suffix}`;
+    const migrationsDir = await mkdtemp(join(tmpdir(), "forgetbase-migration-missing-"));
+    await cp(new URL("../migrations/", import.meta.url), migrationsDir, { recursive: true });
+    await writeFile(join(migrationsDir, `${appliedId}.sql`), "SELECT 1;\n");
+
+    try {
+      await runMigrations(pool, migrationsDir);
+      await rm(join(migrationsDir, `${appliedId}.sql`));
+      expect((await runMigrations(pool, migrationsDir)).applied).toEqual([]);
+      await writeFile(join(migrationsDir, `${pendingId}.sql`), `CREATE TABLE ${tableName} (id text PRIMARY KEY);\n`);
+
+      await expect(runMigrations(pool, migrationsDir, { expectedPendingIds: [pendingId] }))
+        .rejects.toThrow(`Candidate is missing applied migrations: ${appliedId}`);
+      await expect(runMigrations(pool, migrationsDir, { expectedSchemaVersion: pendingId }))
+        .rejects.toThrow(`Candidate is missing applied migrations: ${appliedId}`);
+      const plan = await planMigrations(pool, migrationsDir, [pendingId], pendingId);
+      expect(plan.missingAppliedIds).toEqual([appliedId]);
+      const table = await pool.query("SELECT to_regclass($1) AS name", [`public.${tableName}`]);
+      expect(table.rows[0]?.name).toBeNull();
+
+      await writeFile(join(migrationsDir, `${appliedId}.sql`), "SELECT 1;\n");
+      expect((await runMigrations(pool, migrationsDir, { expectedPendingIds: [pendingId], expectedSchemaVersion: pendingId })).applied)
+        .toEqual([pendingId]);
+    } finally {
+      await pool.query(`DROP TABLE IF EXISTS ${tableName}`);
+      await pool.query("DELETE FROM schema_migrations WHERE id = ANY($1::text[])", [[appliedId, pendingId]]);
+      await rm(migrationsDir, { recursive: true, force: true });
+    }
+  });
+
+  it("binds signed migration execution and no-op plans to the projected schema version", async () => {
+    const suffix = `${Date.now()}_${Math.floor(Math.random() * 1_000_000)}`;
+    const id = `898_schema_${suffix}`;
+    const tableName = `migration_target_${suffix}`;
+    const migrationsDir = await mkdtemp(join(tmpdir(), "forgetbase-migration-target-"));
+    await cp(new URL("../migrations/", import.meta.url), migrationsDir, { recursive: true });
+    await writeFile(join(migrationsDir, `${id}.sql`), `CREATE TABLE ${tableName} (id text PRIMARY KEY);\n`);
+
+    try {
+      await expect(runMigrations(pool, migrationsDir, { expectedPendingIds: [id], expectedSchemaVersion: "999_unavailable" }))
+        .rejects.toThrow("Target schema version does not match the signed release manifest");
+      const table = await pool.query("SELECT to_regclass($1) AS name", [`public.${tableName}`]);
+      expect(table.rows[0]?.name).toBeNull();
+      const mismatched = await planMigrations(pool, migrationsDir, [id], "999_unavailable");
+      expect(mismatched.targetSchemaVersion).toBe(id);
+      expect(mismatched.expectedSchemaVersionMatches).toBe(false);
+      await expect(runMigrations(pool, migrationsDir, { expectedPendingIds: [], expectedSchemaVersion: id }))
+        .rejects.toThrow("Pending migration set does not match the signed release manifest");
+
+      const matching = await planMigrations(pool, migrationsDir, [id], id);
+      expect(matching.expectedSchemaVersionMatches).toBe(true);
+      expect((await runMigrations(pool, migrationsDir, { expectedPendingIds: [id], expectedSchemaVersion: id })).applied).toEqual([id]);
+      const noOp = await planMigrations(pool, migrationsDir, [], id);
+      expect(noOp.currentSchemaVersion).toBe(id);
+      expect(noOp.targetSchemaVersion).toBe(id);
+      expect(noOp.expectedSchemaVersionMatches).toBe(true);
+      expect(noOp.pending).toEqual([]);
+      await expect(runMigrations(pool, migrationsDir, { expectedPendingIds: [], expectedSchemaVersion: "999_unavailable" }))
+        .rejects.toThrow("Target schema version does not match the signed release manifest");
+    } finally {
+      await pool.query(`DROP TABLE IF EXISTS ${tableName}`);
+      await pool.query("DELETE FROM schema_migrations WHERE id = $1", [id]);
+      await rm(migrationsDir, { recursive: true, force: true });
+    }
+  });
+
+  it("retries signed additive migrations only with an explicit checksum-verified applied-ID allowance", async () => {
+    const suffix = `${Date.now()}_${Math.floor(Math.random() * 1_000_000)}`;
+    const id = `898_retry_${suffix}`;
+    const nextId = `899_retry_${suffix}`;
+    const tableName = `migration_retry_${suffix}`;
+    const migrationsDir = await mkdtemp(join(tmpdir(), "forgetbase-migration-retry-"));
+    await cp(new URL("../migrations/", import.meta.url), migrationsDir, { recursive: true });
+    await writeFile(join(migrationsDir, `${id}.sql`), `CREATE TABLE ${tableName} (id text PRIMARY KEY);\n`);
+
+    try {
+      await runMigrations(pool, migrationsDir, { expectedPendingIds: [id], expectedSchemaVersion: id });
+      await pool.query(`INSERT INTO ${tableName} (id) VALUES ('retained-after-rollback')`);
+      await expect(runMigrations(pool, migrationsDir, { expectedPendingIds: [id], expectedSchemaVersion: id }))
+        .rejects.toThrow("Pending migration set does not match the signed release manifest");
+      const plan = await planMigrations(pool, migrationsDir, [id], id, true);
+      expect(plan.pending).toEqual([]);
+      expect(plan.expectedPendingMatches).toBe(true);
+      const retry = await runMigrations(pool, migrationsDir, {
+        expectedPendingIds: [id], expectedSchemaVersion: id, allowAlreadyAppliedExpectedIds: true
+      });
+      expect(retry.applied).toEqual([]);
+      expect(retry.skipped).toContain(id);
+      expect((await pool.query(`SELECT id FROM ${tableName}`)).rows).toEqual([{ id: "retained-after-rollback" }]);
+      await writeFile(join(migrationsDir, `${nextId}.sql`), `INSERT INTO ${tableName} (id) VALUES ('remaining-signed-migration');\n`);
+      expect((await runMigrations(pool, migrationsDir, {
+        expectedPendingIds: [id, nextId], expectedSchemaVersion: nextId, allowAlreadyAppliedExpectedIds: true
+      })).applied).toEqual([nextId]);
+      expect((await pool.query(`SELECT id FROM ${tableName} ORDER BY id`)).rows)
+        .toEqual([{ id: "remaining-signed-migration" }, { id: "retained-after-rollback" }]);
+    } finally {
+      await pool.query(`DROP TABLE IF EXISTS ${tableName}`);
+      await pool.query("DELETE FROM schema_migrations WHERE id = ANY($1::text[])", [[id, nextId]]);
+      await rm(migrationsDir, { recursive: true, force: true });
+    }
+  });
+
+  it.each(["missing", "extra", "null-checksum", "checksum-drift", "wrong-target", "missing-target"])(
+    "rejects a signed migration retry with %s before writes or checksum adoption",
+    async (failure) => {
+      const suffix = `${Date.now()}_${Math.floor(Math.random() * 1_000_000)}`;
+      const id = `898_retry_${suffix}`;
+      const extraId = `899_extra_${suffix}`;
+      const tableName = `migration_retry_reject_${suffix}`;
+      const migrationsDir = await mkdtemp(join(tmpdir(), "forgetbase-migration-retry-reject-"));
+      await cp(new URL("../migrations/", import.meta.url), migrationsDir, { recursive: true });
+      await writeFile(join(migrationsDir, `${id}.sql`), "SELECT 1;\n");
+
+      try {
+        await runMigrations(pool, migrationsDir, { expectedPendingIds: [id], expectedSchemaVersion: id });
+        if (failure === "extra") {
+          await writeFile(join(migrationsDir, `${extraId}.sql`), `CREATE TABLE ${tableName} (id text PRIMARY KEY);\n`);
+        }
+        if (failure === "null-checksum" || failure === "checksum-drift") {
+          await pool.query("UPDATE schema_migrations SET checksum = $2 WHERE id = $1", [id, failure === "null-checksum" ? null : "0".repeat(64)]);
+        }
+        const expectedError = failure === "checksum-drift" ? "Applied migration checksum mismatch"
+          : failure === "wrong-target" ? "Target schema version does not match the signed release manifest"
+            : failure === "missing-target" ? "Already-applied expected migrations require the signed migration set and target schema"
+              : "Pending migration set does not match the signed release manifest";
+        await expect(runMigrations(pool, migrationsDir, {
+          expectedPendingIds: failure === "missing" ? [id, "999_unavailable"] : [id],
+          expectedSchemaVersion: failure === "missing-target" ? undefined : failure === "wrong-target" ? "999_unavailable" : id,
+          allowAlreadyAppliedExpectedIds: true
+        })).rejects.toThrow(expectedError);
+        expect((await pool.query("SELECT to_regclass($1) AS name", [`public.${tableName}`])).rows[0]?.name).toBeNull();
+        if (failure === "null-checksum") {
+          expect((await pool.query("SELECT checksum FROM schema_migrations WHERE id = $1", [id])).rows[0]?.checksum).toBeNull();
+        }
+      } finally {
+        await pool.query(`DROP TABLE IF EXISTS ${tableName}`);
+        await pool.query("DELETE FROM schema_migrations WHERE id = ANY($1::text[])", [[id, extraId]]);
+        await rm(migrationsDir, { recursive: true, force: true });
+      }
+    }
+  );
 
   it("persists governed assets in Postgres", async () => {
     const repository = new PostgresRegistryRepository(pool);

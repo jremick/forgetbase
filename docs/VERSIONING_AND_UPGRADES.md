@@ -1,0 +1,176 @@
+# Versioning And Upgrades
+
+## Purpose
+
+This document defines how ForgetBase identifies releases, informs an operator, applies a managed update, and recovers from failure. It covers the self-hosted system boundary and the in-app operator experience.
+
+The first supported self-update target is a managed Docker Compose installation. Source checkouts remain operator-managed. Hosted installations remain platform-managed.
+
+## Delivery Phases 1-5
+
+### Phase 1: Release Identity And Policy
+
+Every running installation reports one product identity:
+
+- semantic product version
+- source revision
+- build timestamp
+- release channel: `stable`, `beta`, or `nightly`
+- installation mode: `managed`, `source`, or `hosted`
+- database schema version
+- updater version and protocol version
+
+Every managed release has a signed manifest. The manifest is the release contract. It includes:
+
+- exact digest-pinned images for API, web, worker, migration, and proxy components
+- supported source versions and minimum updater version
+- target schema and exact migration IDs
+- migration compatibility and rollback mode
+- estimated downtime and update risk
+- required recovery components
+- structured operator-facing release notes
+- revocation state
+
+ForgetBase uses semantic versions for product ordering. Release channels do not cross automatically. A channel change is an explicit operator configuration change.
+
+### Phase 2: Managed Packaging And Installation
+
+The managed distribution contains the Compose definition, updater service source, backup and restore helpers, public runbooks, signed release manifest, and a complete SHA-256 bundle receipt.
+
+The installer verifies the receipt, verifies the Ed25519 manifest signature against an explicitly configured public key, validates every image registry and digest, and creates the initial release identity outside the application database. It refuses to overwrite existing managed state.
+
+The host updater runs under the operating-system account that owns the Compose project. The API container does not receive the Docker socket or unrestricted host access.
+
+### Phase 3: Discovery And Operator Choice
+
+The updater periodically checks the configured HTTPS feed. An operator can also request a check from the Updates page.
+
+The page shows:
+
+- installed and available versions
+- current channel and installation mode
+- signed-manifest key identity and feed state
+- summary, highlights, security changes, breaking changes, configuration changes, and known issues
+- risk, expected downtime, migration compatibility, and rollback mode
+
+Only a deployment owner can see and use update controls. A deployment owner must be an authenticated tenant admin whose normalized email is in the exact `FORGETBASE_SYSTEM_UPDATE_OWNER_EMAILS` allowlist. Tenant admin status alone does not grant host update authority.
+
+The operator chooses one of three outcomes:
+
+1. Leave the current release installed.
+2. Schedule the verified release for a later time. The browser converts the operator's local selection to UTC for the job ledger.
+3. Apply the verified release now.
+
+No release is applied merely because it is available. ForgetBase does not enable unattended application by default.
+
+### Phase 4: Update, Recovery, And Rollback
+
+Before acceptance, the updater runs a non-mutating preflight. Blocking checks include:
+
+- installation mode and updater compatibility
+- current health
+- supported upgrade path
+- Docker and Compose availability
+- managed configuration validity and drift
+- available disk space
+- writable recovery storage
+- required attachment snapshot capability
+
+The operator must explicitly confirm the selected version. The update state machine then:
+
+1. Repeats preflight immediately before mutation.
+2. Pulls only digest-pinned candidate images and confirms the candidate migration plan matches the signed migration IDs.
+3. Enters maintenance and stops writers.
+4. Creates a coordinated database, attachment, and configuration recovery point and restore-verifies it.
+5. Resumes the current release automatically if recovery creation fails before a verified point exists.
+6. Runs the candidate migration once.
+7. Starts only the candidate API and web. Its immutable container environment denies all API requests except health/readiness before authentication or telemetry. Startup migration and attachment maintenance are disabled; the worker remains stopped and independently rejects database work while fenced.
+8. Verifies readiness, the API write fence, and immutable API/web build identities against the signed version, source revision and schema target.
+9. Durably records that writes may reopen, then persists the opened release environment and identity before recreating API/worker and reopening the proxy. Any failure after that durable boundary requires manual recovery; automatic database restore is forbidden.
+
+Job state and recovery metadata live outside Postgres. Ledger and release control files use atomic replacement and filesystem synchronization. A browser page reconnects after the API returns and reads the durable ledger without resubmitting a mutation.
+
+The Linux updater holds a kernel file lock on local state before reading the ledger or listening. Child commands inherit that lock so an orphaned restore command keeps a replacement controller from running concurrently. Startup preserves one unstarted schedule and marks other interrupted active jobs `needs-attention`, with their last phase and recovery guidance. It never repeats an uncertain migration, restore or write reopening automatically. The next manual recovery stops and removes only the owned migration container before restoring. A corrupt ledger fails closed; the operator must inspect the running release and recovery point before acting.
+
+Automatic rollback is available before writes reopen. If a failure occurs in that window, the updater restores the verified recovery point according to the signed rollback mode:
+
+- `application`: restore the previous image and configuration set without restoring Postgres. This is valid only for a compatible migration declaration.
+- `database-restore`: keep writers stopped, restore the database and attachment backup set plus prior configuration, then restart the previous services.
+- `unavailable` or `platform-managed`: reject the release for a managed self-hosted installation.
+
+Manual rollback remains available from the Updates page. Every manual recovery-set restore can discard database writes and attachment changes made after the selected recovery point, including after failed or interrupted jobs. The UI binds explicit data-loss confirmation to one selected recovery point and its exact timestamp. Recovery artifacts are verified again before destructive restore.
+
+### Phase 5: Hardening And Operations
+
+The update boundary fails closed:
+
+- unknown signing keys, bad signatures, revoked releases, redirects, insecure remote feeds, unsupported registries, mutable image tags, and image/digest mismatches are rejected
+- source and hosted installations cannot invoke managed host mutation
+- weak or missing updater bearer tokens are rejected
+- API requests never expose the updater token
+- only one mutating update or rollback job can be active
+- queued work can be canceled; a mutating job cannot be canceled as if no change occurred
+- migrations use an advisory lock, an exact signed pending set, and stored checksums
+- applied migration checksum drift stops execution
+- command execution uses argument arrays without a shell, bounded output, timeouts, and path-containment checks
+- recovery points are retained independently of application database health
+- a minimum updater version blocks incompatible product updates
+
+Updater replacement itself is not performed by the application container. A release that requires a newer updater is blocked until the host updater is upgraded through the managed bundle and host service manager. This preserves the privilege boundary and prevents an application release from replacing its own control plane.
+
+## System And User Responsibilities
+
+| Concern | ForgetBase system | Deployment owner |
+| --- | --- | --- |
+| Detect | Fetch and verify the channel manifest | Choose the feed and channel |
+| Explain | Present structured notes, risk, downtime, compatibility, and recovery mode | Review impact and known issues |
+| Decide | Never auto-apply by default | Apply now, schedule, or defer |
+| Protect | Run preflight and create a restore-verified database, attachment, and configuration recovery point | Resolve blocking checks and preserve external backups |
+| Execute | Stage, migrate, health-check, and reopen in ordered phases | Keep the host updater supervised and reachable only on the trusted host path |
+| Recover | Auto-rollback before writes reopen and retain manual recovery points | Confirm any rollback that can discard later writes |
+
+## Installation Modes
+
+### Managed Docker Compose
+
+Full update discovery, preflight, scheduling, apply, recovery, and rollback are available. Use [Managed Docker Compose Installation](runbooks/INSTALL_MANAGED_COMPOSE.md).
+
+### Source Checkout
+
+The system can report its source identity and, when an advisory updater is configured, inspect release information. Apply and rollback fail closed. The operator continues to use Git, local build commands, and the existing [Rollback Runbook](runbooks/ROLLBACK.md).
+
+### Hosted
+
+The system reports platform-managed maintenance. Self-hosted controls are absent. The hosting platform owns rollout, rollback, and maintenance communication.
+
+## Migration Classes
+
+- `application-only`: no database changes. The target schema must equal the installed schema and the migration list must be empty.
+- `additive`: older application code can continue to use the migrated database. Application rollback is allowed if the manifest declares it.
+- `destructive`: old code is not assumed compatible. A coordinated database and attachment recovery point is required and rollback restores it.
+
+The updater compares the complete candidate migration plan with the declared migration IDs and schema target in the signed manifest before maintenance starts, then repeats those checks under the migration lock. It validates all applied checksums before executing any pending SQL and rejects a signed candidate that omits applied history. An additive application rollback retains the migrated schema. Retrying that signed release may skip a declared migration only when its recorded checksum matches the candidate bytes; undeclared pending migrations still fail closed. Historical rows with NULL checksums adopt the current SQL as a future drift baseline; this cannot prove the bytes originally applied.
+
+## Recovery Retention
+
+The default retention count is three recovery points. A protected point is not deleted automatically. Retention includes the database dump, attachment archive, backup-set manifest, configuration snapshot, release identity, image references, and schema identity.
+
+External backups remain necessary. In-app recovery is a fast operational path, not a replacement for off-host backup policy or restore drills.
+
+## Acceptance Criteria
+
+A managed update capability is ready for a release only when:
+
+- signature and tamper tests pass
+- source and hosted mutation attempts fail closed
+- unauthorized admins cannot call the update control API
+- a real managed Compose configuration validates with digest-pinned images
+- a clean update reaches the exact target health identity
+- injected failures before writes reopen produce the declared rollback result
+- destructive migration recovery is restore-tested as a coordinated Postgres and attachment set
+- the web flow is checked in a browser for availability, notes, preflight, confirmation, progress, history, and rollback warnings
+- OpenAPI, type, unit, integration, security, and repository contract gates pass
+
+Release publication, tag creation, registry push, deployment, feed mutation, and installation activation are separate owner-authorized actions.
+
+See [Versioning And Upgrades Verification](VERSIONING_UPGRADES_VERIFICATION.md) for the current evidence and limits.
