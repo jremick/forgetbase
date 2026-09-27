@@ -219,6 +219,13 @@ fi
   const preflight = await control("/v1/preflight", { version: candidateVersion });
   assert.equal(preflight.eligible, true, JSON.stringify(preflight.checks.filter((check: Json) => check.status === "fail")));
   record("authorization/signature/preflight", { missingToken: 401, wrongToken: 401, tamperRejected: true, eligible: true });
+  const scheduled = await control("/v1/jobs", { version: candidateVersion, scheduledFor: new Date(Date.now() + 60 * 60_000).toISOString(), automaticRollback: true });
+  assert.equal(scheduled.phase, "scheduled");
+  assert.equal((await http(api, "/health")).body.version, baselineVersion);
+  await http(updater, "/v1/jobs", { method: "POST", token, body: { version: candidateVersion }, expected: [409] });
+  const cancelled = await control(`/v1/jobs/${scheduled.id}/cancel`);
+  assert.equal(cancelled.phase, "cancelled");
+  record("scheduled operator approval", { scheduledWithoutApplying: true, concurrentMutationRejected: true, cancellationRecorded: true });
 
   // Hold only the real health dependency, leaving the actual updater, executor,
   // Docker, API, worker and Postgres active and observable.
