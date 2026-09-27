@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { createServer, type Server } from "node:http";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
@@ -17,6 +18,10 @@ const root = process.cwd();
 const mode = parseMode(process.env.UAT_MODE);
 const expectedRole = parseExpectedRole(process.env.UAT_EXPECT_ROLE);
 const shouldTestAuthoring = process.env.UAT_TEST_AUTHORING === "true";
+const shouldTestRichEditor = process.env.UAT_TEST_RICH_EDITOR === "true";
+if (shouldTestRichEditor && (!shouldTestAuthoring || mode !== "release" || expectedRole !== "admin")) {
+  throw new Error("Rich-editor UAT requires release mode, admin role, and UAT_TEST_AUTHORING=true.");
+}
 const outputDir = resolve(process.env.UAT_OUTPUT_DIR ?? join(root, "work/public-beta-uat"));
 const shouldStartServer = !process.env.UAT_BASE_URL;
 const baseUrl = process.env.UAT_BASE_URL ?? "http://127.0.0.1:4175/";
@@ -343,6 +348,7 @@ async function checkReleaseFlow(page: Page, viewportName: "desktop" | "mobile"):
   await screenshot(page, "admin-desktop.png", "release: admin screenshot");
   if (shouldTestAuthoring) {
     await checkAdminPageAuthoring(page);
+    if (shouldTestRichEditor) await checkRichEditorAuthoring(page);
   }
   await screenshotAdminRoute(page, "admin/reviews", "Review queue", "reviews.png", "release: admin reviews screenshot");
   await screenshotAdminRoute(page, "admin/system/activity", "Search activity", "analytics.png", "release: admin analytics screenshot");
@@ -358,6 +364,8 @@ async function checkAdminPageAuthoring(page: Page): Promise<void> {
   const stableId = "guide.browser-authoring-uat";
   const createdTitle = "Browser Authoring UAT Guide";
   const updatedTitle = "Browser Authoring UAT Guide Updated";
+  const createdBody = "# Browser authoring proof\n\nThis synthetic page verifies the browser create, edit, review, and publish flow.";
+  const updatedBody = "# Browser authoring proof\n\nThis updated synthetic page verifies that browser edits create a governed version before publishing.";
 
   await page.goto(routeUrl(page, "admin/content"), { waitUntil: "domcontentloaded" });
   await page.getByRole("button", { name: "New page", exact: true }).click();
@@ -366,7 +374,7 @@ async function checkAdminPageAuthoring(page: Page): Promise<void> {
   await page.locator("#authoring-stable-id").fill(stableId);
   await page.locator("#authoring-title").fill(createdTitle);
   await page.locator("#authoring-summary").fill("Synthetic page created by the isolated browser authoring proof.");
-  await fillAuthoringBody(page, "# Browser authoring proof\n\nThis synthetic page verifies the browser create, edit, review, and publish flow.");
+  await fillAuthoringBody(page, createdBody);
   const createResponse = page.waitForResponse((response) =>
     response.request().method() === "POST" && new URL(response.url()).pathname.endsWith("/assets")
   );
@@ -374,30 +382,152 @@ async function checkAdminPageAuthoring(page: Page): Promise<void> {
   const authoringApiUrl = (await createResponse).url().replace(/\/assets(?:\?.*)?$/, "");
   await expectVisibleText(page, `Created ${stableId} as a draft`, "release: authoring draft created");
   await expectVisibleText(page, createdTitle, "release: authored page selected");
-  await assertAuthoringPublication(page, authoringApiUrl, stableId, null, "release: draft excluded from ordinary reads");
+  await assertAuthoringDraft(page, authoringApiUrl, stableId, createdBody, "release: created draft content");
+  await assertAuthoringPublication(page, authoringApiUrl, stableId, null, null, "release: draft excluded from ordinary reads");
 
   await page.getByRole("button", { name: "Edit page", exact: true }).click();
   await expectVisibleText(page, `Edit ${createdTitle}`, "release: authoring edit form opened");
   await page.locator("#authoring-title").fill(updatedTitle);
   await page.locator("#authoring-settings > summary").click();
   await page.locator("#authoring-change-note").fill("Verify browser version authoring");
-  await fillAuthoringBody(page, "# Browser authoring proof\n\nThis updated synthetic page verifies that browser edits create a governed version before publishing.");
+  await fillAuthoringBody(page, updatedBody);
   await page.getByRole("button", { name: "Save draft version", exact: true }).click();
   await expectVisibleText(page, `Saved ${stableId} as a new draft version`, "release: authoring draft version saved");
   await expectVisibleText(page, updatedTitle, "release: authored page title updated");
   await expectVisibleText(page, "v2", "release: authored page version advanced");
+  await assertAuthoringDraft(page, authoringApiUrl, stableId, updatedBody, "release: updated draft content");
 
   await page.getByRole("tab", { name: "Versions", exact: true }).click();
   await page.getByRole("button", { name: "Mark reviewed", exact: true }).click();
   await expectVisibleText(page, `Reviewed ${stableId}`, "release: authored page reviewed");
-  await assertAuthoringPublication(page, authoringApiUrl, stableId, null, "release: review does not publish draft");
+  await assertAuthoringPublication(page, authoringApiUrl, stableId, null, null, "release: review does not publish draft");
   await page.getByRole("button", { name: "Publish", exact: true }).click();
   await page.getByRole("button", { name: "Publish page", exact: true }).click();
   await expectVisibleText(page, `Published ${stableId}`, "release: authored page published");
-  await assertAuthoringPublication(page, authoringApiUrl, stableId, updatedTitle, "release: published content available to ordinary reads");
+  await assertAuthoringPublication(page, authoringApiUrl, stableId, updatedTitle, updatedBody, "release: published content available to ordinary reads");
   await assertNoHorizontalOverflow(page, "release: authoring desktop overflow");
   await assertNoClippedText(page, "release: authoring desktop clipped text");
   await screenshot(page, "authoring-flow.png", "release: authoring flow screenshot");
+}
+
+async function assertAuthoringDraft(page: Page, apiUrl: string, stableId: string, expectedBody: string, name: string): Promise<void> {
+  const response = await page.context().request.get(`${apiUrl}/assets/${encodeURIComponent(stableId)}?preview=true`, {
+    headers: { "x-forgetbase-surface": "web" }
+  });
+  const payload = await response.json() as { humanDocuments?: Array<{ body?: string }> };
+  if (response.status() !== 200 || payload.humanDocuments?.length !== 1 || payload.humanDocuments[0]?.body !== expectedBody) {
+    throw new Error(`${name}: saved draft did not preserve the complete Markdown body`);
+  }
+  checks.push({ name, status: "pass", detail: createHash("sha256").update(expectedBody).digest("hex") });
+}
+
+async function assertRichEditorReady(page: Page, name: string): Promise<void> {
+  await page.locator('.fb-rich-editor[aria-busy="false"] .fb-rich-content[contenteditable="true"]').waitFor({ timeout: 15000 });
+  if (await page.getByRole("button", { name: "Rich text", exact: true }).getAttribute("aria-pressed") !== "true") {
+    throw new Error(`${name}: Rich text must be active; a Source or textarea fallback is not rich-editor proof`);
+  }
+  checks.push({ name, status: "pass" });
+}
+
+async function checkRichEditorAuthoring(page: Page): Promise<void> {
+  // Failures targeted here: lossy import, stale nested-editor state on Save,
+  // altered bytes on mode switches/reopen, and loss of unsupported source.
+  const stableId = "guide.rich-editor-uat";
+  const title = "Rich Editor UAT Guide";
+  const body = "# Rich editing proof\n\nUnicode café 🧪 and **bold**.\n\n- First\n- Second\n\n```txt\nnested original\nkeep  two spaces\n```\n\n";
+  const updatedBody = body.replace("nested original", "nested updated");
+  await page.goto(routeUrl(page, "admin/content"), { waitUntil: "domcontentloaded" });
+  await page.getByRole("button", { name: "New page", exact: true }).click();
+  await page.locator("#authoring-settings > summary").click();
+  await page.locator("#authoring-stable-id").fill(stableId);
+  await page.locator("#authoring-title").fill(title);
+  await fillAuthoringBody(page, body);
+  await page.getByRole("button", { name: "Rich text", exact: true }).click();
+  await assertRichEditorReady(page, "rich editor: supported mixed document imported");
+  await screenshot(page, "rich-editor-import.png", "rich editor: import screenshot");
+  const created = page.waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname.endsWith("/assets"));
+  await page.getByRole("button", { name: "Create draft", exact: true }).click();
+  const apiUrl = (await created).url().replace(/\/assets(?:\?.*)?$/, "");
+  await expectVisibleText(page, `Created ${stableId} as a draft`, "rich editor: draft created");
+  await assertAuthoringDraft(page, apiUrl, stableId, body, "rich editor: no-op import preserves all bytes");
+
+  await page.getByRole("button", { name: "Edit page", exact: true }).click();
+  await assertRichEditorReady(page, "rich editor: reopened draft");
+  await page.locator(".fb-rich-editor .cm-content").fill("pending nested edit\nkeep  two spaces");
+  await page.getByRole("button", { name: "Content", exact: true }).click();
+  await page.getByRole("alertdialog", { name: "Save your page before leaving?", exact: true }).waitFor({ state: "visible" });
+  await page.getByRole("button", { name: "Continue editing", exact: true }).click();
+  if (await page.locator(".fb-rich-editor .cm-content").innerText() !== "pending nested edit\nkeep  two spaces") {
+    throw new Error("rich editor: navigation guard lost the pending nested edit");
+  }
+  checks.push({ name: "rich editor: unsaved navigation keeps the pending nested edit", status: "pass" });
+  await page.locator("#authoring-settings > summary").click();
+  await page.locator("#authoring-change-note").fill("Save the current nested code block");
+  // No artificial settling delay: Save must flush the nested editor itself.
+  await page.locator(".fb-rich-editor .cm-content").fill("nested updated\nkeep  two spaces");
+  await page.getByRole("button", { name: "Save draft version", exact: true }).click();
+  await expectVisibleText(page, `Saved ${stableId} as a new draft version`, "rich editor: immediate nested save");
+  await assertAuthoringDraft(page, apiUrl, stableId, updatedBody, "rich editor: saved nested edit matches exact body");
+
+  await page.getByRole("button", { name: "Edit page", exact: true }).click();
+  await assertRichEditorReady(page, "rich editor: saved nested content reopens");
+  if (await page.locator(".fb-rich-editor .cm-content").innerText() !== "nested updated\nkeep  two spaces") {
+    throw new Error("rich editor: reopened code block differs from saved text");
+  }
+  await page.getByRole("button", { name: "Source", exact: true }).click();
+  await page.locator(".fb-source-editor .cm-content").waitFor({ state: "visible" });
+  await page.getByRole("button", { name: "Rich text", exact: true }).click();
+  await assertRichEditorReady(page, "rich editor: Source-to-Rich round trip");
+  await page.locator("#authoring-settings > summary").click();
+  await page.locator("#authoring-change-note").fill("Verify mode switching preserves content");
+  await page.getByRole("button", { name: "Save draft version", exact: true }).click();
+  await expectVisibleText(page, `Saved ${stableId} as a new draft version`, "rich editor: round-trip save");
+  await assertAuthoringDraft(page, apiUrl, stableId, updatedBody, "rich editor: mode switches preserve all bytes");
+  await page.getByRole("tab", { name: "Versions", exact: true }).click();
+  await page.getByRole("button", { name: "Mark reviewed", exact: true }).click();
+  await expectVisibleText(page, `Reviewed ${stableId}`, "rich editor: reviewed");
+  await assertAuthoringPublication(page, apiUrl, stableId, null, null, "rich editor: review does not publish");
+  await page.getByRole("button", { name: "Publish", exact: true }).click();
+  await page.getByRole("button", { name: "Publish page", exact: true }).click();
+  await expectVisibleText(page, `Published ${stableId}`, "rich editor: published");
+  await assertAuthoringPublication(page, apiUrl, stableId, title, updatedBody, "rich editor: published exact body");
+  const readerUrl = new URL(routeUrl(page, "reader"));
+  readerUrl.searchParams.set("page", stableId);
+  await page.goto(readerUrl.href, { waitUntil: "domcontentloaded" });
+  await page.locator(".reader-document-body pre code").waitFor({ state: "visible" });
+  if (await page.locator(".reader-document-body pre code").textContent() !== "nested updated\nkeep  two spaces\n") {
+    throw new Error("rich editor: reader code text differs from the published document");
+  }
+  checks.push({ name: "rich editor: reader renders the saved nested text", status: "pass" });
+  await screenshot(page, "rich-editor-reader.png", "rich editor: reader screenshot");
+
+  const sourceId = "guide.source-fallback-uat";
+  const sourceBody = "---\nowner: synthetic\n---\n\n    keep indented code\n\n[Reference][guide]\n\n[guide]: /docs/start\n\n";
+  await page.goto(routeUrl(page, "admin/content"), { waitUntil: "domcontentloaded" });
+  await page.getByRole("button", { name: "New page", exact: true }).click();
+  await page.locator("#authoring-settings > summary").click();
+  await page.locator("#authoring-stable-id").fill(sourceId);
+  await page.locator("#authoring-title").fill("Source Fallback UAT Guide");
+  await fillAuthoringBody(page, sourceBody);
+  await page.getByRole("button", { name: "Rich text", exact: true }).click();
+  if (await page.getByRole("button", { name: "Source", exact: true }).getAttribute("aria-pressed") !== "true") {
+    throw new Error("source fallback: unsupported Markdown must remain in Source");
+  }
+  await expectVisibleText(page, "Frontmatter stays in Source.", "source fallback: visible explanation");
+  await page.getByRole("button", { name: "Create draft", exact: true }).click();
+  await expectVisibleText(page, `Created ${sourceId} as a draft`, "source fallback: draft created");
+  await assertAuthoringDraft(page, apiUrl, sourceId, sourceBody, "source fallback: saved original bytes");
+  await page.getByRole("button", { name: "Edit page", exact: true }).click();
+  await page.locator(".fb-source-editor .cm-content").waitFor({ state: "visible" });
+  if (await page.getByRole("button", { name: "Source", exact: true }).getAttribute("aria-pressed") !== "true") {
+    throw new Error("source fallback: reopened unsupported document must use Source");
+  }
+  await page.locator("#authoring-settings > summary").click();
+  await page.locator("#authoring-change-note").fill("Verify unchanged fallback source");
+  await screenshot(page, "source-fallback.png", "source fallback: reopened screenshot");
+  await page.getByRole("button", { name: "Save draft version", exact: true }).click();
+  await expectVisibleText(page, `Saved ${sourceId} as a new draft version`, "source fallback: reopened draft saved");
+  await assertAuthoringDraft(page, apiUrl, sourceId, sourceBody, "source fallback: reopen and save preserves all bytes");
 }
 
 async function fillAuthoringBody(page: Page, body: string): Promise<void> {
@@ -405,12 +535,13 @@ async function fillAuthoringBody(page: Page, body: string): Promise<void> {
   if (await textarea.isVisible()) {
     await textarea.fill(body);
   } else {
-    await page.getByRole("button", { name: "Source", exact: true }).click();
+    const sourceMode = page.getByRole("button", { name: "Source", exact: true });
+    if (await sourceMode.getAttribute("aria-pressed") !== "true") await sourceMode.click();
     await page.locator(".fb-source-editor .cm-content").fill(body);
   }
 }
 
-async function assertAuthoringPublication(page: Page, apiUrl: string, stableId: string, title: string | null, name: string): Promise<void> {
+async function assertAuthoringPublication(page: Page, apiUrl: string, stableId: string, title: string | null, expectedBody: string | null, name: string): Promise<void> {
   const response = await page.context().request.get(`${apiUrl}/assets/${encodeURIComponent(stableId)}`, {
     headers: { "x-forgetbase-surface": "web" }
   });
@@ -427,10 +558,11 @@ async function assertAuthoringPublication(page: Page, apiUrl: string, stableId: 
   } else if (response.status() !== 200 || payload.asset?.title !== title ||
     payload.asset.lifecycleState !== "active" || payload.asset.status !== "approved" ||
     !payload.asset.publishedVersionId || payload.asset.currentVersionId !== payload.asset.publishedVersionId ||
-    payload.versions?.length !== 1 || !payload.humanDocuments?.[0]?.body?.includes("updated synthetic page")) {
+    payload.versions?.length !== 1 || payload.humanDocuments?.length !== 1 ||
+    expectedBody === null || payload.humanDocuments[0]?.body !== expectedBody) {
     throw new Error(`${name}: ordinary read did not match the approved authored version`);
   }
-  checks.push({ name, status: "pass" });
+  checks.push({ name, status: "pass", ...(expectedBody === null ? {} : { detail: createHash("sha256").update(expectedBody).digest("hex") }) });
 }
 
 async function applyTenantOverride(page: Page): Promise<void> {
