@@ -82,11 +82,11 @@ const manifest = {
     liveDemoUrl
   },
   compatibility: {
-    node: "22.x",
+    node: "26.10.0",
     pnpm: "11.7.0",
     docker: "Docker Compose v2 with Docker Engine running",
     database: "Postgres 17 with pgvector",
-    browser: "Chromium via Playwright",
+    browser: "Chromium-based browser",
     document: "docs/PUBLIC_BETA_COMPATIBILITY.md"
   },
   checks: [

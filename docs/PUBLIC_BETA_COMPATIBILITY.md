@@ -10,7 +10,7 @@ This document defines what public beta users can reasonably expect from ForgetBa
 The public beta supports a self-hosted trial using:
 
 - macOS or Linux development host
-- Node.js 26.10.0 for current `main`; published beta.5 uses Node.js 22
+- Node.js 26.10.0 for beta.7 and current `main`; historical beta.5 uses Node.js 22
 - pnpm 11.7.0
 - Docker Compose v2
 - Postgres 17 with `pgvector`

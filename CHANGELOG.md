@@ -2,7 +2,7 @@
 
 Published tags are immutable. Beta releases support self-hosted trials with synthetic data; they do not promise stable APIs or production support.
 
-## Unreleased
+## 0.1.0-beta.7 - 2026-09-28
 
 - Move current development, CI and container builds to Node.js 26.10.0, update Nginx to 1.31.0, and refresh the pinned checkout, setup-node and pnpm Actions.
 
@@ -13,7 +13,7 @@ Published tags are immutable. Beta releases support self-hosted trials with synt
 - Verify rich-editor lifecycle behavior and exact draft and published content in the isolated browser proof.
 - Update Vitest to 4.1.11 and the MCP SDK's Hono dependency to 4.13.5 to address the reported dependency advisories.
 
-These changes are on `main`. A deployment's build version does not establish a published GitHub release; use the release tags and attached verification evidence when selecting an installable release.
+No database migrations change from beta.5. Beta.6 identified an intermediate deployment and was not published as a GitHub release; beta.7 is the next public release. Local-agent runtime, managed upgrades and import planning remain outside this release.
 
 ## 0.1.0-beta.5 - 2026-09-05
 

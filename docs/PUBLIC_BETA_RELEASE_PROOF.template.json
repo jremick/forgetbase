@@ -3,7 +3,7 @@
   "stage": "public-beta",
   "release": {
     "commitSha": "<40-character git commit SHA>",
-    "tag": "v0.1.0-beta.2",
+    "tag": "v0.1.0-beta.7",
     "ciRunUrl": "https://github.com/jremick/forgetbase/actions/runs/<run-id>",
     "ciHeadSha": "<40-character CI head SHA>",
     "ciStatus": "passed",
@@ -11,11 +11,11 @@
     "liveDemoUrl": "https://<public-demo-host>"
   },
   "compatibility": {
-    "node": "22.x",
+    "node": "26.10.0",
     "pnpm": "11.7.0",
     "docker": "Docker Compose v2 with Docker Engine running",
     "database": "Postgres 17 with pgvector",
-    "browser": "Chromium via Playwright",
+    "browser": "Chromium-based browser",
     "document": "docs/PUBLIC_BETA_COMPATIBILITY.md"
   },
   "checks": [
