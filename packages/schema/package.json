@@ -8,6 +8,10 @@
     ".": {
       "types": "./src/index.ts",
       "import": "./dist/index.js"
+    },
+    "./governed-hash": {
+      "types": "./src/governed-hash.ts",
+      "import": "./dist/governed-hash.js"
     }
   },
   "scripts": {
