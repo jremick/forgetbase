@@ -120,7 +120,7 @@ Still future work:
 
 ## Docs
 
-Source builds include an opt-in [managed Compose update and recovery workflow](docs/VERSIONING_AND_UPGRADES.md). Activation requires a separately configured host updater and signed release artifacts.
+Source builds include a draft [managed Compose update and recovery workflow](docs/VERSIONING_AND_UPGRADES.md). Host-operator authorization is under review; activation is not ready. Released installations are not changed automatically.
 
 - [Publication Checklist](docs/PUBLICATION.md)
 - [Public Beta Goal](docs/PUBLIC_BETA_GOAL.md)

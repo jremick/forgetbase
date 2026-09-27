@@ -478,7 +478,7 @@ export class ManagedComposeExecutor implements UpdateExecutor {
   private async checkAttachmentRecoverySupport(): Promise<boolean> {
     try {
       await Promise.all([
-        "backup-attachments.sh",
+        "scripts/backup-attachments.sh",
         "scripts/backup-set.sh",
         "scripts/restore-attachments.sh",
         "scripts/verify-backup-set.sh"

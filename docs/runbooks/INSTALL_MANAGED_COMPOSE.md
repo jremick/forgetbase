@@ -2,6 +2,8 @@
 
 This runbook defines the installation boundary required for UI-driven ForgetBase updates.
 
+Draft status: host-operator authorization is unresolved. Use this runbook only for isolated synthetic validation until the authorization model and complete update/recovery drill are verified. See [verification status](../VERSIONING_UPGRADES_VERIFICATION.md).
+
 ## Boundary
 
 - Managed releases use `compose.managed.yaml` and digest-pinned images from a signed release manifest.
@@ -129,7 +131,7 @@ Feed downloads are limited to 2 MiB, use HTTPS without redirects, and require Ed
 6. Leave the page open or return later. Job state survives API and database restarts.
 7. Verify the installed version and recovery point after completion.
 
-An ordinary tenant admin who is not in the deployment-owner allowlist receives `403` and does not see the Updates navigation item.
+Direct requests from an admin with an unlisted email receive `403`, and that principal does not see the Updates navigation item. This email check does not establish an independent host-operator identity under the existing account-management model.
 
 ## Recovery
 

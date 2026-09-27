@@ -10,7 +10,7 @@
  * use --network host, or set MANAGED_PROOF_DOCKER_HOST to host.docker.internal.
  */
 import assert from "node:assert/strict";
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
 import { createHash, generateKeyPairSync, randomBytes, sign } from "node:crypto";
 import { createServer } from "node:http";
 import { copyFile, cp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
@@ -81,7 +81,7 @@ const servers = [
     try {
       const current = await fetch(`${api}${request.url === "/ready" ? "/ready" : "/health"}`, { signal: AbortSignal.timeout(2000) });
       const body = await current.json() as Json;
-      if (body.version !== baselineVersion) {
+      if (request.url !== "/ready" && body.version !== baselineVersion) {
         while (verificationHeld) await delay(100);
         if (denyCandidateHealth) { response.writeHead(503).end("synthetic candidate container outage"); return; }
       }
@@ -95,9 +95,9 @@ try {
   assert.equal(process.env.MANAGED_PROOF_CONFIRM, "synthetic-docker", "Explicit synthetic Docker workload confirmation is required");
   assert.equal(process.platform, "linux", "Run this proof on the approved Linux Docker runner, not the Mac host");
   dockerAuthorized = true;
-  const platform = await command("Docker platform", "docker", ["info", "--format", "{{.OSType}}/{{.Architecture}}"]);
+  const platform = await dockerCommand("Docker platform", ["info", "--format", "{{.OSType}}/{{.Architecture}}"]);
   assert.match(platform, /linux\/(x86_64|aarch64|amd64|arm64)/);
-  await command("Docker Compose version", "docker", ["compose", "version", "--short"]);
+  await dockerCommand("Docker Compose version", ["compose", "version", "--short"]);
   record("runner", { node: process.version, platform: process.platform, architecture: process.arch, docker: platform.trim(), runId });
   await Promise.all(servers.map((server, index) => new Promise<void>((done) => server.listen(index === 0 ? feedPort : healthPort, "127.0.0.1", done))));
   await writeFile(join(directory, "public-key.pem"), publicPem, { mode: 0o600 });
@@ -112,7 +112,7 @@ try {
     .replace(/^\s+- \.\/infra\/docker\/postgres-init:.*\n/m, "");
   await writeFile(composePath, compose);
   await mkdir(join(directory, "bin"), { recursive: true });
-  const realDocker = (await command("Docker executable path", "which", ["docker"])).trim();
+  const realDocker = (await collectCommand("Docker executable path", "which docker", () => execute((options) => spawn("which", ["docker"], { ...options, shell: false }), baseEnv, 30_000))).trim();
   await writeFile(join(directory, "bin/docker"), `#!/usr/bin/env bash
 set -euo pipefail
 args=("$@")
@@ -133,16 +133,16 @@ fi
   baseEnv.MANAGED_PROOF_REAL_DOCKER = realDocker;
   baseEnv.MANAGED_PROOF_CONTROL_DIR = directory;
   record("compose fixture", { sha256: sha256(compose), change: "remove host-only postgres init bind; initialize identical extensions with psql" });
-  await command("start disposable private registry", "docker", ["run", "-d", "--name", registryName, "--label", `forgetbase.proof=${runId}`, "-p", `127.0.0.1:${registryPort}:5000`, "registry:3"]);
+  await dockerCommand("start disposable private registry", ["run", "-d", "--name", registryName, "--label", `forgetbase.proof=${runId}`, "-p", `127.0.0.1:${registryPort}:5000`, "registry:3"]);
   await waitUrl(`http://${host}:${registryPort}/v2/`, 60_000);
   const sourceRevision = process.env.MANAGED_PROOF_SOURCE_REVISION ?? "0000000000000000000000000000000000000000";
   const buildArguments = ["--build-arg", `FORGETBASE_SOURCE_REVISION=${sourceRevision}`, "--build-arg", `FORGETBASE_SOURCE_DATE_EPOCH=${process.env.MANAGED_PROOF_SOURCE_DATE_EPOCH ?? Math.floor(Date.now() / 1000)}`];
   const images: ReleaseManifest["images"] = [];
   for (const component of ["api", "worker", "migrate", "web", "proxy"] as const) {
     const tag = `${registryPrefix}${component}:synthetic`;
-    await command(`build ${component}`, "docker", ["build", "-f", "infra/docker/release.Dockerfile", "--target", component, ...buildArguments, "--build-arg", `FORGETBASE_RELEASE_VERSION=${baselineVersion}`, "-t", tag, "."], baseEnv, 20 * 60_000);
-    await command(`push ${component} to private disposable registry`, "docker", ["push", tag], baseEnv, 5 * 60_000);
-    const refs = JSON.parse(await command(`read ${component} immutable digest`, "docker", ["image", "inspect", tag, "--format", "{{json .RepoDigests}}"]));
+    await dockerCommand(`build ${component}`, ["build", "-f", "infra/docker/release.Dockerfile", "--target", component, ...buildArguments, "--build-arg", `FORGETBASE_RELEASE_VERSION=${baselineVersion}`, "-t", tag, "."], baseEnv, 20 * 60_000);
+    await dockerCommand(`push ${component} to private disposable registry`, ["push", tag], baseEnv, 5 * 60_000);
+    const refs = JSON.parse(await dockerCommand(`read ${component} immutable digest`, ["image", "inspect", tag, "--format", "{{json .RepoDigests}}"]));
     const reference = refs.find((value: string) => value.startsWith(`${registryPrefix}${component}@`));
     assert.ok(reference, `${component} registry digest missing`);
     images.push({ component, reference, digest: reference.split("@")[1] });
@@ -164,7 +164,7 @@ fi
   await composeCommand("enable authentication before update proof", ["up", "--no-deps", "-d", "api", "proxy"]);
   await waitUrl(`${api}/ready`, 120_000);
   await waitUrl(`http://${host}:${proxyPort}/`, 120_000);
-  await command("import synthetic corpus", "pnpm", ["--filter", "@forgetbase/cli", "start", "--", "corpus", "import", "--api-url", api, "--file", "corpus/demo/assets.json"], { ...baseEnv, FORGETBASE_API_KEY: ownerKey });
+  await pnpmCommand("import synthetic corpus", ["--filter", "@forgetbase/cli", "start", "--", "corpus", "import", "--api-url", api, "--file", "corpus/demo/assets.json"], { ...baseEnv, FORGETBASE_API_KEY: ownerKey });
   const upload = await fetch(`${api}/assets/${artifactId}/attachments`, { method: "POST", headers: { authorization: `Bearer ${ownerKey}`, "content-type": "application/octet-stream", "x-forgetbase-attachment-filename-encoded": "recovery-proof.txt", "x-forgetbase-attachment-media-type": "text/plain" }, body: attachmentContent });
   assert.ok(upload.ok, `attachment HTTP ${upload.status}: ${await upload.clone().text()}`);
   attachmentId = ((await upload.json()) as Json).id;
@@ -179,9 +179,9 @@ fi
   await writeFile(join(candidateSource, "packages/db/migrations", `${migrationId}.sql`), "UPDATE managed_e2e_canary SET value = 'candidate-migration' WHERE id = 'before';\n");
   for (const component of ["api", "worker", "migrate", "web", "proxy"] as const) {
     const tag = `${registryPrefix}${component}:candidate`;
-    await command(`build actual candidate ${component} image`, "docker", ["build", "-f", join(candidateSource, "infra/docker/release.Dockerfile"), "--target", component, ...buildArguments, "--build-arg", `FORGETBASE_RELEASE_VERSION=${candidateVersion}`, "-t", tag, candidateSource], baseEnv, 20 * 60_000);
-    await command(`push candidate ${component} digest`, "docker", ["push", tag], baseEnv, 5 * 60_000);
-    const refs = JSON.parse(await command(`candidate ${component} digest`, "docker", ["image", "inspect", tag, "--format", "{{json .RepoDigests}}"]));
+    await dockerCommand(`build actual candidate ${component} image`, ["build", "-f", join(candidateSource, "infra/docker/release.Dockerfile"), "--target", component, ...buildArguments, "--build-arg", `FORGETBASE_RELEASE_VERSION=${candidateVersion}`, "-t", tag, candidateSource], baseEnv, 20 * 60_000);
+    await dockerCommand(`push candidate ${component} digest`, ["push", tag], baseEnv, 5 * 60_000);
+    const refs = JSON.parse(await dockerCommand(`candidate ${component} digest`, ["image", "inspect", tag, "--format", "{{json .RepoDigests}}"]));
     const reference = refs.find((value: string) => value.startsWith(`${registryPrefix}${component}@`));
     assert.ok(reference);
     candidateImages.push({ component, reference, digest: reference.split("@")[1] });
@@ -324,7 +324,7 @@ fi
   await http(api, "/auth/users", { method: "POST", token: ownerKey, body: { email: "boundary-write@example.test", displayName: "Accepted During Reopen", role: "reader", password } });
   await sql("INSERT INTO managed_e2e_canary VALUES ('boundary', 'accepted-during-reopen');");
   await killUpdater();
-  const heldLock = await execute(process.execPath, [join(root, "apps/updater/dist/index.js")], { ...updaterEnvironment, PORT: String(portBase + 8) }, 10_000);
+  const heldLock = await executeNode([join(root, "apps/updater/dist/index.js")], { ...updaterEnvironment, PORT: String(portBase + 8) }, 10_000);
   assert.equal(heldLock.ok, false); assert.match(heldLock.output, /lock|already|running/i);
   await rm(join(directory, "hold-reopen"));
   await delay(1000);
@@ -356,8 +356,8 @@ fi
   await killUpdater();
   for (const server of servers) server.closeAllConnections();
   await Promise.all(servers.map((server) => new Promise<void>((done) => server.close(() => done()))));
-  if (dockerAuthorized) for (const name of [project, restoreProject]) await command(`cleanup ${name}`, "docker", ["compose", "--project-name", name, "--env-file", releaseEnv, "-f", composePath, "down", "--volumes", "--remove-orphans"], baseEnv, 120_000, false);
-  if (dockerAuthorized) await command("cleanup disposable registry", "docker", ["rm", "-f", "-v", registryName], baseEnv, 120_000, false);
+  if (dockerAuthorized) for (const name of [project, restoreProject]) await dockerCommand(`cleanup ${name}`, ["compose", "--project-name", name, "--env-file", releaseEnv, "-f", composePath, "down", "--volumes", "--remove-orphans"], baseEnv, 120_000, false);
+  if (dockerAuthorized) await dockerCommand("cleanup disposable registry", ["rm", "-f", "-v", registryName], baseEnv, 120_000, false);
   await rm(join(directory, "public-key.pem"), { force: true });
   await writeFile(join(directory, "summary.json"), `${JSON.stringify({ ok: success, runId, sourceRevision: process.env.MANAGED_PROOF_SOURCE_REVISION, platform: `${process.platform}/${process.arch}`, supportedPlatformClaim: "Executed platform only; no ARM64 or physically off-host claim", failure, entries, phaseHistory }, null, 2)}\n`, { mode: 0o600 });
   console.log(JSON.stringify({ ok: success, runId, summary: join(directory, "summary.json"), failure }));
@@ -373,29 +373,36 @@ function clean(value: string): string { for (const secret of secrets) value = va
 function record(name: string, data: Json): void { entries.push({ at: new Date().toISOString(), name, ...data }); console.log(JSON.stringify({ step: name, ok: true })); }
 function parseEnv(source: string): Record<string, string> { return Object.fromEntries(source.split("\n").filter((line) => /^[A-Z_]+=/.test(line)).map((line) => [line.slice(0, line.indexOf("=")), line.slice(line.indexOf("=") + 1)])); }
 function delay(ms: number): Promise<void> { return new Promise((done) => setTimeout(done, ms)); }
-async function command(name: string, command: string, args: string[], environment = baseEnv, timeoutMs = 120_000, required = true): Promise<string> {
+type CommandResult = { ok: boolean; code: number | null; output: string; durationMs: number };
+async function dockerCommand(name: string, args: string[], environment = baseEnv, timeoutMs = 120_000, required = true): Promise<string> {
+  return collectCommand(name, ["docker", ...args].join(" "), () => executeDocker(args, environment, timeoutMs), required);
+}
+async function pnpmCommand(name: string, args: string[], environment = baseEnv, timeoutMs = 120_000): Promise<string> {
+  return collectCommand(name, ["pnpm", ...args].join(" "), () => execute((options) => spawn("pnpm", args, { ...options, shell: false }), environment, timeoutMs));
+}
+async function scriptCommand(name: string, script: "restore-postgres.sh" | "restore-attachments.sh" | "verify-backup-set.sh", args: string[], environment: NodeJS.ProcessEnv): Promise<string> {
+  const scriptPath = join(root, "scripts", script);
+  return collectCommand(name, ["bash", scriptPath, ...args].join(" "), () => execute((options) => spawn("bash", ["--", scriptPath, ...args], { ...options, shell: false }), environment, 120_000));
+}
+function executeDocker(args: string[], environment: NodeJS.ProcessEnv, timeoutMs: number): Promise<CommandResult> {
+  return execute((options) => spawn("docker", args, { ...options, shell: false }), environment, timeoutMs);
+}
+function executeNode(args: string[], environment: NodeJS.ProcessEnv, timeoutMs: number): Promise<CommandResult> {
+  return execute((options) => spawn(process.execPath, args, { ...options, shell: false }), environment, timeoutMs);
+}
+async function collectCommand(name: string, description: string, run: () => Promise<CommandResult>, required = true): Promise<string> {
   console.log(JSON.stringify({ step: name, phase: "running" }));
-  const result = await execute(command, args, environment, timeoutMs);
-  entries.push({ name, ok: result.ok, status: result.code, durationMs: result.durationMs, command: clean([command, ...args].join(" ")), output: clean(result.output).slice(-12_000) });
+  const result = await run();
+  entries.push({ name, ok: result.ok, status: result.code, durationMs: result.durationMs, command: clean(description), output: clean(result.output).slice(-12_000) });
   if (required && !result.ok) throw new Error(`${name}: ${clean(result.output).slice(-12_000)}`);
   return result.output;
 }
-async function execute(command: string, args: string[], environment: NodeJS.ProcessEnv, timeoutMs: number): Promise<{ ok: boolean; code: number | null; output: string; durationMs: number }> {
+async function execute(launch: (options: SpawnOptions) => ChildProcess, environment: NodeJS.ProcessEnv, timeoutMs: number): Promise<CommandResult> {
   const start = Date.now();
   return new Promise((done) => {
-    const options = { cwd: root, env: environment, stdio: ["ignore", "pipe", "pipe"] as ["ignore", "pipe", "pipe"], shell: false };
-    const runningCommand = (() => {
-      switch (command) {
-        case "docker": return spawn("docker", args, options);
-        case "pnpm": return spawn("pnpm", args, options);
-        case "bash": return spawn("bash", args, options);
-        case "which": return spawn("which", args, options);
-        case process.execPath: return spawn("node", args, options);
-        default: throw new Error("Unsupported proof executable");
-      }
-    })();
+    const runningCommand = launch({ cwd: root, env: environment, stdio: ["ignore", "pipe", "pipe"], shell: false });
     let output = "";
-    for (const stream of [runningCommand.stdout, runningCommand.stderr]) stream.on("data", (chunk) => { output = (output + chunk.toString()).slice(-64_000); });
+    for (const stream of [runningCommand.stdout, runningCommand.stderr]) stream?.on("data", (chunk) => { output = (output + chunk.toString()).slice(-64_000); });
     const timeout = setTimeout(() => runningCommand.kill("SIGKILL"), timeoutMs);
     runningCommand.once("error", (error) => { clearTimeout(timeout); done({ ok: false, code: null, output: error.message, durationMs: Date.now() - start }); });
     runningCommand.once("close", (code) => { clearTimeout(timeout); done({ ok: code === 0, code, output, durationMs: Date.now() - start }); });
@@ -405,11 +412,11 @@ async function composeCommand(name: string, args: string[], required?: true): Pr
 async function composeCommand(name: string, args: string[], required: false): Promise<{ ok: boolean; output: string }>;
 async function composeCommand(name: string, args: string[], required = true): Promise<any> {
   const commandArgs = ["compose", "--project-name", project, "--env-file", releaseEnv, "-f", composePath, ...args];
-  if (!required) { const result = await execute("docker", commandArgs, baseEnv, 120_000); return { ok: result.ok, output: result.output }; }
-  return command(name, "docker", commandArgs, baseEnv, 10 * 60_000);
+  if (!required) { const result = await executeDocker(commandArgs, baseEnv, 120_000); return { ok: result.ok, output: result.output }; }
+  return dockerCommand(name, commandArgs, baseEnv, 10 * 60_000);
 }
 async function sql(statement: string, targetProject = project): Promise<string> {
-  return command("synthetic database assertion", "docker", ["compose", "--project-name", targetProject, "--env-file", releaseEnv, "-f", composePath, "exec", "-T", "postgres", "psql", "-U", "forgetbase", "-d", "forgetbase", "-v", "ON_ERROR_STOP=1", "-t", "-A", "-c", statement]);
+  return dockerCommand("synthetic database assertion", ["compose", "--project-name", targetProject, "--env-file", releaseEnv, "-f", composePath, "exec", "-T", "postgres", "psql", "-U", "forgetbase", "-d", "forgetbase", "-v", "ON_ERROR_STOP=1", "-t", "-A", "-c", statement]);
 }
 async function until(check: () => Promise<boolean>, timeoutMs: number): Promise<void> { const started = Date.now(); while (Date.now() - started < timeoutMs) { if (await check()) return; await delay(1000); } throw new Error(`Condition timed out after ${timeoutMs}ms`); }
 async function waitUrl(url: string, timeoutMs: number): Promise<void> { await until(async () => { try { return (await fetch(url, { signal: AbortSignal.timeout(2000) })).ok; } catch { return false; } }, timeoutMs); }
@@ -423,7 +430,7 @@ async function control(path: string, body: Json = {}): Promise<Json> { return (a
 async function status(): Promise<Json> { return (await http(updater, "/v1/status", { token })).body; }
 async function startUpdater(): Promise<void> {
   updaterEnvironment = { ...baseEnv, PATH: `${join(directory, "bin")}:${process.env.PATH}`, PORT: String(updaterPort), HOST: "0.0.0.0", FORGETBASE_INSTALLATION_MODE: "managed", FORGETBASE_UPDATES_ENABLED: "true", FORGETBASE_UPDATE_BUNDLE_DIR: directory, FORGETBASE_UPDATE_COMPOSE_FILES: "compose.managed.yaml", FORGETBASE_UPDATER_STATE_DIR: stateDir, FORGETBASE_UPDATE_COMPOSE_PROJECT_NAME: project, FORGETBASE_UPDATE_PUBLIC_KEY_ID: keyId, FORGETBASE_UPDATE_PUBLIC_KEY_FILE: join(directory, "public-key.pem"), FORGETBASE_UPDATE_FEED_URL: `http://127.0.0.1:${feedPort}/manifest`, FORGETBASE_UPDATE_ALLOW_LOCAL_HTTP: "true", FORGETBASE_UPDATE_ALLOWED_REGISTRIES: registryPrefix, FORGETBASE_UPDATE_API_HEALTH_URL: `http://127.0.0.1:${healthPort}/health`, FORGETBASE_UPDATE_WEB_HEALTH_URL: `http://${host}:${webPort}/`, FORGETBASE_UPDATE_MINIMUM_FREE_BYTES: "1" };
-  child = spawn(process.execPath, ["--expose-gc", "--require", join(directory, "gc-stress.cjs"), join(root, "apps/updater/dist/index.js")], { cwd: directory, env: updaterEnvironment, stdio: ["ignore", "pipe", "pipe"] });
+  child = spawn(process.execPath, ["--expose-gc", "--require", join(directory, "gc-stress.cjs"), join(root, "apps/updater/dist/index.js")], { cwd: directory, env: updaterEnvironment, shell: false, stdio: ["ignore", "pipe", "pipe"] });
   let log = "";
   child.stdout?.on("data", (chunk) => { log = (log + clean(chunk.toString())).slice(-24_000); });
   child.stderr?.on("data", (chunk) => { log = (log + clean(chunk.toString())).slice(-24_000); });
@@ -431,11 +438,11 @@ async function startUpdater(): Promise<void> {
   await waitUrl(`${updater}/health`, 120_000);
 }
 async function duplicateUpdaterMustFail(): Promise<void> {
-  const duplicate = await execute(process.execPath, [join(root, "apps/updater/dist/index.js")], { ...updaterEnvironment, PORT: String(portBase + 8) }, 10_000);
+  const duplicate = await executeNode([join(root, "apps/updater/dist/index.js")], { ...updaterEnvironment, PORT: String(portBase + 8) }, 10_000);
   assert.equal(duplicate.ok, false);
   assert.match(duplicate.output, /lock|already|running/i);
   assert.equal((await status()).activeJob, null);
-  const mismatch = await execute(process.execPath, [join(root, "apps/updater/dist/index.js")], { ...updaterEnvironment, PORT: String(portBase + 8), FORGETBASE_INSTALLATION_MODE: "source" }, 10_000);
+  const mismatch = await executeNode([join(root, "apps/updater/dist/index.js")], { ...updaterEnvironment, PORT: String(portBase + 8), FORGETBASE_INSTALLATION_MODE: "source" }, 10_000);
   assert.equal(mismatch.ok, false);
   assert.match(mismatch.output, /mode|managed|lock|already/i);
   record("duplicate updater process rejected", { rejected: true, existingServiceHealthy: true, changedModeRejected: true });
@@ -455,7 +462,7 @@ async function verifyFences(): Promise<void> {
   assert.equal(afterSideEffects, beforeSideEffects, "Fenced requests must not mutate auth or telemetry");
   const running = await composeCommand("fenced service inventory", ["ps", "--status", "running", "--services"]);
   assert.doesNotMatch(running, /^(worker|proxy)$/m);
-  const worker = await execute("docker", ["compose", "--project-name", project, "--env-file", join(stateDir, "candidate-release.env"), "-f", composePath, "run", "--rm", "--no-deps", "-e", "FORGETBASE_MANAGED_WRITES_ENABLED=false", "-e", "FORGETBASE_INSTALLATION_MODE=managed", "worker"], baseEnv, 30_000);
+  const worker = await executeDocker(["compose", "--project-name", project, "--env-file", join(stateDir, "candidate-release.env"), "-f", composePath, "run", "--rm", "--no-deps", "-e", "FORGETBASE_MANAGED_WRITES_ENABLED=false", "-e", "FORGETBASE_INSTALLATION_MODE=managed", "worker"], baseEnv, 30_000);
   assert.equal(worker.ok, false); assert.match(worker.output, /fenc|writ|maintenance/i);
   record("candidate write fencing", { directApi: ["/auth/bootstrap", "/auth/login", "/assets", "/query", "/system/updates"], status: 503, workerRefused: true, proxyStopped: true });
 }
@@ -475,14 +482,14 @@ async function restoreSeparateStack(point: Json): Promise<void> {
   for (const [key, network] of Object.entries(configuration.networks) as [string, Json][]) network.name = `${restoreProject}_${key}`;
   await writeFile(restoreFile, JSON.stringify(configuration), { mode: 0o600 });
   const restoreEnv = { ...baseEnv, COMPOSE_PROJECT_NAME: restoreProject, COMPOSE_FILE: restoreFile, FORGETBASE_RESTORE_CONFIRM: "forgetbase", FORGETBASE_ATTACHMENT_RESTORE_CONFIRM: "attachments" };
-  await command("start independent restore database", "docker", ["compose", "-p", restoreProject, "-f", restoreFile, "up", "--wait", "-d", "postgres"], restoreEnv);
-  await until(async () => (await execute("docker", ["compose", "-p", restoreProject, "-f", restoreFile, "exec", "-T", "postgres", "pg_isready", "-U", "forgetbase"], restoreEnv, 10_000)).ok, 120_000);
-  await command("restore backup into new database volume", "bash", [join(root, "scripts/restore-postgres.sh"), point.backupPath, "forgetbase"], restoreEnv);
-  await command("restore backup into new attachment volume", "bash", [join(root, "scripts/restore-attachments.sh"), point.attachmentSnapshotId], restoreEnv);
-  const rows = await command("independent restored database canary", "docker", ["compose", "-p", restoreProject, "-f", restoreFile, "exec", "-T", "postgres", "psql", "-U", "forgetbase", "-d", "forgetbase", "-t", "-A", "-c", "SELECT value FROM managed_e2e_canary WHERE id='before';"], restoreEnv);
+  await dockerCommand("start independent restore database", ["compose", "-p", restoreProject, "-f", restoreFile, "up", "--wait", "-d", "postgres"], restoreEnv);
+  await until(async () => (await executeDocker(["compose", "-p", restoreProject, "-f", restoreFile, "exec", "-T", "postgres", "pg_isready", "-U", "forgetbase"], restoreEnv, 10_000)).ok, 120_000);
+  await scriptCommand("restore backup into new database volume", "restore-postgres.sh", [point.backupPath, "forgetbase"], restoreEnv);
+  await scriptCommand("restore backup into new attachment volume", "restore-attachments.sh", [point.attachmentSnapshotId], restoreEnv);
+  const rows = await dockerCommand("independent restored database canary", ["compose", "-p", restoreProject, "-f", restoreFile, "exec", "-T", "postgres", "psql", "-U", "forgetbase", "-d", "forgetbase", "-t", "-A", "-c", "SELECT value FROM managed_e2e_canary WHERE id='before';"], restoreEnv);
   assert.match(rows, /original/);
-  await command("independent coordinated backup verification", "bash", [join(root, "scripts/verify-backup-set.sh"), join(point.configurationPath, "..", "backup-set")], restoreEnv);
-  await command("cleanup independent restore stack", "docker", ["compose", "-p", restoreProject, "-f", restoreFile, "down", "--volumes", "--remove-orphans"], restoreEnv);
+  await scriptCommand("independent coordinated backup verification", "verify-backup-set.sh", [join(point.configurationPath, "..", "backup-set")], restoreEnv);
+  await dockerCommand("cleanup independent restore stack", ["compose", "-p", restoreProject, "-f", restoreFile, "down", "--volumes", "--remove-orphans"], restoreEnv);
   await rm(restoreFile, { force: true });
   record("independent-stack restore", { distinctProject: restoreProject, originalUntouched: true, databaseCanary: "original", attachmentSetVerified: true, physicalHost: "same Docker host" });
 }
