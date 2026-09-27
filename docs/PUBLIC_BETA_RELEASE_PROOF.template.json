@@ -3,7 +3,7 @@
   "stage": "public-beta",
   "release": {
     "commitSha": "<40-character git commit SHA>",
-    "tag": "v0.1.0-beta.2",
+    "tag": "v0.1.0-beta.7",
     "ciRunUrl": "https://github.com/jremick/forgetbase/actions/runs/<run-id>",
     "ciHeadSha": "<40-character CI head SHA>",
     "ciStatus": "passed",
