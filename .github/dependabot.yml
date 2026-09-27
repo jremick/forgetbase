@@ -19,12 +19,3 @@ updates:
       time: "09:15"
       timezone: Australia/Melbourne
     open-pull-requests-limit: 3
-
-  - package-ecosystem: docker
-    directory: /
-    schedule:
-      interval: weekly
-      day: monday
-      time: "09:30"
-      timezone: Australia/Melbourne
-    open-pull-requests-limit: 3

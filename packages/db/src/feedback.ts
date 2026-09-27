@@ -8,6 +8,8 @@ import {
 
 export interface ManagedQueryFeedbackListOptions {
   tenantId?: string;
+  since?: string;
+  until?: string;
   limit?: number;
 }
 
@@ -78,10 +80,12 @@ export class PostgresManagedQueryFeedbackRepository implements ManagedQueryFeedb
         SELECT *
         FROM managed_query_feedback
         WHERE tenant_id = $1
+          AND ($2::timestamptz IS NULL OR created_at >= $2::timestamptz)
+          AND ($3::timestamptz IS NULL OR created_at <= $3::timestamptz)
         ORDER BY created_at DESC
-        LIMIT $2
+        LIMIT $4
       `,
-      [tenantId, limit]
+      [tenantId, options.since ?? null, options.until ?? null, limit]
     );
 
     return result.rows.map(mapManagedQueryFeedbackRow);
@@ -141,7 +145,13 @@ export class InMemoryManagedQueryFeedbackRepository implements ManagedQueryFeedb
   async listFeedback(options: ManagedQueryFeedbackListOptions = {}): Promise<ManagedQueryFeedback[]> {
     const tenantId = options.tenantId ?? "tenant_demo";
     const limit = Math.min(Math.max(options.limit ?? 50, 1), 200);
-    return this.feedback.filter((feedback) => feedback.tenantId === tenantId).slice(0, limit);
+    const since = options.since ? Date.parse(options.since) : undefined;
+    const until = options.until ? Date.parse(options.until) : undefined;
+
+    return this.feedback
+      .filter((feedback) => feedback.tenantId === tenantId)
+      .filter((feedback) => isCreatedAtInWindow(feedback.createdAt, since, until))
+      .slice(0, limit);
   }
 
   async purgeFeedback(options: ManagedQueryFeedbackPurgeOptions): Promise<number> {
@@ -160,6 +170,14 @@ export class InMemoryManagedQueryFeedbackRepository implements ManagedQueryFeedb
 
     return matches.length;
   }
+}
+
+function isCreatedAtInWindow(createdAt: string, since?: number, until?: number): boolean {
+  const value = Date.parse(createdAt);
+
+  return !Number.isNaN(value) &&
+    (since === undefined || value >= since) &&
+    (until === undefined || value <= until);
 }
 
 function mapManagedQueryFeedbackRow(row: ManagedQueryFeedbackRow): ManagedQueryFeedback {

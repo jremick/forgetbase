@@ -14,6 +14,32 @@ afterEach(async () => {
 });
 
 describe("ForgetBase CLI contract", () => {
+  it("preserves version preconditions through CLI flags, update JSON, and SDK parsing", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "forgetbase-cli-precondition-"));
+    tempDirs.push(dir);
+    const file = join(dir, "update.json");
+    await writeFile(file, JSON.stringify({
+      expectedVersionId: "version-from-file", humanDocument: { format: "markdown", body: "Edited content" }
+    }));
+    const { fetchMock, calls } = mockFetch(() => betaAssetDetailFixture());
+    captureStdout();
+    vi.stubGlobal("fetch", fetchMock);
+    const commands = [
+      ["update", "policy.beta-public-export", "--file", file],
+      ["update", "policy.beta-public-export", "--file", file, "--expected-version-id", "version-from-flag"],
+      ["review", "policy.beta-public-export", "--review-due-at", "2027-12-31", "--expected-version-id", "version-from-flag"],
+      ["publish", "policy.beta-public-export", "--expected-version-id", "version-from-flag"],
+      ["restore", "policy.beta-public-export", "--version-number", "1", "--expected-version-id", "version-from-flag"]
+    ];
+    for (const command of commands) {
+      expect(await main(["assets", ...command, "--api-url", "http://forgetbase.test", "--api-key", "test-key"])).toBe(0);
+    }
+    expect(calls.map((call) => call.body?.expectedVersionId)).toEqual([
+      "version-from-file", "version-from-flag", "version-from-flag", "version-from-flag", "version-from-flag"
+    ]);
+    expect(calls.map((call) => call.url.pathname.split("/").at(-1))).toEqual(["versions", "versions", "review", "publish", "restore"]);
+  });
+
   it("maps local bootstrap flags to the private-beta setup API contract", async () => {
     const { fetchMock, calls } = mockFetch(() => authBootstrapFixture());
     const logs = captureStdout();
@@ -94,6 +120,7 @@ describe("ForgetBase CLI contract", () => {
     ]);
     expect(calls[0]?.headers.get("authorization")).toBe("Bearer test-key");
     expect(calls[0]?.headers.get("x-forgetbase-surface")).toBe("cli");
+    expect(calls[0]?.url.searchParams.get("preview")).toBe("true");
     expect(calls[1]?.headers.get("authorization")).toBe("Bearer test-key");
     expect(calls[1]?.body).toMatchObject({
       stableId: "policy.beta-public-export",

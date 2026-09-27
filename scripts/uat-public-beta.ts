@@ -2,7 +2,7 @@ import { createServer, type Server } from "node:http";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { extname, join, normalize, resolve } from "node:path";
-import { chromium, type Browser, type Page } from "@playwright/test";
+import { chromium, type Browser, type Page, type Request } from "@playwright/test";
 
 type UatMode = "public" | "release";
 type ExpectedRole = "admin" | "reader";
@@ -16,15 +16,18 @@ type CheckResult = {
 const root = process.cwd();
 const mode = parseMode(process.env.UAT_MODE);
 const expectedRole = parseExpectedRole(process.env.UAT_EXPECT_ROLE);
+const shouldTestAuthoring = process.env.UAT_TEST_AUTHORING === "true";
 const outputDir = resolve(process.env.UAT_OUTPUT_DIR ?? join(root, "work/public-beta-uat"));
 const shouldStartServer = !process.env.UAT_BASE_URL;
 const baseUrl = process.env.UAT_BASE_URL ?? "http://127.0.0.1:4175/";
 const tenantId = process.env.UAT_TENANT_ID ?? "";
 const email = process.env.UAT_EMAIL ?? (isLocalUrl(baseUrl) ? "admin@example.test" : "");
 const password = process.env.UAT_PASSWORD ?? (isLocalUrl(baseUrl) ? "local-dev-password" : "");
+const expectedAttachmentFilename = process.env.UAT_EXPECT_ATTACHMENT_FILENAME ?? "";
 const commitSha = commandOutput("git", ["rev-parse", "HEAD"]) ?? "";
 const checks: CheckResult[] = [];
 const consoleProblems: string[] = [];
+const pageTraffic = new WeakMap<Page, { pending: Set<Request>; changedAt: number }>();
 let server: Server | undefined;
 let browser: Browser | undefined;
 
@@ -48,10 +51,12 @@ try {
 
   if (mode === "release") {
     await checkReleaseFlow(desktop, "desktop");
+    await checkBrowserCredentialLifetime(desktop, "desktop");
 
     const releaseMobile = await browser.newPage({ viewport: { width: 390, height: 844 } });
     trackConsole(releaseMobile);
     await checkReleaseFlow(releaseMobile, "mobile");
+    await checkBrowserCredentialLifetime(releaseMobile, "mobile");
     await releaseMobile.close();
   }
 
@@ -169,6 +174,18 @@ async function startStaticDistServer(urlString: string): Promise<Server> {
 }
 
 function trackConsole(page: Page): void {
+  const traffic = { pending: new Set<Request>(), changedAt: Date.now() };
+  pageTraffic.set(page, traffic);
+  page.on("request", (request) => {
+    traffic.pending.add(request);
+    traffic.changedAt = Date.now();
+  });
+  const finished = (request: Request) => {
+    traffic.pending.delete(request);
+    traffic.changedAt = Date.now();
+  };
+  page.on("requestfinished", finished);
+  page.on("requestfailed", finished);
   page.on("console", (message) => {
     if (message.type() === "error" || message.type() === "warning") {
       consoleProblems.push(`${message.type()}: ${message.text()}`);
@@ -244,6 +261,10 @@ async function checkReleaseFlow(page: Page, viewportName: "desktop" | "mobile"):
   await selectReaderPageForUat(page, "Reader Access and Export Rules");
   await page.locator(".reader-article").scrollIntoViewIfNeeded();
   await expectText(page, ".reader-article-header h1", "Reader Access and Export Rules", `release ${viewportName}: reader article title`);
+  await expectVisibleText(page, "Attachments", `release ${viewportName}: reader attachments panel`);
+  if (expectedAttachmentFilename) {
+    await assertAttachmentDownload(page, expectedAttachmentFilename, `release ${viewportName}: reader attachment download`);
+  }
   await assertReaderArticleDepth(page, `release ${viewportName}: reader article depth`);
   await assertReaderSectionNavigation(page, `release ${viewportName}: reader section navigation`);
   await assertReaderPageFooter(page, `release ${viewportName}: reader page footer`);
@@ -280,7 +301,7 @@ async function checkReleaseFlow(page: Page, viewportName: "desktop" | "mobile"):
   if (viewportName === "desktop" && expectedRole === "reader") {
     await page.locator("#reader-ask-input").fill("credential vault escalation");
     await page.locator(".reader-ask-form button[type='submit']").click();
-    await expectVisibleText(page, "Limited results", "release desktop: restricted result badge");
+    await expectVisibleText(page, "No matching sources", "release desktop: no accessible sources badge");
     await expectVisibleText(page, "No accessible answer was found", "release desktop: restricted result note");
     await assertNoHorizontalOverflow(page, "release desktop: restricted result overflow");
     await assertNoClippedText(page, "release desktop: restricted result clipped text");
@@ -290,13 +311,12 @@ async function checkReleaseFlow(page: Page, viewportName: "desktop" | "mobile"):
 
   if (expectedRole === "reader") {
     await assertReaderHasNoAdminControls(page, `release ${viewportName}: reader has no admin controls`);
-    await page.goto(`${baseUrl.replace(/#.*$/, "")}#admin/system/settings`, { waitUntil: "domcontentloaded" });
+    await page.goto(routeUrl(page, "admin/system/settings"), { waitUntil: "domcontentloaded" });
+    await expectVisibleText(page, "This area is unavailable for your account", `release ${viewportName}: reader direct admin route denied`);
+    await assertReaderHasNoAdminControls(page, `release ${viewportName}: denied route exposes no admin controls`);
+    await page.getByRole("button", { name: "Back to pages", exact: true }).click();
     await page.waitForSelector(".reader-article", { timeout: 10000 });
-    const hash = await page.evaluate(() => window.location.hash);
-    if (hash !== "#reader") {
-      throw new Error(`Reader direct admin route was not forced back to #reader; got ${hash}`);
-    }
-    checks.push({ name: `release ${viewportName}: reader direct admin route forced back`, status: "pass", detail: hash });
+    await expectHash(page, "#reader", `release ${viewportName}: denied route returns to reader`);
     return;
   }
 
@@ -305,7 +325,7 @@ async function checkReleaseFlow(page: Page, viewportName: "desktop" | "mobile"):
     return;
   }
 
-  await page.goto(routeUrl("admin/content"), { waitUntil: "domcontentloaded" });
+  await page.goto(routeUrl(page, "admin/content"), { waitUntil: "domcontentloaded" });
   await page.waitForSelector(".side-nav", { timeout: 10000 });
   await expectHash(page, "#admin/content", "release: admin canonical content route");
   await expectVisibleText(page, "Manage ForgetBase", "release: admin console shell title");
@@ -314,14 +334,103 @@ async function checkReleaseFlow(page: Page, viewportName: "desktop" | "mobile"):
   await expectVisibleText(page, "Reviews", "release: admin reviews label");
   await expectVisibleText(page, "Exports", "release: admin exports label");
   await expectVisibleText(page, "System", "release: admin system label");
+  await page.getByRole("searchbox", { name: "Search pages", exact: true }).fill("Reader Access and Export Rules");
+  await page.getByRole("button", { name: "Reader Access and Export Rules", exact: true }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Open page", exact: true }).click();
+  await expectVisibleText(page, "Page files", "release: content drawer opens governed page and attachment controls");
   await assertNoHorizontalOverflow(page, "release: admin desktop overflow");
   await assertNoClippedText(page, "release: admin desktop clipped text");
   await screenshot(page, "admin-desktop.png", "release: admin screenshot");
+  if (shouldTestAuthoring) {
+    await checkAdminPageAuthoring(page);
+  }
   await screenshotAdminRoute(page, "admin/reviews", "Review queue", "reviews.png", "release: admin reviews screenshot");
+  await screenshotAdminRoute(page, "admin/system/activity", "Search activity", "analytics.png", "release: admin analytics screenshot");
+  await expectVisibleText(page, "Content health", "release: admin analytics content health");
+  await expectVisibleText(page, "90 days", "release: admin analytics window controls");
   await screenshotAdminRoute(page, "admin/system/policies", "Telemetry retention", "policies.png", "release: admin policies screenshot");
   await screenshotAdminRoute(page, "admin/system/access", "Users", "access-management.png", "release: admin access screenshot");
   await screenshotAdminRoute(page, "admin/system/approvals", "Action execution", "approvals.png", "release: admin approvals screenshot");
   await screenshotExportRoute(page);
+}
+
+async function checkAdminPageAuthoring(page: Page): Promise<void> {
+  const stableId = "guide.browser-authoring-uat";
+  const createdTitle = "Browser Authoring UAT Guide";
+  const updatedTitle = "Browser Authoring UAT Guide Updated";
+
+  await page.goto(routeUrl(page, "admin/content"), { waitUntil: "domcontentloaded" });
+  await page.getByRole("button", { name: "New page", exact: true }).click();
+  await expectVisibleText(page, "Create page", "release: authoring create form opened");
+  await page.locator("#authoring-settings > summary").click();
+  await page.locator("#authoring-stable-id").fill(stableId);
+  await page.locator("#authoring-title").fill(createdTitle);
+  await page.locator("#authoring-summary").fill("Synthetic page created by the isolated browser authoring proof.");
+  await fillAuthoringBody(page, "# Browser authoring proof\n\nThis synthetic page verifies the browser create, edit, review, and publish flow.");
+  const createResponse = page.waitForResponse((response) =>
+    response.request().method() === "POST" && new URL(response.url()).pathname.endsWith("/assets")
+  );
+  await page.getByRole("button", { name: "Create draft", exact: true }).click();
+  const authoringApiUrl = (await createResponse).url().replace(/\/assets(?:\?.*)?$/, "");
+  await expectVisibleText(page, `Created ${stableId} as a draft`, "release: authoring draft created");
+  await expectVisibleText(page, createdTitle, "release: authored page selected");
+  await assertAuthoringPublication(page, authoringApiUrl, stableId, null, "release: draft excluded from ordinary reads");
+
+  await page.getByRole("button", { name: "Edit page", exact: true }).click();
+  await expectVisibleText(page, `Edit ${createdTitle}`, "release: authoring edit form opened");
+  await page.locator("#authoring-title").fill(updatedTitle);
+  await page.locator("#authoring-settings > summary").click();
+  await page.locator("#authoring-change-note").fill("Verify browser version authoring");
+  await fillAuthoringBody(page, "# Browser authoring proof\n\nThis updated synthetic page verifies that browser edits create a governed version before publishing.");
+  await page.getByRole("button", { name: "Save draft version", exact: true }).click();
+  await expectVisibleText(page, `Saved ${stableId} as a new draft version`, "release: authoring draft version saved");
+  await expectVisibleText(page, updatedTitle, "release: authored page title updated");
+  await expectVisibleText(page, "v2", "release: authored page version advanced");
+
+  await page.getByRole("tab", { name: "Versions", exact: true }).click();
+  await page.getByRole("button", { name: "Mark reviewed", exact: true }).click();
+  await expectVisibleText(page, `Reviewed ${stableId}`, "release: authored page reviewed");
+  await assertAuthoringPublication(page, authoringApiUrl, stableId, null, "release: review does not publish draft");
+  await page.getByRole("button", { name: "Publish", exact: true }).click();
+  await page.getByRole("button", { name: "Publish page", exact: true }).click();
+  await expectVisibleText(page, `Published ${stableId}`, "release: authored page published");
+  await assertAuthoringPublication(page, authoringApiUrl, stableId, updatedTitle, "release: published content available to ordinary reads");
+  await assertNoHorizontalOverflow(page, "release: authoring desktop overflow");
+  await assertNoClippedText(page, "release: authoring desktop clipped text");
+  await screenshot(page, "authoring-flow.png", "release: authoring flow screenshot");
+}
+
+async function fillAuthoringBody(page: Page, body: string): Promise<void> {
+  const textarea = page.locator("#authoring-body");
+  if (await textarea.isVisible()) {
+    await textarea.fill(body);
+  } else {
+    await page.getByRole("button", { name: "Source", exact: true }).click();
+    await page.locator(".fb-source-editor .cm-content").fill(body);
+  }
+}
+
+async function assertAuthoringPublication(page: Page, apiUrl: string, stableId: string, title: string | null, name: string): Promise<void> {
+  const response = await page.context().request.get(`${apiUrl}/assets/${encodeURIComponent(stableId)}`, {
+    headers: { "x-forgetbase-surface": "web" }
+  });
+  const payload = await response.json() as {
+    error?: string;
+    asset?: { title?: string; lifecycleState?: string; status?: string; currentVersionId?: string; publishedVersionId?: string };
+    versions?: Array<{ id?: string }>;
+    humanDocuments?: Array<{ body?: string }>;
+  };
+  if (title === null) {
+    if (response.status() !== 404 || payload.error !== "asset_not_found") {
+      throw new Error(`${name}: expected an unpublished asset to be unavailable, got HTTP ${response.status()}`);
+    }
+  } else if (response.status() !== 200 || payload.asset?.title !== title ||
+    payload.asset.lifecycleState !== "active" || payload.asset.status !== "approved" ||
+    !payload.asset.publishedVersionId || payload.asset.currentVersionId !== payload.asset.publishedVersionId ||
+    payload.versions?.length !== 1 || !payload.humanDocuments?.[0]?.body?.includes("updated synthetic page")) {
+    throw new Error(`${name}: ordinary read did not match the approved authored version`);
+  }
+  checks.push({ name, status: "pass" });
 }
 
 async function applyTenantOverride(page: Page): Promise<void> {
@@ -333,7 +442,7 @@ async function applyTenantOverride(page: Page): Promise<void> {
     }
 
     window.sessionStorage.setItem("forgetbase-uat-storage-initialized", "true");
-    window.localStorage.removeItem("forgetbase-api-key");
+    window.localStorage.setItem("forgetbase-api-key", "legacy-uat-token");
     window.localStorage.removeItem("forgetbase-session-cookie-active");
     window.localStorage.removeItem("forgetbase-login-email");
 
@@ -345,14 +454,45 @@ async function applyTenantOverride(page: Page): Promise<void> {
   }, tenantId);
 }
 
-function routeUrl(route: string): string {
+async function checkBrowserCredentialLifetime(page: Page, viewportName: string): Promise<void> {
+  await page.goto(routeUrl(page, "reader"), { waitUntil: "domcontentloaded" });
+  await page.waitForSelector(".reader-article", { timeout: 15000 });
+  const hasStoredKey = await page.evaluate(() =>
+    window.localStorage.getItem("forgetbase-api-key") !== null ||
+    window.sessionStorage.getItem("forgetbase-api-key") !== null
+  );
+  if (hasStoredKey) throw new Error("Browser bearer credential persisted after login or navigation");
+  checks.push({ name: `release ${viewportName}: reader return and no persisted bearer credential`, status: "pass" });
+
+  // Finish background reads before deliberately replacing the document. Otherwise
+  // this test creates ERR_ABORTED failures in its own request-failure gate.
+  await waitForSettledRequests(page);
+  await page.reload({ waitUntil: "domcontentloaded" });
   const url = new URL(baseUrl);
+  const splitOrigin = isLocalUrl(baseUrl) && ["5173", "5175"].includes(url.port);
+  await page.waitForSelector(splitOrigin ? "#login-email" : ".reader-article", { timeout: 15000 });
+  await waitForSettledRequests(page);
+  checks.push({ name: `release ${viewportName}: ${splitOrigin ? "reload discards development bearer credential" : "cookie session survives reload"}`, status: "pass" });
+}
+
+async function waitForSettledRequests(page: Page): Promise<void> {
+  const traffic = pageTraffic.get(page);
+  if (!traffic) throw new Error("Page request tracking was not initialized");
+  const deadline = Date.now() + 15000;
+  while (traffic.pending.size || Date.now() - traffic.changedAt < 500) {
+    if (Date.now() >= deadline) throw new Error("Background requests did not settle before the credential reload check");
+    await new Promise((resolveWait) => setTimeout(resolveWait, 50));
+  }
+}
+
+function routeUrl(page: Page, route: string): string {
+  const url = new URL(page.url());
   url.hash = route;
   return url.toString();
 }
 
 async function checkMobileAdminShell(page: Page): Promise<void> {
-  await page.goto(routeUrl("admin/content"), { waitUntil: "domcontentloaded" });
+  await page.goto(routeUrl(page, "admin/content"), { waitUntil: "domcontentloaded" });
   await page.waitForSelector(".app-shell.admin-shell", { timeout: 10000 });
   await expectHash(page, "#admin/content", "release mobile: admin canonical content route");
   await page.getByRole("button", { name: "Open navigation" }).click();
@@ -363,13 +503,13 @@ async function checkMobileAdminShell(page: Page): Promise<void> {
 }
 
 async function assertLegacyAdminHashCanonicalizes(page: Page): Promise<void> {
-  await page.goto(routeUrl("settings"), { waitUntil: "domcontentloaded" });
+  await page.goto(routeUrl(page, "settings"), { waitUntil: "domcontentloaded" });
   await expectVisibleText(page, "Settings", "release: legacy settings route loaded");
   await expectHash(page, "#admin/system/settings", "release: legacy settings route canonicalized");
-  await page.goto(routeUrl("exports"), { waitUntil: "domcontentloaded" });
+  await page.goto(routeUrl(page, "exports"), { waitUntil: "domcontentloaded" });
   await expectVisibleText(page, "Package builder", "release: legacy exports route loaded");
   await expectHash(page, "#admin/exports", "release: legacy exports route canonicalized");
-  await page.goto(routeUrl("admin/content"), { waitUntil: "domcontentloaded" });
+  await page.goto(routeUrl(page, "admin/content"), { waitUntil: "domcontentloaded" });
   await expectHash(page, "#admin/content", "release: admin content route restored");
 }
 
@@ -380,10 +520,14 @@ async function screenshotAdminRoute(
   fileName: string,
   name: string
 ): Promise<void> {
-  await page.goto(routeUrl(route), { waitUntil: "domcontentloaded" });
+  await page.goto(routeUrl(page, route), { waitUntil: "domcontentloaded" });
   await expectVisibleText(page, expectedText, `${name}: route loaded`);
   if (route.startsWith("admin/")) {
     await expectHash(page, `#${route}`, `${name}: canonical hash`);
+  }
+  if (route === "admin/system/access") {
+    await page.locator("strong").filter({ hasText: email }).first().waitFor({ state: "visible", timeout: 15000 });
+    checks.push({ name: `${name}: user records loaded`, status: "pass" });
   }
   await assertNoHorizontalOverflow(page, `${name}: overflow`);
   await assertNoClippedText(page, `${name}: clipped text`);
@@ -391,13 +535,24 @@ async function screenshotAdminRoute(
 }
 
 async function screenshotExportRoute(page: Page): Promise<void> {
-  await page.goto(routeUrl("admin/exports"), { waitUntil: "domcontentloaded" });
+  await page.goto(routeUrl(page, "admin/exports"), { waitUntil: "domcontentloaded" });
   await expectVisibleText(page, "Package builder", "release: admin exports route loaded");
   await page.getByRole("button", { name: /^Generate$/ }).click();
   await expectVisibleText(page, "Included stable IDs", "release: admin export generated");
   await assertNoHorizontalOverflow(page, "release: admin exports overflow");
   await assertNoClippedText(page, "release: admin exports clipped text");
   await screenshot(page, "exports.png", "release: admin exports screenshot");
+}
+
+async function assertAttachmentDownload(page: Page, filename: string, name: string): Promise<void> {
+  await expectVisibleText(page, filename, `${name}: filename visible`);
+  const downloadPromise = page.waitForEvent("download");
+  await page.getByRole("button", { name: `Download ${filename}` }).click();
+  const download = await downloadPromise;
+  if (download.suggestedFilename() !== filename) {
+    throw new Error(`${name}: expected filename ${filename}; got ${download.suggestedFilename()}`);
+  }
+  checks.push({ name, status: "pass", detail: filename });
 }
 
 async function clickUnique(page: Page, selector: string, text: string): Promise<void> {
@@ -624,6 +779,7 @@ async function assertNoClippedText(page: Page, name: string): Promise<void> {
 }
 
 async function assertReaderArticleDepth(page: Page, name: string): Promise<void> {
+  await page.locator(".reader-document-body h2").first().waitFor({ state: "visible" });
   const result = await page.evaluate(() => {
     const body = document.querySelector(".reader-document-body");
     const text = (body?.textContent ?? "").replace(/\s+/g, " ").trim();
@@ -672,9 +828,12 @@ async function assertReaderNestedNavigation(page: Page, name: string): Promise<v
   if (await mobilePicker.isVisible()) {
     await mobilePicker.locator("select").selectOption({ label: "Reader Nested Navigation Example" });
   } else {
-    await clickFirstVisible(page, "button", "Reader experience");
-    await clickFirstVisible(page, "button", "Lifecycle states");
-    await clickFirstVisible(page, "button", "Nested page sample");
+    for (const label of ["Reader experience", "Lifecycle states"]) {
+      const expand = page.getByRole("button", { name: `Expand ${label} pages`, exact: true });
+      if (await expand.isVisible()) await expand.click();
+      await page.getByRole("button", { name: `Collapse ${label} pages`, exact: true }).waitFor({ state: "visible" });
+    }
+    await page.getByRole("link", { name: "Nested page sample", exact: true }).click();
   }
   await page.waitForFunction(
     () => document.querySelector(".reader-article-header h1")?.textContent?.replace(/\s+/g, " ").trim() === "Reader Nested Navigation Example",
@@ -730,6 +889,9 @@ async function assertReaderSectionNavigation(page: Page, name: string): Promise<
     throw new Error(`${name}: expected section navigation to match document headings; got ${JSON.stringify(result)}`);
   }
 
+  if (await page.locator(".reader-section-nav").getAttribute("open") === null) {
+    await page.locator(".reader-section-nav > summary").click();
+  }
   await page.locator(".reader-section-nav button").first().click();
   await assertElementInViewport(page, ".reader-document-body h2[id], .reader-document-body h3[id]", `${name}: section link scrolls to heading`);
   await page.evaluate(() => window.scrollTo(0, 0));
@@ -745,15 +907,25 @@ async function assertReaderSearchResults(page: Page, name: string): Promise<void
       return paragraphs.some((paragraph) => (paragraph.textContent ?? "").replace(/\s+/g, " ").trim().length > 40);
     }).length;
 
+    const stableIds = rows.map((row) => row.dataset.stableId ?? "");
+
     return {
       rows: rows.length,
       openButtons,
-      readableSnippets
+      readableSnippets,
+      stableIdsPresent: stableIds.filter(Boolean).length,
+      uniqueStableIds: new Set(stableIds).size
     };
   });
 
-  if (result.rows < 1 || result.openButtons < 1 || result.readableSnippets < 1) {
-    throw new Error(`${name}: expected at least one result with a snippet and Open page action; got ${JSON.stringify(result)}`);
+  if (
+    result.rows < 1 ||
+    result.openButtons < 1 ||
+    result.readableSnippets < 1 ||
+    result.stableIdsPresent !== result.rows ||
+    result.uniqueStableIds !== result.rows
+  ) {
+    throw new Error(`${name}: expected one result per page with a snippet and Open page action; got ${JSON.stringify(result)}`);
   }
 
   checks.push({ name, status: "pass", detail: result.rows });
@@ -767,7 +939,7 @@ async function assertSearchResultOpensPage(page: Page, name: string): Promise<vo
     throw new Error(`${name}: first search result did not have a readable title`);
   }
 
-  await firstResult.getByRole("button", { name: "Open page" }).click();
+  await firstResult.getByRole("link", { name: "Open page" }).click();
   await page.waitForFunction(
     (title) => document.querySelector(".reader-article-header h1")?.textContent?.replace(/\s+/g, " ").trim() === title,
     expectedTitle,
@@ -784,7 +956,7 @@ async function selectReaderPageForUat(page: Page, title: string): Promise<void> 
   if (await mobilePicker.isVisible()) {
     await mobilePicker.locator("select").selectOption({ label: title });
   } else {
-    await clickFirstVisible(page, "button", title === "Reader Access and Export Rules" ? "Read vs export" : title);
+    await clickFirstVisible(page, "a", title === "Reader Access and Export Rules" ? "Read vs export" : title);
   }
 
   await page.waitForFunction(
@@ -813,7 +985,9 @@ async function assertElementInViewport(page: Page, selector: string, name: strin
 }
 
 async function assertProtectedSessionApiRequiresAuthentication(page: Page, name: string): Promise<void> {
-  const response = await page.context().request.get(new URL("/api/auth/me", baseUrl).toString(), {
+  const apiBase = await page.evaluate(() => window.localStorage.getItem("forgetbase-api-url") ?? "/api");
+  const apiUrl = new URL(apiBase.endsWith("/") ? apiBase : `${apiBase}/`, baseUrl);
+  const response = await page.context().request.get(new URL("auth/me", apiUrl).toString(), {
     headers: { accept: "application/json" }
   });
   let error = "";
@@ -826,7 +1000,7 @@ async function assertProtectedSessionApiRequiresAuthentication(page: Page, name:
   }
 
   if (response.status() !== 401 || error !== "authentication_required") {
-    throw new Error(`${name}: expected 401 authentication_required from /api/auth/me, got ${JSON.stringify({
+    throw new Error(`${name}: expected 401 authentication_required from auth/me, got ${JSON.stringify({
       status: response.status(),
       error
     })}`);
@@ -857,6 +1031,7 @@ async function assertHeroFits(page: Page, name: string): Promise<void> {
 
 async function screenshot(page: Page, fileName: string, name: string): Promise<void> {
   const filePath = join(outputDir, fileName);
+  await page.evaluate(() => window.scrollTo(0, 0));
   await page.screenshot({ path: filePath, fullPage: true });
   checks.push({ name, status: "pass", detail: filePath });
 }

@@ -1,0 +1,63 @@
+/* No Preflight: existing routes retain their styles. Prefix all generated utilities. */
+@layer theme, utilities;
+@import "tailwindcss/theme.css" layer(theme) prefix(fb);
+@import "tailwindcss/utilities.css" layer(utilities) prefix(fb) source(none);
+@source "./";
+@theme inline {
+  --text-sm: 14px;
+  --text-xs: 12px;
+  --color-muted: #f3f5f6;
+  --color-background: var(--content-background);
+  --color-foreground: var(--content-foreground);
+  --color-primary: var(--content-primary);
+  --color-primary-foreground: #fff;
+  --color-secondary: #eef2f3;
+  --color-secondary-foreground: #26323c;
+  --color-muted-foreground: #5c6873;
+  --color-accent: #e8f3f1;
+  --color-accent-foreground: #0b504a;
+  --color-border: #e2e6e9;
+  --color-input: #d3d9dd;
+  --color-ring: #0f766e;
+}
+.fb-content { --content-background: #fff; --content-foreground: #1b2430; --content-primary: #0f766e; color: var(--content-foreground); background: var(--content-background); font: 14px/1.45 system-ui,sans-serif; min-width:0; }
+.fb-content *, .fb-content ::before, .fb-content ::after { border-color:#e2e6e9; }
+.fb-content button { font-family:inherit; }
+.fb-content table { border-collapse:collapse; width:100%; }
+.fb-content th { text-align:left; font-weight:500; }
+.fb-content td,.fb-content th { padding:12px; }
+.fb-content tr { border-bottom:1px solid #e2e6e9; }
+.fb-content tr:last-child { border-bottom:0; }
+.fb-content input { border:1px solid #d3d9dd; }
+.content-heading,.content-heading>div,.content-actions,.content-toolbar,.content-pagination,.content-pagination nav { display:flex; align-items:center; gap:12px; }
+.content-heading { justify-content:space-between; margin-bottom:20px; }
+.content-heading h1 { font-size:24px; letter-spacing:-.03em; margin:0; font-weight:650; }
+.content-muted { color:#5c6873; font-size:13px; }
+.content-toolbar { flex-wrap:wrap; margin-bottom:14px; }
+.content-search { position:relative; width:min(340px,100%); }
+.content-search>svg { position:absolute; left:10px; top:11px; color:#5c6873; }
+.content-search input { padding-left:34px; }
+.content-filter select { height:36px; border:1px solid #d3d9dd; background:#fff; border-radius:6px; padding:0 30px 0 10px; color:inherit; }
+.content-table { border:1px solid #e2e6e9; border-radius:8px; overflow:hidden; }
+.content-page-cell { display:grid; gap:3px; }
+.content-page-link { background:none; border:0; padding:0; color:inherit; font-weight:500; text-align:left; }
+.content-page-link:hover { text-decoration:underline; }
+.content-status { display:flex; gap:5px; flex-wrap:wrap; }
+.content-sort { display:inline-flex; align-items:center; gap:7px; background:none; border:0; color:inherit; padding:0; }
+.content-sort svg { color:#7a8790; }
+.content-column-title { width:32%; }
+.content-review-due { color:#92400e; }
+.content-pagination { justify-content:space-between; margin-top:14px; flex-wrap:wrap; }
+.content-pagination nav { gap:8px; }
+.content-empty { padding:35px 10px; text-align:center; }
+.content-drawer-overlay { position:fixed; inset:0; background:rgb(15 23 42 / .3); z-index:70; }
+.content-drawer { position:fixed; top:0; right:0; bottom:0; width:min(560px,100vw); max-width:100vw; padding:28px; overflow:auto; z-index:71; box-shadow:-12px 0 35px rgb(15 23 42 / .12); }
+.content-drawer-title { margin:0 42px 12px 0; font-size:22px; line-height:1.3; font-weight:600; }
+.content-drawer-close { position:absolute; top:16px; right:16px; }
+.content-drawer .content-status { margin:20px 0; }
+.content-detail-meta { display:grid; grid-template-columns:100px minmax(0,1fr); gap:8px; font-size:13px; margin:20px 0; }
+.content-detail-meta dt { color:#5c6873; }
+.content-detail-meta dd { margin:0; overflow-wrap:anywhere; }
+.content-drawer article { margin-top:24px; }
+@media(max-width:1000px) { .content-column-ownerId,.content-column-updatedAt { display:none; } }
+@media(max-width:650px) { .content-column-access,.content-column-reviewDueAt { display:none; } .content-column-title { width:60%; } .content-search { width:100%; } .content-heading { align-items:flex-start; } .content-heading>div { flex-wrap:wrap; gap:6px; } .content-heading h1 { font-size:22px; } .content-pagination nav>span { display:none; } .content-drawer { padding:22px; } }

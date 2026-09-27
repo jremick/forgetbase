@@ -84,13 +84,13 @@ assertNotIncludes(reader, "reader-refresh-button", "reader refresh button remove
 assertNotIncludes(reader, "reader-source-heading", "reader footer heading removed");
 assertIncludes(routing, "\"admin/content\": \"library\"", "admin content route");
 assertIncludes(routing, "\"admin/system/settings\": \"settings\"", "admin settings route");
-assertIncludes(app, "window.history.replaceState({}, document.title", "admin canonical hash rewrite");
+assertIncludes(app, "createAppNavigation", "guarded app history");
 assertIncludes(admin, "className=\"side-nav tree-nav admin-side-nav\"", "admin console shell");
 assertIncludes(admin, "renderNavigationSections(() => setIsMobileNavOpen(false))", "mobile admin shell navigation");
 assertIncludes(reader, "Search pages", "reader action");
 assertIncludes(app, 'lazy(() => import("./AdminSurface.js")', "lazy admin boundary");
 assertNotIncludes(app, 'import { AdminSurface } from "./AdminSurface.js"', "admin excluded from static entry graph");
-assertIncludes(app, "isAdminRoute(route) && !administrator", "reader admin-route guard");
+assertIncludes(app, "isAdminRoute(route) && !canAccessAppRoute(principal, route)", "reader admin-route guard");
 
 for (const selector of [
   ".admin-side-header",
@@ -116,13 +116,13 @@ assertIncludes(css, ".reader-shell .reader-library {\n    display: none;", "sing
 
 const publicCopy = sliceBetween(
   app,
-  '<main className="public-entry-main login-entry-main" id="main">',
+  '<main className="public-entry-main login-entry-main" id="main"',
   "</main>",
   "public entry"
 );
 const readerCopy = sliceBetween(
   reader,
-  '<main className={`reader-main ${accountSettings ? "reader-main--account" : ""}`} id="main">',
+  '<main className={`reader-main ${accountSettings ? "reader-main--account" : ""}`} id="main"',
   "</main>",
   "reader shell"
 );

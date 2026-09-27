@@ -18,3 +18,7 @@ work/
 .maintainer/
 infra/docker/tls/*
 !infra/docker/tls/.gitkeep
+
+# Generated immutable identity for release builds
+/build-info.json
+/apps/web/public/release.json
