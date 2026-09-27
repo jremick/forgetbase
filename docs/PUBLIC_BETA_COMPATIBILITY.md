@@ -42,7 +42,7 @@ Operational limits:
 - Publish the current page version before adding or deleting attachments.
 - Browser authoring edits Markdown; structured instructions use CLI or SDK JSON.
 - Clients must send `expectedVersionId` to receive stale-edit protection. The browser does so.
-- Local-agent runtime, managed upgrades and import-planner branches are separate development candidates.
+- Local-agent runtime, managed upgrades and import planning are future features and are not included in this beta.
 - External identity providers and paid model quality have not been verified by the operational release evidence.
 
 Still volatile:

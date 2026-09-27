@@ -2,8 +2,8 @@
 
 Use the existing personal project and its approved HTTPS origin. Repository
 publication follows the separate [public release gates](PUBLIC_BETA_RELEASE.md).
-This procedure releases the single-instance core; it does
-not activate the managed-upgrade or local-agent candidate branches.
+This procedure releases the single-instance core. It does not include managed
+upgrades or the local-agent runtime.
 
 ## Release inputs
 
