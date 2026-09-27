@@ -387,7 +387,8 @@ async function checkAdminPageAuthoring(page: Page): Promise<void> {
   await expectVisibleText(page, updatedTitle, "release: authored page title updated");
   await expectVisibleText(page, "v2", "release: authored page version advanced");
 
-  await page.getByRole("button", { name: "Review", exact: true }).click();
+  await page.getByRole("tab", { name: "Versions", exact: true }).click();
+  await page.getByRole("button", { name: "Mark reviewed", exact: true }).click();
   await expectVisibleText(page, `Reviewed ${stableId}`, "release: authored page reviewed");
   await assertAuthoringPublication(page, authoringApiUrl, stableId, null, "release: review does not publish draft");
   await page.getByRole("button", { name: "Publish", exact: true }).click();
