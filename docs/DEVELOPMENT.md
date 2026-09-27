@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- Node.js
+- Node.js 26.10.0
 - npm
 - Docker Desktop or a compatible Docker daemon for Compose checks
 

@@ -21,7 +21,7 @@ Expected public beta limits:
 
 ## Quick Start
 
-Prerequisites: Node.js 22, Docker, and Docker Compose.
+Prerequisites for the published beta.5 release: Node.js 22, Docker, and Docker Compose. Current `main` development uses Node.js 26.10.0; see [Development](docs/DEVELOPMENT.md).
 
 Check out a published release from [Releases](https://github.com/jremick/forgetbase/releases), then run the commands below from its root directory. For the public candidate:
 
