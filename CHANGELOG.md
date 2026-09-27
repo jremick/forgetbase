@@ -7,6 +7,8 @@ Published tags are immutable. Beta releases support self-hosted trials with synt
 - Add a searchable, sortable content library and source-preserving rich Markdown editing with a separate Source mode for unsupported syntax.
 - Use the shared Markdown renderer for reader pages, content details, and authoring previews.
 - Restore canonical navigation URLs and exercise the governed Versions tab in release browser checks.
+- Preserve excessive Markdown nesting as escaped source and prevent successful saves from reopening the unsaved-changes dialog.
+- Verify rich-editor lifecycle behavior and exact draft and published content in the isolated browser proof.
 
 These changes are on `main`. A deployment's build version does not establish a published GitHub release; use the release tags and attached verification evidence when selecting an installable release.
 
