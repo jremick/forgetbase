@@ -46,7 +46,10 @@ export class OpenAiEmbeddingProvider implements EmbeddingProvider {
     this.apiKey = options.apiKey;
     this.model = options.model ?? DEFAULT_OPENAI_EMBEDDING_MODEL;
     this.dimensions = options.dimensions ?? DEFAULT_EMBEDDING_DIMENSIONS;
-    this.baseUrl = (options.baseUrl ?? DEFAULT_OPENAI_EMBEDDING_BASE_URL).replace(/\/+$/, "");
+    const baseUrl = options.baseUrl ?? DEFAULT_OPENAI_EMBEDDING_BASE_URL;
+    let end = baseUrl.length;
+    while (end > 0 && baseUrl[end - 1] === "/") end -= 1;
+    this.baseUrl = baseUrl.slice(0, end);
     this.timeoutMs = options.timeoutMs ?? DEFAULT_OPENAI_EMBEDDING_TIMEOUT_MS;
     this.fetchImpl = options.fetchImpl ?? fetch;
 
@@ -81,14 +84,13 @@ export class OpenAiEmbeddingProvider implements EmbeddingProvider {
           model: this.model,
           dimensions: this.dimensions
         }),
-        signal: controller.signal
+        signal: controller.signal,
+        redirect: "error"
       });
 
       if (!response.ok) {
-        const errorText = await response.text().catch(() => "");
-        throw new Error(
-          `OpenAI embeddings request failed with HTTP ${response.status}${errorText ? `: ${errorText.slice(0, 200)}` : ""}`
-        );
+        await response.body?.cancel();
+        throw new Error(`OpenAI embeddings request failed with HTTP ${response.status}`);
       }
 
       const payload = await response.json() as OpenAiEmbeddingResponse;

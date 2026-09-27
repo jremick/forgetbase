@@ -1,0 +1,17 @@
+.fb-markdown-editor{min-width:0;max-width:100%;border:1px solid var(--border,#d4d4d8);border-radius:.5rem;background:var(--background,#fff);color:var(--foreground,#18181b);overflow:hidden}
+.fb-editor-controls{display:flex;align-items:center;flex-wrap:wrap;gap:.5rem;padding:.65rem;border-bottom:1px solid var(--border,#d4d4d8)}
+.fb-editor-label{font-weight:600;margin-right:auto}.fb-editor-controls [role=group]{display:flex;gap:.2rem}
+.fb-editor-controls button{font:inherit;font-size:.8125rem;padding:.35rem .55rem;border:1px solid var(--border,#d4d4d8);border-radius:.3rem;background:transparent;color:inherit;cursor:pointer}
+.fb-editor-controls button[aria-pressed=true]{background:var(--muted,#f4f4f5);font-weight:600}.fb-editor-controls button:disabled{cursor:default;opacity:.6}
+.fb-editor-controls button:focus-visible,.fb-markdown-editor :focus-visible{outline:2px solid #2563eb;outline-offset:2px}
+.fb-editor-help{display:block;font-size:.75rem;line-height:1.5;margin:.5rem .75rem;color:var(--muted-foreground,#52525b)}
+.fb-editor-error{margin:.5rem .75rem;color:#b91c1c}.fb-editor-body{border:0;margin:0;padding:0;min-width:0;max-width:100%}
+.fb-source-editor .cm-editor{min-height:18rem;max-height:65vh;font-size:.875rem;background:transparent;color:inherit}.fb-source-editor .cm-scroller{overflow:auto;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.fb-source-editor .cm-gutters{background:var(--muted,#f4f4f5);color:var(--muted-foreground,#71717a)}
+.fb-rich-editor{max-width:100%;overflow:auto}.fb-rich-editor .mdxeditor{background:transparent;color:inherit;--font-body:inherit;--font-mono:ui-monospace,SFMono-Regular,Menlo,monospace}
+.fb-rich-editor .mdxeditor-root-contenteditable{min-height:18rem;max-height:65vh;overflow:auto}.fb-rich-editor .mdxeditor-toolbar{flex-wrap:wrap}
+.fb-rich-editor .fb-rich-content{font-family:inherit;line-height:1.6}.fb-rich-editor .fb-rich-content h1{font-size:1.6em}.fb-rich-editor .fb-rich-content h2{font-size:1.35em}.fb-rich-editor .fb-rich-content h3{font-size:1.15em}
+.fb-rich-editor .fb-rich-content ul{list-style:disc;padding-left:1.5em}.fb-rich-editor .fb-rich-content ol{list-style:decimal;padding-left:1.5em}
+.fb-rich-editor pre,.fb-rich-editor table{max-width:100%}.fb-rich-editor [role=textbox]{min-width:0}
+
+.fb-rich-editor .fb-rich-content p{margin:.6em 0}.fb-rich-editor .fb-rich-content :is(h1,h2,h3,h4,h5,h6){margin:1em 0 .35em;line-height:1.3}.fb-rich-editor .fb-rich-content :first-child{margin-top:0}

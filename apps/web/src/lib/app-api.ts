@@ -2,6 +2,7 @@ const csrfCookieName = "forgetbase_csrf";
 const unsafeMethods = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
 export type AppRequest = <T>(path: string, init?: RequestInit, authKey?: string) => Promise<T>;
+export type AppBinaryRequest = (path: string, init?: RequestInit, authKey?: string) => Promise<Response>;
 
 export function shouldProbeAuthenticatedSession(apiKey: string, sessionCookieActive: boolean): boolean {
   return Boolean(apiKey) || sessionCookieActive;
@@ -65,5 +66,41 @@ export function createAppRequest(getApiUrl: () => string, getApiKey: () => strin
     }
 
     return response.json() as Promise<T>;
+  };
+}
+
+export function createAppBinaryRequest(getApiUrl: () => string, getApiKey: () => string): AppBinaryRequest {
+  return async function requestBinary(path: string, init: RequestInit = {}, authKey = getApiKey()): Promise<Response> {
+    const apiUrl = getApiUrl();
+    const headers = new Headers(init.headers);
+    headers.set("x-forgetbase-surface", "web");
+
+    if (authKey) {
+      headers.set("authorization", `Bearer ${authKey}`);
+    } else if (unsafeMethods.has((init.method ?? "GET").toUpperCase())) {
+      const csrfToken = readCookie(csrfCookieName);
+
+      if (csrfToken) {
+        headers.set("x-forgetbase-csrf", csrfToken);
+      }
+    }
+
+    let response: Response;
+
+    try {
+      response = await fetch(`${apiUrl.replace(/\/$/, "")}${path}`, {
+        ...init,
+        headers,
+        credentials: init.credentials ?? "include"
+      });
+    } catch (fetchError) {
+      throw new Error(`API request failed for ${apiUrl}: ${fetchError instanceof Error ? fetchError.message : String(fetchError)}`);
+    }
+
+    if (!response.ok) {
+      throw new Error(`${response.status} ${await response.text()}`);
+    }
+
+    return response;
   };
 }

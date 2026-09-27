@@ -1,3 +1,7 @@
+import { PostgresAssetChangeOutboxRepository, type AssetChangeOutboxRepository, type AssetChangeWork } from "@forgetbase/db";
+import { readReleaseIdentity } from "./release-identity.js";
+import { safeErrorCode, safeRequestLogger } from "./request-security.js";
+import { InvalidAssetCursorError, readAccessibleAssetPage, readAllAccessibleAssets } from "./asset-collections.js";
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { isAbsolute } from "node:path";
@@ -7,10 +11,12 @@ import fastify, {
   type FastifyRequest,
   type FastifyServerOptions
 } from "fastify";
-import { createRemoteJWKSet, jwtVerify, type JWTPayload } from "jose";
+import rateLimit from "@fastify/rate-limit";
+import { createRemoteJWKSet, errors as joseErrors, jwtVerify, type JWTPayload } from "jose";
 import {
 	  aiExportPackageSchema,
-	  aiExportFormatSchema,
+  aiExportFormatSchema,
+  attachmentAllowedMediaTypes,
 	  agentActionDecisionInputSchema,
 	  agentActionExecuteInputSchema,
 	  agentActionExecutionPolicyInputSchema,
@@ -37,6 +43,11 @@ import {
   assetVersionSnapshotSchema,
   assetValidationInputSchema,
   assetValidationReportSchema,
+  attachmentListResponseSchema,
+  attachmentReconciliationInputSchema,
+  attachmentReconciliationReportSchema,
+  attachmentSchema,
+  attachmentUploadMetadataSchema,
   auditEventSchema,
   authProviderConfigInputSchema,
   authProviderConfigListResponseSchema,
@@ -88,6 +99,7 @@ import {
   modelProviderHealthListResponseSchema,
   modelProviderSchema,
   permissionGrantCreateInputSchema,
+  permissionGrantListInputSchema,
   piiRedactionPolicyInputSchema,
   piiRedactionPolicySchema,
   retrievalEventSchema,
@@ -141,6 +153,8 @@ import {
   type ModelProviderConfig,
   type ModelProviderHealth,
   type PiiRedactionPolicy,
+  type PermissionGrant,
+  type PermissionGrantMutationResponse,
   type RetrievalEvent,
   type SearchInput,
   type SearchResult,
@@ -150,7 +164,8 @@ import {
   type TelemetryAnalyticsSummary,
 } from "@forgetbase/schema";
 	import {
-	  PostgresAgentActionExecutionRepository,
+  PostgresAgentActionExecutionRepository,
+  PostgresAttachmentRepository,
   PostgresManagedQueryEvalRunRepository,
 	  PostgresManagedQueryFeedbackRepository,
   PostgresAuthRepository,
@@ -169,6 +184,7 @@ import {
   createPool,
   createEmbeddingProviderFromEnv,
   DuplicateAssetError,
+  AssetVersionConflictError,
   PostgresRegistryRepository,
   defaultManagedQueryCachePolicy,
 	  defaultManagedQueryPolicy,
@@ -184,7 +200,8 @@ import {
   runMigrations,
 	  ServiceAccountPolicyViolationError,
   ManagedQueryEvalSchedulePolicyError,
-		  type AuthProviderConfigRepository,
+  type AuthProviderConfigRepository,
+  type AttachmentRepository,
 	  type AuthRepository,
 	  type LoginCredentialIssueResult,
 	  type AgentActionExecutionRepository,
@@ -204,7 +221,23 @@ import {
   type TelemetryRetentionPolicyRepository
 } from "@forgetbase/db";
 import { redactText, validateAssetCollection, type RedactionFinding } from "@forgetbase/validation";
+import {
+  LocalFilesystemAttachmentStorage,
+  generateAttachmentStorageKey,
+  type AttachmentStorageAdapter
+} from "./attachment-storage.js";
+import {
+  AttachmentConcurrencyGate,
+  AttachmentContentRejectedError,
+  AttachmentFixedWindowRateLimiter,
+  AttachmentScannerUnavailableError,
+  ClamDAttachmentMalwareScanner,
+  DisabledAttachmentMalwareScanner,
+  inspectAttachmentContent,
+  type AttachmentMalwareScanner
+} from "./attachment-security.js";
 import { buildOpenApiDocument } from "./openapi.js";
+import { reconcileAttachments } from "./attachment-reconciliation.js";
 
 const OIDC_STATE_TTL_MS = 10 * 60 * 1000;
 const OIDC_JWT_ALGORITHMS = ["RS256", "RS384", "RS512", "PS256", "PS384", "PS512", "ES256", "ES384", "ES512"];
@@ -230,9 +263,33 @@ const DEFAULT_LOGIN_THROTTLE_WINDOW_MS = 60_000;
 const DEFAULT_LOGIN_THROTTLE_BLOCK_MS = 60_000;
 const DEFAULT_LOGIN_THROTTLE_MAX_ENTRIES = 10_000;
 const DEFAULT_CORS_ALLOWED_ORIGINS = ["http://127.0.0.1:5175", "http://localhost:5175"];
+const DEFAULT_ATTACHMENT_MAX_BYTES = 10 * 1024 * 1024;
+const MAX_ATTACHMENT_MAX_BYTES = 100 * 1024 * 1024;
+const DEFAULT_ATTACHMENT_TENANT_MAX_BYTES = 1024 * 1024 * 1024;
+const DEFAULT_ATTACHMENT_TENANT_MAX_FILES = 1_000;
+const DEFAULT_ATTACHMENT_PRINCIPAL_MAX_BYTES = 256 * 1024 * 1024;
+const DEFAULT_ATTACHMENT_PRINCIPAL_MAX_FILES = 250;
+const DEFAULT_ATTACHMENT_UPLOADS_PER_MINUTE = 30;
+const DEFAULT_ATTACHMENT_MAX_CONCURRENT_UPLOADS = 4;
+const ALLOWED_ATTACHMENT_MEDIA_TYPES = new Set<string>(attachmentAllowedMediaTypes);
 
 export interface BuildServerOptions extends FastifyServerOptions {
   registryRepository?: RegistryRepository;
+  attachmentRepository?: AttachmentRepository;
+  attachmentStorage?: AttachmentStorageAdapter;
+  attachmentStorageRoot?: string;
+  attachmentMaxBytes?: number;
+  attachmentMalwareScanner?: AttachmentMalwareScanner;
+  attachmentScanRequired?: boolean;
+  attachmentTenantMaxBytes?: number;
+  attachmentTenantMaxFiles?: number;
+  attachmentPrincipalMaxBytes?: number;
+  attachmentPrincipalMaxFiles?: number;
+  attachmentUploadsPerMinute?: number;
+  attachmentMaxConcurrentUploads?: number;
+  attachmentReconciliationEnabled?: boolean;
+  attachmentReconciliationDryRun?: boolean;
+  attachmentReconciliationIntervalMs?: number;
   authRepository?: AuthRepository;
   retrievalRepository?: RetrievalRepository;
   retrievalRankingPolicyRepository?: RetrievalRankingPolicyRepository;
@@ -263,6 +320,9 @@ export interface BuildServerOptions extends FastifyServerOptions {
   loginThrottleWindowMs?: number;
   loginThrottleBlockMs?: number;
   loginThrottleMaxEntries?: number;
+  requestRateLimitMax?: number;
+  requestRateLimitWindowMs?: number;
+  requestRateLimitMaxEntries?: number;
   requireAuthentication?: boolean;
   readinessCheck?: () => Promise<void>;
 }
@@ -322,7 +382,32 @@ export interface ModelRuntimeUsage {
 
 export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
   const server = fastify({
-    logger: options.logger ?? true
+    logger: safeRequestLogger(options.logger),
+    // Forwarded headers must not let clients choose a fresh rate-limit bucket.
+    trustProxy: false
+  });
+  server.setErrorHandler((error, request, reply) => {
+    const candidateStatus = error && typeof error === "object" && "statusCode" in error ? error.statusCode : undefined;
+    const statusCode = typeof candidateStatus === "number" && Number.isInteger(candidateStatus) && candidateStatus >= 400 && candidateStatus < 500
+      ? candidateStatus : 500;
+    const code = safeErrorCode(error);
+    request.log[statusCode >= 500 ? "error" : "info"]({ code, statusCode }, "Request failed");
+    return reply.code(statusCode).send({ error: statusCode >= 500 ? "internal_server_error" : code === "internal_server_error" ? "invalid_request" : code });
+  });
+  server.register(rateLimit, {
+    // The synchronous builder declares routes before plugins finish loading.
+    // Apply the plugin's limiter through a root hook, including unknown routes.
+    global: false,
+    hook: "onRequest",
+    max: readRateLimitOption(options.requestRateLimitMax, "FORGETBASE_REQUEST_RATE_LIMIT_MAX", 1000, 100_000),
+    timeWindow: readRateLimitOption(options.requestRateLimitWindowMs, "FORGETBASE_REQUEST_RATE_LIMIT_WINDOW_MS", 60_000, 3_600_000),
+    cache: readRateLimitOption(options.requestRateLimitMaxEntries, "FORGETBASE_REQUEST_RATE_LIMIT_MAX_ENTRIES", 5000, 100_000)
+  });
+  let limitRequest: ReturnType<FastifyInstance["rateLimit"]>;
+  let limitReadiness: ReturnType<FastifyInstance["rateLimit"]>;
+  server.after(() => {
+    limitRequest = server.rateLimit();
+    limitReadiness = server.rateLimit({ max: 60, timeWindow: 60_000 });
   });
   const databaseUrl = options.databaseUrl ?? process.env.DATABASE_URL;
   const pool = (
@@ -342,11 +427,14 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
     options.authProviderConfigRepository &&
     options.providerConfigRepository &&
     options.secretReferencePolicyRepository &&
-    options.telemetryRetentionPolicyRepository
+    options.telemetryRetentionPolicyRepository &&
+    options.attachmentRepository
   ) || !databaseUrl
     ? undefined
     : createPool(databaseUrl);
   const registryRepository = options.registryRepository ?? (pool ? new PostgresRegistryRepository(pool) : undefined);
+  const assetChangeOutbox = pool ? new PostgresAssetChangeOutboxRepository(pool) : undefined;
+  const attachmentRepository = options.attachmentRepository ?? (pool ? new PostgresAttachmentRepository(pool) : undefined);
   const authRepository = options.authRepository ?? (pool ? new PostgresAuthRepository(pool) : undefined);
   const retrievalRankingPolicyRepository = options.retrievalRankingPolicyRepository ??
     (pool ? new PostgresRetrievalRankingPolicyRepository(pool) : undefined);
@@ -377,6 +465,95 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
     (pool ? new PostgresSecretReferencePolicyRepository(pool) : undefined);
   const telemetryRetentionPolicyRepository = options.telemetryRetentionPolicyRepository ??
     (pool ? new PostgresTelemetryRetentionPolicyRepository(pool) : undefined);
+  const attachmentMaxBytes = readPositiveIntegerOption(
+    options.attachmentMaxBytes,
+    process.env.FORGETBASE_ATTACHMENT_MAX_BYTES,
+    DEFAULT_ATTACHMENT_MAX_BYTES,
+    "FORGETBASE_ATTACHMENT_MAX_BYTES"
+  );
+  if (attachmentMaxBytes > MAX_ATTACHMENT_MAX_BYTES) {
+    throw new Error(`FORGETBASE_ATTACHMENT_MAX_BYTES must not exceed ${MAX_ATTACHMENT_MAX_BYTES}.`);
+  }
+  const attachmentStorage = options.attachmentStorage ?? (attachmentRepository
+    ? new LocalFilesystemAttachmentStorage(
+        options.attachmentStorageRoot ?? process.env.FORGETBASE_ATTACHMENT_STORAGE_ROOT ?? "work/attachments",
+        attachmentMaxBytes
+      )
+    : undefined);
+  const attachmentScanRequired = options.attachmentScanRequired ??
+    readOptionalEnvBoolean(process.env.FORGETBASE_ATTACHMENT_SCAN_REQUIRED) ??
+    false;
+  const attachmentScannerHost = process.env.FORGETBASE_ATTACHMENT_CLAMD_HOST?.trim();
+  const attachmentScannerConfigured = Boolean(options.attachmentMalwareScanner || attachmentScannerHost);
+  const attachmentMalwareScanner: AttachmentMalwareScanner = options.attachmentMalwareScanner ?? (attachmentScannerHost
+    ? new ClamDAttachmentMalwareScanner(
+        attachmentScannerHost,
+        readPositiveIntegerOption(
+          undefined,
+          process.env.FORGETBASE_ATTACHMENT_CLAMD_PORT,
+          3310,
+          "FORGETBASE_ATTACHMENT_CLAMD_PORT"
+        ),
+        readPositiveIntegerOption(
+          undefined,
+          process.env.FORGETBASE_ATTACHMENT_SCAN_TIMEOUT_MS,
+          15_000,
+          "FORGETBASE_ATTACHMENT_SCAN_TIMEOUT_MS"
+        )
+      )
+    : new DisabledAttachmentMalwareScanner());
+  const attachmentTenantMaxBytes = readPositiveIntegerOption(
+    options.attachmentTenantMaxBytes,
+    process.env.FORGETBASE_ATTACHMENT_TENANT_MAX_BYTES,
+    DEFAULT_ATTACHMENT_TENANT_MAX_BYTES,
+    "FORGETBASE_ATTACHMENT_TENANT_MAX_BYTES"
+  );
+  const attachmentTenantMaxFiles = readPositiveIntegerOption(
+    options.attachmentTenantMaxFiles,
+    process.env.FORGETBASE_ATTACHMENT_TENANT_MAX_FILES,
+    DEFAULT_ATTACHMENT_TENANT_MAX_FILES,
+    "FORGETBASE_ATTACHMENT_TENANT_MAX_FILES"
+  );
+  const attachmentPrincipalMaxBytes = readPositiveIntegerOption(
+    options.attachmentPrincipalMaxBytes,
+    process.env.FORGETBASE_ATTACHMENT_PRINCIPAL_MAX_BYTES,
+    DEFAULT_ATTACHMENT_PRINCIPAL_MAX_BYTES,
+    "FORGETBASE_ATTACHMENT_PRINCIPAL_MAX_BYTES"
+  );
+  const attachmentPrincipalMaxFiles = readPositiveIntegerOption(
+    options.attachmentPrincipalMaxFiles,
+    process.env.FORGETBASE_ATTACHMENT_PRINCIPAL_MAX_FILES,
+    DEFAULT_ATTACHMENT_PRINCIPAL_MAX_FILES,
+    "FORGETBASE_ATTACHMENT_PRINCIPAL_MAX_FILES"
+  );
+  const attachmentUploadRateLimiter = new AttachmentFixedWindowRateLimiter(
+    readPositiveIntegerOption(
+      options.attachmentUploadsPerMinute,
+      process.env.FORGETBASE_ATTACHMENT_UPLOADS_PER_MINUTE,
+      DEFAULT_ATTACHMENT_UPLOADS_PER_MINUTE,
+      "FORGETBASE_ATTACHMENT_UPLOADS_PER_MINUTE"
+    ),
+    60_000
+  );
+  const attachmentUploadGate = new AttachmentConcurrencyGate(readPositiveIntegerOption(
+    options.attachmentMaxConcurrentUploads,
+    process.env.FORGETBASE_ATTACHMENT_MAX_CONCURRENT_UPLOADS,
+    DEFAULT_ATTACHMENT_MAX_CONCURRENT_UPLOADS,
+    "FORGETBASE_ATTACHMENT_MAX_CONCURRENT_UPLOADS"
+  ));
+  const attachmentReconciliationEnabled = options.attachmentReconciliationEnabled ??
+    readOptionalEnvBoolean(process.env.FORGETBASE_ATTACHMENT_RECONCILIATION_ENABLED) ??
+    false;
+  const attachmentReconciliationDryRun = options.attachmentReconciliationDryRun ??
+    readOptionalEnvBoolean(process.env.FORGETBASE_ATTACHMENT_RECONCILIATION_DRY_RUN) ??
+    true;
+  const attachmentReconciliationIntervalMs = readPositiveIntegerOption(
+    options.attachmentReconciliationIntervalMs,
+    process.env.FORGETBASE_ATTACHMENT_RECONCILIATION_INTERVAL_MS,
+    60 * 60 * 1_000,
+    "FORGETBASE_ATTACHMENT_RECONCILIATION_INTERVAL_MS"
+  );
+  let attachmentReconciliationTimer: NodeJS.Timeout | undefined;
   const oidcRuntime = options.oidcRuntime ?? defaultOidcRuntime;
   const oidcStateSecret = options.oidcStateSecret ?? process.env.FORGETBASE_OIDC_STATE_SECRET;
   const modelRuntime = options.modelRuntime ?? defaultModelRuntime;
@@ -415,6 +592,36 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
     readOptionalEnvBoolean(process.env.FORGETBASE_REQUIRE_AUTHENTICATION) ??
     false;
 
+  server.addContentTypeParser(
+    "application/octet-stream",
+    { parseAs: "buffer", bodyLimit: attachmentMaxBytes },
+    (_request, body, done) => done(null, body)
+  );
+
+  server.addHook("onRequest", async (request, reply) => {
+    const isAttachmentUpload = request.method === "POST" && request.routeOptions.url === "/assets/:stableId/attachments";
+    const isBinaryBody = request.headers["content-type"]?.split(";")[0]?.trim().toLowerCase() === "application/octet-stream";
+    if (isBinaryBody && !isAttachmentUpload) {
+      return reply.code(415).send({ error: "unsupported_media_type" });
+    }
+    if (!isAttachmentUpload) return;
+
+    const rate = attachmentUploadRateLimiter.consume(request.ip);
+    if (!rate.allowed) {
+      reply.header("retry-after", String(rate.retryAfterSeconds));
+      return reply.code(429).send({ error: "attachment_upload_rate_limited" });
+    }
+
+    const release = attachmentUploadGate.tryAcquire();
+    if (!release) {
+      reply.header("retry-after", "1");
+      return reply.code(429).send({ error: "attachment_upload_concurrency_limited" });
+    }
+    request.raw.once("aborted", release);
+    reply.raw.once("close", release);
+    reply.raw.once("finish", release);
+  });
+
   server.addHook("onRequest", async (request, reply) => {
     const origin = request.headers.origin;
 
@@ -422,7 +629,7 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
       reply.header("vary", "Origin");
 
       if (!allowedOrigins.has(origin)) {
-        if (request.method === "OPTIONS") {
+        if (request.method === "OPTIONS" || requiresCsrfProtection(request)) {
           return reply.code(403).send({ error: "origin_not_allowed" });
         }
       } else {
@@ -439,6 +646,14 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
     if (request.method === "OPTIONS") {
       return reply.code(204).send();
     }
+  });
+
+  server.addHook("onRequest", async (request, reply) => {
+    // Only the cheap liveness route is exempt. Readiness has a separate budget.
+    if (request.routeOptions.url === "/health") return;
+    return request.routeOptions.url === "/ready"
+      ? limitReadiness.call(server, request, reply)
+      : limitRequest.call(server, request, reply);
   });
 
   server.addHook("preHandler", async (request, reply) => {
@@ -483,8 +698,36 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
     });
   }
 
+  if (attachmentReconciliationEnabled) {
+    server.addHook("onReady", async () => {
+      if (!attachmentRepository || !attachmentStorage?.inventory) {
+        server.log.error("Attachment reconciliation is enabled but inventory support is unavailable");
+        return;
+      }
+      const run = async () => {
+        try {
+          const report = await reconcileAttachments({
+            repository: attachmentRepository,
+            storage: attachmentStorage,
+            dryRun: attachmentReconciliationDryRun
+          });
+          server.log.info({ attachmentReconciliation: report }, "Attachment reconciliation completed");
+        } catch (error) {
+          server.log.error(error, "Scheduled attachment reconciliation failed");
+        }
+      };
+      await run();
+      attachmentReconciliationTimer = setInterval(() => void run(), attachmentReconciliationIntervalMs);
+      attachmentReconciliationTimer.unref();
+    });
+    server.addHook("onClose", async () => {
+      if (attachmentReconciliationTimer) clearInterval(attachmentReconciliationTimer);
+    });
+  }
+
+  const releaseIdentity = readReleaseIdentity();
   server.get("/health", async () => {
-    return healthResponseSchema.parse(createHealthResponse("forgetbase-api"));
+    return { ...healthResponseSchema.parse(createHealthResponse("forgetbase-api")), ...(releaseIdentity ? { release: releaseIdentity } : {}) };
   });
 
   server.get("/ready", async (_request, reply) => {
@@ -507,13 +750,24 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
           throw new Error("Database migrations are not ready");
         }
       }
+      if (attachmentScanRequired) {
+        if (!attachmentScannerConfigured || !attachmentMalwareScanner.checkReady) {
+          throw new AttachmentScannerUnavailableError();
+        }
+        await attachmentMalwareScanner.checkReady();
+      }
 
+      const indexing = assetChangeOutbox ? await assetChangeOutbox.getHealth() : null;
+      if (indexing && (indexing.failed > 0 || (indexing.oldestPendingAgeMs ?? 0) > 15 * 60 * 1000)) {
+        return reply.code(503).send({ status: "not-ready", service: "forgetbase-api", checks: { database: "ok", migrations: "ok", indexing: "lagging" } });
+      }
       return {
         status: "ready",
         service: "forgetbase-api",
         checks: {
           database: pool || options.readinessCheck ? "ok" : "not-configured",
-          migrations: pool ? "ok" : "not-configured"
+          migrations: pool ? "ok" : "not-configured",
+          ...(indexing ? { indexing: indexing.pending || indexing.processing ? "processing" : "ok" } : {})
         }
       };
     } catch (error) {
@@ -1946,25 +2200,30 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
       return reply.code(503).send({ error: "registry_unavailable" });
     }
 
-    const query = request.query as { limit?: string };
-    const limit = query.limit ? Number.parseInt(query.limit, 10) : undefined;
+    const query = request.query as { limit?: string; cursor?: string; preview?: string };
+    const limit = query.limit === undefined ? 50 : Number(query.limit);
+    if (!Number.isInteger(limit) || limit < 1 || limit > 200 ||
+        (query.preview !== undefined && !["true", "false"].includes(query.preview))) {
+      return reply.code(400).send({ error: "invalid_asset_list" });
+    }
     const principal = await authenticateOptionalPrincipal(request, reply, authRepository, loginSessionIdleTimeoutSeconds);
-
-    if (principal === undefined) {
-      return;
+    if (principal === undefined) return;
+    const surface = readSurface(request, principal);
+    const preview = query.preview === "true";
+    if (preview && authRepository && (!principal || !roleCanWriteAssets(principal) || !principalHasScope(principal, "asset:read") || !principalHasScope(principal, "asset:write"))) {
+      return reply.code(403).send({ error: "access_denied" });
+    }
+    try {
+      const page = await readAccessibleAssetPage({
+        registryRepository, authRepository, principal, surface,
+        view: preview ? "current" : "published", limit, cursor: query.cursor
+      });
+      return assetListResponseSchema.parse(page);
+    } catch (error) {
+      if (error instanceof InvalidAssetCursorError) return reply.code(400).send({ error: "invalid_asset_cursor" });
+      throw error;
     }
 
-    const surface = readSurface(request, principal);
-
-    const assets = await registryRepository.listAssets({
-      tenantId: principal?.tenantId,
-      limit
-    });
-    const visibleAssets = authRepository
-      ? await filterReadableAssets(authRepository, principal, assets, surface)
-      : assets;
-
-    return assetListResponseSchema.parse({ assets: visibleAssets });
   });
 
   server.get("/assets/review-queue", async (request, reply) => {
@@ -1981,26 +2240,39 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
     if (
       authRepository &&
       principal &&
-      (!roleCanWriteAssets(principal) || !principalHasScope(principal, "asset:write"))
+      (!roleCanWriteAssets(principal) || !principalHasScope(principal, "asset:read") || !principalHasScope(principal, "asset:write"))
     ) {
       await recordDenied(authRepository, principal, principal.tenantId, "asset.review_queue", "asset", undefined, {});
       return reply.code(403).send({ error: "access_denied" });
     }
 
-    const query = request.query as { asOf?: string; includeApproved?: string; limit?: string };
+    const query = request.query as { asOf?: string; includeApproved?: string; limit?: string; offset?: string };
     const parsed = assetReviewQueueInputSchema.safeParse({
       tenantId: principal?.tenantId,
       asOf: query.asOf,
       includeApproved: query.includeApproved === "true",
-      limit: query.limit ? Number.parseInt(query.limit, 10) : undefined
+      limit: query.limit === undefined ? undefined : Number(query.limit),
+      offset: query.offset === undefined ? undefined : Number(query.offset)
     });
 
     if (!parsed.success) {
       return sendValidationError(reply, parsed.error.issues);
     }
 
-    const queue = await registryRepository.listAssetsNeedingReview(parsed.data);
-    return assetReviewQueueResponseSchema.parse(queue);
+    const asOf = parsed.data.asOf ?? new Date().toISOString().slice(0, 10);
+    const assets = await readAllAccessibleAssets({
+      registryRepository, authRepository, principal, surface: readSurface(request, principal), view: "current"
+    });
+    const queue = assets.filter((asset) => parsed.data.includeApproved || asset.lifecycleState !== "active" ||
+        asset.status !== "approved" || asset.reviewDueAt <= asOf)
+        .sort((a, b) => a.reviewDueAt.localeCompare(b.reviewDueAt) || a.stableId.localeCompare(b.stableId));
+    const end = parsed.data.offset + parsed.data.limit;
+    return assetReviewQueueResponseSchema.parse({
+      asOf, includeApproved: parsed.data.includeApproved,
+      assets: queue.slice(parsed.data.offset, end),
+      totalCount: queue.length,
+      nextOffset: end < queue.length ? end : null
+    });
   });
 
   server.get("/assets/:stableId", async (request, reply) => {
@@ -2015,16 +2287,16 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
       return;
     }
 
-    const detail = await registryRepository.getAssetByStableId(params.stableId, {
-      tenantId: principal?.tenantId
-    });
+    const surface = readSurface(request, principal);
+
+    const detail = await getAssetReadView(request, reply, registryRepository, authRepository, principal, params.stableId);
+    if (detail === undefined) return;
 
     if (!detail) {
       return reply.code(404).send({ error: "asset_not_found" });
     }
 
     if (authRepository) {
-      const surface = readSurface(request, principal);
       const allowed = await authRepository.canAccessAsset({
         principal,
         asset: detail.asset,
@@ -2041,7 +2313,518 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
       }
     }
 
+    if (retrievalRepository) {
+      await retrievalRepository.recordRetrievalEvent({
+        tenantId: detail.asset.tenantId,
+        ...auditActor(principal),
+        surface,
+        query: detail.asset.stableId,
+        resultCount: 1,
+        deniedCount: 0,
+        latencyMs: 0,
+        metadata: {
+          queryKind: "asset-view",
+          resultStableIds: [detail.asset.stableId],
+          resultAssetIds: [detail.asset.id],
+          resultChunkIds: []
+        }
+      });
+    }
+
     return assetDetailSchema.parse(detail);
+  });
+
+  server.get("/assets/:stableId/attachments", async (request, reply) => {
+    if (!registryRepository || !authRepository || !attachmentRepository) {
+      return reply.code(503).send({ error: "attachments_unavailable" });
+    }
+
+    const params = request.params as { stableId: string };
+    const principal = await authenticateOptionalPrincipal(request, reply, authRepository, loginSessionIdleTimeoutSeconds);
+    if (principal === undefined) return;
+
+    const detail = await getAssetReadView(request, reply, registryRepository, authRepository, principal, params.stableId);
+    if (detail === undefined) return;
+    if (!detail) return reply.code(404).send({ error: "asset_not_found" });
+
+    const surface = readSurface(request, principal);
+    const allowed = await authRepository.canAccessAsset({ principal, asset: detail.asset, action: "read", surface });
+    if (!allowed) {
+      await recordDenied(authRepository, principal, detail.asset.tenantId, "attachment.list", "asset", detail.asset.id, {
+        stableId: detail.asset.stableId,
+        surface
+      });
+      return reply.code(principal ? 403 : 401).send({ error: "access_denied" });
+    }
+
+    const attachments = await attachmentRepository.listAttachments({
+      tenantId: detail.asset.tenantId,
+      assetId: detail.asset.id,
+      limit: 100
+    });
+    return attachmentListResponseSchema.parse({
+      attachments: attachments.map((attachment) => attachmentSchema.parse(attachment))
+    });
+  });
+
+  server.post("/assets/:stableId/attachments", async (request, reply) => {
+    if (!registryRepository || !authRepository || !attachmentRepository || !attachmentStorage) {
+      return reply.code(503).send({ error: "attachments_unavailable" });
+    }
+
+    const principal = await requirePrincipal(request, reply, authRepository, loginSessionIdleTimeoutSeconds);
+    if (!principal) return;
+
+    const params = request.params as { stableId: string };
+    const detail = await registryRepository.getAssetByStableId(params.stableId, { tenantId: principal.tenantId });
+    if (!detail) return reply.code(404).send({ error: "asset_not_found" });
+
+    const surface = readSurface(request, principal);
+    const allowed = roleCanWriteAssets(principal) &&
+      principalHasScope(principal, "asset:write") &&
+      await authRepository.canAccessAsset({ principal, asset: detail.asset, action: "write", surface });
+    if (!allowed) {
+      await recordDenied(authRepository, principal, detail.asset.tenantId, "attachment.upload", "asset", detail.asset.id, {
+        stableId: detail.asset.stableId,
+        surface
+      });
+      return reply.code(403).send({ error: "access_denied" });
+    }
+
+    if (!requirePublishedAttachmentTarget(detail, reply)) return;
+
+    const metadata = attachmentUploadMetadataSchema.safeParse({
+      filename: decodeAttachmentFilenameHeader(request.headers["x-forgetbase-attachment-filename-encoded"]),
+      mediaType: request.headers["x-forgetbase-attachment-media-type"]
+    });
+    if (!metadata.success) return sendValidationError(reply, metadata.error.issues);
+    if (!ALLOWED_ATTACHMENT_MEDIA_TYPES.has(metadata.data.mediaType)) {
+      return reply.code(415).send({ error: "attachment_media_type_not_allowed" });
+    }
+
+    const content = Buffer.isBuffer(request.body) ? request.body : null;
+    if (!content?.byteLength) {
+      return reply.code(400).send({ error: "attachment_content_required" });
+    }
+    if (content.byteLength > attachmentMaxBytes) {
+      return reply.code(413).send({ error: "attachment_too_large", maxBytes: attachmentMaxBytes });
+    }
+
+    const [tenantUsage, principalUsage] = await Promise.all([
+      attachmentRepository.getAttachmentUsage({ tenantId: detail.asset.tenantId }),
+      attachmentRepository.getAttachmentUsage({
+        tenantId: detail.asset.tenantId,
+        uploadedByUserId: principal.userId ?? undefined,
+        uploadedByServiceAccountId: principal.serviceAccountId ?? undefined,
+        uploadedByApiKeyId: principal.apiKeyId
+      })
+    ]);
+    const tenantQuotaExceeded = tenantUsage.fileCount + 1 > attachmentTenantMaxFiles ||
+      tenantUsage.totalBytes + content.byteLength > attachmentTenantMaxBytes;
+    const principalQuotaExceeded = principalUsage.fileCount + 1 > attachmentPrincipalMaxFiles ||
+      principalUsage.totalBytes + content.byteLength > attachmentPrincipalMaxBytes;
+    if (tenantQuotaExceeded || principalQuotaExceeded) {
+      const scope = tenantQuotaExceeded ? "tenant" : "principal";
+      await authRepository.recordAuditEvent({
+        tenantId: detail.asset.tenantId,
+        ...auditActor(principal),
+        action: "attachment.upload",
+        targetType: "asset",
+        targetId: detail.asset.id,
+        outcome: "denied",
+        reason: "attachment_quota_exceeded",
+        metadata: {
+          stableId: detail.asset.stableId,
+          scope,
+          sizeBytes: content.byteLength
+        }
+      }).catch((auditError: unknown) => server.log.error(auditError, "Attachment quota audit failed"));
+      return reply.code(409).send({ error: "attachment_quota_exceeded", scope });
+    }
+
+    let inspection;
+    try {
+      inspection = inspectAttachmentContent({
+        filename: metadata.data.filename,
+        mediaType: metadata.data.mediaType,
+        content
+      });
+    } catch (error) {
+      if (!(error instanceof AttachmentContentRejectedError)) throw error;
+      await authRepository.recordAuditEvent({
+        tenantId: detail.asset.tenantId,
+        ...auditActor(principal),
+        action: "attachment.upload",
+        targetType: "asset",
+        targetId: detail.asset.id,
+        outcome: "denied",
+        reason: error.reason,
+        metadata: {
+          stableId: detail.asset.stableId,
+          mediaType: metadata.data.mediaType,
+          sizeBytes: content.byteLength
+        }
+      }).catch((auditError: unknown) => server.log.error(auditError, "Attachment rejection audit failed"));
+      return reply.code(422).send({ error: "attachment_content_rejected", reason: error.reason });
+    }
+
+    let malwareScan;
+    try {
+      if (attachmentScanRequired && !attachmentScannerConfigured) {
+        throw new AttachmentScannerUnavailableError();
+      }
+      malwareScan = await attachmentMalwareScanner.scan(content);
+    } catch (error) {
+      await authRepository.recordAuditEvent({
+        tenantId: detail.asset.tenantId,
+        ...auditActor(principal),
+        action: "attachment.upload",
+        targetType: "asset",
+        targetId: detail.asset.id,
+        outcome: "error",
+        reason: "malware_scanner_unavailable",
+        metadata: {
+          stableId: detail.asset.stableId,
+          mediaType: metadata.data.mediaType,
+          sizeBytes: content.byteLength
+        }
+      }).catch((auditError: unknown) => server.log.error(auditError, "Attachment scanner failure audit failed"));
+      return reply.code(503).send({ error: "attachment_scanner_unavailable" });
+    }
+    if (malwareScan.status === "infected") {
+      await authRepository.recordAuditEvent({
+        tenantId: detail.asset.tenantId,
+        ...auditActor(principal),
+        action: "attachment.upload",
+        targetType: "asset",
+        targetId: detail.asset.id,
+        outcome: "denied",
+        reason: "malware_detected",
+        metadata: {
+          stableId: detail.asset.stableId,
+          mediaType: metadata.data.mediaType,
+          sizeBytes: content.byteLength,
+          scanner: malwareScan.scanner
+        }
+      }).catch((auditError: unknown) => server.log.error(auditError, "Attachment malware audit failed"));
+      return reply.code(422).send({ error: "attachment_malware_detected" });
+    }
+
+    const storageKey = generateAttachmentStorageKey();
+    const contentSha256 = createHash("sha256").update(content).digest("hex");
+    try {
+      await attachmentStorage.put(storageKey, content);
+    } catch {
+      await authRepository.recordAuditEvent({
+        tenantId: detail.asset.tenantId,
+        ...auditActor(principal),
+        action: "attachment.upload",
+        targetType: "asset",
+        targetId: detail.asset.id,
+        outcome: "error",
+        reason: "storage_write_failed",
+        metadata: {
+          stableId: detail.asset.stableId,
+          mediaType: metadata.data.mediaType,
+          sizeBytes: content.byteLength,
+          contentSha256
+        }
+      });
+      return reply.code(503).send({ error: "attachment_storage_unavailable" });
+    }
+
+    let attachment;
+    try {
+      attachment = await attachmentRepository.createAttachment({
+        tenantId: detail.asset.tenantId,
+        assetId: detail.asset.id,
+        filename: metadata.data.filename,
+        mediaType: metadata.data.mediaType,
+        sizeBytes: content.byteLength,
+        contentSha256,
+        storageKey,
+        uploadedByUserId: principal.userId ?? undefined,
+        uploadedByServiceAccountId: principal.serviceAccountId ?? undefined,
+        uploadedByApiKeyId: principal.apiKeyId,
+        metadata: {
+          contentInspection: {
+            status: "passed",
+            detectedMediaType: inspection.detectedMediaType,
+            extension: inspection.extension
+          },
+          malwareScan: {
+            status: malwareScan.scanner === "disabled" ? "not-required" : "clean",
+            scanner: malwareScan.scanner
+          }
+        }
+      });
+    } catch {
+      let orphanCleanupSucceeded = false;
+
+      try {
+        orphanCleanupSucceeded = await attachmentStorage.delete(storageKey);
+      } catch {
+        orphanCleanupSucceeded = false;
+      }
+
+      await authRepository.recordAuditEvent({
+        tenantId: detail.asset.tenantId,
+        ...auditActor(principal),
+        action: "attachment.upload",
+        targetType: "asset",
+        targetId: detail.asset.id,
+        outcome: "error",
+        reason: "metadata_write_failed",
+        metadata: {
+          stableId: detail.asset.stableId,
+          mediaType: metadata.data.mediaType,
+          sizeBytes: content.byteLength,
+          contentSha256,
+          orphanCleanupSucceeded
+        }
+      }).catch(() => undefined);
+      return reply.code(503).send({ error: "attachment_metadata_unavailable" });
+    }
+
+    try {
+      await authRepository.recordAuditEvent({
+        tenantId: detail.asset.tenantId,
+        ...auditActor(principal),
+        action: "attachment.upload",
+        targetType: "attachment",
+        targetId: attachment.id,
+        outcome: "success",
+        metadata: {
+          stableId: detail.asset.stableId,
+          mediaType: attachment.mediaType,
+          sizeBytes: attachment.sizeBytes,
+          contentSha256: attachment.contentSha256,
+          scanner: malwareScan.scanner
+        }
+      });
+    } catch (error) {
+      server.log.error({ error, attachmentId: attachment.id }, "Attachment success audit failed after metadata commit");
+    }
+    return reply.code(201).send(attachmentSchema.parse(attachment));
+  });
+
+  server.get("/assets/:stableId/attachments/:attachmentId/download", async (request, reply) => {
+    if (!registryRepository || !authRepository || !attachmentRepository || !attachmentStorage) {
+      return reply.code(503).send({ error: "attachments_unavailable" });
+    }
+
+    const params = request.params as { stableId: string; attachmentId: string };
+    const principal = await authenticateOptionalPrincipal(request, reply, authRepository, loginSessionIdleTimeoutSeconds);
+    if (principal === undefined) return;
+    const detail = await getAssetReadView(request, reply, registryRepository, authRepository, principal, params.stableId);
+    if (detail === undefined) return;
+    if (!detail) return reply.code(404).send({ error: "asset_not_found" });
+
+    const surface = readSurface(request, principal);
+    const allowed = await authRepository.canAccessAsset({ principal, asset: detail.asset, action: "read", surface });
+    if (!allowed) {
+      await recordDenied(authRepository, principal, detail.asset.tenantId, "attachment.download", "asset", detail.asset.id, {
+        stableId: detail.asset.stableId,
+        surface
+      });
+      return reply.code(principal ? 403 : 401).send({ error: "access_denied" });
+    }
+
+    const attachment = await attachmentRepository.getAttachment(params.attachmentId, {
+      tenantId: detail.asset.tenantId
+    });
+    if (!attachment || attachment.assetId !== detail.asset.id) {
+      return reply.code(404).send({ error: "attachment_not_found" });
+    }
+    if (attachmentScanRequired &&
+      readMetadataString((attachment.metadata.malwareScan as Record<string, unknown> | undefined)?.status) !== "clean") {
+      await authRepository.recordAuditEvent({
+        tenantId: detail.asset.tenantId,
+        ...auditActor(principal),
+        action: "attachment.download",
+        targetType: "attachment",
+        targetId: attachment.id,
+        outcome: "denied",
+        reason: "malware_scan_not_verified",
+        metadata: { stableId: detail.asset.stableId }
+      }).catch((auditError: unknown) => server.log.error(auditError, "Attachment scan-state denial audit failed"));
+      return reply.code(503).send({ error: "attachment_scan_not_verified" });
+    }
+
+    let content: Buffer;
+    try {
+      content = await attachmentStorage.get(attachment.storageKey);
+    } catch {
+      await authRepository.recordAuditEvent({
+        tenantId: detail.asset.tenantId,
+        ...auditActor(principal),
+        action: "attachment.download",
+        targetType: "attachment",
+        targetId: attachment.id,
+        outcome: "error",
+        reason: "storage_unavailable",
+        metadata: { stableId: detail.asset.stableId }
+      });
+      return reply.code(503).send({ error: "attachment_storage_unavailable" });
+    }
+
+    const actualSha256 = createHash("sha256").update(content).digest("hex");
+    if (content.byteLength !== attachment.sizeBytes || actualSha256 !== attachment.contentSha256) {
+      await authRepository.recordAuditEvent({
+        tenantId: detail.asset.tenantId,
+        ...auditActor(principal),
+        action: "attachment.download",
+        targetType: "attachment",
+        targetId: attachment.id,
+        outcome: "error",
+        reason: "integrity_check_failed",
+        metadata: { stableId: detail.asset.stableId }
+      });
+      return reply.code(503).send({ error: "attachment_integrity_check_failed" });
+    }
+
+    await authRepository.recordAuditEvent({
+      tenantId: detail.asset.tenantId,
+      ...auditActor(principal),
+      action: "attachment.download",
+      targetType: "attachment",
+      targetId: attachment.id,
+      outcome: "success",
+      metadata: { stableId: detail.asset.stableId, sizeBytes: attachment.sizeBytes }
+    });
+    reply.header("content-type", attachment.mediaType);
+    reply.header("content-length", String(content.byteLength));
+    reply.header("content-disposition", attachmentContentDisposition(attachment.filename));
+    reply.header("x-content-type-options", "nosniff");
+    reply.header("cache-control", "private, no-store");
+    return reply.send(content);
+  });
+
+  server.delete("/assets/:stableId/attachments/:attachmentId", async (request, reply) => {
+    if (!registryRepository || !authRepository || !attachmentRepository || !attachmentStorage) {
+      return reply.code(503).send({ error: "attachments_unavailable" });
+    }
+
+    const principal = await requirePrincipal(request, reply, authRepository, loginSessionIdleTimeoutSeconds);
+    if (!principal) return;
+    const params = request.params as { stableId: string; attachmentId: string };
+    const detail = await registryRepository.getAssetByStableId(params.stableId, { tenantId: principal.tenantId });
+    if (!detail) return reply.code(404).send({ error: "asset_not_found" });
+
+    const surface = readSurface(request, principal);
+    const allowed = roleCanWriteAssets(principal) &&
+      principalHasScope(principal, "asset:write") &&
+      await authRepository.canAccessAsset({ principal, asset: detail.asset, action: "write", surface });
+    if (!allowed) {
+      await recordDenied(authRepository, principal, detail.asset.tenantId, "attachment.delete", "asset", detail.asset.id, {
+        stableId: detail.asset.stableId,
+        surface
+      });
+      return reply.code(403).send({ error: "access_denied" });
+    }
+
+    if (!requirePublishedAttachmentTarget(detail, reply)) return;
+
+    const existing = await attachmentRepository.getAttachment(params.attachmentId, {
+      tenantId: detail.asset.tenantId,
+      includeUnavailable: true
+    });
+    if (!existing || existing.assetId !== detail.asset.id || existing.lifecycleState === "deleted") {
+      return reply.code(404).send({ error: "attachment_not_found" });
+    }
+
+    const deleting = await attachmentRepository.markAttachmentDeleting({
+      tenantId: detail.asset.tenantId,
+      attachmentId: existing.id,
+      requestedByUserId: principal.userId ?? undefined,
+      requestedByServiceAccountId: principal.serviceAccountId ?? undefined,
+      requestedByApiKeyId: principal.apiKeyId
+    });
+    if (!deleting) return reply.code(409).send({ error: "attachment_delete_conflict" });
+
+    try {
+      await attachmentStorage.delete(deleting.storageKey);
+    } catch {
+      await authRepository.recordAuditEvent({
+        tenantId: detail.asset.tenantId,
+        ...auditActor(principal),
+        action: "attachment.delete",
+        targetType: "attachment",
+        targetId: deleting.id,
+        outcome: "error",
+        reason: "storage_delete_failed",
+        metadata: { stableId: detail.asset.stableId }
+      });
+      return reply.code(503).send({ error: "attachment_storage_unavailable" });
+    }
+
+    const deleted = await attachmentRepository.markAttachmentDeleted({
+      tenantId: detail.asset.tenantId,
+      attachmentId: deleting.id
+    });
+    if (!deleted) return reply.code(409).send({ error: "attachment_delete_conflict" });
+
+    await authRepository.recordAuditEvent({
+      tenantId: detail.asset.tenantId,
+      ...auditActor(principal),
+      action: "attachment.delete",
+      targetType: "attachment",
+      targetId: deleted.id,
+      outcome: "success",
+      metadata: { stableId: detail.asset.stableId, sizeBytes: deleted.sizeBytes }
+    });
+    return attachmentSchema.parse(deleted);
+  });
+
+  server.post("/admin/attachments/reconcile", async (request, reply) => {
+    if (!authRepository || !attachmentRepository || !attachmentStorage?.inventory) {
+      return reply.code(503).send({ error: "attachment_reconciliation_unavailable" });
+    }
+
+    const principal = await requireAdminPrincipal(request, reply, authRepository, loginSessionIdleTimeoutSeconds);
+    if (!principal) return;
+    const parsed = attachmentReconciliationInputSchema.safeParse(
+      request.body && typeof request.body === "object" ? request.body : {}
+    );
+    if (!parsed.success) return sendValidationError(reply, parsed.error.issues);
+
+    try {
+      const report = await reconcileAttachments({
+        repository: attachmentRepository,
+        storage: attachmentStorage,
+        tenantId: principal.tenantId,
+        dryRun: parsed.data.dryRun,
+        verifyContent: parsed.data.verifyContent,
+        staleDeletingAfterMs: parsed.data.staleDeletingAfterMinutes * 60 * 1_000,
+        recordLimit: parsed.data.recordLimit
+      });
+      await authRepository.recordAuditEvent({
+        tenantId: principal.tenantId,
+        ...auditActor(principal),
+        action: "attachment.reconcile",
+        targetType: "attachment_storage",
+        targetId: principal.tenantId,
+        outcome: "success",
+        metadata: report
+      });
+      return attachmentReconciliationReportSchema.parse(report);
+    } catch (error) {
+      server.log.error(error, "Attachment reconciliation failed");
+      await authRepository.recordAuditEvent({
+        tenantId: principal.tenantId,
+        ...auditActor(principal),
+        action: "attachment.reconcile",
+        targetType: "attachment_storage",
+        targetId: principal.tenantId,
+        outcome: "error",
+        reason: "attachment_reconciliation_failed",
+        metadata: {
+          dryRun: parsed.data.dryRun,
+          verifyContent: parsed.data.verifyContent
+        }
+      }).catch(() => undefined);
+      return reply.code(503).send({ error: "attachment_reconciliation_failed" });
+    }
   });
 
   server.get("/assets/:stableId/versions/:versionNumber", async (request, reply) => {
@@ -2113,30 +2896,23 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
       return sendValidationError(reply, parsed.error.issues);
     }
 
+    if (principal) {
+      const surface = readSurface(request, principal);
+      if (!principal.allowedSurfaces.includes(surface) || !parsed.data.allowedSurfaces.includes(surface)) {
+        return reply.code(403).send({ error: "access_denied" });
+      }
+    }
+
     try {
-      const detail = await registryRepository.createAsset(parsed.data);
-      if (retrievalRepository) {
-        await retrievalRepository.indexAsset(detail);
-      }
-      const managedQueryCacheInvalidatedCount = await invalidateManagedQueryCacheForAssetChange(
-        cacheRepository,
-        detail.asset.tenantId
-      );
-      if (authRepository && principal) {
-        await authRepository.recordAuditEvent({
-          tenantId: detail.asset.tenantId,
-          ...auditActor(principal),
-          action: "asset.create",
-          targetType: "asset",
-          targetId: detail.asset.id,
-          outcome: "success",
-          metadata: {
-            stableId: detail.asset.stableId,
-            managedQueryCacheInvalidatedCount
-          }
-        });
-      }
-      return reply.code(201).send(assetDetailSchema.parse(detail));
+      const detail = await registryRepository.createAsset(parsed.data, principal && authRepository ? {
+        creator: principal,
+        grantCreatorPermissions: (grants) => authRepository.createPermissionGrants(grants)
+      } : undefined);
+      const processing = await finishAssetChange({
+        detail, registryRepository, retrievalRepository, cacheRepository, authRepository, principal, assetChangeOutbox,
+        action: "asset.create", reply
+      });
+      return reply.code(201).send(assetDetailSchema.parse({ ...detail, processing }));
     } catch (error) {
       if (error instanceof DuplicateAssetError) {
         return reply.code(409).send({ error: "asset_already_exists", message: error.message });
@@ -2157,15 +2933,6 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
       return;
     }
 
-    if (
-      authRepository &&
-      principal &&
-      (!roleCanWriteAssets(principal) || !principalHasScope(principal, "asset:write"))
-    ) {
-      await recordDenied(authRepository, principal, principal.tenantId, "asset.update", "asset", undefined, {});
-      return reply.code(403).send({ error: "access_denied" });
-    }
-
     const params = request.params as { stableId: string };
     const parsed = assetUpdateInputSchema.safeParse({
       ...(request.body as Record<string, unknown>),
@@ -2176,36 +2943,25 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
       return sendValidationError(reply, parsed.error.issues);
     }
 
-    const detail = await registryRepository.updateAsset(params.stableId, parsed.data);
+    if (!(await authorizeAssetCommand(
+      request, reply, registryRepository, authRepository, principal,
+      params.stableId, parsed.data.tenantId, "asset.update"
+    ))) {
+      return;
+    }
+
+    const detail = await runVersionedAssetMutation(reply, () => registryRepository.updateAsset(params.stableId, parsed.data));
+    if (detail === undefined) return;
 
     if (!detail) {
       return reply.code(404).send({ error: "asset_not_found" });
     }
 
-    if (retrievalRepository) {
-      await retrievalRepository.indexAsset(detail);
-    }
-    const managedQueryCacheInvalidatedCount = await invalidateManagedQueryCacheForAssetChange(
-      cacheRepository,
-      detail.asset.tenantId
-    );
-    if (authRepository && principal) {
-      await authRepository.recordAuditEvent({
-        tenantId: detail.asset.tenantId,
-        ...auditActor(principal),
-        action: "asset.update",
-        targetType: "asset",
-        targetId: detail.asset.id,
-        outcome: "success",
-        metadata: {
-          stableId: detail.asset.stableId,
-          currentVersionId: detail.asset.currentVersionId,
-          managedQueryCacheInvalidatedCount
-        }
-      });
-    }
-
-    return assetDetailSchema.parse(detail);
+    const processing = await finishAssetChange({
+      detail, registryRepository, retrievalRepository, cacheRepository, authRepository, principal, assetChangeOutbox,
+      action: "asset.update", reply
+    });
+    return assetDetailSchema.parse({ ...detail, processing });
   });
 
   server.post("/assets/:stableId/review", async (request, reply) => {
@@ -2219,15 +2975,6 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
       return;
     }
 
-    if (
-      authRepository &&
-      principal &&
-      (!roleCanWriteAssets(principal) || !principalHasScope(principal, "asset:write"))
-    ) {
-      await recordDenied(authRepository, principal, principal.tenantId, "asset.review", "asset", undefined, {});
-      return reply.code(403).send({ error: "access_denied" });
-    }
-
     const params = request.params as { stableId: string };
     const parsed = assetReviewInputSchema.safeParse({
       ...(request.body as Record<string, unknown>),
@@ -2238,40 +2985,25 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
       return sendValidationError(reply, parsed.error.issues);
     }
 
-    const detail = await registryRepository.reviewAsset(params.stableId, parsed.data);
+    if (!(await authorizeAssetCommand(
+      request, reply, registryRepository, authRepository, principal,
+      params.stableId, parsed.data.tenantId, "asset.review"
+    ))) {
+      return;
+    }
+
+    const detail = await runVersionedAssetMutation(reply, () => registryRepository.reviewAsset(params.stableId, parsed.data));
+    if (detail === undefined) return;
 
     if (!detail) {
       return reply.code(404).send({ error: "asset_not_found" });
     }
 
-    if (retrievalRepository) {
-      await retrievalRepository.indexAsset(detail);
-    }
-    const managedQueryCacheInvalidatedCount = await invalidateManagedQueryCacheForAssetChange(
-      cacheRepository,
-      detail.asset.tenantId
-    );
-    if (authRepository && principal) {
-      await authRepository.recordAuditEvent({
-        tenantId: detail.asset.tenantId,
-        ...auditActor(principal),
-        action: "asset.review",
-        targetType: "asset",
-        targetId: detail.asset.id,
-        outcome: "success",
-        metadata: {
-          stableId: detail.asset.stableId,
-          currentVersionId: detail.asset.currentVersionId,
-          status: detail.asset.status,
-          reviewDueAt: detail.asset.reviewDueAt,
-          sourceRef: detail.asset.sourceRef,
-          changeNote: parsed.data.changeNote ?? null,
-          managedQueryCacheInvalidatedCount
-        }
-      });
-    }
-
-    return assetDetailSchema.parse(detail);
+    const processing = await finishAssetChange({
+      detail, registryRepository, retrievalRepository, cacheRepository, authRepository, principal, assetChangeOutbox,
+      action: "asset.review", reply
+    });
+    return assetDetailSchema.parse({ ...detail, processing });
   });
 
   server.post("/assets/:stableId/publish", async (request, reply) => {
@@ -2285,15 +3017,6 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
       return;
     }
 
-    if (
-      authRepository &&
-      principal &&
-      (!roleCanWriteAssets(principal) || !principalHasScope(principal, "asset:write"))
-    ) {
-      await recordDenied(authRepository, principal, principal.tenantId, "asset.publish", "asset", undefined, {});
-      return reply.code(403).send({ error: "access_denied" });
-    }
-
     const params = request.params as { stableId: string };
     const parsed = assetPublishInputSchema.safeParse({
       ...(request.body as Record<string, unknown>),
@@ -2304,40 +3027,25 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
       return sendValidationError(reply, parsed.error.issues);
     }
 
-    const detail = await registryRepository.publishAsset(params.stableId, parsed.data);
+    if (!(await authorizeAssetCommand(
+      request, reply, registryRepository, authRepository, principal,
+      params.stableId, parsed.data.tenantId, "asset.publish"
+    ))) {
+      return;
+    }
+
+    const detail = await runVersionedAssetMutation(reply, () => registryRepository.publishAsset(params.stableId, parsed.data));
+    if (detail === undefined) return;
 
     if (!detail) {
       return reply.code(404).send({ error: "asset_not_found" });
     }
 
-    if (retrievalRepository) {
-      await retrievalRepository.indexAsset(detail);
-    }
-    const managedQueryCacheInvalidatedCount = await invalidateManagedQueryCacheForAssetChange(
-      cacheRepository,
-      detail.asset.tenantId
-    );
-    if (authRepository && principal) {
-      await authRepository.recordAuditEvent({
-        tenantId: detail.asset.tenantId,
-        ...auditActor(principal),
-        action: "asset.publish",
-        targetType: "asset",
-        targetId: detail.asset.id,
-        outcome: "success",
-        metadata: {
-          stableId: detail.asset.stableId,
-          currentVersionId: detail.asset.currentVersionId,
-          lifecycleState: detail.asset.lifecycleState,
-          status: detail.asset.status,
-          reviewDueAt: detail.asset.reviewDueAt,
-          changeNote: parsed.data.changeNote ?? null,
-          managedQueryCacheInvalidatedCount
-        }
-      });
-    }
-
-    return assetDetailSchema.parse(detail);
+    const processing = await finishAssetChange({
+      detail, registryRepository, retrievalRepository, cacheRepository, authRepository, principal, assetChangeOutbox,
+      action: "asset.publish", reply
+    });
+    return assetDetailSchema.parse({ ...detail, processing });
   });
 
   server.post("/assets/:stableId/restore", async (request, reply) => {
@@ -2351,15 +3059,6 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
       return;
     }
 
-    if (
-      authRepository &&
-      principal &&
-      (!roleCanWriteAssets(principal) || !principalHasScope(principal, "asset:write"))
-    ) {
-      await recordDenied(authRepository, principal, principal.tenantId, "asset.restore", "asset", undefined, {});
-      return reply.code(403).send({ error: "access_denied" });
-    }
-
     const params = request.params as { stableId: string };
     const parsed = assetRestoreInputSchema.safeParse({
       ...(request.body as Record<string, unknown>),
@@ -2370,43 +3069,30 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
       return sendValidationError(reply, parsed.error.issues);
     }
 
-    const detail = await registryRepository.restoreAssetVersion(params.stableId, parsed.data);
+    if (!(await authorizeAssetCommand(
+      request, reply, registryRepository, authRepository, principal,
+      params.stableId, parsed.data.tenantId, "asset.restore"
+    ))) {
+      return;
+    }
+
+    const detail = await runVersionedAssetMutation(reply, () => registryRepository.restoreAssetVersion(params.stableId, parsed.data));
+    if (detail === undefined) return;
 
     if (!detail) {
       return reply.code(404).send({ error: "asset_or_version_not_found" });
     }
 
-    if (retrievalRepository) {
-      await retrievalRepository.indexAsset(detail);
-    }
-    const managedQueryCacheInvalidatedCount = await invalidateManagedQueryCacheForAssetChange(
-      cacheRepository,
-      detail.asset.tenantId
-    );
-    if (authRepository && principal) {
-      await authRepository.recordAuditEvent({
-        tenantId: detail.asset.tenantId,
-        ...auditActor(principal),
-        action: "asset.restore",
-        targetType: "asset",
-        targetId: detail.asset.id,
-        outcome: "success",
-        metadata: {
-          stableId: detail.asset.stableId,
-          currentVersionId: detail.asset.currentVersionId,
-          requestedVersionId: parsed.data.versionId ?? null,
-          requestedVersionNumber: parsed.data.versionNumber ?? null,
-          managedQueryCacheInvalidatedCount
-        }
-      });
-    }
-
-    return assetDetailSchema.parse(detail);
+    const processing = await finishAssetChange({
+      detail, registryRepository, retrievalRepository, cacheRepository, authRepository, principal, assetChangeOutbox,
+      action: "asset.restore", reply
+    });
+    return assetDetailSchema.parse({ ...detail, processing });
   });
 
   server.post("/assets/:stableId/grants", async (request, reply) => {
-    if (!authRepository) {
-      return reply.code(503).send({ error: "auth_unavailable" });
+    if (!authRepository || !registryRepository) {
+      return reply.code(503).send({ error: !authRepository ? "auth_unavailable" : "registry_unavailable" });
     }
 
     const principal = await requirePermissionAdminPrincipal(request, reply, authRepository, loginSessionIdleTimeoutSeconds);
@@ -2427,24 +3113,68 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
       return sendValidationError(reply, parsed.error.issues);
     }
 
+    const asset = await requirePermissionTarget(request, reply, registryRepository, authRepository, principal, params.stableId);
+    if (!asset) {
+      return;
+    }
     const grant = await authRepository.createPermissionGrant(parsed.data);
-    await authRepository.recordAuditEvent({
-      tenantId: grant.tenantId,
-      ...auditActor(principal),
-      action: "permission.grant",
-      targetType: "asset",
-      targetId: grant.assetId,
-      outcome: "success",
-      metadata: {
-        stableId: grant.stableId,
-        principalType: grant.principalType,
-        principalId: grant.principalId,
-        permissionAction: grant.action,
-        surfaces: grant.surfaces
-      }
+    const result = await finishPermissionGrantChange({
+      request, authRepository, cacheRepository, principal, grant, action: "permission.grant"
     });
+    return reply.code(201).send(result);
+  });
 
-    return reply.code(201).send(grant);
+  server.get("/assets/:stableId/grants", async (request, reply) => {
+    if (!authRepository || !registryRepository) {
+      return reply.code(503).send({ error: !authRepository ? "auth_unavailable" : "registry_unavailable" });
+    }
+    const principal = await requirePermissionAdminPrincipal(request, reply, authRepository, loginSessionIdleTimeoutSeconds);
+    if (!principal) {
+      return;
+    }
+    const params = request.params as { stableId: string };
+    const query = request.query as { limit?: string; cursor?: string };
+    const parsed = permissionGrantListInputSchema.safeParse({
+      limit: query.limit === undefined ? undefined : Number(query.limit),
+      cursor: query.cursor
+    });
+    if (!parsed.success) {
+      return sendValidationError(reply, parsed.error.issues);
+    }
+    if (!(await requirePermissionTarget(request, reply, registryRepository, authRepository, principal, params.stableId))) {
+      return;
+    }
+    return authRepository.listPermissionGrants({
+      ...parsed.data,
+      tenantId: principal.tenantId,
+      stableId: params.stableId
+    });
+  });
+
+  server.delete("/assets/:stableId/grants/:grantId", async (request, reply) => {
+    if (!authRepository || !registryRepository) {
+      return reply.code(503).send({ error: !authRepository ? "auth_unavailable" : "registry_unavailable" });
+    }
+    const principal = await requirePermissionAdminPrincipal(request, reply, authRepository, loginSessionIdleTimeoutSeconds);
+    if (!principal) {
+      return;
+    }
+    const params = request.params as { stableId: string; grantId: string };
+    if (!(await requirePermissionTarget(request, reply, registryRepository, authRepository, principal, params.stableId))) {
+      return;
+    }
+    const grant = await authRepository.revokePermissionGrant({
+      tenantId: principal.tenantId,
+      stableId: params.stableId,
+      grantId: params.grantId
+    });
+    if (!grant) {
+      return reply.code(404).send({ error: "permission_grant_not_found" });
+    }
+    const result = await finishPermissionGrantChange({
+      request, authRepository, cacheRepository, principal, grant, action: "permission.revoke"
+    });
+    return reply.code(200).send(result);
   });
 
   server.get("/audit/events", async (request, reply) => {
@@ -2499,6 +3229,7 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
     }
 
     const { allowedResults, telemetryEventId } = await runPermissionedSearch({
+      registryRepository,
       retrievalRepository,
       authRepository,
       piiRedactionPolicyRepository,
@@ -2555,6 +3286,7 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
     }
 
     const { allowedResults, deniedCount, telemetryEventId } = await runPermissionedSearch({
+      registryRepository,
       retrievalRepository,
       authRepository,
       piiRedactionPolicyRepository,
@@ -2846,6 +3578,7 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
 
     for (const evalCase of parsed.data.cases) {
       const { allowedResults, deniedCount, telemetryEventId } = await runPermissionedSearch({
+      registryRepository,
         retrievalRepository,
         authRepository,
         piiRedactionPolicyRepository,
@@ -3686,9 +4419,12 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
       return reply.code(503).send({ error: "registry_unavailable" });
     }
 
-    const query = request.query as { package?: string; limit?: string; format?: string; okfVersion?: string };
+    const query = request.query as { package?: string; limit?: string; cursor?: string; format?: string; okfVersion?: string };
     const packageName = query.package || "demo-agent-pack";
-    const limit = query.limit ? Number.parseInt(query.limit, 10) : 200;
+    const limit = query.limit === undefined ? 10000 : Number(query.limit);
+    if (!Number.isInteger(limit) || limit < 1 || limit > 10000) {
+      return reply.code(400).send({ error: "invalid_export_limit" });
+    }
     const formatResult = aiExportFormatSchema.safeParse(query.format ?? "json");
 
     if (!formatResult.success) {
@@ -3710,12 +4446,36 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
       return;
     }
 
-    const assets = await registryRepository.listAssets({
-      tenantId: principal?.tenantId,
-      limit
-    });
+    const contentRevision = await registryRepository.getContentRevision(principal?.tenantId);
+    let assetCursor: string | undefined;
+    if (query.cursor) {
+      try {
+        if (query.cursor.length > 8192) throw new Error("Invalid export cursor");
+        const continuation = JSON.parse(Buffer.from(query.cursor, "base64url").toString("utf8"));
+        if (continuation.version !== 1 || typeof continuation.revision !== "string" || typeof continuation.cursor !== "string") {
+          throw new Error("Invalid export cursor");
+        }
+        if (continuation.revision !== contentRevision) {
+          return reply.code(409).send({ error: "export_changed_retry", message: "Content changed between export pages. Restart the export." });
+        }
+        assetCursor = continuation.cursor;
+      } catch {
+        return reply.code(400).send({ error: "invalid_export_cursor" });
+      }
+    }
+    let page;
+    try {
+      page = await readAccessibleAssetPage({
+        registryRepository, authRepository, principal, surface, action: "export",
+        packageName, view: "published", limit, cursor: assetCursor
+      });
+    } catch (error) {
+      if (error instanceof InvalidAssetCursorError) return reply.code(400).send({ error: "invalid_asset_cursor" });
+      throw error;
+    }
+    const assets = page.assets;
     const exportAssets = [];
-    let deniedCount = 0;
+    let deniedCount = page.deniedCount;
 
     for (const asset of assets) {
       if (!asset.allowedExports.includes(packageName)) {
@@ -3723,7 +4483,7 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
       }
 
       const detail = await registryRepository.getAssetByStableId(asset.stableId, {
-        tenantId: asset.tenantId
+        tenantId: asset.tenantId, view: "published"
       });
 
       if (!detail) {
@@ -3742,12 +4502,17 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
       exportAssets.push(toExportPackageAsset(detail));
     }
 
+    if (contentRevision !== await registryRepository.getContentRevision(principal?.tenantId)) {
+      return reply.code(409).send({ error: "export_changed_retry", message: "Content changed during export. Retry the export." });
+    }
     const exportPackage = aiExportPackageSchema.parse({
       packageName,
       generatedAt: new Date().toISOString(),
       tenantId: principal?.tenantId ?? "tenant_demo",
       assetCount: exportAssets.length,
       deniedCount,
+      complete: page.complete,
+      nextCursor: page.nextCursor ? Buffer.from(JSON.stringify({ version: 1, revision: contentRevision, cursor: page.nextCursor })).toString("base64url") : null,
       assets: exportAssets
     });
     const okfPackage = format === "okf"
@@ -4306,6 +5071,183 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
   return server;
 }
 
+function requirePublishedAttachmentTarget(detail: AssetDetail, reply: FastifyReply): boolean {
+  if (!detail.asset.publishedVersionId || detail.asset.currentVersionId !== detail.asset.publishedVersionId ||
+      detail.asset.lifecycleState !== "active" || detail.asset.status !== "approved") {
+    reply.code(409).send({
+      error: "publication_required",
+      message: "Publish the current page before adding or deleting attachments. Attachments belong to the published page."
+    });
+    return false;
+  }
+  return true;
+}
+
+async function authorizeAssetCommand(
+  request: FastifyRequest,
+  reply: FastifyReply,
+  registryRepository: RegistryRepository,
+  authRepository: AuthRepository | undefined,
+  principal: AuthPrincipal | null,
+  stableId: string,
+  tenantId: string,
+  command: string
+): Promise<boolean> {
+  const current = await registryRepository.getAssetByStableId(stableId, { tenantId });
+  if (!current) {
+    reply.code(404).send({ error: "asset_not_found" });
+    return false;
+  }
+  if (!authRepository) {
+    return true;
+  }
+  const surface = readSurface(request, principal);
+  // These commands return full content. A write grant alone must not disclose it.
+  const allowed = principal && roleCanWriteAssets(principal) &&
+    principalHasScope(principal, "asset:read") && principalHasScope(principal, "asset:write") &&
+    await authRepository.canAccessAsset({ principal, asset: current.asset, action: "read", surface }) &&
+    await authRepository.canAccessAsset({ principal, asset: current.asset, action: "write", surface });
+  if (!allowed) {
+    await recordDenied(authRepository, principal, tenantId, command, "asset", current.asset.id, { stableId, surface });
+    reply.code(403).send({ error: "access_denied" });
+    return false;
+  }
+  return true;
+}
+
+async function finishPermissionGrantChange(input: {
+  request: FastifyRequest;
+  authRepository: AuthRepository;
+  cacheRepository: ManagedQueryCacheRepository | undefined;
+  principal: AuthPrincipal;
+  grant: PermissionGrant;
+  action: "permission.grant" | "permission.revoke";
+}): Promise<PermissionGrantMutationResponse> {
+  const pendingActions: Array<"cache-invalidation" | "audit-recording"> = [];
+  let managedQueryCacheInvalidatedCount: number | null = null;
+  try {
+    managedQueryCacheInvalidatedCount = await invalidateManagedQueryCacheForAssetChange(input.cacheRepository, input.grant.tenantId);
+  } catch {
+    pendingActions.push("cache-invalidation");
+  }
+  try {
+    await input.authRepository.recordAuditEvent({
+      tenantId: input.grant.tenantId,
+      ...auditActor(input.principal),
+      action: input.action,
+      targetType: "asset",
+      targetId: input.grant.assetId,
+      outcome: "success",
+      metadata: {
+        stableId: input.grant.stableId,
+        grantId: input.grant.id,
+        principalType: input.grant.principalType,
+        principalId: input.grant.principalId,
+        permissionAction: input.grant.action,
+        surfaces: input.grant.surfaces,
+        managedQueryCacheInvalidatedCount,
+        reconciliationPending: [...pendingActions]
+      }
+    });
+  } catch {
+    pendingActions.push("audit-recording");
+  }
+  if (pendingActions.length > 0) {
+    // The canonical grant already committed and all subsequent access checks read it.
+    // Report follow-up failures separately so callers do not mistake this for a failed write.
+    input.request.log.error({ tenantId: input.grant.tenantId, grantId: input.grant.id, action: input.action, pendingActions },
+      "Permission change committed; operator reconciliation required");
+  }
+  return {
+    ...input.grant,
+    reconciliation: { status: pendingActions.length > 0 ? "pending" : "complete", pendingActions }
+  };
+}
+
+async function requirePermissionTarget(
+  request: FastifyRequest,
+  reply: FastifyReply,
+  registryRepository: RegistryRepository,
+  authRepository: AuthRepository,
+  principal: AuthPrincipal,
+  stableId: string
+): Promise<AssetDetail | null> {
+  const detail = await registryRepository.getAssetByStableId(stableId, { tenantId: principal.tenantId });
+  if (!detail) {
+    reply.code(404).send({ error: "asset_not_found" });
+    return null;
+  }
+  const surface = readSurface(request, principal);
+  // Permission administrators still obey both the key and asset surface bindings.
+  if (!principal.allowedSurfaces.includes(surface) || !detail.asset.allowedSurfaces.includes(surface)) {
+    await recordDenied(authRepository, principal, principal.tenantId, "permission.manage", "asset", detail.asset.id, { stableId, surface });
+    reply.code(403).send({ error: "access_denied" });
+    return null;
+  }
+  return detail;
+}
+
+async function runVersionedAssetMutation(
+  reply: FastifyReply,
+  mutate: () => Promise<AssetDetail | null>
+): Promise<AssetDetail | null | undefined> {
+  try {
+    return await mutate();
+  } catch (error) {
+    if (!(error instanceof AssetVersionConflictError)) throw error;
+    reply.code(409).send({
+      error: "asset_version_conflict",
+      message: error.message,
+      expectedVersionId: error.expectedVersionId,
+      currentVersionId: error.currentVersionId
+    });
+    return undefined;
+  }
+}
+
+async function canPreviewAsset(
+  authRepository: AuthRepository | undefined,
+  principal: AuthPrincipal | null,
+  detail: AssetDetail,
+  surface: Surface
+): Promise<boolean> {
+  return Boolean(authRepository && principal && roleCanWriteAssets(principal) &&
+    principalHasScope(principal, "asset:read") && principalHasScope(principal, "asset:write") &&
+    await authRepository.canAccessAsset({ principal, asset: detail.asset, action: "read", surface }) &&
+    await authRepository.canAccessAsset({ principal, asset: detail.asset, action: "write", surface }));
+}
+
+async function getAssetReadView(
+  request: FastifyRequest,
+  reply: FastifyReply,
+  registryRepository: RegistryRepository,
+  authRepository: AuthRepository | undefined,
+  principal: AuthPrincipal | null,
+  stableId: string
+): Promise<AssetDetail | null | undefined> {
+  const query = request.query as { preview?: string };
+  if (query.preview !== undefined && query.preview !== "true" && query.preview !== "false") {
+    reply.code(400).send({ error: "invalid_preview" });
+    return undefined;
+  }
+  const preview = query.preview === "true";
+  const detail = await registryRepository.getAssetByStableId(stableId, {
+    tenantId: principal?.tenantId,
+    view: preview ? "current" : "published"
+  });
+  if (!detail || !preview) return detail;
+  const surface = readSurface(request, principal);
+  if (!await canPreviewAsset(authRepository, principal, detail, surface)) {
+    if (authRepository) await recordDenied(authRepository, principal, detail.asset.tenantId, "asset.preview", "asset", detail.asset.id, {
+      stableId,
+      surface
+    });
+    reply.code(principal ? 403 : 401).send({ error: "access_denied" });
+    return undefined;
+  }
+  return detail;
+}
+
 async function sendAssetVersionSnapshot(
   request: FastifyRequest,
   reply: FastifyReply,
@@ -4330,31 +5272,22 @@ async function sendAssetVersionSnapshot(
     return sendValidationError(reply, parsed.error.issues);
   }
 
-  const snapshot = await registryRepository.getAssetVersionSnapshot(stableId, parsed.data);
-
-  if (!snapshot) {
+  const current = await registryRepository.getAssetByStableId(stableId, { tenantId: principal?.tenantId, view: "current" });
+  if (!current) {
     return reply.code(404).send({ error: "asset_or_version_not_found" });
   }
-
-  if (authRepository) {
-    const surface = readSurface(request, principal);
-    const allowed = await authRepository.canAccessAsset({
-      principal,
-      asset: snapshot.asset,
-      action: "read",
+  const surface = readSurface(request, principal);
+  if (!await canPreviewAsset(authRepository, principal, current, surface)) {
+    if (authRepository) await recordDenied(authRepository, principal, current.asset.tenantId, "asset.version.read", "asset", current.asset.id, {
+      stableId,
+      ...versionSelector,
       surface
     });
-
-    if (!allowed) {
-      await recordDenied(authRepository, principal, snapshot.asset.tenantId, "asset.version.read", "asset", snapshot.asset.id, {
-        stableId: snapshot.asset.stableId,
-        versionId: snapshot.version.id,
-        versionNumber: snapshot.version.versionNumber,
-        surface
-      });
-      return reply.code(403).send({ error: "access_denied" });
-    }
+    return reply.code(principal ? 403 : 401).send({ error: "access_denied" });
   }
+
+  const snapshot = await registryRepository.getAssetVersionSnapshot(stableId, parsed.data);
+  if (!snapshot) return reply.code(404).send({ error: "asset_or_version_not_found" });
 
   return assetVersionSnapshotSchema.parse(snapshot);
 }
@@ -4366,25 +5299,12 @@ async function canExportAsset(
   packageName: string,
   surface: Surface
 ): Promise<boolean> {
-  if (
-    isPublishedAsset(detail) &&
-    detail.asset.sensitivity === "public-demo" &&
-    detail.asset.allowedSurfaces.includes(surface) &&
-    detail.asset.allowedExports.includes(packageName)
-  ) {
-    return true;
-  }
-
-  return authRepository.canAccessAsset({
+  return detail.asset.allowedExports.includes(packageName) && authRepository.canAccessAsset({
     principal,
     asset: detail.asset,
     action: "export",
     surface
   });
-}
-
-function isPublishedAsset(detail: AssetDetail): boolean {
-  return detail.asset.lifecycleState === "active" && detail.asset.status === "approved";
 }
 
 function toExportPackageAsset(detail: AssetDetail) {
@@ -4448,23 +5368,6 @@ function toExportPackageAsset(detail: AssetDetail) {
   };
 }
 
-async function filterReadableAssets(
-  authRepository: AuthRepository,
-  principal: AuthPrincipal | null,
-  assets: Awaited<ReturnType<RegistryRepository["listAssets"]>>,
-  surface: Surface
-) {
-  const visible = [];
-
-  for (const asset of assets) {
-    if (await authRepository.canAccessAsset({ principal, asset, action: "read", surface })) {
-      visible.push(asset);
-    }
-  }
-
-  return visible;
-}
-
 async function filterSearchResults(
   authRepository: AuthRepository,
   principal: AuthPrincipal | null,
@@ -4486,6 +5389,7 @@ async function filterSearchResults(
 }
 
 async function runPermissionedSearch(input: {
+  registryRepository?: RegistryRepository;
   retrievalRepository: RetrievalRepository;
   authRepository: AuthRepository | undefined;
   piiRedactionPolicyRepository: PiiRedactionPolicyRepository | undefined;
@@ -4495,10 +5399,32 @@ async function runPermissionedSearch(input: {
   queryKind: "search" | "managed-query" | "managed-query-eval";
 }) {
   const startedAt = Date.now();
-  const candidates = await input.retrievalRepository.search(input.input);
-  const { allowedResults, deniedCount } = input.authRepository
-    ? await filterSearchResults(input.authRepository, input.principal, candidates, input.surface)
-    : { allowedResults: candidates, deniedCount: 0 };
+  const readableAssets = input.registryRepository
+    ? await readAllAccessibleAssets({
+        registryRepository: input.registryRepository, authRepository: input.authRepository,
+        principal: input.principal, surface: input.surface, view: "published"
+      })
+    : undefined;
+  const candidates = await input.retrievalRepository.search(input.input, {
+    eligibleAssetIds: readableAssets?.map((asset) => asset.id)
+  });
+  const currentReadableAssets = input.registryRepository
+    ? await readAllAccessibleAssets({ registryRepository: input.registryRepository, authRepository: input.authRepository,
+        principal: input.principal, surface: input.surface, view: "published" })
+    : readableAssets;
+  const readableById = currentReadableAssets ? new Map(currentReadableAssets.map((asset) => [asset.id, asset])) : undefined;
+  // Replace index metadata with the authoritative published projection. A stale
+  // version may never become context while an indexing job is outstanding.
+  const currentCandidates = readableById ? candidates.flatMap((result) => {
+    const asset = readableById.get(result.asset.id);
+    return asset && result.citation.versionId === asset.currentVersionId ? [{ ...result, asset }] : [];
+  }) : candidates;
+  const { allowedResults, deniedCount: permissionDeniedCount } = input.authRepository
+    ? await filterSearchResults(input.authRepository, input.principal, currentCandidates, input.surface)
+    : { allowedResults: currentCandidates, deniedCount: 0 };
+  // Count only retrieved candidates rejected at the final visibility check.
+  // Pre-filtered restricted inventory is never scored or disclosed as hit counts.
+  const deniedCount = candidates.length - currentCandidates.length + permissionDeniedCount;
   const tenantId = input.principal?.tenantId ?? input.input.tenantId ?? "tenant_demo";
   const piiRedactionPolicy = await readPiiRedactionPolicy(input.piiRedactionPolicyRepository, tenantId);
   const redactedQuery = redactText(input.input.query, piiRedactionPolicy);
@@ -4513,6 +5439,9 @@ async function runPermissionedSearch(input: {
     metadata: {
       queryKind: input.queryKind,
       candidateCount: candidates.length,
+      resultStableIds: uniqueStrings(allowedResults.map((result) => result.asset.stableId)),
+      resultAssetIds: uniqueStrings(allowedResults.map((result) => result.asset.id)),
+      resultChunkIds: uniqueStrings(allowedResults.map((result) => result.chunkId)),
       ranking: summarizeSearchRanking(candidates, allowedResults),
       telemetryRedaction: {
         applied: redactedQuery.redacted,
@@ -5518,6 +6447,77 @@ async function readManagedQueryCachePolicy(
   }
 }
 
+/** Canonical changes have committed here. Infrastructure follow-ups must never
+ * turn that successful save into a false failure. The database outbox owns retry.
+ */
+async function finishAssetChange(input: {
+  detail: AssetDetail;
+  registryRepository: RegistryRepository;
+  retrievalRepository?: RetrievalRepository;
+  cacheRepository?: ManagedQueryCacheRepository;
+  authRepository?: AuthRepository;
+  principal: AuthPrincipal | null;
+  action: string;
+  reply: FastifyReply;
+  assetChangeOutbox?: AssetChangeOutboxRepository;
+}) {
+  let work: AssetChangeWork | undefined;
+  if (input.assetChangeOutbox) {
+    try {
+      [work] = await input.assetChangeOutbox.claim({ tenantId: input.detail.asset.tenantId, assetId: input.detail.asset.id, limit: 1 });
+    } catch { /* The committed job remains durable for the worker. */ }
+  }
+  const workerOwnsReconciliation = Boolean(input.assetChangeOutbox && !work);
+  let index: "ready" | "pending" | "unavailable" = workerOwnsReconciliation ? "pending" : input.retrievalRepository ? "ready" : "unavailable";
+  let reconciliation: "complete" | "pending" = workerOwnsReconciliation ? "pending" : "complete";
+  let managedQueryCacheInvalidatedCount = 0;
+  if (input.retrievalRepository && !workerOwnsReconciliation) {
+    try {
+      const published = await input.registryRepository.getAssetByStableId(input.detail.asset.stableId, {
+        tenantId: input.detail.asset.tenantId, view: "published"
+      });
+      if (published) await input.retrievalRepository.indexAsset(published, { assetChangeWork: work });
+      else {
+        const cleared = await input.retrievalRepository.clearAssetIndex({
+          tenantId: input.detail.asset.tenantId, assetId: input.detail.asset.id,
+          expectedPublishedVersionId: input.detail.asset.publishedVersionId ?? null, assetChangeWork: work
+        });
+        if (!cleared) throw new Error("Asset changed during reconciliation");
+      }
+    } catch {
+      index = "pending";
+      reconciliation = "pending";
+    }
+  }
+  try {
+    managedQueryCacheInvalidatedCount = await invalidateManagedQueryCacheForAssetChange(input.cacheRepository, input.detail.asset.tenantId);
+  } catch { reconciliation = "pending"; }
+  if (input.authRepository && input.principal) {
+    try {
+      await input.authRepository.recordAuditEvent({
+        tenantId: input.detail.asset.tenantId, ...auditActor(input.principal),
+        action: input.action, targetType: "asset", targetId: input.detail.asset.id, outcome: "success",
+        metadata: {
+          stableId: input.detail.asset.stableId, currentVersionId: input.detail.asset.currentVersionId,
+          publishedVersionId: input.detail.asset.publishedVersionId, managedQueryCacheInvalidatedCount,
+          status: input.detail.asset.status, lifecycleState: input.detail.asset.lifecycleState,
+          reviewDueAt: input.detail.asset.reviewDueAt, indexingState: index
+        }
+      });
+    } catch { reconciliation = "pending"; }
+  }
+  if (work && input.assetChangeOutbox) {
+    try {
+      if (reconciliation === "complete") {
+        if (!(await input.assetChangeOutbox.complete(work))) reconciliation = "pending";
+      } else await input.assetChangeOutbox.fail(work, "asset_reconciliation_failed");
+    } catch { reconciliation = "pending"; }
+  }
+  input.reply.header("x-forgetbase-index-state", index);
+  input.reply.header("x-forgetbase-reconciliation", reconciliation);
+  return { index, reconciliation };
+}
+
 async function invalidateManagedQueryCacheForAssetChange(
   repository: ManagedQueryCacheRepository | undefined,
   tenantId: string
@@ -6402,9 +7402,24 @@ async function buildTelemetryAnalyticsSummary(input: {
 }): Promise<TelemetryAnalyticsSummary> {
   const parsed = telemetryAnalyticsInputSchema.parse(input.input);
   const [retrievalEvents, auditEvents, feedbackRecords, assets] = await Promise.all([
-    input.retrievalRepository.listRetrievalEvents({ tenantId: parsed.tenantId, limit: parsed.limit }),
-    input.authRepository.listAuditEvents({ tenantId: parsed.tenantId, limit: parsed.limit }),
-    input.feedbackRepository.listFeedback({ tenantId: parsed.tenantId, limit: parsed.limit }),
+    input.retrievalRepository.listRetrievalEvents({
+      tenantId: parsed.tenantId,
+      since: parsed.since,
+      until: parsed.until,
+      limit: parsed.limit
+    }),
+    input.authRepository.listAuditEvents({
+      tenantId: parsed.tenantId,
+      since: parsed.since,
+      until: parsed.until,
+      limit: parsed.limit
+    }),
+    input.feedbackRepository.listFeedback({
+      tenantId: parsed.tenantId,
+      since: parsed.since,
+      until: parsed.until,
+      limit: parsed.limit
+    }),
     input.registryRepository.listAssets({ tenantId: parsed.tenantId, limit: parsed.limit })
   ]);
   const windowedRetrievalEvents = filterByCreatedAt(retrievalEvents, parsed);
@@ -6414,6 +7429,11 @@ async function buildTelemetryAnalyticsSummary(input: {
   const estimatedCostValues = providerGenerationEvents
     .map((event) => readGenerationUsageNumber(event, "estimatedCostUsd"))
     .filter((value): value is number => value !== null);
+  const humanSearchEvents = windowedRetrievalEvents.filter(isHumanSearchEvent);
+  const pageViewEvents = windowedRetrievalEvents.filter((event) => readRetrievalQueryKind(event) === "asset-view");
+  const assetIdsByStableId = new Map(assets.map((asset) => [asset.stableId, asset.id]));
+  const asOf = toUtcDateOnly(parsed.until ?? new Date().toISOString());
+  const contentHealth = summarizeContentHealth(assets, asOf);
 
   return telemetryAnalyticsSummarySchema.parse({
     tenantId: parsed.tenantId,
@@ -6473,6 +7493,24 @@ async function buildTelemetryAnalyticsSummary(input: {
         readGenerationReason
       )
     },
+    searchQuality: {
+      lowResultThreshold: 2,
+      searchEventCount: humanSearchEvents.length,
+      unansweredSearchCount: humanSearchEvents.filter((event) => event.resultCount === 0).length,
+      lowResultSearchCount: humanSearchEvents.filter((event) => uniquePageCount(event) <= 2).length,
+      topQueries: summarizeTopQueries(humanSearchEvents),
+      mostReturnedPages: summarizePages(humanSearchEvents, assetIdsByStableId)
+    },
+    pageViews: {
+      eventCount: pageViewEvents.length,
+      popularPages: summarizePages(pageViewEvents, assetIdsByStableId)
+    },
+    contentHealth: {
+      ...contentHealth,
+      sampleLimit: parsed.limit,
+      sampleLimitReached: assets.length === parsed.limit
+    },
+    dailyTrends: summarizeDailyTrends(humanSearchEvents, pageViewEvents),
     assets: {
       sampleCount: assets.length,
       byType: countBy(assets, (asset) => asset.type),
@@ -6481,6 +7519,183 @@ async function buildTelemetryAnalyticsSummary(input: {
       bySensitivity: countBy(assets, (asset) => asset.sensitivity)
     }
   });
+}
+
+function isHumanSearchEvent(event: RetrievalEvent): boolean {
+  const queryKind = readRetrievalQueryKind(event);
+
+  return queryKind === "search" || queryKind === "managed-query";
+}
+
+function readMetadataStringArray(event: RetrievalEvent, key: string): string[] {
+  const value = event.metadata[key];
+
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return uniqueStrings(value.filter((item): item is string => typeof item === "string" && item.length > 0));
+}
+
+function readResultStableIds(event: RetrievalEvent): string[] {
+  const values = readMetadataStringArray(event, "resultStableIds");
+
+  if (values.length) {
+    return values;
+  }
+
+  const stableId = readMetadataString(event.metadata.stableId);
+  return stableId ? [stableId] : [];
+}
+
+function uniquePageCount(event: RetrievalEvent): number {
+  const stableIds = readResultStableIds(event);
+
+  return stableIds.length || event.resultCount;
+}
+
+function summarizeTopQueries(events: RetrievalEvent[]) {
+  const summaries = new Map<string, { count: number; resultCount: number; stableIds: Set<string>; legacyPageCount: number }>();
+
+  for (const event of events) {
+    const existing = summaries.get(event.query) ?? {
+      count: 0,
+      resultCount: 0,
+      stableIds: new Set<string>(),
+      legacyPageCount: 0
+    };
+    existing.count += 1;
+    existing.resultCount += event.resultCount;
+    const stableIds = readResultStableIds(event);
+
+    if (stableIds.length) {
+      stableIds.forEach((stableId) => existing.stableIds.add(stableId));
+    } else {
+      existing.legacyPageCount = Math.max(existing.legacyPageCount, event.resultCount);
+    }
+
+    summaries.set(event.query, existing);
+  }
+
+  return Array.from(summaries, ([query, summary]) => ({
+    query,
+    count: summary.count,
+    resultCount: summary.resultCount,
+    uniquePageCount: Math.max(summary.stableIds.size, summary.legacyPageCount)
+  }))
+    .sort((left, right) => right.count - left.count || right.resultCount - left.resultCount || left.query.localeCompare(right.query))
+    .slice(0, 10);
+}
+
+function summarizePages(events: RetrievalEvent[], assetIdsByStableId: Map<string, string>) {
+  const counts = new Map<string, number>();
+
+  for (const event of events) {
+    for (const stableId of readResultStableIds(event)) {
+      counts.set(stableId, (counts.get(stableId) ?? 0) + 1);
+    }
+  }
+
+  return Array.from(counts, ([stableId, count]) => ({
+    stableId,
+    assetId: assetIdsByStableId.get(stableId) ?? null,
+    count
+  }))
+    .sort((left, right) => right.count - left.count || left.stableId.localeCompare(right.stableId))
+    .slice(0, 10);
+}
+
+function summarizeContentHealth(
+  assets: Awaited<ReturnType<RegistryRepository["listAssets"]>>,
+  asOf: string
+) {
+  const dueSoonAt = addUtcDays(asOf, 30);
+  const states = assets.map((asset) => {
+    if (asset.lifecycleState !== "active" || asset.status !== "approved") {
+      return "needs-review";
+    }
+
+    if (asset.reviewDueAt <= asOf) {
+      return "overdue";
+    }
+
+    return asset.reviewDueAt <= dueSoonAt ? "due-soon" : "fresh";
+  });
+
+  return {
+    asOf,
+    dueSoonDays: 30,
+    totalCount: assets.length,
+    freshCount: states.filter((state) => state === "fresh").length,
+    dueSoonCount: states.filter((state) => state === "due-soon").length,
+    overdueCount: states.filter((state) => state === "overdue").length,
+    needsReviewCount: states.filter((state) => state === "needs-review").length,
+    byReviewState: countBy(states, (state) => state)
+  } as const;
+}
+
+function summarizeDailyTrends(humanSearchEvents: RetrievalEvent[], pageViewEvents: RetrievalEvent[]) {
+  const buckets = new Map<string, {
+    searchCount: number;
+    unansweredSearchCount: number;
+    lowResultSearchCount: number;
+    pageViewCount: number;
+    stableIds: Set<string>;
+  }>();
+  const bucketFor = (date: string) => {
+    const existing = buckets.get(date);
+
+    if (existing) {
+      return existing;
+    }
+
+    const created = {
+      searchCount: 0,
+      unansweredSearchCount: 0,
+      lowResultSearchCount: 0,
+      pageViewCount: 0,
+      stableIds: new Set<string>()
+    };
+    buckets.set(date, created);
+    return created;
+  };
+
+  for (const event of humanSearchEvents) {
+    const bucket = bucketFor(toUtcDateOnly(event.createdAt));
+    bucket.searchCount += 1;
+    bucket.unansweredSearchCount += event.resultCount === 0 ? 1 : 0;
+    bucket.lowResultSearchCount += uniquePageCount(event) <= 2 ? 1 : 0;
+    readResultStableIds(event).forEach((stableId) => bucket.stableIds.add(stableId));
+  }
+
+  for (const event of pageViewEvents) {
+    const bucket = bucketFor(toUtcDateOnly(event.createdAt));
+    bucket.pageViewCount += 1;
+    readResultStableIds(event).forEach((stableId) => bucket.stableIds.add(stableId));
+  }
+
+  return Array.from(buckets, ([date, bucket]) => ({
+    date,
+    searchCount: bucket.searchCount,
+    unansweredSearchCount: bucket.unansweredSearchCount,
+    lowResultSearchCount: bucket.lowResultSearchCount,
+    pageViewCount: bucket.pageViewCount,
+    uniquePageCount: bucket.stableIds.size
+  })).sort((left, right) => left.date.localeCompare(right.date));
+}
+
+function toUtcDateOnly(value: string): string {
+  return new Date(value).toISOString().slice(0, 10);
+}
+
+function addUtcDays(date: string, days: number): string {
+  const value = new Date(`${date}T00:00:00.000Z`);
+  value.setUTCDate(value.getUTCDate() + days);
+  return value.toISOString().slice(0, 10);
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return Array.from(new Set(values)).sort();
 }
 
 function filterByCreatedAt<T extends { createdAt: string }>(
@@ -6624,6 +7839,29 @@ function auditActor(principal: AuthPrincipal | null | undefined) {
     actorServiceAccountId: principal?.serviceAccountId ?? undefined,
     actorApiKeyId: principal?.apiKeyId ?? undefined
   };
+}
+
+function attachmentContentDisposition(filename: string): string {
+  const fallback = filename
+    .replace(/[^\x20-\x7e]/g, "_")
+    .replace(/["\\\r\n]/g, "_")
+    .trim() || "attachment";
+  const encoded = encodeURIComponent(filename).replace(/[!'()*]/g, (character) =>
+    `%${character.charCodeAt(0).toString(16).toUpperCase()}`
+  );
+  return `attachment; filename="${fallback}"; filename*=UTF-8''${encoded}`;
+}
+
+function decodeAttachmentFilenameHeader(value: string | string[] | undefined): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return undefined;
+  }
 }
 
 function hasSecretLikeMetadataKey(value: unknown): boolean {
@@ -6786,6 +8024,7 @@ async function postModelJson(
     method: "POST",
     headers,
     body: JSON.stringify(body),
+    redirect: "error",
     signal: AbortSignal.timeout(timeoutMs)
   });
 
@@ -6912,24 +8151,37 @@ function isObjectRecord(value: unknown): value is Record<string, unknown> {
 
 const defaultOidcRuntime: OidcRuntime = {
   async discover(config) {
+    const issuer = assertOidcEndpoint(config.issuerUrl, true);
+    if (issuer.search) {
+      throw new OidcLoginError("oidc_discovery_invalid", 502, "OIDC issuer must not contain a query.");
+    }
     const discoveryUrl = `${config.issuerUrl.replace(/\/$/, "")}/.well-known/openid-configuration`;
     const response = await fetch(discoveryUrl, {
       headers: {
         accept: "application/json"
-      }
+      },
+      redirect: "error",
+      signal: AbortSignal.timeout(10_000)
     });
 
     if (!response.ok) {
       throw new OidcLoginError("oidc_discovery_failed", 502, `OIDC discovery failed with HTTP ${response.status}.`);
     }
 
-    const document = await response.json() as Record<string, unknown>;
-    return {
+    const document = await readOidcJson(response);
+    const discovery = {
       issuer: readRequiredDiscoveryField(document, "issuer"),
       authorizationEndpoint: readRequiredDiscoveryField(document, "authorization_endpoint"),
       tokenEndpoint: readRequiredDiscoveryField(document, "token_endpoint"),
       jwksUri: readRequiredDiscoveryField(document, "jwks_uri")
     };
+    if (discovery.issuer !== config.issuerUrl) {
+      throw new OidcLoginError("oidc_issuer_mismatch", 502, "OIDC discovery issuer does not match the configured issuer.");
+    }
+    for (const endpoint of [discovery.authorizationEndpoint, discovery.tokenEndpoint, discovery.jwksUri]) {
+      assertOidcEndpoint(endpoint, issuer.protocol === "http:");
+    }
+    return discovery;
   },
 
   async exchangeCode({ config, discovery, code, redirectUri, codeVerifier }) {
@@ -6960,13 +8212,16 @@ const defaultOidcRuntime: OidcRuntime = {
         accept: "application/json",
         "content-type": "application/x-www-form-urlencoded"
       },
-      body
+      body,
+      redirect: "error",
+      signal: AbortSignal.timeout(10_000)
     });
-    const tokenBody = await response.json().catch(() => ({})) as Record<string, unknown>;
 
     if (!response.ok) {
+      await response.body?.cancel();
       throw new OidcLoginError("oidc_token_exchange_failed", 401, "OIDC token exchange failed.");
     }
+    const tokenBody = await readOidcJson(response);
 
     const idToken = tokenBody.id_token;
 
@@ -6979,15 +8234,63 @@ const defaultOidcRuntime: OidcRuntime = {
 
   async verifyIdToken({ config, discovery, idToken }) {
     const jwks = createRemoteJWKSet(new URL(discovery.jwksUri));
-    const { payload } = await jwtVerify(idToken, jwks, {
-      issuer: discovery.issuer,
-      audience: config.clientId,
-      algorithms: OIDC_JWT_ALGORITHMS
-    });
-
-    return payload;
+    try {
+      const { payload } = await jwtVerify(idToken, jwks, {
+        issuer: config.issuerUrl,
+        audience: config.clientId,
+        algorithms: OIDC_JWT_ALGORITHMS,
+        requiredClaims: ["sub", "iat", "exp", "nonce"]
+      });
+      return payload;
+    } catch (error) {
+      if (error instanceof joseErrors.JOSEError) {
+        throw new OidcLoginError("oidc_id_token_invalid", 401, "OIDC ID token validation failed.");
+      }
+      throw error;
+    }
   }
 };
+
+function assertOidcEndpoint(value: string, allowLocalHttp: boolean): URL {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new OidcLoginError("oidc_discovery_invalid", 502, "OIDC endpoint must be an absolute URL.");
+  }
+  const localHttp = allowLocalHttp && url.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
+  if ((url.protocol !== "https:" && !localHttp) || url.username || url.password || url.hash) {
+    throw new OidcLoginError("oidc_discovery_invalid", 502, "OIDC endpoints require HTTPS without credentials or fragments; local HTTP is limited to loopback development issuers.");
+  }
+  return url;
+}
+
+async function readOidcJson(response: Response): Promise<Record<string, unknown>> {
+  const reader = response.body?.getReader();
+  if (!reader) throw new OidcLoginError("oidc_response_invalid", 502, "OIDC response is empty.");
+  const chunks: Uint8Array[] = [];
+  let bytes = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      bytes += value.byteLength;
+      if (bytes > 1024 * 1024) {
+        await reader.cancel();
+        throw new OidcLoginError("oidc_response_invalid", 502, "OIDC response exceeds the byte limit.");
+      }
+      chunks.push(value);
+    }
+    const body: unknown = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    if (!isObjectRecord(body)) throw new Error("Invalid OIDC document");
+    return body;
+  } catch (error) {
+    if (error instanceof OidcLoginError) throw error;
+    throw new OidcLoginError("oidc_response_invalid", 502, "OIDC response is invalid.");
+  } finally {
+    reader.releaseLock();
+  }
+}
 
 async function findEnabledAuthProviderConfig(
   repository: AuthProviderConfigRepository,
@@ -7333,6 +8636,10 @@ async function authenticateOptionalRequest(
   const authenticatedRequest = await authenticate(request, authRepository, loginSessionIdleTimeoutSeconds);
 
   if (!authenticatedRequest) {
+    if (request.headers.authorization !== undefined || readSessionCookieToken(request) !== undefined) {
+      reply.code(401).send({ error: "authentication_required" });
+      return undefined;
+    }
     return null;
   }
 
@@ -7816,6 +9123,14 @@ function readIntegerEnv(name: string): number | undefined {
   }
 
   return Number.parseInt(value.trim(), 10);
+}
+
+function readRateLimitOption(configured: number | undefined, name: string, fallback: number, maximum: number): number {
+  const value = readPositiveIntegerOption(configured, process.env[name], fallback, name);
+  if (!Number.isSafeInteger(value) || value > maximum) {
+    throw new Error(`${name} must be an integer between 1 and ${maximum}.`);
+  }
+  return value;
 }
 
 function readPositiveIntegerOption(

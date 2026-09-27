@@ -1,3 +1,5 @@
+import type { AuthPrincipal } from "@forgetbase/schema";
+
 const pageRouteValues = [
   "reader",
   "account-settings",
@@ -80,13 +82,93 @@ export function isAdminRoute(route: AppRoute): boolean {
   return !isReaderRoute(route);
 }
 
-export function canUseAdministration(principal: Pick<AuthPrincipal, "role" | "scopes">): boolean {
-  const hasAdminScope = principal.scopes.includes("admin");
-  const canWriteAssets = (principal.role === "admin" || principal.role === "maintainer") &&
-    (hasAdminScope || principal.scopes.includes("asset:write"));
-  const canManagePermissions = principal.role === "admin" &&
-    (hasAdminScope || principal.scopes.includes("permission:write"));
+export type AppAccessPrincipal = Pick<AuthPrincipal, "role" | "scopes" | "allowedSurfaces">;
 
-  return canWriteAssets || canManagePermissions;
+export interface AppCapabilities {
+  administration: boolean;
+  readAssets: boolean;
+  createAssets: boolean;
+  previewAssets: boolean;
+  editAssets: boolean;
+  reviewAssets: boolean;
+  publishAssets: boolean;
+  restoreAssets: boolean;
+  managePageGrants: boolean;
+  exportAssets: boolean;
+  exportPrivateAssets: boolean;
+  manageSystem: boolean;
 }
-import type { AuthPrincipal } from "@forgetbase/schema";
+
+/**
+ * Describes which tasks the browser can offer. Asset grants, tenant boundaries,
+ * publication requirements, and asset surface bindings remain API decisions.
+ */
+export function getAppCapabilities(principal: AppAccessPrincipal | null | undefined): AppCapabilities {
+  const webAllowed = Boolean(principal?.allowedSurfaces.includes("web"));
+  const hasAdminScope = Boolean(principal?.scopes.includes("admin"));
+  const writerRole = principal?.role === "admin" || principal?.role === "maintainer";
+  const readAssets = webAllowed && (hasAdminScope || Boolean(principal?.scopes.includes("asset:read")));
+  const createAssets = webAllowed && writerRole &&
+    (hasAdminScope || Boolean(principal?.scopes.includes("asset:write")));
+  // Preview and existing-page commands return content, so the API needs both scopes.
+  const previewAssets = createAssets && readAssets;
+  const managePageGrants = webAllowed && principal?.role === "admin" &&
+    (hasAdminScope || principal.scopes.includes("permission:write"));
+  const manageSystem = webAllowed && principal?.role === "admin" && hasAdminScope;
+  // Public-demo packages are available without an admin scope. Private assets
+  // require that scope; the API still checks each asset's export permission.
+  const exportAssets = webAllowed && Boolean(principal?.allowedSurfaces.includes("export"));
+
+  return {
+    administration: createAssets || managePageGrants || manageSystem,
+    readAssets,
+    createAssets,
+    previewAssets,
+    editAssets: previewAssets,
+    reviewAssets: previewAssets,
+    publishAssets: previewAssets,
+    restoreAssets: previewAssets,
+    managePageGrants,
+    exportAssets,
+    exportPrivateAssets: exportAssets && hasAdminScope,
+    manageSystem
+  };
+}
+
+const administrationRouteCapabilities: Record<Exclude<AppRoute, "reader" | "account-settings">, readonly (keyof AppCapabilities)[]> = {
+  library: ["createAssets", "previewAssets"],
+  search: ["readAssets"],
+  "asset-read": ["previewAssets", "managePageGrants"],
+  review: ["reviewAssets"],
+  versions: ["previewAssets"],
+  distribute: ["exportAssets"],
+  activity: ["manageSystem"],
+  health: ["manageSystem"],
+  integrations: ["manageSystem"],
+  settings: ["manageSystem"],
+  policies: ["manageSystem"],
+  access: ["manageSystem"],
+  approvals: ["manageSystem"]
+};
+
+export function canAccessAppRoute(principal: AppAccessPrincipal | null | undefined, route: string): boolean {
+  const normalizedRoute = normalizeAppRoute(route);
+  if (isReaderRoute(normalizedRoute)) {
+    return Boolean(principal?.allowedSurfaces.includes("web"));
+  }
+  const capabilities = getAppCapabilities(principal);
+  return capabilities.administration && administrationRouteCapabilities[normalizedRoute as Exclude<AppRoute, "reader" | "account-settings">]
+    .some((capability) => capabilities[capability]);
+}
+
+export function firstPermittedAdministrationRoute(principal: AppAccessPrincipal | null | undefined): AppRoute | null {
+  return pageRouteValues.find((route) => isAdminRoute(route) && canAccessAppRoute(principal, route)) ?? null;
+}
+
+export function canUseAdministration(
+  principal: Pick<AuthPrincipal, "role" | "scopes"> & Partial<Pick<AuthPrincipal, "allowedSurfaces">>
+): boolean {
+  // Preserve the existing role/scope-only helper contract. Application callers
+  // pass the full principal so a browser-disabled key cannot enter Admin.
+  return getAppCapabilities({ ...principal, allowedSurfaces: principal.allowedSurfaces ?? ["web", "export"] }).administration;
+}

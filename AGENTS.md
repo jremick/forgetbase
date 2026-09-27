@@ -13,7 +13,7 @@ The product manages AI instructions, policies, guardrails, playbooks, tool guida
 
 - Keep changes surgical and traceable to the current implementation lane.
 - Keep the governed core agent-native while treating the reader UI as a first-class product surface and the admin UI as a separate operational surface.
-- Keep the repository private during controlled live UAT. Do not change visibility, create a release, push a new tag, or announce public beta without explicit owner approval.
+- Use isolated synthetic content for controlled live UAT. Test execution does not authorize a deployment, repository visibility change, release, tag or announcement; those actions require explicit owner approval.
 - Keep public examples synthetic and reusable.
 
 ## Public Content Boundary

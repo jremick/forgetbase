@@ -1,11 +1,11 @@
 # Public Beta Goal
 
-Status: active implementation target
-Date: 2026-06-29
+Status: public self-hosted trial target
+Date: 2026-09-05
 
 ## Current Phase
 
-The repository remains private while the candidate is hardened and tested on a controlled live instance. This phase follows [Private Live UAT](PRIVATE_LIVE_UAT.md). It does not authorize changing repository visibility, creating a release, pushing a new tag, or announcing public beta.
+The beta.3 baseline completed its private operational gates. Public promotion follows [Publication](PUBLICATION.md) and the [release runbook](runbooks/PUBLIC_BETA_RELEASE.md). Controlled live testing still follows [Private Live UAT](PRIVATE_LIVE_UAT.md); passing tests alone does not authorize publication.
 
 ## Goal
 
@@ -27,7 +27,7 @@ Write and organize company knowledge once. People can read it. AI tools can use 
 ## Required User Experience
 
 - The reading UI is the default product experience.
-- Pages are comfortable enough to replace a basic Confluence-style company knowledge base.
+- Pages are comfortable enough to serve as a basic company knowledge base.
 - The admin console is separate from reading.
 - Regular readers do not see admin-only actions.
 - The UI uses plain words: Pages, Search, Ask, Sources, Review, Publish, Access, Admin, Exports, Settings.
