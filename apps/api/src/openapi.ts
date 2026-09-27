@@ -331,10 +331,12 @@ export function buildOpenApiDocument() {
       "/assets/review-queue": {
         get: {
           summary: "List governed assets needing review",
+          description: "Includes approved drafts awaiting publication. The response includes totalCount and nextOffset after permission filtering. Continue with the returned offset and the same asOf value; refresh from offset zero after a review or publication changes the queue.",
           parameters: [
             queryParameter("asOf", false),
             queryParameter("includeApproved", false),
-            queryParameter("limit", false)
+            queryParameter("limit", false),
+            queryParameter("offset", false)
           ],
           responses: {
             "200": jsonResponse("Assets needing review"),

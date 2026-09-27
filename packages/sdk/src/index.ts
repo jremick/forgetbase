@@ -304,6 +304,7 @@ export class ForgetBaseClient {
 
     params.set("includeApproved", String(parsed.includeApproved));
     params.set("limit", String(parsed.limit));
+    params.set("offset", String(parsed.offset));
 
     return this.request(`/assets/review-queue?${params.toString()}`, assetReviewQueueResponseSchema);
   }

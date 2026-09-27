@@ -2246,12 +2246,13 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
       return reply.code(403).send({ error: "access_denied" });
     }
 
-    const query = request.query as { asOf?: string; includeApproved?: string; limit?: string };
+    const query = request.query as { asOf?: string; includeApproved?: string; limit?: string; offset?: string };
     const parsed = assetReviewQueueInputSchema.safeParse({
       tenantId: principal?.tenantId,
       asOf: query.asOf,
       includeApproved: query.includeApproved === "true",
-      limit: query.limit ? Number.parseInt(query.limit, 10) : undefined
+      limit: query.limit === undefined ? undefined : Number(query.limit),
+      offset: query.offset === undefined ? undefined : Number(query.offset)
     });
 
     if (!parsed.success) {
@@ -2262,12 +2263,15 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
     const assets = await readAllAccessibleAssets({
       registryRepository, authRepository, principal, surface: readSurface(request, principal), view: "current"
     });
+    const queue = assets.filter((asset) => parsed.data.includeApproved || asset.lifecycleState !== "active" ||
+        asset.status !== "approved" || asset.reviewDueAt <= asOf)
+        .sort((a, b) => a.reviewDueAt.localeCompare(b.reviewDueAt) || a.stableId.localeCompare(b.stableId));
+    const end = parsed.data.offset + parsed.data.limit;
     return assetReviewQueueResponseSchema.parse({
       asOf, includeApproved: parsed.data.includeApproved,
-      assets: assets.filter((asset) => parsed.data.includeApproved || asset.lifecycleState !== "active" ||
-        asset.status !== "approved" || asset.reviewDueAt <= asOf)
-        .sort((a, b) => a.reviewDueAt.localeCompare(b.reviewDueAt) || a.stableId.localeCompare(b.stableId))
-        .slice(0, parsed.data.limit)
+      assets: queue.slice(parsed.data.offset, end),
+      totalCount: queue.length,
+      nextOffset: end < queue.length ? end : null
     });
   });
 

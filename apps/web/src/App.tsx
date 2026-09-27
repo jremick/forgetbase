@@ -1,13 +1,13 @@
 import type { ApiKeyRecord, AuthLoginResponse, AuthOidcLoginResponse, AuthPrincipal } from "@forgetbase/schema";
-import { Component, lazy, Suspense, useEffect, useMemo, useRef, useState, type ErrorInfo, type FormEvent, type ReactNode } from "react";
+import { Component, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ErrorInfo, type FormEvent, type ReactNode } from "react";
 import { Alert, AlertDescription, AlertTitle } from "./components/ui/alert.js";
 import { Button } from "./components/ui/button.js";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./components/ui/card.js";
 import { Input } from "./components/ui/input.js";
 import { Label } from "./components/ui/label.js";
 import { createAppBinaryRequest, createAppRequest, shouldProbeAuthenticatedSession } from "./lib/app-api.js";
+import { canAccessAppRoute, canUseAdministration, firstPermittedAdministrationRoute, isAdminRoute, isReaderRoute, normalizeAppRoute, type AppRoute } from "./lib/app-routing.js";
 import { useBrowserApiKey } from "./lib/browser-auth.js";
-import { canUseAdministration, canonicalAppHash, isAdminRoute, isReaderRoute, normalizeAppRoute, type AppRoute } from "./lib/app-routing.js";
 import {
   apiUrlStorageKey,
   localDevLoginDefaults,
@@ -19,6 +19,7 @@ import {
   readInitialLoginTenantId
 } from "./local-dev-auth.js";
 import { ReaderSurface } from "./ReaderSurface.js";
+import { appLocation, createAppNavigation, type NavigationBlocker } from "./lib/app-navigation.js";
 import "./styles.css";
 
 const LazyAdminSurface = lazy(() => import("./AdminSurface.js").then((module) => ({ default: module.AdminSurface })));
@@ -91,6 +92,10 @@ export function App() {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [route, setRoute] = useState<AppRoute>(() => normalizeAppRoute(window.location.hash));
+  const [locationKey, setLocationKey] = useState(() => `${window.location.pathname}${window.location.search}${window.location.hash}`);
+  const navigationRef = useRef<ReturnType<typeof createAppNavigation> | null>(null);
+  const navigationBlockerRef = useRef<NavigationBlocker | null>(null);
+  const registerNavigationBlocker = useCallback((blocker: NavigationBlocker | null) => { navigationBlockerRef.current = blocker; }, []);
   const apiUrlRef = useRef(apiUrl);
   const apiKeyRef = useRef(apiKey);
 
@@ -115,16 +120,12 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    const syncRoute = () => {
-      const rawRoute = window.location.hash.replace(/^#/, "");
-      const nextRoute = normalizeAppRoute(rawRoute);
-      const canonicalHash = canonicalAppHash(nextRoute);
-      setRoute(nextRoute);
-      if (rawRoute && rawRoute !== canonicalHash) window.history.replaceState({}, document.title, `${window.location.pathname}${window.location.search}#${canonicalHash}`);
-    };
-    syncRoute();
-    window.addEventListener("hashchange", syncRoute);
-    return () => window.removeEventListener("hashchange", syncRoute);
+    const navigation = createAppNavigation((location) => {
+      setLocationKey(location);
+      setRoute(normalizeAppRoute(window.location.hash));
+    }, () => navigationBlockerRef.current);
+    navigationRef.current = navigation;
+    return () => { navigation.dispose(); navigationRef.current = null; };
   }, []);
 
   useEffect(() => {
@@ -155,14 +156,6 @@ export function App() {
       });
     return () => { active = false; };
   }, [request]);
-
-  useEffect(() => {
-    if (!principal) return;
-    if (isAdminRoute(route) && !administrator) {
-      setRoute("reader");
-      window.history.replaceState({}, document.title, `${window.location.pathname}${window.location.search}#reader`);
-    }
-  }, [administrator, principal, route]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -255,24 +248,32 @@ export function App() {
     }
   }
 
-  function navigate(nextRoute: string): void {
-    window.location.hash = canonicalAppHash(nextRoute);
+  function navigate(nextRoute: string, pageId?: string, view?: string): void {
+    if (nextRoute === "admin") nextRoute = firstPermittedAdministrationRoute(principal) ?? "reader";
+    navigationRef.current?.navigate(appLocation(nextRoute, pageId, view));
   }
 
   if (authState === "authenticated" && principal) {
+    if (isAdminRoute(route) && !canAccessAppRoute(principal, route)) {
+      return <div className="app-shell auth-shell"><main id="main" tabIndex={-1} className="public-entry-main">
+        <Card><CardHeader><CardTitle><h1>This area is unavailable for your account</h1></CardTitle><CardDescription>Your current role or access scopes do not allow this task.</CardDescription></CardHeader>
+          <CardContent><Button onClick={() => navigate("reader")}>Back to pages</Button>{administrator ? <Button onClick={() => navigate("admin")}>Open administration</Button> : null}</CardContent>
+        </Card>
+      </main></div>;
+    }
     if (isReaderRoute(route)) {
       return <ReaderSurface principal={principal} route={route as Extract<AppRoute, "reader" | "account-settings">} request={request} requestBinary={requestBinary} onLogout={logout} onNavigate={navigate} canUseAdministration={administrator} />;
     }
 
     if (administrator) {
-      return <LazyBoundary><Suspense fallback={<div className="app-shell admin-shell"><main className="main" id="main"><Alert variant="info"><AlertDescription>Loading administration…</AlertDescription></Alert></main></div>}><LazyAdminSurface onSessionEnded={clearSession} /></Suspense></LazyBoundary>;
+      return <LazyBoundary><Suspense fallback={<div className="app-shell admin-shell"><main className="main" id="main"><Alert variant="info"><AlertDescription>Loading administration…</AlertDescription></Alert></main></div>}><LazyAdminSurface onSessionEnded={clearSession} locationKey={locationKey} onNavigate={navigate} registerNavigationBlocker={registerNavigationBlocker} /></Suspense></LazyBoundary>;
     }
   }
 
   return <div className="app-shell auth-shell">
-    <a className="skip-link" href="#main">Skip to content</a>
+    <a className="skip-link" href="#main" onClick={(event) => { event.preventDefault(); document.getElementById("main")?.focus(); }}>Skip to content</a>
     <header className="topbar"><div className="brand"><span className="mark" aria-hidden="true"><img className="mark-image" src="/favicon.svg" alt="" /></span><span className="brand-name">ForgetBase</span></div><div className="topbar-main public-topbar-main"><span aria-hidden="true" /></div></header>
-    <main className="public-entry-main login-entry-main" id="main">
+    <main className="public-entry-main login-entry-main" id="main" tabIndex={-1}>
       <Card className="login-panel" aria-labelledby="login-title">
         <CardHeader className="login-dialog-header"><span className="mark login-mark" aria-hidden="true"><img className="mark-image" src="/favicon.svg" alt="" /></span><div><CardDescription className="eyebrow">ForgetBase</CardDescription><CardTitle><h1 id="login-title">Log in to ForgetBase</h1></CardTitle><CardDescription id="login-description" className="lede">Use your account to read pages or manage the knowledge base.</CardDescription></div></CardHeader>
         <CardContent className="login-panel-content">

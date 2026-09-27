@@ -37,6 +37,11 @@ Every Railway application build requires the manifest's three `buildVariables`:
 - `FORGETBASE_SOURCE_DATE_EPOCH`: source commit time in seconds.
 - `FORGETBASE_RELEASE_VERSION`: immutable release version.
 
+For the rich editor, also set `VITE_ENABLE_RICH_EDITOR=true` on `web` and
+`proxy` before building. Both Dockerfiles accept this build argument. It defaults
+to `false`; rebuilding with that value restores textarea authoring without a
+data migration. CI builds with the editor enabled and enforces its bundle caps.
+
 Set these on `api`, `worker`, `web` and `proxy` with `--skip-deploys`, then deploy
 the same extracted archive. The Dockerfiles pin the Node and NGINX base images by
 digest and install the frozen pnpm lockfile. Each build embeds the same source,

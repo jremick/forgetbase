@@ -24,6 +24,15 @@ export type AssetAuthoringFormState = {
 export type AssetAuthoringField = keyof AssetAuthoringFormState;
 export type AssetAuthoringErrors = Partial<Record<AssetAuthoringField, string>>;
 
+export function suggestedPageId(title: string): string {
+  return title.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+}
+
+export function hasUnsavedPageChanges(form: AssetAuthoringFormState, initial: AssetAuthoringFormState | null): boolean {
+  return initial !== null && (Object.keys(form) as AssetAuthoringField[]).some((field) => form[field] !== initial[field]);
+}
+
 const stableIdPattern = /^[a-z0-9]+(?:[._-][a-z0-9]+)*$/;
 const dateOnlyPattern = /^\d{4}-\d{2}-\d{2}$/;
 

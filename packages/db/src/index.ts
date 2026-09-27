@@ -241,27 +241,38 @@ export class PostgresRegistryRepository implements RegistryRepository {
     const asOf = parsed.asOf ?? todayDateOnly();
     const includeApproved = parsed.includeApproved ?? false;
     const limit = parsed.limit ?? 50;
-    const result = await this.pool.query<AssetRow>(
+    const result = await this.pool.query<AssetRow & { total_count: number }>(
       `
-        SELECT *
-        FROM assets
-        WHERE tenant_id = $1
-          AND (
-            $3::boolean = true
-            OR lifecycle_state <> 'active'
-            OR status <> 'approved'
-            OR review_due_at <= $2::date
-          )
-        ORDER BY review_due_at ASC, updated_at DESC, stable_id ASC
-        LIMIT $4
+        WITH eligible_assets AS (
+          SELECT * FROM assets
+          WHERE tenant_id = $1
+            AND (
+              $3::boolean = true
+              OR lifecycle_state <> 'active'
+              OR status <> 'approved'
+              OR review_due_at <= $2::date
+            )
+        )
+        SELECT page.*, totals.total_count
+        FROM (SELECT count(*)::int AS total_count FROM eligible_assets) totals
+        LEFT JOIN LATERAL (
+          SELECT * FROM eligible_assets
+          ORDER BY review_due_at ASC, stable_id ASC
+          LIMIT $4 OFFSET $5
+        ) page ON true
+        ORDER BY page.review_due_at ASC, page.stable_id ASC
       `,
-      [parsed.tenantId, asOf, includeApproved, limit]
+      [parsed.tenantId, asOf, includeApproved, limit, parsed.offset]
     );
+    const totalCount = result.rows[0]?.total_count ?? 0;
+    const nextOffset = parsed.offset + limit;
 
     return assetReviewQueueResponseSchema.parse({
       asOf,
       includeApproved,
-      assets: result.rows.map(mapAssetRow)
+      assets: result.rows.filter((row) => row.stable_id !== null).map(mapAssetRow),
+      totalCount,
+      nextOffset: nextOffset < totalCount ? nextOffset : null
     });
   }
 
@@ -736,15 +747,16 @@ export class InMemoryRegistryRepository implements RegistryRepository {
       )
       .sort((left, right) =>
         left.reviewDueAt.localeCompare(right.reviewDueAt) ||
-        right.updatedAt.localeCompare(left.updatedAt) ||
         left.stableId.localeCompare(right.stableId)
-      )
-      .slice(0, limit);
+      );
+    const nextOffset = parsed.offset + limit;
 
     return assetReviewQueueResponseSchema.parse({
       asOf,
       includeApproved,
-      assets
+      assets: assets.slice(parsed.offset, nextOffset),
+      totalCount: assets.length,
+      nextOffset: nextOffset < assets.length ? nextOffset : null
     });
   }
 
