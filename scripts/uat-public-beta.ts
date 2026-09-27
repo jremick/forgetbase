@@ -312,12 +312,11 @@ async function checkReleaseFlow(page: Page, viewportName: "desktop" | "mobile"):
   if (expectedRole === "reader") {
     await assertReaderHasNoAdminControls(page, `release ${viewportName}: reader has no admin controls`);
     await page.goto(routeUrl(page, "admin/system/settings"), { waitUntil: "domcontentloaded" });
+    await expectVisibleText(page, "This area is unavailable for your account", `release ${viewportName}: reader direct admin route denied`);
+    await assertReaderHasNoAdminControls(page, `release ${viewportName}: denied route exposes no admin controls`);
+    await page.getByRole("button", { name: "Back to pages", exact: true }).click();
     await page.waitForSelector(".reader-article", { timeout: 10000 });
-    const hash = await page.evaluate(() => window.location.hash);
-    if (hash !== "#reader") {
-      throw new Error(`Reader direct admin route was not forced back to #reader; got ${hash}`);
-    }
-    checks.push({ name: `release ${viewportName}: reader direct admin route forced back`, status: "pass", detail: hash });
+    await expectHash(page, "#reader", `release ${viewportName}: denied route returns to reader`);
     return;
   }
 
@@ -360,6 +359,7 @@ async function checkAdminPageAuthoring(page: Page): Promise<void> {
   const createdTitle = "Browser Authoring UAT Guide";
   const updatedTitle = "Browser Authoring UAT Guide Updated";
 
+  await page.goto(routeUrl(page, "admin/content"), { waitUntil: "domcontentloaded" });
   await page.getByRole("button", { name: "New page", exact: true }).click();
   await expectVisibleText(page, "Create page", "release: authoring create form opened");
   await page.locator("#authoring-settings > summary").click();
