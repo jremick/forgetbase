@@ -81,6 +81,12 @@ try {
   await waitForUrl(`${apiUrl}/ready`, 120_000);
   await waitForUrl(webUrl, 120_000);
 
+  run("record host Node version", process.execPath, ["--version"]);
+  for (const service of ["api", "worker", "web"]) {
+    run(`record ${service} Node version`, "docker", ["compose", ...composeFiles, "exec", "-T", service, "node", "--version"], composeEnv);
+  }
+  run("record proxy Nginx version", "docker", ["compose", ...composeFiles, "exec", "-T", "proxy", "nginx", "-v"], composeEnv);
+
   run(
     "run Postgres-backed repository tests",
     "npx",

@@ -21,20 +21,20 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - name: Set up pnpm
-        uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
         with:
           version: 11.7.0
           run_install: false
 
       - name: Set up Node.js
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "22"
+          node-version: "26.10.0"
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
 
@@ -43,6 +43,38 @@ jobs:
 
       - name: Install Playwright Chromium
         run: pnpm exec playwright install --with-deps chromium
+
+      - name: Build deployment images and record runtime versions
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/deployment-image-proof"
+          source_epoch="$(git show -s --format=%ct HEAD)"
+          for service in api worker web proxy; do
+            image="forgetbase-proof-${GITHUB_RUN_ID}-${service}"
+            docker build --progress=plain \
+              --file "infra/docker/railway-${service}.Dockerfile" \
+              --build-arg "FORGETBASE_SOURCE_REVISION=${GITHUB_SHA}" \
+              --build-arg "FORGETBASE_SOURCE_DATE_EPOCH=${source_epoch}" \
+              --build-arg "FORGETBASE_RELEASE_VERSION=0.0.0-proof" \
+              --build-arg "VITE_ENABLE_RICH_EDITOR=true" \
+              --tag "$image" . 2>&1 | tee "${RUNNER_TEMP}/deployment-image-proof/${service}-build.log"
+            if [ "$service" = proxy ]; then
+              docker run --rm --entrypoint nginx "$image" -v 2>&1 | tee "${RUNNER_TEMP}/deployment-image-proof/${service}-runtime.txt"
+            else
+              docker run --rm --entrypoint node "$image" --version | tee "${RUNNER_TEMP}/deployment-image-proof/${service}-runtime.txt"
+            fi
+            docker image rm "$image"
+          done
+
+      - name: Upload deployment image evidence
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: deployment-image-proof-${{ github.run_id }}
+          path: ${{ runner.temp }}/deployment-image-proof
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
 
       - name: Run private live isolated proof
         run: pnpm private-live:isolated-proof

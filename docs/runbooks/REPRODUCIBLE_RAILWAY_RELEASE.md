@@ -12,7 +12,7 @@ deployment IDs, approved origin, release version, source commit, CI results and
 recovery manifest in the private operator record. Do not copy credentials or raw
 production data into Git or release assets.
 
-Use Node 22.23.2 and pnpm 11.7.0. Required checks are the frozen install,
+Use Node 26.10.0 and pnpm 11.7.0 for current `main`. For older release tags, use the runtime pinned in that tag. Required checks are the frozen install,
 production dependency audit, typecheck, build, PostgreSQL tests, deployment
 defaults, contracts and rendered authenticated reader/admin UAT. CI must be green
 for the commit being released. The isolated Compose proof also verifies paired

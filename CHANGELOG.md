@@ -4,6 +4,8 @@ Published tags are immutable. Beta releases support self-hosted trials with synt
 
 ## Unreleased
 
+- Move current development, CI and container builds to Node.js 26.10.0, update Nginx to 1.31.0, and refresh the pinned checkout, setup-node and pnpm Actions.
+
 - Add a searchable, sortable content library and source-preserving rich Markdown editing with a separate Source mode for unsupported syntax.
 - Use the shared Markdown renderer for reader pages, content details, and authoring previews.
 - Restore canonical navigation URLs and exercise the governed Versions tab in release browser checks.
