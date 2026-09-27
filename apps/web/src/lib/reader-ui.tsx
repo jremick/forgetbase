@@ -93,18 +93,7 @@ function readerHeadingId(text: string, index: number): string {
 }
 
 export function extractReaderSectionHeadings(body: string, title: string): ReaderSectionHeading[] {
-  const lines = body.split(/\r?\n/);
-  const headings: ReaderSectionHeading[] = [];
-
-  for (const line of lines) {
-    const match = /^(#{1,3})\s+(.+)$/.exec(line.trim());
-    if (!match) continue;
-    const text = normalizeHeadingText(match[2] ?? "");
-    if (!text || text.toLowerCase() === title.trim().toLowerCase() || match[1]?.length === 1) continue;
-    headings.push({ id: readerHeadingId(text, headings.length), text, level: match[1]?.length === 3 ? 3 : 2 });
-  }
-
-  return headings;
+  return [...markdownHeadings(parseMarkdownBlocks(body.split(/\r?\n/)), title).values()];
 }
 
 function renderInlineMarkdown(value: string): ReactNode[] {
@@ -136,54 +125,132 @@ export function sanitizeMarkdownHref(value: string): string | null {
   return trimmed;
 }
 
-export function renderMarkdownDocument(body: string, title: string): ReactNode[] {
-  const output: ReactNode[] = [];
-  const paragraph: string[] = [];
-  let list: string[] = [];
-  let key = 0;
+type MarkdownBlock =
+  | { type: "paragraph"; text: string }
+  | { type: "heading"; text: string; level: number }
+  | { type: "code"; text: string; language: string }
+  | { type: "list"; ordered: boolean; start: number; items: MarkdownBlock[][] };
 
-  const flushParagraph = () => {
-    if (!paragraph.length) return;
-    output.push(<p key={`p-${key++}`}>{renderInlineMarkdown(paragraph.join(" "))}</p>);
-    paragraph.length = 0;
-  };
-  const flushList = () => {
-    if (!list.length) return;
-    output.push(<ul key={`ul-${key++}`}>{list.map((item, index) => <li key={index}>{renderInlineMarkdown(item)}</li>)}</ul>);
-    list = [];
-  };
+function markdownListMarker(line: string) {
+  const match = /^( *)([-+*]|\d+[.)])(\s+)(.*)$/.exec(line);
+  return match ? {
+    indent: match[1]!.length,
+    contentIndent: match[1]!.length + match[2]!.length + match[3]!.length,
+    ordered: /^\d/.test(match[2]!),
+    start: Number.parseInt(match[2]!, 10) || 1,
+    text: match[4]!
+  } : null;
+}
 
-  for (const rawLine of body.split(/\r?\n/)) {
-    const line = rawLine.trim();
-    const heading = /^(#{1,3})\s+(.+)$/.exec(line);
-    const listItem = /^[-*]\s+(.+)$/.exec(line);
-
-    if (!line) {
-      flushParagraph();
-      flushList();
-    } else if (heading) {
-      flushParagraph();
-      flushList();
-      const text = normalizeHeadingText(heading[2] ?? "");
-      if (heading[1]?.length === 1 && text.toLowerCase() === title.trim().toLowerCase()) continue;
-      const id = heading[1]?.length === 1 ? undefined : readerHeadingId(text, output.filter((node) => node !== null).length);
-      output.push(heading[1]?.length === 1
-        ? <h2 key={`h-${key++}`}>{renderInlineMarkdown(text)}</h2>
-        : heading[1]?.length === 2
-          ? <h2 id={id} key={`h-${key++}`}>{renderInlineMarkdown(text)}</h2>
-          : <h3 id={id} key={`h-${key++}`}>{renderInlineMarkdown(text)}</h3>);
-    } else if (listItem) {
-      flushParagraph();
-      list.push(listItem[1] ?? "");
-    } else {
-      flushList();
-      paragraph.push(line);
+/** This deliberately small Markdown subset always renders text through React escaping. */
+function parseMarkdownBlocks(sourceLines: string[], depth = 0): MarkdownBlock[] {
+  if (depth >= 32) return [{ type: "paragraph", text: sourceLines.join("\n") }];
+  const lines = sourceLines.map((line) => line.replace(/^\t+/, (tabs) => "    ".repeat(tabs.length)));
+  const blocks: MarkdownBlock[] = [];
+  let cursor = 0;
+  while (cursor < lines.length) {
+    const line = lines[cursor]!;
+    if (!line.trim()) { cursor++; continue; }
+    const fence = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
+    if (fence) {
+      const marker = fence[1]!;
+      const code: string[] = [];
+      const close = new RegExp(`^ {0,3}${marker[0]}{${marker.length},}\\s*$`);
+      cursor++;
+      while (cursor < lines.length && !close.test(lines[cursor]!)) code.push(sourceLines[cursor++]!);
+      if (cursor < lines.length) cursor++;
+      const language = fence[2]!.trim().split(/\s/)[0] ?? "";
+      blocks.push({ type: "code", text: code.join("\n"), language: /^[a-z0-9_-]+$/i.test(language) ? language : "" });
+      continue;
     }
+    const heading = /^(#{1,3})\s+(.+)$/.exec(line.trim());
+    if (heading) {
+      blocks.push({ type: "heading", level: heading[1]!.length, text: heading[2]! });
+      cursor++;
+      continue;
+    }
+    const firstItem = markdownListMarker(line);
+    if (firstItem) {
+      const items: MarkdownBlock[][] = [];
+      while (cursor < lines.length) {
+        const item = markdownListMarker(lines[cursor]!);
+        if (!item || item.indent !== firstItem.indent || item.ordered !== firstItem.ordered) break;
+        const itemLines = [item.text];
+        cursor++;
+        while (cursor < lines.length) {
+          const continuation = lines[cursor]!;
+          if (!continuation.trim()) {
+            let next = cursor + 1;
+            while (next < lines.length && !lines[next]!.trim()) next++;
+            if (next === lines.length || (lines[next]!.match(/^ */)?.[0].length ?? 0) <= firstItem.indent) {
+              cursor = next;
+              break;
+            }
+            itemLines.push("");
+            cursor++;
+            continue;
+          }
+          const indent = continuation.match(/^ */)?.[0].length ?? 0;
+          if (indent <= firstItem.indent) break;
+          itemLines.push(continuation.slice(Math.min(indent, item.contentIndent)));
+          cursor++;
+        }
+        items.push(parseMarkdownBlocks(itemLines, depth + 1));
+      }
+      blocks.push({ type: "list", ordered: firstItem.ordered, start: firstItem.start, items });
+      continue;
+    }
+    const paragraph = [line.trim()];
+    cursor++;
+    while (cursor < lines.length && lines[cursor]!.trim() &&
+      !/^(#{1,3})\s+/.test(lines[cursor]!.trim()) &&
+      !/^ {0,3}(`{3,}|~{3,})/.test(lines[cursor]!) && !markdownListMarker(lines[cursor]!)) {
+      paragraph.push(lines[cursor++]!.trim());
+    }
+    blocks.push({ type: "paragraph", text: paragraph.join(" ") });
   }
+  return blocks;
+}
 
-  flushParagraph();
-  flushList();
-  return output;
+function markdownHeadings(blocks: MarkdownBlock[], title: string): Map<MarkdownBlock, ReaderSectionHeading> {
+  const headings = new Map<MarkdownBlock, ReaderSectionHeading>();
+  const usedIds = new Set<string>();
+  const visit = (block: MarkdownBlock) => {
+    if (block.type === "list") { block.items.forEach((item) => item.forEach(visit)); return; }
+    if (block.type !== "heading" || block.level === 1) return;
+    const text = normalizeHeadingText(block.text);
+    if (!text || text.toLowerCase() === title.trim().toLowerCase()) return;
+    const base = readerHeadingId(text, headings.size);
+    let id = base;
+    let occurrence = 1;
+    while (usedIds.has(id)) id = `${base}-${++occurrence}`;
+    usedIds.add(id);
+    headings.set(block, { id, text, level: block.level === 3 ? 3 : 2 });
+  };
+  blocks.forEach(visit);
+  return headings;
+}
+
+export function renderMarkdownDocument(body: string, title: string): ReactNode[] {
+  const blocks = parseMarkdownBlocks(body.split(/\r?\n/));
+  const headings = markdownHeadings(blocks, title);
+  const renderBlock = (block: MarkdownBlock, key: number): ReactNode => {
+    if (block.type === "paragraph") return <p key={key}>{renderInlineMarkdown(block.text)}</p>;
+    if (block.type === "code") return <pre key={key}><code className={block.language ? `language-${block.language}` : undefined}>{block.text}</code></pre>;
+    if (block.type === "list") {
+      const items = block.items.map((item, index) => <li key={index}>{item.map((child, childIndex) => child.type === "paragraph" && childIndex === 0
+        ? <span key={childIndex}>{renderInlineMarkdown(child.text)}</span>
+        : renderBlock(child, childIndex))}</li>);
+      return block.ordered ? <ol key={key} start={block.start === 1 ? undefined : block.start}>{items}</ol> : <ul key={key}>{items}</ul>;
+    }
+    const text = normalizeHeadingText(block.text);
+    if (block.level === 1 && text.toLowerCase() === title.trim().toLowerCase()) return null;
+    const id = headings.get(block)?.id;
+    return block.level === 3
+      ? <h3 key={key} id={id} tabIndex={-1}>{renderInlineMarkdown(block.text)}</h3>
+      : <h2 key={key} id={id} tabIndex={-1}>{renderInlineMarkdown(block.text)}</h2>;
+  };
+  return blocks.map(renderBlock);
 }
 
 export function cleanReaderAnswerText(value: string): string {

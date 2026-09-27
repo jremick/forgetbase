@@ -85,18 +85,38 @@ function assertBudget(label: string, actual: { raw: number; gzip: number }, maxi
 const initialFiles = collectStaticGraph(entryKey);
 const adminFiles = collectStaticGraph(adminKey);
 const incrementalAdminFiles = new Set([...adminFiles].filter((file) => !initialFiles.has(file)));
+const editorKey = Object.entries(manifest).find(([key, chunk]) =>
+  key.endsWith("/components/editor/markdown-editor.tsx") || chunk.src?.endsWith("/components/editor/markdown-editor.tsx")
+)?.[0];
+const editorFiles = editorKey ? collectStaticGraph(editorKey) : new Set<string>();
+const incrementalEditorFiles = new Set([...editorFiles].filter((file) => !initialFiles.has(file) && !adminFiles.has(file)));
+if (editorKey && (initialFiles.has(manifest[editorKey]!.file) || adminFiles.has(manifest[editorKey]!.file))) {
+  throw new Error("The editor must load only across its authoring dynamic import boundary");
+}
+const authoring = measure(incrementalEditorFiles);
 const allFiles = javascriptFiles();
 const initial = measure(initialFiles);
 const admin = measure(incrementalAdminFiles);
 const all = measure(allFiles);
 
 assertBudget("Initial reader graph", initial, { raw: 650_000, gzip: 185_000 });
-assertBudget("Lazy admin graph", admin, { raw: 250_000, gzip: 65_000 });
-assertBudget("All web JavaScript", all, { raw: 900_000, gzip: 250_000 });
+assertBudget("Lazy admin graph", admin, { raw: 300_000, gzip: 80_000 });
+assertBudget("Incremental authoring graph", authoring, { raw: 1_500_000, gzip: 500_000 });
+assertBudget("All web JavaScript", all, { raw: 3_600_000, gzip: 1_200_000 });
 
 const initialSource = [...initialFiles].map((file) => readFileSync(join(distDir, file), "utf8")).join("\n");
 const adminSource = [...incrementalAdminFiles].map((file) => readFileSync(join(distDir, file), "utf8")).join("\n");
 const adminMarkers = ["Manage ForgetBase", "/admin/managed-query-policy", "admin-side-nav"];
+const editorSource = [...editorFiles].map((file) => readFileSync(join(distDir, file), "utf8")).join("\n");
+for (const marker of ["mdxeditor-root-contenteditable", "fb-source-editor"]) {
+  if (initialSource.includes(marker) || adminSource.includes(marker)) {
+    throw new Error(`Reader or administration eagerly includes editor code: ${marker}`);
+  }
+  if (editorKey && !editorSource.includes(marker)) {
+    throw new Error(`Authoring graph is missing expected editor marker: ${marker}`);
+  }
+}
+
 
 for (const marker of adminMarkers) {
   if (initialSource.includes(marker)) {
@@ -112,5 +132,6 @@ console.log([
   `Web bundle budget OK (${relative(root, manifestPath)})`,
   `initial reader: ${format(initial.raw)} raw / ${format(initial.gzip)} gzip`,
   `lazy admin: ${format(admin.raw)} raw / ${format(admin.gzip)} gzip`,
+  `incremental authoring: ${format(authoring.raw)} raw / ${format(authoring.gzip)} gzip${editorKey ? "" : " (disabled)"}`,
   `all JavaScript: ${format(all.raw)} raw / ${format(all.gzip)} gzip`
 ].join("\n"));

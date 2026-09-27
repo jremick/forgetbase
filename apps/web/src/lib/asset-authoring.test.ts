@@ -9,6 +9,8 @@ import {
   buildAssetCreateInput,
   buildAssetUpdateInput,
   createEmptyAssetAuthoringForm,
+  hasUnsavedPageChanges,
+  suggestedPageId,
   validateAssetAuthoringForm
 } from "./asset-authoring.js";
 
@@ -26,6 +28,22 @@ function form() {
 }
 
 describe("asset authoring", () => {
+  it("detects unsaved content and metadata, but clears dirty state when changes are undone", () => {
+    const initial = form();
+    expect(hasUnsavedPageChanges({ ...initial }, initial)).toBe(false);
+    expect(hasUnsavedPageChanges({ ...initial, body: `${initial.body}\n` }, initial)).toBe(true);
+    expect(hasUnsavedPageChanges({ ...initial, sensitivity: "restricted" }, initial)).toBe(true);
+    expect(hasUnsavedPageChanges(initial, null)).toBe(false);
+    const edited = { ...initial, title: "Changed" };
+    edited.title = initial.title;
+    expect(hasUnsavedPageChanges(edited, initial)).toBe(false);
+  });
+
+  it("suggests a valid editable ID from the title", () => {
+    expect(suggestedPageId("  Café / Release checklist! ")).toBe("cafe-release-checklist");
+    expect(suggestedPageId("---")).toBe("");
+  });
+
   it("maps a new page to a governed draft human document", () => {
     const input = buildAssetCreateInput(form());
 

@@ -1,6 +1,7 @@
 import * as React from "react";
 import { Slot } from "@radix-ui/react-slot";
 import { chakraRuntime } from "../../theme/chakra-runtime.js";
+import { cn } from "../../lib/utils.js";
 
 const ChakraButton = chakraRuntime.Button as React.ElementType;
 
@@ -15,7 +16,12 @@ export type ButtonProps = React.ComponentProps<"button"> & {
 
 function buttonVariantProps(variant: AppButtonVariant | null | undefined) {
   if (variant === "primary") {
-    return { colorPalette: "brand", variant: "solid" as const };
+    return {
+      colorPalette: "brand",
+      variant: "solid" as const,
+      _hover: { bg: "brand.700" },
+      _active: { bg: "brand.800" }
+    };
   }
 
   if (variant === "ghost") {
@@ -42,16 +48,16 @@ function buttonSizeProps(size: AppButtonSize | null | undefined) {
     return { minWidth: "10", paddingInline: "0", size: "md" as const };
   }
 
-  return { size: "md" as const };
+  return { size: "md" as const, minHeight: "40px" };
 }
 
-function buttonVariants(_props?: { variant?: AppButtonVariant | null; size?: AppButtonSize | null; className?: string }) {
-  return _props?.className ?? "";
+function buttonVariants(props?: { variant?: AppButtonVariant | null; size?: AppButtonSize | null; className?: string }) {
+  return cn("fb-button", `fb-button--${props?.variant ?? "default"}`, `fb-button-size--${props?.size ?? "default"}`, props?.className);
 }
 
-function Button({ variant, size, asChild = false, ...props }: ButtonProps) {
+function Button({ variant, size, asChild = false, className, ...props }: ButtonProps) {
   if (asChild) {
-    return <Slot data-slot="button" data-size={size ?? "default"} data-variant={variant ?? "default"} {...props} />;
+    return <Slot data-slot="button" data-size={size ?? "default"} data-variant={variant ?? "default"} className={buttonVariants({ variant, size, className })} {...props} />;
   }
 
   return (
@@ -61,6 +67,7 @@ function Button({ variant, size, asChild = false, ...props }: ButtonProps) {
       data-variant={variant ?? "default"}
       {...buttonVariantProps(variant)}
       {...buttonSizeProps(size)}
+      className={className}
       {...props}
     />
   );

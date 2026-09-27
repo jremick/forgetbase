@@ -1,5 +1,10 @@
+import type { MarkdownEditorHandle, MarkdownEditorProps } from "./components/editor/markdown-editor.js";
+import { MarkdownDocument } from "./components/markdown/markdown-document.js";
+import { ContentLibrary } from "./components/content/content-library.js";
 import { loadAssetCollection } from "./lib/asset-collection.js";
-import { lazy, Suspense, useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import type { NavigationBlocker } from "./lib/app-navigation.js";
+import { canAccessAppRoute, getAppCapabilities } from "./lib/app-routing.js";
+import { forwardRef, useImperativeHandle, lazy, Suspense, useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import type {
   AccountLinkingMode,
   AgentActionExecutionPolicy,
@@ -87,8 +92,7 @@ import {
   MetricCard,
   RouteHeader,
   SectionCard,
-  StatusAlert,
-  Toolbar
+  StatusAlert
 } from "./components/app/index.js";
 import { TrustStateSummary } from "./components/domain/index.js";
 import type { AnalyticsWindowDays } from "./components/domain/analytics-dashboard.js";
@@ -120,7 +124,6 @@ import {
 import { Input } from "./components/ui/input.js";
 import { Label } from "./components/ui/label.js";
 import { NativeSelect } from "./components/ui/native-select.js";
-import { renderMarkdownDocument as renderSafeMarkdownDocument } from "./lib/reader-ui.js";
 import {
   Sheet,
   SheetContent,
@@ -174,6 +177,8 @@ import {
   buildAssetCreateInput,
   buildAssetUpdateInput,
   createEmptyAssetAuthoringForm,
+  suggestedPageId,
+  hasUnsavedPageChanges,
   validateAssetAuthoringForm,
   type AssetAuthoringErrors,
   type AssetAuthoringField,
@@ -192,11 +197,29 @@ import {
 } from "./local-dev-auth.js";
 import "./styles.css";
 
+const PageAccessPanel = lazy(() => import("./components/app/page-access-panel.js").then((module) => ({ default: module.PageAccessPanel })));
+
 const AnalyticsDashboard = lazy(() => import("./components/domain/analytics-dashboard.js")
   .then((module) => ({ default: module.AnalyticsDashboard })));
 
 const sessionCookieActiveStorageKey = "forgetbase-session-cookie-active";
 const csrfCookieName = "forgetbase_csrf";
+// The fallback keeps the current Markdown editable if the authoring chunk cannot load.
+const PlainMarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorProps>(function PlainMarkdownEditor(props, ref) {
+  const value = useRef(props.value);
+  value.current = props.value;
+  useImperativeHandle(ref, () => ({ getSnapshot: () => ({ value: value.current, ready: true }) }));
+  useEffect(() => { props.onReadyChange?.(true); }, [props.onReadyChange]);
+  return <FormField label={props.label} htmlFor="authoring-body" required errorText={props.error} helpText="Rich editing could not load. Your Markdown is available below.">
+    <Textarea id="authoring-body" value={props.value} readOnly={props.readOnly} rows={18} className="font-mono text-sm leading-6"
+      onChange={(event) => { value.current = event.target.value; props.onChange(value.current); }} />
+  </FormField>;
+});
+const richEditorEnabled = import.meta.env.VITE_ENABLE_RICH_EDITOR === "true";
+const RichMarkdownEditor = richEditorEnabled ? lazy(() => import("./components/editor/markdown-editor.js")
+  .then((module) => ({ default: module.MarkdownEditor }))
+  .catch(() => ({ default: PlainMarkdownEditor }))) : PlainMarkdownEditor;
+
 const configuredApiUrl = import.meta.env.VITE_FORGETBASE_API_URL?.trim();
 const attachmentMaxBytes = 10 * 1024 * 1024;
 const demoEvalCases = [
@@ -267,247 +290,13 @@ type NavSectionConfig = {
   count?: number | string;
   leaves: NavLeafConfig[];
 };
-type ReaderNavNode = {
-  asset: AssetRecord;
-  children: ReaderNavNode[];
-};
-type AssetContentView = "human" | "instruction" | "version" | "raw";
+type AssetContentView = "human" | "instruction" | "version" | "raw" | "access" | "activity";
 type ManagedQueryView = "answer" | "evidence" | "diagnostics";
 type PolicySettingsView = "retention" | "answers" | "ranking" | "evals" | "actions" | "data" | "privacy";
 type AccessSettingsView = "users" | "service-policy" | "service-accounts" | "groups" | "api-keys" | "sessions";
 type GeneratedPackage = AiExportPackage | OkfExportPackage;
-type ReaderSectionHeading = {
-  id: string;
-  text: string;
-  level: 2 | 3;
-};
 type ReleaseAction = "review" | "publish" | "restore";
 type ConfirmedReleaseAction = Exclude<ReleaseAction, "review">;
-const assetTypeLabels: Record<string, string> = {
-  "agent-instruction": "Agent Guide",
-  "eval-case": "Check",
-  "guardrail": "Privacy Guide",
-  "guideline": "Guideline",
-  "human-document": "Document",
-  "playbook": "Guide",
-  "policy": "Policy",
-  "reference": "Reference",
-  "skill": "Skill",
-  "sop": "Checklist",
-  "telemetry-policy": "Privacy Policy",
-  "template": "Template",
-  "tool-instruction": "Tool Guide"
-};
-
-function formatAssetTypeLabel(type: string): string {
-  if (assetTypeLabels[type]) {
-    return assetTypeLabels[type];
-  }
-
-  return type
-    .split("-")
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(" ");
-}
-
-function formatReaderLifecycle(value: string): string {
-  const labels: Record<string, string> = {
-    active: "Published",
-    archived: "Archived",
-    deprecated: "Deprecated",
-    draft: "Draft",
-    restricted: "Restricted"
-  };
-
-  return labels[value] ?? formatAssetTypeLabel(value);
-}
-
-function formatReaderStatus(value: string): string {
-  const labels: Record<string, string> = {
-    approved: "Reviewed",
-    draft: "Draft",
-    rejected: "Needs changes",
-    reviewing: "In review"
-  };
-
-  return labels[value] ?? formatAssetTypeLabel(value);
-}
-
-function formatReaderAccess(asset: AssetRecord): string {
-  return isPublicReaderEligible(asset) ? "Open to readers" : "Signed-in readers";
-}
-
-function readerAssetMatches(asset: AssetRecord, query: string): boolean {
-  const normalizedQuery = query.trim().toLowerCase();
-
-  if (!normalizedQuery) {
-    return true;
-  }
-
-  return [
-    asset.title,
-    asset.summary ?? "",
-    formatAssetTypeLabel(asset.type)
-  ].join(" ").toLowerCase().includes(normalizedQuery);
-}
-
-function normalizeReaderQuery(value: string): string {
-  return value.trim().toLowerCase();
-}
-
-function formatReaderDate(value: string): string {
-  const parsed = Date.parse(value);
-
-  if (!Number.isFinite(parsed)) {
-    return value;
-  }
-
-  return new Intl.DateTimeFormat(undefined, {
-    month: "short",
-    day: "numeric",
-    year: "numeric"
-  }).format(new Date(parsed));
-}
-
-function formatReaderMaintainer(ownerId: string): string {
-  const cleaned = ownerId.replace(/^user[_-]/, "").replace(/[_-]+/g, " ").trim();
-
-  if (!cleaned) {
-    return "Maintainer";
-  }
-
-  return `${cleaned
-    .split(/\s+/)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(" ")} team`;
-}
-
-function formatReaderReview(reviewDueAt: string): string {
-  const relative = formatReviewDue(reviewDueAt);
-
-  if (relative === "due today" || relative.startsWith("overdue")) {
-    return relative;
-  }
-
-  return `Review due ${formatReaderDate(reviewDueAt)}`;
-}
-
-function normalizeHeadingText(value: string): string {
-  return value.trim().replace(/\s+/g, " ").toLowerCase();
-}
-
-function readerHeadingId(text: string, index: number): string {
-  const slug = text
-    .toLowerCase()
-    .replace(/[^a-z0-9\s-]/g, "")
-    .trim()
-    .replace(/\s+/g, "-")
-    .slice(0, 48)
-    .replace(/-+$/g, "");
-
-  return `reader-section-${index + 1}-${slug || "section"}`;
-}
-
-function extractReaderSectionHeadings(body: string, title: string): ReaderSectionHeading[] {
-  const lines = body.split(/\r?\n/);
-  const firstContentIndex = lines.findIndex((line) => line.trim());
-
-  if (firstContentIndex >= 0) {
-    const firstHeading = lines[firstContentIndex]?.match(/^#\s+(.+)$/);
-
-    if (firstHeading && normalizeHeadingText(firstHeading[1] ?? "") === normalizeHeadingText(title)) {
-      lines.splice(firstContentIndex, 1);
-    }
-  }
-
-  let sectionIndex = 0;
-
-  return lines.flatMap((rawLine) => {
-    const heading = rawLine.trim().match(/^(#{2,3})\s+(.+)$/);
-
-    if (!heading) {
-      return [];
-    }
-
-    const text = (heading[2] ?? "").trim();
-    const level = heading[1]?.length === 3 ? 3 : 2;
-    const entry = {
-      id: readerHeadingId(text, sectionIndex),
-      text,
-      level
-    } satisfies ReaderSectionHeading;
-    sectionIndex += 1;
-
-    return [entry];
-  });
-}
-
-function cleanReaderAnswerText(value: string): string {
-  return value
-    .replace(/^#+\s*/, "")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function formatReaderSnippet(value: string, maxLength: number): string {
-  const cleaned = cleanReaderAnswerText(value);
-
-  if (cleaned.length <= maxLength && /[.!?)]$/.test(cleaned)) {
-    return cleaned;
-  }
-
-  const bounded = cleaned.length > maxLength ? cleaned.slice(0, maxLength) : cleaned;
-  const trimmed = bounded.slice(0, Math.max(0, bounded.lastIndexOf(" "))).trim() || bounded.trim();
-
-  return /[.!?)]$/.test(trimmed) ? trimmed : `${trimmed.replace(/[,:;]+$/, "")}...`;
-}
-
-function renderReaderAnswer(answer: string): ReactNode {
-  const lines = answer.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-  const intro = lines.find((line) => line.startsWith("Answer from the pages I can access"));
-  const findings = lines
-    .filter((line) => /^\d+\.\s+/.test(line))
-    .map((line) => {
-      const text = cleanReaderAnswerText(line.replace(/^\d+\.\s+/, ""));
-      const separatorIndex = text.indexOf(":");
-
-      if (separatorIndex <= 0) {
-        return { title: "", body: formatReaderSnippet(text, 220) };
-      }
-
-      return {
-        title: text.slice(0, separatorIndex).trim(),
-        body: formatReaderSnippet(text.slice(separatorIndex + 1), 220)
-      };
-    });
-  const fallbackParagraphs = lines.filter((line) =>
-    line !== intro &&
-    line !== "What I found:" &&
-    !/^\d+\.\s+/.test(line)
-  );
-
-  return (
-    <div className="reader-ask-body">
-      {intro ? <p>I found matching guidance in the pages you can access.</p> : null}
-      {findings.length ? (
-        <>
-          <ol className="reader-answer-list">
-            {findings.slice(0, 3).map((finding, index) => (
-              <li key={`${index}-${finding.title || finding.body}`}>
-                {finding.title ? <strong>{finding.title}</strong> : null}
-                <span>{finding.body}</span>
-              </li>
-            ))}
-          </ol>
-          {findings.length > 3 ? <p className="reader-ask-note">{findings.length - 3} more source note{findings.length - 3 === 1 ? "" : "s"} checked.</p> : null}
-        </>
-      ) : fallbackParagraphs.map((paragraph, index) => (
-        <p key={`${index}-${paragraph}`}>{cleanReaderAnswerText(paragraph)}</p>
-      ))}
-    </div>
-  );
-}
-
 const pageRouteValues = [
   "reader",
   "account-settings",
@@ -648,12 +437,6 @@ function assetMutationErrorMessage(error: unknown): string {
     : message;
 }
 
-function isPublishedReaderAsset(asset: AssetRecord): boolean {
-  return asset.lifecycleState === "active" &&
-    asset.status === "approved" &&
-    asset.allowedSurfaces.includes("web");
-}
-
 function navBadgeVariant(tone?: NavBadgeTone): BadgeVariant {
   if (tone === "bad") {
     return "destructive";
@@ -694,79 +477,8 @@ function readAssetMetadataString(asset: AssetRecord, key: string): string | null
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
-function readAssetMetadataStringArray(asset: AssetRecord, key: string): string[] {
-  const value = asset.metadata[key];
-
-  return Array.isArray(value)
-    ? value.filter((entry): entry is string => typeof entry === "string" && Boolean(entry.trim())).map((entry) => entry.trim())
-    : [];
-}
-
-function readAssetMetadataNumber(asset: AssetRecord, key: string): number | null {
-  const value = asset.metadata[key];
-
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return value;
-  }
-
-  if (typeof value === "string") {
-    const parsed = Number.parseFloat(value);
-    return Number.isFinite(parsed) ? parsed : null;
-  }
-
-  return null;
-}
-
-function readerNavLabel(asset: AssetRecord): string {
-  return readAssetMetadataString(asset, "readerNavLabel") ?? asset.title;
-}
-
 function readerParentId(asset: AssetRecord): string | null {
   return readAssetMetadataString(asset, "readerParentId");
-}
-
-function readerNavOrder(asset: AssetRecord): number {
-  return readAssetMetadataNumber(asset, "readerNavOrder") ?? Number.MAX_SAFE_INTEGER;
-}
-
-function sortReaderNodes(nodes: ReaderNavNode[]): ReaderNavNode[] {
-  return nodes
-    .map((node) => ({ ...node, children: sortReaderNodes(node.children) }))
-    .sort((left, right) =>
-      readerNavOrder(left.asset) - readerNavOrder(right.asset) ||
-      readerNavLabel(left.asset).localeCompare(readerNavLabel(right.asset))
-    );
-}
-
-function buildReaderNavTree(assets: AssetRecord[]): ReaderNavNode[] {
-  const nodes = new Map<string, ReaderNavNode>();
-
-  assets.forEach((asset) => {
-    nodes.set(asset.stableId, { asset, children: [] });
-  });
-
-  const roots: ReaderNavNode[] = [];
-
-  nodes.forEach((node) => {
-    const parentId = readerParentId(node.asset);
-    const parentNode = parentId && parentId !== node.asset.stableId ? nodes.get(parentId) : undefined;
-
-    if (parentNode) {
-      parentNode.children.push(node);
-    } else {
-      roots.push(node);
-    }
-  });
-
-  return sortReaderNodes(roots);
-}
-
-function readerNodeContainsStableId(node: ReaderNavNode, stableId: string | undefined): boolean {
-  if (!stableId) {
-    return false;
-  }
-
-  return node.asset.stableId === stableId || node.children.some((child) => readerNodeContainsStableId(child, stableId));
 }
 
 function readCookie(name: string): string {
@@ -798,7 +510,14 @@ function defaultAuthoringReviewDate(): string {
   return dueAt.toISOString().slice(0, 10);
 }
 
-export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void } = {}) {
+type AdminSurfaceProps = {
+  onSessionEnded?: () => void;
+  locationKey: string;
+  onNavigate: (route: string, pageId?: string, view?: string) => void;
+  registerNavigationBlocker: (blocker: NavigationBlocker | null) => void;
+};
+
+export function AdminSurface({ onSessionEnded, locationKey, onNavigate, registerNavigationBlocker }: AdminSurfaceProps) {
   const [apiUrl, setApiUrl] = useState(() => readInitialApiUrl(configuredApiUrl));
   const [apiKey, setApiKey] = useState(() => localStorage.getItem("forgetbase-api-key") ?? "");
   const [sessionCookieActive, setSessionCookieActive] = useState(
@@ -811,7 +530,8 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
   const [loginPassword, setLoginPassword] = useState(readInitialLoginPassword);
   const [assets, setAssets] = useState<AssetRecord[]>([]);
   const [selectedStableId, setSelectedStableId] = useState(readInitialReaderPageId);
-  const [assetDetail, setAssetDetail] = useState<AssetDetail | null>(null);
+  const [loadedAssetDetail, setAssetDetail] = useState<AssetDetail | null>(null);
+  const assetDetail = loadedAssetDetail?.asset.stableId === selectedStableId ? loadedAssetDetail : null;
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [attachmentsLoading, setAttachmentsLoading] = useState(false);
   const [attachmentUploading, setAttachmentUploading] = useState(false);
@@ -824,14 +544,14 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
   const [selectedVersionNumber, setSelectedVersionNumber] = useState("");
   const [versionSnapshot, setVersionSnapshot] = useState<AssetVersionSnapshot | null>(null);
   const [reviewQueue, setReviewQueue] = useState<AssetReviewQueueResponse | null>(null);
+  const [reviewQueueLoading, setReviewQueueLoading] = useState(false);
+  const [reviewQueueError, setReviewQueueError] = useState("");
+  const reviewQueueEpochRef = useRef(0);
+  const [pageAccessId, setPageAccessId] = useState(readInitialReaderPageId);
   const [publishReviewDueAt, setPublishReviewDueAt] = useState("");
   const [workflowNote, setWorkflowNote] = useState("");
   const [searchQuery, setSearchQuery] = useState("personal data");
   const [searchResponse, setSearchResponse] = useState<SearchResponse | null>(null);
-  const [readerAskText, setReaderAskText] = useState("What should be redacted?");
-  const [readerAskResponse, setReaderAskResponse] = useState<ManagedQueryResponse | null>(null);
-  const [isReaderAskRunning, setIsReaderAskRunning] = useState(false);
-  const [readerAskError, setReaderAskError] = useState("");
   const [pendingReleaseAction, setPendingReleaseAction] = useState<ReleaseAction | null>(null);
   const [releaseActionToConfirm, setReleaseActionToConfirm] = useState<ConfirmedReleaseAction | null>(null);
   const [managedQueryText, setManagedQueryText] = useState("personal data");
@@ -852,6 +572,10 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
   const [analyticsWindowDays, setAnalyticsWindowDays] = useState<AnalyticsWindowDays>(30);
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
   const [telemetryRetentionPolicy, setTelemetryRetentionPolicy] = useState<TelemetryRetentionPolicy | null>(null);
+  const [retentionLoadState, setRetentionLoadState] = useState<"idle" | "loading" | "loaded" | "error">("idle");
+  const [retentionError, setRetentionError] = useState("");
+  const [retentionBusy, setRetentionBusy] = useState(false);
+  const retentionLoadEpochRef = useRef(0);
   const [telemetryRetentionPurgeResult, setTelemetryRetentionPurgeResult] =
     useState<TelemetryRetentionPurgeResult | null>(null);
   const [managedQueryCacheEntries, setManagedQueryCacheEntries] = useState<ManagedQueryCacheEntry[]>([]);
@@ -906,9 +630,9 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
   const [piiRedactionEnabled, setPiiRedactionEnabled] = useState<"true" | "false">("true");
   const [piiRedactionRuleKinds, setPiiRedactionRuleKinds] =
     useState("api-key,bearer-token,credit-card,email,government-id,ip-address,jwt,phone,url-secret");
-  const [retentionRetrievalDays, setRetentionRetrievalDays] = useState("30");
-  const [retentionAuditDays, setRetentionAuditDays] = useState("365");
-  const [retentionFeedbackDays, setRetentionFeedbackDays] = useState("90");
+  const [retentionRetrievalDays, setRetentionRetrievalDays] = useState("");
+  const [retentionAuditDays, setRetentionAuditDays] = useState("");
+  const [retentionFeedbackDays, setRetentionFeedbackDays] = useState("");
   const [auditEvents, setAuditEvents] = useState<AuditEvent[]>([]);
   const [users, setUsers] = useState<LocalUser[]>([]);
   const [userEmail, setUserEmail] = useState("");
@@ -1024,6 +748,8 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
   const [authoringErrors, setAuthoringErrors] = useState<AssetAuthoringErrors>({});
   const [authoringSubmitError, setAuthoringSubmitError] = useState("");
   const [isSavingPage, setIsSavingPage] = useState(false);
+  const markdownEditorRef = useRef<MarkdownEditorHandle>(null);
+  const [editorReady, setEditorReady] = useState(false);
   const [currentPage, setCurrentPage] = useState(() =>
     normalizePageRoute(typeof window === "undefined" ? "" : window.location.hash.replace("#", ""))
   );
@@ -1060,6 +786,11 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
   const loadedWorkspaceRoutesRef = useRef<Set<string>>(new Set());
   const authenticationEpochRef = useRef(0);
   const assetLoadEpochRef = useRef(0);
+  const authoringInitialFormRef = useRef<AssetAuthoringFormState | null>(null);
+  const authoringIdEditedRef = useRef(false);
+  const authoringDirtyRef = useRef(false);
+  const pendingLeaveRef = useRef<(() => void) | null>(null);
+  const [isLeaveDialogOpen, setIsLeaveDialogOpen] = useState(false);
   const authoringEditTargetRef = useRef<{
     stableId: string;
     currentVersionId: string | null;
@@ -1067,25 +798,31 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
     humanDocument?: AssetDetail["humanDocuments"][number];
   } | null>(null);
 
-  const readerRouteRequested = currentPage === "reader";
-  const accountSettingsRouteRequested = currentPage === "account-settings";
-  const shouldUseReaderAssetScope = currentPrincipal?.role === "reader" || readerRouteRequested;
-  const readerPublishedAssets = useMemo(
-    () => assets.filter(isPublishedReaderAsset),
-    [assets]
-  );
-  const selectedAsset = useMemo(
-    () => {
-      const scopedAssets = shouldUseReaderAssetScope ? readerPublishedAssets : assets;
+  const authoringDirty = Boolean(authoringMode && hasUnsavedPageChanges(authoringForm, authoringInitialFormRef.current));
+  authoringDirtyRef.current = authoringDirty;
 
-      return scopedAssets.find((asset) => asset.stableId === selectedStableId) ?? scopedAssets[0];
-    },
-    [assets, readerPublishedAssets, selectedStableId, shouldUseReaderAssetScope]
-  );
+  useEffect(() => {
+    registerNavigationBlocker(authoringMode ? (proceed) => requestLeaveAuthoring(() => {
+      cancelPageAuthoring();
+      proceed();
+    }) : null);
+    return () => registerNavigationBlocker(null);
+  }, [authoringMode, registerNavigationBlocker]);
+
+  useEffect(() => {
+    if (!authoringMode) return;
+    const beforeUnload = (event: BeforeUnloadEvent) => {
+      if (hasPendingAuthoringChanges()) { event.preventDefault(); event.returnValue = ""; }
+    };
+    window.addEventListener("beforeunload", beforeUnload);
+    return () => window.removeEventListener("beforeunload", beforeUnload);
+  }, [authoringMode]);
+
   const currentVersion = useMemo(
     () => assetDetail?.versions.find((version) => version.id === assetDetail.asset.currentVersionId) ?? assetDetail?.versions[0],
     [assetDetail]
   );
+  const publishedVersion = assetDetail?.versions.find((version) => version.id === assetDetail.asset.publishedVersionId);
   const selectedVersionIsCurrent = versionSnapshot?.version.id === assetDetail?.asset.currentVersionId;
   const currentInstructionObject = assetDetail?.instructionObjects[0] ?? null;
   const currentHumanDocument = assetDetail?.humanDocuments[0] ?? null;
@@ -1093,15 +830,8 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
   const selectedInstructionBody = versionSnapshot?.instructionObjects[0]?.body ?? "";
   const currentHumanBody = currentHumanDocument?.body ?? "";
   const selectedHumanBody = versionSnapshot?.humanDocuments[0]?.body ?? "";
-  const readerSectionHeadings = useMemo(
-    () => currentHumanBody && assetDetail
-      ? extractReaderSectionHeadings(currentHumanBody, assetDetail.asset.title).slice(0, 8)
-      : [],
-    [assetDetail, currentHumanBody]
-  );
   const approvedAssets = assets.filter((asset) => asset.status === "approved").length;
   const reviewDueAssets = assets.filter(isAssetGovernanceDue).length;
-  const publicReaderAssets = assets.filter(isPublicReaderEligible).length;
   const packageNameInput = packageName.trim() || "demo-agent-pack";
   const exportEligibleAssets = assets.filter((asset) => asset.allowedExports.includes(packageNameInput)).length;
   const filteredLibraryAssets = useMemo(
@@ -1112,37 +842,7 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
     ),
     [assets, libraryQuery, librarySensitivityFilter, libraryViewFilter]
   );
-  const filteredReaderAssets = useMemo(
-    () => readerPublishedAssets.filter((asset) => readerAssetMatches(asset, libraryQuery)),
-    [libraryQuery, readerPublishedAssets]
-  );
-  const readerSearchQuery = normalizeReaderQuery(libraryQuery);
-  const searchResponseQuery = normalizeReaderQuery(searchResponse?.query ?? "");
-  const readerSearchHasFreshResponse = Boolean(readerSearchQuery && searchResponse && searchResponseQuery === readerSearchQuery);
-  const readerSearchResults = useMemo(() => {
-    if (!readerSearchHasFreshResponse || !searchResponse) {
-      return [];
-    }
 
-    const seen = new Set<string>();
-
-    return searchResponse.results.filter((result) => {
-      if (!isPublishedReaderAsset(result.asset) || seen.has(result.asset.stableId)) {
-        return false;
-      }
-
-      seen.add(result.asset.stableId);
-      return true;
-    });
-  }, [readerSearchHasFreshResponse, searchResponse]);
-  const readerAssetGroups = useMemo(() => {
-    return buildReaderNavTree(filteredReaderAssets);
-  }, [filteredReaderAssets]);
-  const readerVisiblePageCount = filteredReaderAssets.length;
-  const libraryFilterActive = Boolean(
-    libraryQuery.trim() || libraryViewFilter !== "all" || librarySensitivityFilter !== "all"
-  );
-  const readerFilterActive = Boolean(libraryQuery.trim());
   const visibleOperationsPage = operationsRoutes.has(currentPage) || currentPage === "review";
   const visibleDistributePage = currentPage === "distribute";
   const isLegacyExportsAlias = currentHashRoute === "exports";
@@ -1194,24 +894,9 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
   const isAuthenticated = authState === "authenticated";
   const displayIdentity = currentPrincipal?.displayName || currentPrincipal?.email || "Guest";
   const displayInitials = isAuthenticated ? initialsFor(displayIdentity) : "GU";
-  const readerSurfaceActive = isAuthenticated && (shouldUseReaderAssetScope || accountSettingsRouteRequested);
-  const readerLibrarySurfaceActive = readerSurfaceActive && !accountSettingsRouteRequested;
-  const canUseAdministration = Boolean(
-    currentPrincipal &&
-    (currentPrincipal.role === "admin" ||
-      currentPrincipal.role === "maintainer" ||
-      currentPrincipal.scopes.includes("admin") ||
-      currentPrincipal.scopes.includes("asset:write") ||
-      currentPrincipal.scopes.includes("permission:write"))
-  );
-  const canWriteAssets = Boolean(
-    currentPrincipal &&
-    (currentPrincipal.role === "admin" || currentPrincipal.role === "maintainer") &&
-    (currentPrincipal.scopes.includes("admin") || currentPrincipal.scopes.includes("asset:write"))
-  );
-  const readerSelectedAsset = readerPublishedAssets.find((asset) => asset.stableId === selectedStableId) ??
-    filteredReaderAssets[0] ??
-    readerPublishedAssets[0];
+  const capabilities = getAppCapabilities(currentPrincipal);
+  const canUseAdministration = capabilities.administration;
+  const canWriteAssets = capabilities.createAssets;
 
   useEffect(() => {
     localStorage.setItem(apiUrlStorageKey, apiUrl);
@@ -1243,23 +928,17 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
   }, []);
 
   useEffect(() => {
-    const syncPageFromHash = () => {
-      const routeFromHash = window.location.hash.replace("#", "");
-      const normalizedRoute = normalizePageRoute(routeFromHash);
-      const canonicalHash = routeFromHash ? canonicalRouteHash(normalizedRoute) : "";
-
-      setCurrentHashRoute(canonicalHash);
-      setCurrentPage(normalizedRoute);
-
-      if (routeFromHash && routeFromHash !== canonicalHash) {
-        window.history.replaceState({}, document.title, `${window.location.pathname}${window.location.search}#${canonicalHash}`);
-      }
-    };
-
-    syncPageFromHash();
-    window.addEventListener("hashchange", syncPageFromHash);
-    return () => window.removeEventListener("hashchange", syncPageFromHash);
-  }, []);
+    const url = new URL(locationKey, window.location.origin);
+    if (!authoringDirtyRef.current) cancelPageAuthoring();
+    const normalizedRoute = normalizePageRoute(url.hash);
+    setCurrentHashRoute(canonicalRouteHash(normalizedRoute));
+    setCurrentPage(normalizedRoute);
+    const pageId = url.searchParams.get("page")?.trim();
+    if (pageId) { setSelectedStableId(pageId); setPageAccessId(pageId); }
+    const view = url.searchParams.get("view");
+    if (view && ["human", "instruction", "version", "raw", "access", "activity"].includes(view)) setAssetContentView(view as AssetContentView);
+    else setAssetContentView(normalizedRoute === "versions" ? "version" : "human");
+  }, [locationKey]);
 
   useEffect(() => {
     localStorage.setItem(densityStorageKey, density);
@@ -1287,17 +966,13 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
 
-        if (readerLibrarySurfaceActive) {
-          document.getElementById("reader-search-input")?.focus();
-        } else if (!readerSurfaceActive) {
-          setIsCommandOpen(true);
-        }
+        setIsCommandOpen(true);
       }
     };
 
     window.addEventListener("keydown", handleCommandShortcut);
     return () => window.removeEventListener("keydown", handleCommandShortcut);
-  }, [isAuthenticated, readerLibrarySurfaceActive, readerSurfaceActive]);
+  }, [isAuthenticated]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -1335,65 +1010,25 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
   }, []);
 
   useEffect(() => {
-    if (currentPrincipal?.role === "reader" && currentPage !== "reader" && currentPage !== "account-settings") {
-      setCurrentPage("reader");
-      setCurrentHashRoute("reader");
-      window.history.replaceState({}, document.title, `${window.location.pathname}${window.location.search}#reader`);
+    if (isAuthenticated && !capabilities.administration) {
+      onNavigate("reader");
     }
-  }, [currentPage, currentPrincipal?.role]);
+  }, [isAuthenticated, capabilities.administration, onNavigate]);
 
   useEffect(() => {
-    if (!readerLibrarySurfaceActive) {
-      return;
+    if (isAuthenticated && capabilities.previewAssets && selectedStableId) {
+      void loadAsset(selectedStableId);
     }
-
-    if (!readerPublishedAssets.length) {
-      setSelectedStableId("");
-      setAssetDetail(null);
-      return;
-    }
-
-    const fallbackAsset = readerPublishedAssets[0]!;
-    const nextStableId = readerPublishedAssets.some((asset) => asset.stableId === selectedStableId)
-      ? selectedStableId
-      : fallbackAsset.stableId;
-
-    if (nextStableId !== selectedStableId) {
-      setSelectedStableId(nextStableId);
-      setAssetContentView("human");
-    }
-  }, [readerPublishedAssets, readerLibrarySurfaceActive, selectedStableId]);
+  }, [isAuthenticated, capabilities.previewAssets, selectedStableId]);
 
   useEffect(() => {
-    if (!readerLibrarySurfaceActive || !selectedStableId) {
-      return;
-    }
-
-    const url = new URL(window.location.href);
-    if (url.searchParams.get("page") === selectedStableId && url.hash === "#reader") {
-      return;
-    }
-
-    url.searchParams.set("page", selectedStableId);
-    url.hash = "reader";
-    window.history.replaceState({}, document.title, `${url.pathname}${url.search}${url.hash}`);
-    setCurrentHashRoute("reader");
-  }, [readerLibrarySurfaceActive, selectedStableId]);
-
-  useEffect(() => {
-    if (isAuthenticated && selectedAsset && !accountSettingsRouteRequested) {
-      void loadAsset(selectedAsset.stableId);
-    }
-  }, [accountSettingsRouteRequested, isAuthenticated, selectedAsset?.stableId]);
-
-  useEffect(() => {
-    if (!isAuthenticated || readerSurfaceActive) {
+    if (!isAuthenticated) {
       loadedWorkspaceRoutesRef.current.clear();
       setLoadingWorkspaceRoute("");
       return;
     }
 
-    if (!visibleOperationsPage) {
+    if (!visibleOperationsPage || !canAccessAppRoute(currentPrincipal, currentPage)) {
       return;
     }
 
@@ -1403,7 +1038,7 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
 
     loadedWorkspaceRoutesRef.current.add(currentPage);
     void loadWorkspaceRoute(currentPage);
-  }, [isAuthenticated, readerSurfaceActive, visibleOperationsPage, currentPage]);
+  }, [isAuthenticated, visibleOperationsPage, currentPage]);
 
   useEffect(() => {
     if (!assetDetail) {
@@ -1612,8 +1247,6 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
     setSelectedVersionNumber("");
     setVersionSnapshot(null);
     setReviewQueue(null);
-    setReaderAskResponse(null);
-    setReaderAskError("");
     setExportPackage(null);
     setTelemetryEvents([]);
     setTelemetrySummary(null);
@@ -1726,10 +1359,8 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
       setSessionCookieActive(!authKey);
       const healthResponse = await request<{ status: string }>("/health", {}, authKey);
       setHealth(healthResponse.status);
-      const assetResponse = { assets: await loadAssetCollection(request, { preview: true, authKey }) };
-      const nextSelectedStableId = assetResponse.assets.some((asset) => asset.stableId === selectedStableId)
-        ? selectedStableId
-        : assetResponse.assets[0]?.stableId ?? "";
+      const assetResponse = { assets: getAppCapabilities(principal).previewAssets ? await loadAssetCollection(request, { preview: true, authKey }) : [] };
+      const nextSelectedStableId = selectedStableId || assetResponse.assets[0]?.stableId || "";
       setAssets(assetResponse.assets);
       setSelectedStableId(nextSelectedStableId);
 
@@ -1742,6 +1373,10 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
       const loadErrorMessage = loadError instanceof Error ? loadError.message : String(loadError);
 
       if (loadErrorMessage.startsWith("401 ")) {
+        if (authoringDirtyRef.current) {
+          setAuthoringSubmitError("Your session has expired. Your unsaved text is still here. Copy your changes before signing out and signing in again.");
+          return;
+        }
         clearAuthenticatedState();
         setHealth("ok");
         setMessage("");
@@ -1754,6 +1389,7 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
 
   async function loadAsset(stableId: string) {
     const loadEpoch = ++assetLoadEpochRef.current;
+    setAssetDetail(null);
 
     if (!stableId) {
       setAssetDetail(null);
@@ -1870,12 +1506,13 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
   }
 
   async function publishAsset() {
-    if (!assetDetail || pendingReleaseAction) {
+    if (!assetDetail || pendingReleaseAction || !capabilities.publishAssets) {
       return;
     }
 
     setError("");
     setPendingReleaseAction("publish");
+    const loadEpoch = assetLoadEpochRef.current;
 
     try {
       const detail = await request<AssetDetail>(`/assets/${encodeURIComponent(assetDetail.asset.stableId)}/publish`, {
@@ -1886,10 +1523,11 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
           changeNote: workflowNote || undefined
         })
       });
-      setAssetDetail(detail);
+      if (loadEpoch === assetLoadEpochRef.current) setAssetDetail(detail);
       replaceAsset(detail.asset);
-      setVersionSnapshot(null);
+      if (loadEpoch === assetLoadEpochRef.current) setVersionSnapshot(null);
       setMessage(`Published ${detail.asset.stableId}`);
+      await loadReviewQueue();
     } catch (publishError) {
       setError(assetMutationErrorMessage(publishError));
     } finally {
@@ -1897,30 +1535,37 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
     }
   }
 
-  async function loadReviewQueue() {
-    setError("");
+  async function loadReviewQueue(append = false) {
+    const epoch = ++reviewQueueEpochRef.current;
+    setReviewQueueError("");
+    setReviewQueueLoading(true);
 
     try {
       const params = new URLSearchParams({
-        asOf: new Date().toISOString().slice(0, 10),
+        asOf: append && reviewQueue ? reviewQueue.asOf : new Date().toISOString().slice(0, 10),
         includeApproved: "false",
-        limit: "25"
+        limit: "25",
+        offset: String(append ? reviewQueue?.nextOffset ?? 0 : 0)
       });
       const queue = await request<AssetReviewQueueResponse>(`/assets/review-queue?${params.toString()}`);
-      setReviewQueue(queue);
-      setMessage(`Loaded ${queue.assets.length} review items`);
+      if (epoch !== reviewQueueEpochRef.current) return;
+      setReviewQueue((current) => append && current ? { ...queue, assets: [...current.assets, ...queue.assets.filter((asset) => !current.assets.some((existing) => existing.id === asset.id))] } : queue);
     } catch (reviewError) {
-      setError(reviewError instanceof Error ? reviewError.message : String(reviewError));
+      if (epoch !== reviewQueueEpochRef.current) return;
+      setReviewQueueError(reviewError instanceof Error ? reviewError.message : String(reviewError));
+    } finally {
+      if (epoch === reviewQueueEpochRef.current) setReviewQueueLoading(false);
     }
   }
 
   async function completeAssetReview() {
-    if (!assetDetail || pendingReleaseAction) {
+    if (!assetDetail || pendingReleaseAction || !capabilities.reviewAssets) {
       return;
     }
 
     setError("");
     setPendingReleaseAction("review");
+    const loadEpoch = assetLoadEpochRef.current;
 
     try {
       const detail = await request<AssetDetail>(`/assets/${encodeURIComponent(assetDetail.asset.stableId)}/review`, {
@@ -1932,13 +1577,10 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
           changeNote: workflowNote || undefined
         })
       });
-      setAssetDetail(detail);
+      if (loadEpoch === assetLoadEpochRef.current) setAssetDetail(detail);
       replaceAsset(detail.asset);
-      setReviewQueue((current) => current ? {
-        ...current,
-        assets: current.assets.filter((asset) => asset.id !== detail.asset.id)
-      } : current);
-      setMessage(`Reviewed ${detail.asset.stableId}`);
+      await loadReviewQueue();
+      setMessage(`Reviewed ${detail.asset.stableId}. ${detail.asset.currentVersionId !== detail.asset.publishedVersionId ? "The draft is ready to publish." : "The published version is reviewed."}`);
     } catch (reviewError) {
       setError(assetMutationErrorMessage(reviewError));
     } finally {
@@ -1947,12 +1589,13 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
   }
 
   async function restoreVersion() {
-    if (!assetDetail || !selectedVersionNumber || pendingReleaseAction) {
+    if (!assetDetail || !selectedVersionNumber || pendingReleaseAction || !capabilities.restoreAssets) {
       return;
     }
 
     setError("");
     setPendingReleaseAction("restore");
+    const loadEpoch = assetLoadEpochRef.current;
 
     try {
       const detail = await request<AssetDetail>(`/assets/${encodeURIComponent(assetDetail.asset.stableId)}/restore`, {
@@ -1963,10 +1606,10 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
           changeNote: workflowNote || undefined
         })
       });
-      setAssetDetail(detail);
+      if (loadEpoch === assetLoadEpochRef.current) setAssetDetail(detail);
       replaceAsset(detail.asset);
-      setVersionSnapshot(null);
-      setMessage(`Restored ${detail.asset.stableId} to v${selectedVersionNumber}`);
+      if (loadEpoch === assetLoadEpochRef.current) setVersionSnapshot(null);
+      setMessage(`Created a new draft of ${detail.asset.stableId} from v${selectedVersionNumber}. The published version is unchanged.`);
     } catch (restoreError) {
       setError(assetMutationErrorMessage(restoreError));
     } finally {
@@ -1982,7 +1625,10 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
   }
 
   function updateAuthoringField(field: AssetAuthoringField, value: string) {
-    setAuthoringForm((current) => ({ ...current, [field]: value }) as AssetAuthoringFormState);
+    if (field === "stableId") authoringIdEditedRef.current = true;
+    setAuthoringForm((current) => ({ ...current, [field]: value,
+      ...(field === "title" && authoringMode === "create" && !authoringIdEditedRef.current ? { stableId: suggestedPageId(value) } : {})
+    }) as AssetAuthoringFormState);
     setAuthoringErrors((current) => {
       if (!current[field]) {
         return current;
@@ -1997,13 +1643,16 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
 
   function startCreatePage() {
     const ownerId = currentPrincipal?.userId ?? currentPrincipal?.principalId ?? "";
-    setAuthoringForm(createEmptyAssetAuthoringForm(ownerId, defaultAuthoringReviewDate()));
+    const form = createEmptyAssetAuthoringForm(ownerId, defaultAuthoringReviewDate());
+    authoringIdEditedRef.current = false;
+    authoringInitialFormRef.current = form;
+    setAuthoringForm(form);
     setAuthoringErrors({});
     setAuthoringSubmitError("");
     authoringEditTargetRef.current = null;
+    setEditorReady(false);
     setAuthoringMode("create");
     setAssetContentView("human");
-    navigatePage("library");
   }
 
   function startEditPage() {
@@ -2017,7 +1666,9 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
       return;
     }
 
-    setAuthoringForm(assetAuthoringFormFromDetail(assetDetail));
+    const form = assetAuthoringFormFromDetail(assetDetail);
+    authoringInitialFormRef.current = form;
+    setAuthoringForm(form);
     setAuthoringErrors({});
     setAuthoringSubmitError("");
     authoringEditTargetRef.current = {
@@ -2026,22 +1677,82 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
       metadata: assetDetail.asset.metadata,
       humanDocument: currentDocument
     };
+    setEditorReady(false);
     setAuthoringMode("edit");
     setAssetContentView("human");
   }
 
   function cancelPageAuthoring() {
+    authoringDirtyRef.current = false;
+    authoringInitialFormRef.current = null;
     setAuthoringMode(null);
     setAuthoringErrors({});
     setAuthoringSubmitError("");
     authoringEditTargetRef.current = null;
   }
 
-  async function saveAuthoredPage(event: FormEvent) {
-    event.preventDefault();
+  function hasPendingAuthoringChanges(): boolean {
+    // Nested editor cells can hold an edit before the root onChange callback.
+    let dirty = authoringDirtyRef.current;
+    if (richEditorEnabled && markdownEditorRef.current) {
+      try {
+        const snapshot = markdownEditorRef.current.getSnapshot();
+        dirty ||= !snapshot.ready || snapshot.value !== authoringInitialFormRef.current?.body;
+      } catch {
+        dirty = true;
+      }
+    }
+    authoringDirtyRef.current = dirty;
+    return dirty;
+  }
+
+  function requestLeaveAuthoring(proceed: () => void) {
+    if (!hasPendingAuthoringChanges()) { proceed(); return; }
+    pendingLeaveRef.current = proceed;
+    setIsLeaveDialogOpen(true);
+  }
+
+  function discardAndLeave() {
+    const proceed = pendingLeaveRef.current;
+    pendingLeaveRef.current = null;
+    setIsLeaveDialogOpen(false);
+    cancelPageAuthoring();
+    proceed?.();
+  }
+
+  async function saveAndLeave() {
+    const proceed = pendingLeaveRef.current;
+    if (await saveAuthoredPage(undefined, true)) {
+      pendingLeaveRef.current = null;
+      setIsLeaveDialogOpen(false);
+      proceed?.();
+    } else {
+      // Return to the editor with its text, field errors and conflict intact.
+      pendingLeaveRef.current = null;
+      setIsLeaveDialogOpen(false);
+    }
+  }
+
+  async function saveAuthoredPage(event?: FormEvent, leaving = false): Promise<boolean> {
+    event?.preventDefault();
 
     if (!authoringMode || isSavingPage) {
-      return;
+      return false;
+    }
+
+    let formToSave = authoringForm;
+    if (richEditorEnabled) {
+      try {
+        const snapshot = markdownEditorRef.current?.getSnapshot();
+        if (!snapshot?.ready) {
+          setAuthoringSubmitError(snapshot?.reason ?? "The editor is loading. Try saving when it is ready.");
+          return false;
+        }
+        formToSave = { ...authoringForm, body: snapshot.value };
+      } catch {
+        setAuthoringSubmitError("The editor could not prepare this save. Your text is still here. Switch to Source and copy your changes before retrying.");
+        return false;
+      }
     }
 
     const editTargetParent = typeof authoringEditTargetRef.current?.metadata.readerParentId === "string"
@@ -2052,7 +1763,7 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
       knownStableIds.push(editTargetParent);
     }
     const fieldErrors = validateAssetAuthoringForm(
-      authoringForm,
+      formToSave,
       authoringMode,
       knownStableIds,
       new Map(assets.flatMap((asset) => {
@@ -2062,15 +1773,16 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
     );
 
     if (Object.keys(fieldErrors).length) {
+      document.getElementById("authoring-settings")?.setAttribute("open", "");
       setAuthoringErrors(fieldErrors);
       setAuthoringSubmitError("Fix the highlighted fields, then save again.");
-      return;
+      return false;
     }
 
     const editTarget = authoringEditTargetRef.current;
     if (authoringMode === "edit" && !editTarget) {
       setAuthoringSubmitError("This page is no longer loaded. Cancel editing, reopen it, and try again.");
-      return;
+      return false;
     }
 
     setError("");
@@ -2083,19 +1795,19 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
       const detail = authoringMode === "create"
         ? await request<AssetDetail>("/assets", {
             method: "POST",
-            body: JSON.stringify(buildAssetCreateInput(authoringForm))
+            body: JSON.stringify(buildAssetCreateInput(formToSave))
           })
         : await request<AssetDetail>(`/assets/${encodeURIComponent(editTarget!.stableId)}/versions`, {
             method: "POST",
             body: JSON.stringify({
-              ...buildAssetUpdateInput(authoringForm, editTarget!.metadata, editTarget!.humanDocument),
+              ...buildAssetUpdateInput(formToSave, editTarget!.metadata, editTarget!.humanDocument),
               expectedVersionId: editTarget!.currentVersionId ?? undefined
             })
           });
       const savedMode = authoringMode;
 
       if (authenticationEpoch !== authenticationEpochRef.current) {
-        return;
+        return false;
       }
 
       setAssetDetail(detail);
@@ -2103,29 +1815,43 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
       setSelectedStableId(detail.asset.stableId);
       setVersionSnapshot(null);
       setAuthoringMode(null);
+      authoringDirtyRef.current = false;
+      authoringInitialFormRef.current = null;
       setAuthoringErrors({});
       authoringEditTargetRef.current = null;
-      navigatePage("asset-read");
+      if (!leaving) {
+        const pending = pendingLeaveRef.current;
+        pendingLeaveRef.current = null;
+        setIsLeaveDialogOpen(false);
+        if (pending) pending();
+        else onNavigate("asset-read", detail.asset.stableId);
+      }
       setMessage((savedMode === "create"
         ? `Created ${detail.asset.stableId} as a draft`
         : `Saved ${detail.asset.stableId} as a new draft version`) +
         (detail.processing?.reconciliation === "pending" ? ". Saved successfully; background reconciliation is pending." : "")
       );
+      return true;
     } catch (saveError) {
       if (authenticationEpoch !== authenticationEpochRef.current) {
-        return;
+        return false;
       }
 
       const saveErrorMessage = saveError instanceof Error ? saveError.message : String(saveError);
 
-      if (saveErrorMessage.includes("asset_version_conflict")) {
+      if (saveErrorMessage.includes("asset_version_conflict") || (authoringMode === "edit" && saveErrorMessage.startsWith("409 "))) {
         setAuthoringSubmitError("This page changed while you were editing. Your text is still here. Copy your changes, reload the page, and compare the latest draft before saving again.");
       } else if (authoringMode === "create" && saveErrorMessage.startsWith("409 ")) {
         setAuthoringErrors((current) => ({ ...current, stableId: "This stable ID is already in use." }));
         setAuthoringSubmitError("Choose a different stable ID, then save again.");
+      } else if (saveErrorMessage.startsWith("401 ")) {
+        setAuthoringSubmitError("Your session has expired. Your text is still here. Copy your changes before signing in again.");
+      } else if (saveErrorMessage.startsWith("403 ")) {
+        setAuthoringSubmitError("Your account cannot save this page. Your text is still here. Copy your changes and ask an administrator to check your access.");
       } else {
-        setAuthoringSubmitError(`The page was not saved. ${saveErrorMessage}`);
+        setAuthoringSubmitError("Your changes remain in the editor. Try saving again. If it still fails, ask an administrator for help.");
       }
+      return false;
     } finally {
       if (authenticationEpoch === authenticationEpochRef.current) {
         setIsSavingPage(false);
@@ -2146,41 +1872,8 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
       setSearchResponse(response);
       setMessage(`Search returned ${response.results.length} chunks`);
 
-      if (readerSurfaceActive) {
-        scrollReaderRegionIntoView("reader-search-results");
-      }
     } catch (searchError) {
       setError(searchError instanceof Error ? searchError.message : String(searchError));
-    }
-  }
-
-  async function runReaderAsk(event?: FormEvent) {
-    event?.preventDefault();
-
-    if (!readerAskText.trim()) {
-      return;
-    }
-
-    setError("");
-    setReaderAskError("");
-    setIsReaderAskRunning(true);
-
-    try {
-      const response = await request<ManagedQueryResponse>("/agent/query", {
-        method: "POST",
-        body: JSON.stringify({
-          query: readerAskText,
-          limit: 5,
-          mode: "deterministic-retrieval",
-          cache: false
-        })
-      });
-      setReaderAskResponse(response);
-    } catch (queryError) {
-      setReaderAskResponse(null);
-      setReaderAskError(queryError instanceof Error ? queryError.message : String(queryError));
-    } finally {
-      setIsReaderAskRunning(false);
     }
   }
 
@@ -2292,23 +1985,31 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
   }
 
   async function loadTelemetryRetentionPolicy() {
-    setError("");
+    const epoch = ++retentionLoadEpochRef.current;
+    setRetentionLoadState("loading");
+    setRetentionError("");
+    setTelemetryRetentionPurgeResult(null);
 
     try {
       const policy = await request<TelemetryRetentionPolicy>("/admin/telemetry-retention");
+      if (epoch !== retentionLoadEpochRef.current) return;
       setTelemetryRetentionPolicy(policy);
       setRetentionRetrievalDays(formatRetentionInput(policy.retrievalEventRetentionDays));
       setRetentionAuditDays(formatRetentionInput(policy.auditEventRetentionDays));
       setRetentionFeedbackDays(formatRetentionInput(policy.feedbackRetentionDays));
-      setMessage("Loaded telemetry retention policy");
+      setRetentionLoadState("loaded");
     } catch (retentionError) {
-      setError(retentionError instanceof Error ? retentionError.message : String(retentionError));
+      if (epoch !== retentionLoadEpochRef.current) return;
+      setRetentionLoadState("error");
+      setRetentionError(`The saved retention policy could not be loaded. ${retentionError instanceof Error ? retentionError.message : String(retentionError)}`);
     }
   }
 
   async function saveTelemetryRetentionPolicy(event: FormEvent) {
     event.preventDefault();
-    setError("");
+    if (retentionLoadState !== "loaded" || !telemetryRetentionPolicy || retentionBusy) return;
+    setRetentionError("");
+    setRetentionBusy(true);
 
     try {
       const policy = await request<TelemetryRetentionPolicy>("/admin/telemetry-retention", {
@@ -2320,14 +2021,19 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
         })
       });
       setTelemetryRetentionPolicy(policy);
+      setTelemetryRetentionPurgeResult(null);
       setMessage("Saved telemetry retention policy");
     } catch (retentionError) {
-      setError(retentionError instanceof Error ? retentionError.message : String(retentionError));
+      setRetentionError(retentionError instanceof Error ? retentionError.message : String(retentionError));
+    } finally {
+      setRetentionBusy(false);
     }
   }
 
   async function purgeTelemetryRetention(dryRun: boolean) {
-    setError("");
+    if (retentionLoadState !== "loaded" || !telemetryRetentionPolicy || retentionBusy) return;
+    setRetentionError("");
+    setRetentionBusy(true);
 
     try {
       const result = await request<TelemetryRetentionPurgeResult>("/admin/telemetry-retention/purge", {
@@ -2337,7 +2043,9 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
       setTelemetryRetentionPurgeResult(result);
       setMessage(`${dryRun ? "Previewed" : "Purged"} telemetry retention`);
     } catch (retentionError) {
-      setError(retentionError instanceof Error ? retentionError.message : String(retentionError));
+      setRetentionError(retentionError instanceof Error ? retentionError.message : String(retentionError));
+    } finally {
+      setRetentionBusy(false);
     }
   }
 
@@ -3507,22 +3215,12 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
     }
   }
 
-  function navigatePage(route: string) {
-    const nextRoute = normalizePageRoute(route);
-    setCurrentPage(nextRoute);
-    window.location.hash = canonicalRouteHash(nextRoute);
-  }
-
-  function scrollReaderRegionIntoView(id: string) {
-    window.requestAnimationFrame(() => {
-      document.getElementById(id)?.scrollIntoView({ block: "start", behavior: "auto" });
-    });
+  function navigatePage(route: string, pageId?: string, view?: string) {
+    onNavigate(normalizePageRoute(route), pageId, view);
   }
 
   function openAssetRead(stableId: string) {
-    cancelPageAuthoring();
-    setSelectedStableId(stableId);
-    navigatePage("asset-read");
+    navigatePage("asset-read", stableId);
   }
 
   function routeBreadcrumbs(route: string) {
@@ -3604,6 +3302,7 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
         return [loadProviderConfigs, loadProviderHealth, loadAuthProviderConfigs];
       case "policies":
         return [
+          loadTelemetryRetentionPolicy,
           loadManagedQueryPolicy,
           loadRetrievalRankingPolicy,
           loadEvalSchedulePolicy,
@@ -3725,8 +3424,8 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
   }
 
   const operationsPage = operationsPageCopy[currentPage] ?? defaultOperationsPageCopy;
-  const activeAssetContentView = currentPage === "versions" ? "version" : assetContentView;
-  const navSections: NavSectionConfig[] = [
+  const activeAssetContentView = assetContentView;
+  const allNavSections: NavSectionConfig[] = [
     {
       label: "Content",
       folderLabel: "Pages",
@@ -3737,7 +3436,7 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
       leaves: [
         { route: "library", label: "All content", count: approvedAssets },
         { route: "search", label: "Search and ask" },
-        { route: "asset-read", label: "Page detail", badge: assetDetail ? { label: "open", tone: "warn" } : undefined }
+        ...(capabilities.managePageGrants && !capabilities.previewAssets ? [{ route: "asset-read", label: "Page access" }] : [])
       ]
     },
     {
@@ -3748,8 +3447,7 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
       activeRoutes: ["review", "versions"],
       count: reviewDueAssets,
       leaves: [
-        { route: "review", label: "Review queue", badge: reviewQueue ? { label: reviewQueue.assets.length, tone: "warn" } : undefined },
-        { route: "versions", label: "Version compare" }
+        { route: "review", label: "Review queue", badge: reviewQueue ? { label: reviewQueue.totalCount ?? reviewQueue.assets.length, tone: "warn" } : undefined }
       ]
     },
     {
@@ -3785,6 +3483,13 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
       ]
     }
   ];
+  const navSections = allNavSections.map((section) => ({
+    ...section,
+    leaves: section.leaves.filter((leaf) => canAccessAppRoute(currentPrincipal, leaf.route))
+  })).filter((section) => section.leaves.length > 0).map((section) => ({
+    ...section,
+    folderRoute: canAccessAppRoute(currentPrincipal, section.folderRoute) ? section.folderRoute : section.leaves[0]!.route
+  }));
   const commandSections = navSections.map((section) => {
     const routes = new Map<string, { route: string; label: string; badge?: string | number }>();
 
@@ -3807,13 +3512,6 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
       routes: Array.from(routes.values())
     };
   });
-  const selectReaderPage = (stableId: string) => {
-    setSelectedStableId(stableId);
-    setAssetContentView("human");
-    window.requestAnimationFrame(() => {
-      document.querySelector<HTMLElement>(".reader-article-header h1")?.focus({ preventScroll: true });
-    });
-  };
   const renderNavChrome = (label: string, count?: number) => (
     <div className="nav-chrome">
       <Button
@@ -3840,41 +3538,12 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
       aria-valuemin={navWidthMin}
       aria-valuemax={navWidthMax}
       aria-valuenow={navWidth}
+      aria-orientation="vertical"
       role="separator"
       onPointerDown={startNavResize}
       onKeyDown={resizeNavFromKeyboard}
     />
   );
-  const readerIconMap: Record<string, React.ElementType> = {
-    book: BookOpen,
-    checklist: ClipboardText,
-    export: Package,
-    guide: BookOpen,
-    policy: ClipboardText,
-    privacy: GearSix,
-    search: MagnifyingGlass,
-    system: GearSix
-  };
-  const renderReaderNavIcon = (asset: AssetRecord, hasChildren: boolean) => {
-    const configuredIcon = readAssetMetadataString(asset, "readerIcon");
-    const iconKey = (configuredIcon ?? (hasChildren ? "book" : asset.type)).toLowerCase();
-    const Icon = readerIconMap[iconKey] ?? readerIconMap[asset.type] ?? BookOpen;
-
-    return <Icon aria-hidden="true" />;
-  };
-  const readerPageInfoItems = (asset: AssetRecord): Array<{ key: string; term: string; description: ReactNode }> => {
-    const fieldCatalog: Record<string, { term: string; description: ReactNode }> = {
-      version: { term: "Version", description: currentVersion ? `Version ${currentVersion.versionNumber}` : "Not versioned" },
-      updated: { term: "Last updated", description: formatReaderDate(asset.updatedAt) },
-      access: { term: "Access", description: formatReaderAccess(asset) },
-      maintainer: { term: "Maintainer", description: formatReaderMaintainer(asset.ownerId) },
-      review: { term: "Review", description: formatReaderReview(asset.reviewDueAt) }
-    };
-    const configuredFields = readAssetMetadataStringArray(asset, "readerPageInfoFields");
-    const fields = configuredFields.length ? configuredFields : ["version", "updated", "access", "maintainer", "review"];
-
-    return fields.flatMap((key) => fieldCatalog[key] ? [{ key, ...fieldCatalog[key] }] : []);
-  };
   const renderAdminShellHeader = () => (
     <div className="admin-side-header">
       <h2>Manage ForgetBase</h2>
@@ -3936,181 +3605,41 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
       })}
     </div>
   );
-  const renderReaderNavNode = (node: ReaderNavNode, depth = 0): ReactNode => {
-    const hasChildren = node.children.length > 0;
-    const isActive = node.asset.stableId === readerSelectedAsset?.stableId;
-    const isSelectedBranch = readerNodeContainsStableId(node, readerSelectedAsset?.stableId);
-    const branchKey = `reader:${node.asset.stableId}`;
-    const branchId = `reader-nav-branch-${node.asset.id}`;
-    const isExpanded = hasChildren ? expandedNavSections[branchKey] ?? isSelectedBranch : false;
-
-    if (!hasChildren) {
-      return (
-        <Button
-          type="button"
-          key={node.asset.id}
-          className={`nav-link nav-leaf reader-nav-node has-dot ${isActive ? "active" : ""}`}
-          data-depth={depth}
-          variant="ghost"
-          aria-current={isActive ? "page" : undefined}
-          onClick={() => selectReaderPage(node.asset.stableId)}
-        >
-          <span className="nav-icon reader-leaf-dot" aria-hidden="true"></span>
-          <span className="nav-text">{readerNavLabel(node.asset)}</span>
-        </Button>
-      );
-    }
-
-    return (
-      <div className="reader-tree-group" key={node.asset.id} data-depth={depth}>
-        <Button
-          className={`nav-folder reader-nav-node ${isSelectedBranch ? "is-active-ancestor" : ""} ${isExpanded ? "is-expanded" : ""} ${isActive ? "active" : ""}`}
-          data-depth={depth}
-          type="button"
-          variant="ghost"
-          aria-expanded={isExpanded}
-          aria-controls={branchId}
-          aria-current={isActive ? "page" : undefined}
-          onClick={() => {
-            selectReaderPage(node.asset.stableId);
-            setExpandedNavSections((current) => ({
-              ...current,
-              [branchKey]: !(current[branchKey] ?? isSelectedBranch)
-            }));
-          }}
-        >
-          <span className="folder-glyph reader-folder-icon" aria-hidden="true">{renderReaderNavIcon(node.asset, true)}</span>
-          <span className="nav-text">{readerNavLabel(node.asset)}</span>
-          <Badge variant="neutral" className="nav-count">{node.children.length}</Badge>
-          <span className="nav-chevron" aria-hidden="true"></span>
-        </Button>
-        {isExpanded ? (
-          <div className="nav-branch" id={branchId}>
-            {node.children.map((child) => renderReaderNavNode(child, depth + 1))}
-          </div>
-        ) : null}
-      </div>
-    );
-  };
-  const renderReaderCollapsedNavNode = (node: ReaderNavNode): ReactNode => {
-    const hasChildren = node.children.length > 0;
-    const isActive = node.asset.stableId === readerSelectedAsset?.stableId;
-    const isSelectedBranch = readerNodeContainsStableId(node, readerSelectedAsset?.stableId);
-
-    return (
-      <Button
-        type="button"
-        key={node.asset.id}
-        className={`reader-collapsed-node ${isSelectedBranch ? "is-active-ancestor" : ""} ${isActive ? "active" : ""}`}
-        variant="ghost"
-        aria-label={readerNavLabel(node.asset)}
-        aria-current={isActive ? "page" : undefined}
-        title={readerNavLabel(node.asset)}
-        onClick={() => selectReaderPage(node.asset.stableId)}
-      >
-        {hasChildren ? (
-          <span className="folder-glyph reader-folder-icon" aria-hidden="true">{renderReaderNavIcon(node.asset, true)}</span>
-        ) : (
-          <span className="nav-icon reader-leaf-dot" aria-hidden="true"></span>
-        )}
-      </Button>
-    );
-  };
   const shellStyle = {
     "--nav": `${isNavCollapsed ? navCollapsedWidth : navWidth}px`
   } as CSSProperties & Record<"--nav", string>;
 
   return (
     <div
-      className={`app-shell ${isAuthenticated ? readerSurfaceActive ? "reader-shell" : "admin-shell" : "auth-shell"} ${isNavCollapsed ? "nav-collapsed" : ""} ${accountSettingsRouteRequested ? "reader-shell--account" : ""}`}
+      className={`app-shell ${isAuthenticated ? "admin-shell" : "auth-shell"} ${isNavCollapsed ? "nav-collapsed" : ""}`}
       data-density={density}
       style={shellStyle}
     >
-      <a className="skip-link" href="#main">Skip to content</a>
+      <a className="skip-link" href="#main" onClick={(event) => { event.preventDefault(); document.getElementById("main")?.focus(); }}>Skip to content</a>
+      <AlertDialog open={isLeaveDialogOpen} onOpenChange={(open) => { if (!open && !isSavingPage) { setIsLeaveDialogOpen(false); pendingLeaveRef.current = null; } }}>
+        <AlertDialogContent>
+          <AlertDialogHeader><AlertDialogTitle>Save your page before leaving?</AlertDialogTitle><AlertDialogDescription>Your changes have not been saved. Save a draft, discard the changes, or continue editing.</AlertDialogDescription></AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isSavingPage}>Continue editing</AlertDialogCancel>
+            <Button type="button" variant="danger" disabled={isSavingPage} onClick={discardAndLeave}>Discard changes</Button>
+            <Button type="button" variant="primary" disabled={isSavingPage || (richEditorEnabled && !editorReady)} onClick={() => void saveAndLeave()}>{isSavingPage ? "Saving…" : "Save draft and leave"}</Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       <header className="topbar">
         <div className="brand">
           <span className="mark" aria-hidden="true">
             <img className="mark-image" src="/favicon.svg" alt="" />
           </span>
           <span className="brand-name">ForgetBase</span>
-          {isAuthenticated && !readerSurfaceActive ? (
+          {isAuthenticated ? (
             <div className="health brand-health">
               <span className={`health-dot ${health === "ok" ? "ok" : "bad"}`}></span>
               <span>API {health}</span>
             </div>
           ) : null}
         </div>
-        {isAuthenticated ? readerSurfaceActive ? (
-          <div className="topbar-main reader-topbar-main">
-            {accountSettingsRouteRequested ? (
-              <div className="reader-topbar-spacer" aria-hidden="true" />
-            ) : (
-              <form
-                className="reader-topbar-search"
-                onSubmit={(event) => {
-                  setLibraryQuery(searchQuery);
-                  void runSearch(event);
-                }}
-              >
-                <MagnifyingGlass aria-hidden="true" />
-                <Input
-                  id="reader-search-input"
-                  value={searchQuery}
-                  onChange={(event) => {
-                    setSearchQuery(event.target.value);
-                    setLibraryQuery(event.target.value);
-                  }}
-                  placeholder="Search pages"
-                  aria-label="Search pages"
-                />
-                <span className="kbd reader-search-kbd">Cmd K</span>
-              </form>
-            )}
-            <div className="topbar-actions">
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    type="button"
-                    className="identity-trigger"
-                    aria-label={`Account menu for ${displayIdentity}`}
-                  >
-                    <span className="avatar">{displayInitials}</span>
-                    <span className="identity-name">{displayIdentity}</span>
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="identity-menu">
-                  <DropdownMenuLabel>
-                    <span className="identity-menu-header">
-                      <span className="identity-menu-label">Signed in</span>
-                      <span className="identity-menu-title">
-                        <span className="identity-menu-value">{displayIdentity}</span>
-                        {currentPrincipal?.role ? <Badge variant="neutral">{currentPrincipal.role}</Badge> : null}
-                      </span>
-                      <span className="identity-menu-email">{currentPrincipal?.email ?? "No email available"}</span>
-                    </span>
-                  </DropdownMenuLabel>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuGroup>
-                    <DropdownMenuItem onSelect={() => navigatePage("account-settings")}>
-                      Settings
-                    </DropdownMenuItem>
-                    {canUseAdministration ? (
-                      <DropdownMenuItem onSelect={() => navigatePage("admin/content")}>
-                        Admin
-                      </DropdownMenuItem>
-                    ) : null}
-                  </DropdownMenuGroup>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem variant="destructive" onSelect={() => void logout()}>
-                    Sign out
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </div>
-          </div>
-        ) : (
+        {isAuthenticated ? (
           <div className="topbar-main">
             <Button
               variant="ghost"
@@ -4176,7 +3705,7 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
                     </DropdownMenuItem>
                   </DropdownMenuGroup>
                   <DropdownMenuSeparator />
-                  <DropdownMenuItem variant="destructive" onSelect={() => void logout()}>
+                  <DropdownMenuItem variant="destructive" onSelect={() => requestLeaveAuthoring(() => void logout())}>
                     Sign out
                   </DropdownMenuItem>
                 </DropdownMenuContent>
@@ -4190,331 +3719,7 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
         )}
       </header>
 
-      {isAuthenticated ? readerSurfaceActive ? (
-        <>
-        {readerLibrarySurfaceActive ? (
-          <aside className="side-nav tree-nav reader-library" aria-label="Published material list">
-            {renderNavChrome("Pages", readerVisiblePageCount)}
-            {isNavCollapsed ? (
-              <div className="nav-group reader-nav-group reader-nav-group--collapsed">
-                <div className="nav-tree reader-collapsed-tree">
-                  {readerAssetGroups.length ? readerAssetGroups.map((node) => renderReaderCollapsedNavNode(node)) : null}
-                </div>
-              </div>
-            ) : (
-              <>
-                <div className="nav-group reader-nav-group">
-                  {readerFilterActive ? (
-                    <div className="reader-library-tools">
-                      {readerFilterActive ? (
-                        <Button type="button" size="sm" variant="ghost" onClick={() => {
-                          setLibraryQuery("");
-                          setSearchQuery("");
-                        }}>
-                          Clear
-                        </Button>
-                      ) : null}
-                    </div>
-                  ) : null}
-                  <div className="nav-tree">
-                    {readerAssetGroups.length ? readerAssetGroups.map((node) => renderReaderNavNode(node)) : (
-                      <div className="reader-empty-state">
-                        <h3>No pages found</h3>
-                        <p>{readerFilterActive ? "Clear search to see all pages." : "No approved pages are available to this reader account yet."}</p>
-                      </div>
-                    )}
-                  </div>
-                </div>
-                {renderNavResizer()}
-              </>
-            )}
-          </aside>
-        ) : null}
-        <main className={`reader-main ${accountSettingsRouteRequested ? "reader-main--account" : ""}`} id="main">
-          {accountSettingsRouteRequested ? (
-            <section className="account-settings-page" aria-labelledby="account-settings-title">
-              <header className="account-settings-header">
-                <p className="eyebrow">Account</p>
-                <h1 id="account-settings-title">Settings</h1>
-                <p>Review the signed-in identity, role, groups, and access scopes used for this session.</p>
-              </header>
-              <dl className="account-settings-grid">
-                <div>
-                  <dt>Name</dt>
-                  <dd>{displayIdentity}</dd>
-                </div>
-                <div>
-                  <dt>Email</dt>
-                  <dd>{currentPrincipal?.email ?? "not available"}</dd>
-                </div>
-                <div>
-                  <dt>Role</dt>
-                  <dd>{currentPrincipal?.role ?? "unknown"}</dd>
-                </div>
-                <div>
-                  <dt>Principal</dt>
-                  <dd>{currentPrincipal?.principalType ?? "unknown"}</dd>
-                </div>
-                <div>
-                  <dt>Groups</dt>
-                  <dd>{formatList(currentPrincipal?.groupIds ?? [])}</dd>
-                </div>
-                <div>
-                  <dt>Scopes</dt>
-                  <dd>{formatList(currentPrincipal?.scopes ?? [])}</dd>
-                </div>
-              </dl>
-              <div className="account-settings-actions">
-                {canUseAdministration ? (
-                  <Button type="button" onClick={() => navigatePage("admin/content")}>Admin</Button>
-                ) : null}
-                <Button type="button" variant="ghost" onClick={() => void logout()}>Sign out</Button>
-              </div>
-            </section>
-          ) : (
-            <>
-          {error ? (
-            <Alert variant="destructive" className="reader-alert">
-              <AlertTitle>Request failed</AlertTitle>
-              <AlertDescription>{error}</AlertDescription>
-            </Alert>
-          ) : null}
-          {message ? (
-            <Alert variant="success" className="reader-alert" role="status" aria-live="polite">
-              <AlertDescription>{message}</AlertDescription>
-            </Alert>
-          ) : null}
-
-          {readerFilterActive ? (
-            <section className="reader-search-results" id="reader-search-results" aria-label="Search results">
-              <div className="reader-search-results-header">
-                <div>
-                  <p className="eyebrow">Search results</p>
-                  <h2>Results for “{libraryQuery.trim()}”</h2>
-                </div>
-                <Button type="button" size="sm" variant="ghost" onClick={() => {
-                  setLibraryQuery("");
-                  setSearchQuery("");
-                  setSearchResponse(null);
-                }}>
-                  Clear
-                </Button>
-              </div>
-              {readerSearchHasFreshResponse ? (
-                readerSearchResults.length ? (
-                  <div className="reader-search-list">
-                    {readerSearchResults.slice(0, 5).map((result) => (
-                      <article className="reader-search-result" key={`${result.asset.stableId}:${result.chunkId}`}>
-                        <div>
-                          <p className="reader-search-meta">{formatAssetTypeLabel(result.asset.type)} · {formatReaderAccess(result.asset)}</p>
-                          <h3>{result.asset.title}</h3>
-                          <p>{formatReaderSnippet(result.citation.snippet || result.content, 180)}</p>
-                        </div>
-                        <Button
-                          type="button"
-                          size="sm"
-                          onClick={() => {
-                            selectReaderPage(result.asset.stableId);
-                            scrollReaderRegionIntoView("reader-article");
-                          }}
-                        >
-                          Open page
-                        </Button>
-                      </article>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="reader-empty-state">
-                    <h3>No readable results</h3>
-                    <p>No pages you can read matched this search.</p>
-                  </div>
-                )
-              ) : (
-                <div className="reader-search-prompt">
-                  <p>Press Enter to search page content and sources.</p>
-                </div>
-              )}
-            </section>
-          ) : null}
-
-          <section className="reader-mobile-page-picker" aria-label="Choose a page">
-            <div>
-              <p className="eyebrow">Pages</p>
-              <p>{readerVisiblePageCount} page{readerVisiblePageCount === 1 ? "" : "s"} available</p>
-            </div>
-            <NativeSelect
-              aria-label="Choose a page"
-              value={readerSelectedAsset?.stableId ?? ""}
-              onChange={(event) => {
-                selectReaderPage(event.target.value);
-                scrollReaderRegionIntoView("reader-article");
-              }}
-            >
-              {filteredReaderAssets.map((asset) => (
-                <option key={asset.id} value={asset.stableId}>{asset.title}</option>
-              ))}
-            </NativeSelect>
-          </section>
-
-          <section className="reader-layout reader-layout--content" aria-label="Published library">
-            <article className="reader-article" id="reader-article">
-              {assetDetail && readerSelectedAsset ? (
-                <>
-                  <header className="reader-article-header">
-                    <div>
-                      <p className="eyebrow">{formatAssetTypeLabel(assetDetail.asset.type)}</p>
-                      <h1 tabIndex={-1}>{assetDetail.asset.title}</h1>
-                      {assetDetail.asset.summary ? <p>{assetDetail.asset.summary}</p> : null}
-                    </div>
-                    <div className="reader-status">
-                      <Badge variant={stateBadgeVariant(assetDetail.asset.lifecycleState)}>{formatReaderLifecycle(assetDetail.asset.lifecycleState)}</Badge>
-                      <Badge variant={stateBadgeVariant(assetDetail.asset.status)}>{formatReaderStatus(assetDetail.asset.status)}</Badge>
-                    </div>
-                  </header>
-
-                  {readerSectionHeadings.length ? (
-                    <nav className="reader-section-nav" aria-label="Page sections">
-                      <p>On this page</p>
-                      <div>
-                        {readerSectionHeadings.map((heading) => (
-                          <button
-                            type="button"
-                            className={heading.level === 3 ? "is-nested" : ""}
-                            key={heading.id}
-                            onClick={() => document.getElementById(heading.id)?.scrollIntoView({ block: "start" })}
-                          >
-                            {heading.text}
-                          </button>
-                        ))}
-                      </div>
-                    </nav>
-                  ) : null}
-
-                  <div className="reader-document">
-                    {currentHumanBody ? (
-                      <div className="reader-document-body">
-                        {renderSafeMarkdownDocument(currentHumanBody, assetDetail.asset.title)}
-                      </div>
-                    ) : (
-                      <div className="reader-empty-state">
-                        <h3>No readable page yet</h3>
-                        <p>This item is published, but it does not have a human-readable page body yet.</p>
-                      </div>
-                    )}
-                  </div>
-
-                  <section className="reader-ask-panel" aria-labelledby="reader-ask-title">
-                    <div className="reader-ask-heading">
-                      <div>
-                        <p className="eyebrow">Ask</p>
-                        <h2 id="reader-ask-title">Ask this knowledge base</h2>
-                        <p>Get an answer with citations from pages available to your account.</p>
-                      </div>
-                      {readerAskResponse ? (
-                        <Badge variant={readerAskResponse.checks.deniedCount ? "warning" : "success"}>
-                          {readerAskResponse.checks.deniedCount ? "Limited results" : "Sources checked"}
-                        </Badge>
-                      ) : null}
-                    </div>
-                    <form className="reader-ask-form" onSubmit={(event) => void runReaderAsk(event)}>
-                      <Label htmlFor="reader-ask-input" className="sr-only">Ask a question</Label>
-                      <Input
-                        id="reader-ask-input"
-                        value={readerAskText}
-                        onChange={(event) => setReaderAskText(event.target.value)}
-                        placeholder="Ask about these pages"
-                        aria-describedby="reader-ask-help"
-                      />
-                      <p id="reader-ask-help" className="reader-ask-note">Answers only use content your account can read.</p>
-                      <Button type="submit" disabled={isReaderAskRunning || !readerAskText.trim()}>
-                        {isReaderAskRunning ? "Finding sources…" : "Ask"}
-                      </Button>
-                    </form>
-                    {isReaderAskRunning ? (
-                      <div className="reader-ask-loading" role="status" aria-live="polite">
-                        <span className="reader-loading-dot" aria-hidden="true" />
-                        Finding an answer and checking accessible sources.
-                      </div>
-                    ) : null}
-                    {readerAskError ? (
-                      <Alert variant="destructive" className="reader-ask-error">
-                        <AlertTitle>Could not answer this question</AlertTitle>
-                        <AlertDescription>{readerAskError}</AlertDescription>
-                      </Alert>
-                    ) : null}
-                    {readerAskResponse && !isReaderAskRunning ? (
-                      <div className="reader-ask-answer" aria-live="polite">
-                        <div>
-                          <h3>Answer</h3>
-                          {readerAskResponse.checks.deniedCount && !readerAskResponse.citations.length ? (
-                            <div className="reader-no-access-state">
-                              <strong>No accessible answer was found.</strong>
-                              <p>Try another question or ask an admin for access to the matching pages.</p>
-                            </div>
-                          ) : renderReaderAnswer(readerAskResponse.answer)}
-                          {readerAskResponse.checks.deniedCount && readerAskResponse.citations.length ? (
-                            <p className="reader-ask-note">Some matching pages are not available to your account.</p>
-                          ) : null}
-                        </div>
-                        <div className="reader-citations" aria-label="Sources">
-                          <h3>Sources</h3>
-                          {readerAskResponse.citations.length ? (
-                            readerAskResponse.citations.slice(0, 5).map((citation, index) => (
-                              <details className="reader-citation" key={`${citation.assetId}:${citation.chunkId}`} open={index === 0}>
-                                <summary>
-                                  <strong>{citation.title}</strong>
-                                  <span>Source {index + 1}</span>
-                                </summary>
-                                <p>{formatReaderSnippet(citation.snippet, 180)}</p>
-                                <Button
-                                  type="button"
-                                  size="sm"
-                                  variant="ghost"
-                                  onClick={() => {
-                                    selectReaderPage(citation.stableId);
-                                    scrollReaderRegionIntoView("reader-article");
-                                  }}
-                                >
-                                  Open source page
-                                </Button>
-                              </details>
-                            ))
-                          ) : (
-                            <p className="reader-ask-note">No accessible sources matched this question.</p>
-                          )}
-                        </div>
-                      </div>
-                    ) : !isReaderAskRunning ? (
-                      <div className="reader-ask-empty">
-                        <p>Try asking “What should be redacted?”</p>
-                      </div>
-                    ) : null}
-                  </section>
-
-                  <footer className="reader-page-footer" aria-label="Page details">
-                    <dl>
-                      {readerPageInfoItems(assetDetail.asset).map((item) => (
-                        <div key={item.key}>
-                          <dt>{item.term}</dt>
-                          <dd>{item.description}</dd>
-                        </div>
-                      ))}
-                    </dl>
-                  </footer>
-                </>
-              ) : (
-                <div className="reader-empty-state reader-empty-state--large">
-                  <h2>No page selected</h2>
-                  <p>Select a page from the list after it loads.</p>
-                </div>
-              )}
-            </article>
-          </section>
-            </>
-          )}
-        </main>
-        </>
-      ) : (
+      {isAuthenticated ? (
         <>
           <CommandDialog
             open={isCommandOpen}
@@ -4577,7 +3782,7 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
             )}
           </nav>
 
-          <main className="main" id="main">
+          <main className="main" id="main" tabIndex={-1}>
         {sessionCookieActive ? null : (
           <details className="developer-connection">
             <summary>Developer connection</summary>
@@ -4605,7 +3810,7 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
                   </div>
                   <div className="connection-actions">
                     <Button type="button" onClick={() => void refresh()}><ArrowsClockwise aria-hidden="true" />Refresh</Button>
-                    <Button type="button" onClick={() => void logout()}><SignOut aria-hidden="true" />Sign out</Button>
+                    <Button type="button" onClick={() => requestLeaveAuthoring(() => void logout())}><SignOut aria-hidden="true" />Sign out</Button>
                   </div>
                 </form>
               </CardContent>
@@ -4619,162 +3824,55 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
             <AlertDescription>{error}</AlertDescription>
           </Alert>
         ) : null}
-        {message ? (
+        {message && !(currentPage === "library" && /^Loaded \d+ assets$/.test(message)) ? (
           <Alert variant="success" className="shell-alert" role="status" aria-live="polite">
             <AlertDescription>{message}</AlertDescription>
           </Alert>
         ) : null}
 
           <section className={`page ${["library", "asset-read", "versions"].includes(currentPage) ? "active" : ""}`} data-page="library">
+            {currentPage !== "library" || authoringMode ? (
             <RouteHeader
               className="page-route-header"
               breadcrumbs={routeBreadcrumbs(currentPage)}
-              title={currentPage === "asset-read"
+              title={authoringMode ? authoringMode === "create" ? "Create page" : `Edit ${authoringForm.title || "page"}` : currentPage === "asset-read"
                 ? assetDetail?.asset.title ?? "Reading room"
                 : currentPage === "versions"
                   ? "Version Compare"
                   : "Content"}
-              lede={currentPage === "versions"
+              lede={authoringMode ? "Write the page, save a draft, then review and publish when it is ready." : currentPage === "versions"
                 ? "Compare versions before restoring, publishing, or closing a review."
                 : currentPage === "asset-read"
                   ? "Read the selected page with review state, access, versions, and source details."
                   : "Manage pages, policies, guides, templates, checklists, and other knowledge content."}
               actions={(
                 <>
-                  {currentPage === "library" && canWriteAssets ? (
+                  {currentPage === "library" && canWriteAssets && !authoringMode ? (
                     <Button type="button" variant="primary" onClick={startCreatePage} disabled={authoringMode !== null || isSavingPage}>New page</Button>
                   ) : null}
-                  {currentPage === "asset-read" && assetDetail && canWriteAssets ? (
+                  {currentPage === "asset-read" && assetDetail && capabilities.editAssets ? (
                     <Button type="button" onClick={startEditPage} disabled={authoringMode !== null || isSavingPage}>Edit page</Button>
                   ) : null}
-                  <Button type="button" onClick={() => void refresh()} disabled={isSavingPage}>
+                  <Button type="button" onClick={() => void refresh()} disabled={isSavingPage || authoringMode !== null}>
                     <ArrowsClockwise aria-hidden="true" />Refresh
                   </Button>
                 </>
               )}
             />
-            {currentPage === "library" ? (
-              <div className="grid four">
-                <MetricCard label="Visible pages" value={assets.length} note="Filtered by your account." />
-                <MetricCard label="Reviewed" value={approvedAssets} note="Approved content loaded in the browser." />
-                <MetricCard label="Need review" value={reviewDueAssets} note="Draft, stale, in review, overdue, or inactive." />
-                <MetricCard label="Reader pages" value={publicReaderAssets} note="Published and approved pages readers can open." />
-              </div>
             ) : null}
-            <section className={`workspace ${currentPage === "library" ? "" : "workspace--focused"}`}>
-              {currentPage === "library" ? (
-                <DataTableShell
-                  title="Content"
-                  description={`${filteredLibraryAssets.length} of ${assets.length} visible in this view`}
-                  isEmpty={!filteredLibraryAssets.length}
-                  emptyTitle="No content matches this view"
-                  emptyDescription="Adjust filters or refresh the list."
-                >
-                <Toolbar
-                  aria-label="Content filters"
-                  className="rounded-none border-x-0 border-t-0"
-                  filters={(
-                    <>
-                      <FormField label="Find" htmlFor="library-query" className="min-w-[220px] flex-1">
-                        <Input
-                          id="library-query"
-                          value={libraryQuery}
-                          onChange={(event) => setLibraryQuery(event.target.value)}
-                          placeholder="Title, stable ID, owner, source"
-                        />
-                      </FormField>
-                      <FormField label="View" htmlFor="library-view-filter" className="min-w-[180px]">
-                        <Select value={libraryViewFilter} onValueChange={(value) => setLibraryViewFilter(value as LibraryViewFilter)}>
-                          <SelectTrigger id="library-view-filter">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="all">All visible</SelectItem>
-                            <SelectItem value="public-reader">Reader-ready</SelectItem>
-                            <SelectItem value="needs-governance">Needs review</SelectItem>
-                            <SelectItem value="approved-active">Published and reviewed</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </FormField>
-                      <FormField label="Sensitivity" htmlFor="library-sensitivity-filter" className="min-w-[170px]">
-                        <Select value={librarySensitivityFilter} onValueChange={setLibrarySensitivityFilter}>
-                          <SelectTrigger id="library-sensitivity-filter">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="all">All bands</SelectItem>
-                            {sensitivityFilterValues.map((sensitivity) => (
-                              <SelectItem key={sensitivity} value={sensitivity}>{sensitivity}</SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </FormField>
-                    </>
-                  )}
-                  actions={(
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="ghost"
-                      disabled={!libraryFilterActive}
-                      onClick={() => {
-                        setLibraryQuery("");
-                        setLibraryViewFilter("all");
-                        setLibrarySensitivityFilter("all");
-                      }}
-                    >
-                      Clear
-                    </Button>
-                  )}
+            <section className="workspace workspace--focused">
+              {currentPage === "library" && !authoringMode ? (
+                <ContentLibrary
+                  assets={filteredLibraryAssets} total={assets.length}
+                  query={libraryQuery} onQuery={setLibraryQuery}
+                  view={libraryViewFilter} onView={setLibraryViewFilter}
+                  sensitivity={librarySensitivityFilter} onSensitivity={setLibrarySensitivityFilter}
+                  onClear={() => { setLibraryQuery(""); setLibraryViewFilter("all"); setLibrarySensitivityFilter("all"); }}
+                  canCreate={canWriteAssets} onCreate={startCreatePage} onRefresh={() => void refresh()}
+                  onSelect={setSelectedStableId} onOpen={openAssetRead} detail={assetDetail} error={error}
                 />
-                <Table className="library-table">
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Page</TableHead>
-                      <TableHead>State</TableHead>
-                      <TableHead>Review</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {filteredLibraryAssets.map((asset) => (
-                      <TableRow
-                        key={asset.id}
-                        data-state={asset.stableId === selectedAsset?.stableId ? "selected" : undefined}
-                        className="cursor-pointer"
-                        onClick={() => openAssetRead(asset.stableId)}
-                        onKeyDown={(event) => selectAssetFromRow(event, () => openAssetRead(asset.stableId))}
-                        tabIndex={0}
-                        aria-selected={asset.stableId === selectedAsset?.stableId}
-                      >
-                        <TableCell className="library-page-cell">
-                          <span className="grid min-w-0 gap-1">
-                            <strong className="text-[13px] leading-tight text-foreground">{asset.title}</strong>
-                            <span className="library-page-meta">
-                              <span>{formatAssetTypeLabel(asset.type)}</span>
-                              <span>{isPublicReaderEligible(asset) ? "Open to readers" : "Signed-in page"}</span>
-                            </span>
-                            {asset.summary ? (
-                              <small className="overflow-hidden text-[11px] leading-snug text-muted-foreground [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:2]">
-                                {asset.summary}
-                              </small>
-                            ) : null}
-                          </span>
-                        </TableCell>
-                        <TableCell className="library-state-cell">
-                          <span className="asset-state-stack">
-                            <Badge variant={stateBadgeVariant(asset.lifecycleState)}>{formatReaderLifecycle(asset.lifecycleState)}</Badge>
-                            <Badge variant={stateBadgeVariant(asset.status)}>{formatReaderStatus(asset.status)}</Badge>
-                          </span>
-                        </TableCell>
-                        <TableCell className="library-review-cell">
-                          <Badge variant={isAssetGovernanceDue(asset) ? "warning" : "success"}>{formatReviewDue(asset.reviewDueAt)}</Badge>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-                </DataTableShell>
               ) : null}
+              {currentPage !== "library" || authoringMode ? (
 
               <SectionCard
                 title={authoringMode === "create"
@@ -4795,7 +3893,8 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
                 contentClassName="grid gap-4"
               >
                 {authoringMode ? (
-                  <form className="grid gap-5" onSubmit={(event) => void saveAuthoredPage(event)} noValidate>
+                  <form className="grid gap-5 page-authoring-form" onSubmit={(event) => void saveAuthoredPage(event)} noValidate>
+                    <fieldset className="grid gap-5" style={{ minWidth: 0 }} disabled={isSavingPage}>
                     {authoringSubmitError ? (
                       <Alert variant="destructive" role="alert">
                         <AlertTitle>Page not saved</AlertTitle>
@@ -4804,12 +3903,68 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
                     ) : null}
                     {authoringMode === "edit" ? (
                       <Alert variant="warning">
-                        <AlertTitle>Saving returns this page to draft</AlertTitle>
+                        <AlertTitle>Save changes as a new draft</AlertTitle>
                         <AlertDescription>
-                          The new version will leave reader navigation and search until it is reviewed and published again.
+                          Readers will keep seeing the published version. Review and publish the new draft when it is ready.
                         </AlertDescription>
                       </Alert>
                     ) : null}
+                      <FormField label="Title" htmlFor="authoring-title" required errorText={authoringErrors.title}>
+                        <Input
+                          id="authoring-title"
+                          value={authoringForm.title}
+                          onChange={(event) => updateAuthoringField("title", event.target.value)}
+                          aria-invalid={Boolean(authoringErrors.title)}
+                        />
+                      </FormField>
+                      <FormField label="Summary" htmlFor="authoring-summary">
+                        <Textarea
+                          id="authoring-summary"
+                          value={authoringForm.summary}
+                          onChange={(event) => updateAuthoringField("summary", event.target.value)}
+                          rows={2}
+                        />
+                      </FormField>
+                    <div className="grid items-start gap-4 xl:grid-cols-2">
+                      {richEditorEnabled ? <Suspense fallback={<p role="status">Loading Markdown editor…</p>}>
+                        <RichMarkdownEditor ref={markdownEditorRef}
+                          value={authoringForm.body}
+                          onChange={(body) => { authoringDirtyRef.current = true; updateAuthoringField("body", body); }}
+                          documentKey={`${authenticationEpochRef.current}:${authoringMode}:${authoringEditTargetRef.current?.stableId ?? "new"}:${authoringEditTargetRef.current?.currentVersionId ?? ""}`}
+                          readOnly={isSavingPage} label="Page content" error={authoringErrors.body}
+                          onReadyChange={setEditorReady} />
+                      </Suspense> : (
+                      <FormField
+                        label="Markdown"
+                        htmlFor="authoring-body"
+                        required
+                        errorText={authoringErrors.body}
+                        helpText="Use headings, paragraphs, and ordered or unordered lists."
+                      >
+                        <Textarea
+                          id="authoring-body"
+                          value={authoringForm.body}
+                          onChange={(event) => updateAuthoringField("body", event.target.value)}
+                          rows={18}
+                          className="font-mono text-sm leading-6"
+                          aria-invalid={Boolean(authoringErrors.body)}
+                        />
+                      </FormField>
+                      )}
+                      <SectionCard title="Preview" description="Reader-style preview of the current draft." variant="compact">
+                        {authoringForm.body.trim() ? (
+                          <article className="reader-document">
+                            <div className="reader-document-body">
+                              <MarkdownDocument body={authoringForm.body} title={authoringForm.title || "Untitled page"} />
+                            </div>
+                          </article>
+                        ) : (
+                          <EmptyState title="Nothing to preview" description="Add Markdown content to see the page preview." />
+                        )}
+                      </SectionCard>
+                    </div>
+                    <details id="authoring-settings">
+                      <summary>Page settings · ID, location, audience, and review</summary>
                     <div className="grid gap-4 md:grid-cols-2">
                       <FormField
                         label="Stable ID"
@@ -4829,22 +3984,8 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
                           autoComplete="off"
                         />
                       </FormField>
-                      <FormField label="Title" htmlFor="authoring-title" required errorText={authoringErrors.title}>
-                        <Input
-                          id="authoring-title"
-                          value={authoringForm.title}
-                          onChange={(event) => updateAuthoringField("title", event.target.value)}
-                          aria-invalid={Boolean(authoringErrors.title)}
-                        />
-                      </FormField>
-                      <FormField label="Summary" htmlFor="authoring-summary" className="md:col-span-2">
-                        <Textarea
-                          id="authoring-summary"
-                          value={authoringForm.summary}
-                          onChange={(event) => updateAuthoringField("summary", event.target.value)}
-                          rows={2}
-                        />
-                      </FormField>
+
+
                       <FormField
                         label="Parent page"
                         htmlFor="authoring-parent"
@@ -4907,7 +4048,7 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
                         </Select>
                       </FormField>
                       <FormField
-                        label="Access / audience"
+                        label="Audience labels"
                         htmlFor="authoring-audience"
                         required
                         errorText={authoringErrors.audience}
@@ -4937,44 +4078,31 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
                         </FormField>
                       ) : null}
                     </div>
-                    <div className="grid items-start gap-4 xl:grid-cols-2">
-                      <FormField
-                        label="Markdown"
-                        htmlFor="authoring-body"
-                        required
-                        errorText={authoringErrors.body}
-                        helpText="Use headings, paragraphs, and ordered or unordered lists."
-                      >
-                        <Textarea
-                          id="authoring-body"
-                          value={authoringForm.body}
-                          onChange={(event) => updateAuthoringField("body", event.target.value)}
-                          rows={18}
-                          className="font-mono text-sm leading-6"
-                          aria-invalid={Boolean(authoringErrors.body)}
-                        />
-                      </FormField>
-                      <SectionCard title="Preview" description="Reader-style preview of the current draft." variant="compact">
-                        {authoringForm.body.trim() ? (
-                          <article className="reader-document">
-                            <div className="reader-document-body">
-                              {renderSafeMarkdownDocument(authoringForm.body, authoringForm.title || "Untitled page")}
-                            </div>
-                          </article>
-                        ) : (
-                          <EmptyState title="Nothing to preview" description="Add Markdown content to see the page preview." />
-                        )}
-                      </SectionCard>
-                    </div>
+                    </details>
                     <div className="flex flex-wrap justify-end gap-2 border-t border-border pt-4">
-                      <Button type="button" onClick={cancelPageAuthoring} disabled={isSavingPage}>Cancel</Button>
-                      <Button type="submit" variant="primary" disabled={isSavingPage}>
+                      <Button type="button" onClick={() => requestLeaveAuthoring(cancelPageAuthoring)} disabled={isSavingPage}>Cancel</Button>
+                      <Button type="submit" variant="primary" disabled={isSavingPage || (richEditorEnabled && !editorReady)}>
                         {isSavingPage ? "Saving…" : authoringMode === "create" ? "Create draft" : "Save draft version"}
                       </Button>
                     </div>
+                    </fieldset>
                   </form>
+                ) : capabilities.managePageGrants && !capabilities.previewAssets ? (
+                  <div className="grid gap-4">
+                    <form onSubmit={(event) => { event.preventDefault(); navigatePage("asset-read", pageAccessId.trim(), "access"); }}>
+                      <FormField label="Page stable ID" htmlFor="page-access-id" helpText="Enter the ID of the page whose grants you need to manage."><Input id="page-access-id" value={pageAccessId} onChange={(event) => setPageAccessId(event.target.value)} /></FormField>
+                      <Button type="submit" disabled={!pageAccessId.trim()}>Open page access</Button>
+                    </form>
+                    {selectedStableId ? <Suspense fallback={<p role="status">Loading page access…</p>}><PageAccessPanel pageId={selectedStableId} request={request} canManage canListPrincipals={capabilities.manageSystem} /></Suspense> : null}
+                  </div>
                 ) : assetDetail ? (
                   <>
+                    <Alert variant={publishedVersion ? "info" : "warning"}>
+                      <AlertTitle>{publishedVersion ? `Published v${publishedVersion.versionNumber}` : "No published version"}{currentVersion && currentVersion.id !== assetDetail.asset.publishedVersionId ? ` · Current draft v${currentVersion.versionNumber}` : ""}</AlertTitle>
+                      <AlertDescription>{publishedVersion ? "Readers see the published version. Draft changes become visible after publication." : "Review and publish this draft to make it available to readers."}{assetDetail.processing?.reconciliation === "pending" ? " Background processing is pending." : ""}</AlertDescription>
+                      {publishedVersion ? <Button type="button" variant="ghost" onClick={() => navigatePage("reader", assetDetail.asset.stableId)}>View published page</Button> : null}
+                      {assetContentView !== "version" ? <Button type="button" onClick={() => navigatePage("asset-read", assetDetail.asset.stableId, "version")}>Review and publish</Button> : null}
+                    </Alert>
                     <TrustStateSummary
                       state={isAssetGovernanceDue(assetDetail.asset) ? "needs-review" : isPublicReaderEligible(assetDetail.asset) ? "trusted" : "restricted"}
                       title={assetDetail.asset.stableId}
@@ -4991,18 +4119,44 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
                         ...(currentVersion ? [{ label: `v${currentVersion.versionNumber}`, variant: "neutral" as const }] : [])
                       ]}
                     />
-                    <DefinitionGrid
-                      items={[
-                        { term: "Stable ID", description: assetDetail.asset.stableId },
-                        { term: "Lifecycle", description: <Badge variant={stateBadgeVariant(assetDetail.asset.lifecycleState)}>{assetDetail.asset.lifecycleState}</Badge> },
-                        { term: "Status", description: <Badge variant={stateBadgeVariant(assetDetail.asset.status)}>{assetDetail.asset.status}</Badge> },
-                        { term: "Sensitivity", description: <Badge variant={sensitivityBadgeVariant(assetDetail.asset.sensitivity)}>{assetDetail.asset.sensitivity}</Badge> },
-                        { term: "Audience", description: assetDetail.asset.audience.join(", ") },
-                        { term: "Review", description: assetDetail.asset.reviewDueAt },
-                        { term: "Current version", description: currentVersion ? `v${currentVersion.versionNumber}` : "none" },
-                        { term: "Exports", description: assetDetail.asset.allowedExports.join(", ") || "none" }
-                      ]}
-                    />
+                    <Tabs
+                      value={activeAssetContentView}
+                      onValueChange={(value) => navigatePage("asset-read", selectedStableId, value)}
+                      className="min-w-0"
+                    >
+                      <TabsList className="h-auto w-full flex-wrap justify-start">
+                        <TabsTrigger value="human">Content</TabsTrigger>
+                        <TabsTrigger value="access">Access</TabsTrigger>
+                        <TabsTrigger value="instruction">Agent instruction</TabsTrigger>
+                        <TabsTrigger value="version">Versions</TabsTrigger>
+                        <TabsTrigger value="activity">Activity</TabsTrigger>
+                        <TabsTrigger value="raw">Raw metadata</TabsTrigger>
+                      </TabsList>
+                      <TabsContent value="human">
+                        <div className="grid items-start gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(180px,0.42fr)]">
+                          <SectionCard
+                            title="Human document"
+                            description={assetDetail.asset.summary ?? "No summary recorded."}
+                            variant="tool"
+                            actions={<Badge variant="neutral">{assetDetail.humanDocuments.length} document{assetDetail.humanDocuments.length === 1 ? "" : "s"}</Badge>}
+                          >
+                            <div className="grid gap-3">
+                              {currentHumanBody ? <article className="reader-document"><div className="reader-document-body"><MarkdownDocument body={currentHumanBody} title={assetDetail.asset.title} /></div></article> : <EmptyState title="No human document" />}
+                            </div>
+                          </SectionCard>
+                          <SectionCard title="Context rail" variant="tool">
+                            <DefinitionGrid
+                              compact
+                              items={[
+                                { term: "Format", description: currentHumanDocument?.format ?? "none" },
+                                { term: "Source", description: `${assetDetail.asset.sourceKind ?? "unknown"}${assetDetail.asset.sourceRef ? ` / ${assetDetail.asset.sourceRef}` : ""}` },
+                                { term: "Surfaces", description: formatList(assetDetail.asset.allowedSurfaces) },
+                                { term: "Exports", description: formatList(assetDetail.asset.allowedExports) },
+                                { term: "Updated", description: new Date(assetDetail.asset.updatedAt).toLocaleString() }
+                              ]}
+                            />
+                          </SectionCard>
+                        </div>
                     <SectionCard title="Page files" description={assetDetail.asset.publishedVersionId === assetDetail.asset.currentVersionId
                       ? "Files are stored separately from page revisions and always download as attachments."
                       : "Publish this version before adding or deleting files. Existing attachments remain available to readers."} variant="tool">
@@ -5042,24 +4196,68 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
                         </AlertDialogFooter>
                       </AlertDialogContent>
                     </AlertDialog>
+                      </TabsContent>
+                      <TabsContent value="instruction">
+                        <div className="grid items-start gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(180px,0.42fr)]">
+                          <SectionCard
+                            title="Agent instruction"
+                            description={currentInstructionObject?.instructionKind ?? "No instruction kind recorded."}
+                            variant="tool"
+                            actions={<Badge variant="neutral">{assetDetail.instructionObjects.length} object{assetDetail.instructionObjects.length === 1 ? "" : "s"}</Badge>}
+                          >
+                            <div className="mb-3 rounded-md border border-border bg-muted/40 p-3">
+                              {currentInstructionBody ? <pre>{currentInstructionBody}</pre> : <EmptyState title="No instruction object" />}
+                            </div>
+                            <div className="grid gap-3 md:grid-cols-2">
+                              <SectionCard title="Constraints" variant="compact">
+                                {currentInstructionObject?.constraints.length ? (
+                                  <ul>
+                                    {currentInstructionObject.constraints.map((constraint) => <li key={constraint}>{constraint}</li>)}
+                                  </ul>
+                                ) : <EmptyState title="None recorded" />}
+                              </SectionCard>
+                              <SectionCard title="Failure modes" variant="compact">
+                                {currentInstructionObject?.failureModes.length ? (
+                                  <ul>
+                                    {currentInstructionObject.failureModes.map((failureMode) => <li key={failureMode}>{failureMode}</li>)}
+                                  </ul>
+                                ) : <EmptyState title="None recorded" />}
+                              </SectionCard>
+                            </div>
+                          </SectionCard>
+                          <SectionCard title="Agent contract" variant="tool">
+                            <DefinitionGrid
+                              compact
+                              items={[
+                                { term: "Kind", description: currentInstructionObject?.instructionKind ?? "none" },
+                                { term: "Targets", description: formatList(currentInstructionObject?.targetAgents ?? []) },
+                                { term: "Escalation", description: currentInstructionObject?.escalation ?? "none" },
+                                { term: "Allowed actions", description: formatList(assetDetail.asset.allowedActions) },
+                                { term: "Surfaces", description: formatList(assetDetail.asset.allowedSurfaces) }
+                              ]}
+                            />
+                          </SectionCard>
+                        </div>
+                      </TabsContent>
+                      <TabsContent value="version">
                     <SectionCard
                       title="Release control"
                       variant="tool"
                       actions={(
                         <>
-                          <Button size="sm" type="button" onClick={() => void completeAssetReview()} disabled={pendingReleaseAction !== null}>
-                            {pendingReleaseAction === "review" ? "Reviewing…" : "Review"}
+                          <Button size="sm" type="button" onClick={() => void completeAssetReview()} disabled={pendingReleaseAction !== null || !capabilities.reviewAssets}>
+                            {pendingReleaseAction === "review" ? "Reviewing…" : "Mark reviewed"}
                           </Button>
-                          <Button size="sm" type="button" onClick={() => setReleaseActionToConfirm("publish")} disabled={pendingReleaseAction !== null}>
+                          <Button size="sm" type="button" onClick={() => setReleaseActionToConfirm("publish")} disabled={pendingReleaseAction !== null || !capabilities.publishAssets}>
                             {pendingReleaseAction === "publish" ? "Publishing…" : "Publish"}
                           </Button>
                           <Button
                             size="sm"
                             type="button"
                             onClick={() => setReleaseActionToConfirm("restore")}
-                            disabled={!versionSnapshot || selectedVersionIsCurrent || pendingReleaseAction !== null}
+                            disabled={!versionSnapshot || selectedVersionIsCurrent || pendingReleaseAction !== null || !capabilities.restoreAssets}
                           >
-                            {pendingReleaseAction === "restore" ? "Restoring…" : "Restore"}
+                            {pendingReleaseAction === "restore" ? "Restoring…" : "Restore as draft"}
                           </Button>
                         </>
                       )}
@@ -5107,11 +4305,11 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
                       <AlertDialogContent>
                         <AlertDialogHeader>
                           <AlertDialogTitle>
-                            {releaseActionToConfirm === "restore" ? "Restore this version?" : "Publish this page?"}
+                            {releaseActionToConfirm === "restore" ? "Restore this version as a draft?" : "Publish this page?"}
                           </AlertDialogTitle>
                           <AlertDialogDescription>
                             {releaseActionToConfirm === "restore"
-                              ? `This will make version ${selectedVersionNumber || "selected"} the current content for ${assetDetail.asset.stableId}.`
+                              ? `This will create a new draft from version ${selectedVersionNumber || "selected"} of ${assetDetail.asset.stableId}. Readers will keep seeing the published version until you publish the new draft.`
                               : `This will publish ${assetDetail.asset.stableId} using the current review date and change note.`}
                           </AlertDialogDescription>
                         </AlertDialogHeader>
@@ -5130,91 +4328,12 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
                               }
                             }}
                           >
-                            {releaseActionToConfirm === "restore" ? "Restore version" : "Publish page"}
+                            {releaseActionToConfirm === "restore" ? "Restore as draft" : "Publish page"}
                           </AlertDialogAction>
                         </AlertDialogFooter>
                       </AlertDialogContent>
                     </AlertDialog>
-                    <Tabs
-                      value={activeAssetContentView}
-                      onValueChange={(value) => setAssetContentView(value as AssetContentView)}
-                      className="min-w-0"
-                    >
-                      <TabsList className="h-auto w-full flex-wrap justify-start">
-                        <TabsTrigger value="human">Human document</TabsTrigger>
-                        <TabsTrigger value="instruction">Agent instruction</TabsTrigger>
-                        <TabsTrigger value="version">Version compare</TabsTrigger>
-                        <TabsTrigger value="raw">Raw metadata</TabsTrigger>
-                      </TabsList>
-                      <TabsContent value="human">
-                        <div className="grid items-start gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(180px,0.42fr)]">
-                          <SectionCard
-                            title="Human document"
-                            description={assetDetail.asset.summary ?? "No summary recorded."}
-                            variant="tool"
-                            actions={<Badge variant="neutral">{assetDetail.humanDocuments.length} document{assetDetail.humanDocuments.length === 1 ? "" : "s"}</Badge>}
-                          >
-                            <div className="grid gap-3">
-                              {currentHumanBody ? <pre className="whitespace-pre-wrap py-0.5 font-sans text-sm leading-7 text-foreground">{currentHumanBody}</pre> : <EmptyState title="No human document" />}
-                            </div>
-                          </SectionCard>
-                          <SectionCard title="Context rail" variant="tool">
-                            <DefinitionGrid
-                              compact
-                              items={[
-                                { term: "Format", description: currentHumanDocument?.format ?? "none" },
-                                { term: "Source", description: `${assetDetail.asset.sourceKind ?? "unknown"}${assetDetail.asset.sourceRef ? ` / ${assetDetail.asset.sourceRef}` : ""}` },
-                                { term: "Surfaces", description: formatList(assetDetail.asset.allowedSurfaces) },
-                                { term: "Exports", description: formatList(assetDetail.asset.allowedExports) },
-                                { term: "Updated", description: new Date(assetDetail.asset.updatedAt).toLocaleString() }
-                              ]}
-                            />
-                          </SectionCard>
-                        </div>
-                      </TabsContent>
-                      <TabsContent value="instruction">
-                        <div className="grid items-start gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(180px,0.42fr)]">
-                          <SectionCard
-                            title="Agent instruction"
-                            description={currentInstructionObject?.instructionKind ?? "No instruction kind recorded."}
-                            variant="tool"
-                            actions={<Badge variant="neutral">{assetDetail.instructionObjects.length} object{assetDetail.instructionObjects.length === 1 ? "" : "s"}</Badge>}
-                          >
-                            <div className="mb-3 rounded-md border border-border bg-muted/40 p-3">
-                              {currentInstructionBody ? <pre>{currentInstructionBody}</pre> : <EmptyState title="No instruction object" />}
-                            </div>
-                            <div className="grid gap-3 md:grid-cols-2">
-                              <SectionCard title="Constraints" variant="compact">
-                                {currentInstructionObject?.constraints.length ? (
-                                  <ul>
-                                    {currentInstructionObject.constraints.map((constraint) => <li key={constraint}>{constraint}</li>)}
-                                  </ul>
-                                ) : <EmptyState title="None recorded" />}
-                              </SectionCard>
-                              <SectionCard title="Failure modes" variant="compact">
-                                {currentInstructionObject?.failureModes.length ? (
-                                  <ul>
-                                    {currentInstructionObject.failureModes.map((failureMode) => <li key={failureMode}>{failureMode}</li>)}
-                                  </ul>
-                                ) : <EmptyState title="None recorded" />}
-                              </SectionCard>
-                            </div>
-                          </SectionCard>
-                          <SectionCard title="Agent contract" variant="tool">
-                            <DefinitionGrid
-                              compact
-                              items={[
-                                { term: "Kind", description: currentInstructionObject?.instructionKind ?? "none" },
-                                { term: "Targets", description: formatList(currentInstructionObject?.targetAgents ?? []) },
-                                { term: "Escalation", description: currentInstructionObject?.escalation ?? "none" },
-                                { term: "Allowed actions", description: formatList(assetDetail.asset.allowedActions) },
-                                { term: "Surfaces", description: formatList(assetDetail.asset.allowedSurfaces) }
-                              ]}
-                            />
-                          </SectionCard>
-                        </div>
-                      </TabsContent>
-                      <TabsContent value="version">
+
                         <div className="grid gap-3 md:grid-cols-2">
                           <SectionCard title="Current instruction" variant="tool"><pre>{currentInstructionBody || "No instruction object"}</pre></SectionCard>
                           <SectionCard title={versionSnapshot ? `Selected v${versionSnapshot.version.versionNumber}` : "Selected version"} variant="tool">
@@ -5226,7 +4345,29 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
                           </SectionCard>
                         </div>
                       </TabsContent>
+                      <TabsContent value="access">
+                        <Suspense fallback={<p role="status">Loading page access…</p>}><PageAccessPanel pageId={assetDetail.asset.stableId} request={request} canManage={capabilities.managePageGrants} canListPrincipals={capabilities.manageSystem} allowedSurfaces={assetDetail.asset.allowedSurfaces} audience={assetDetail.asset.audience} /></Suspense>
+                      </TabsContent>
+                      <TabsContent value="activity">
+                        <SectionCard title="Version activity" description="Saved revisions for this page." variant="tool">
+                          <ol>{assetDetail.versions.map((version) => <li key={version.id}><strong>v{version.versionNumber}</strong> · {new Date(version.createdAt).toLocaleString()} · {version.changeNote || "No change note"}{version.id === assetDetail.asset.publishedVersionId ? " · Published" : ""}{version.id === assetDetail.asset.currentVersionId ? " · Current" : ""}</li>)}</ol>
+                        </SectionCard>
+                      </TabsContent>
                       <TabsContent value="raw">
+                    <DefinitionGrid
+                      items={[
+                        { term: "Stable ID", description: assetDetail.asset.stableId },
+                        { term: "Lifecycle", description: <Badge variant={stateBadgeVariant(assetDetail.asset.lifecycleState)}>{assetDetail.asset.lifecycleState}</Badge> },
+                        { term: "Status", description: <Badge variant={stateBadgeVariant(assetDetail.asset.status)}>{assetDetail.asset.status}</Badge> },
+                        { term: "Sensitivity", description: <Badge variant={sensitivityBadgeVariant(assetDetail.asset.sensitivity)}>{assetDetail.asset.sensitivity}</Badge> },
+                        { term: "Audience", description: assetDetail.asset.audience.join(", ") },
+                        { term: "Review", description: assetDetail.asset.reviewDueAt },
+                        { term: currentVersion?.id === assetDetail.asset.publishedVersionId ? "Current published version" : "Current draft", description: currentVersion ? `v${currentVersion.versionNumber}` : "none" },
+                        { term: "Published version", description: publishedVersion ? `v${publishedVersion.versionNumber}` : "Not published" },
+                        { term: "Exports", description: assetDetail.asset.allowedExports.join(", ") || "none" }
+                      ]}
+                    />
+
                         <SectionCard title="Raw metadata" variant="tool">
                           <pre>{JSON.stringify({
                             asset: assetDetail.asset,
@@ -5243,6 +4384,7 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
                   <EmptyState title="No asset selected" description="Select an asset from the library table." />
                 )}
               </SectionCard>
+              ) : null}
       </section>
 
           </section>
@@ -5733,12 +4875,14 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
             </SectionCard>
           </div>
           <div className={routePanelClass(currentPage, ["review"], "grid gap-4")}>
+            {reviewQueueError ? <Alert variant="destructive" role="alert"><AlertDescription>Could not load the review queue. {reviewQueueError}</AlertDescription><Button onClick={() => void loadReviewQueue()} disabled={reviewQueueLoading}>Retry</Button></Alert> : null}
             <DataTableShell
               title="Review queue"
-              description={reviewQueue ? `${reviewQueue.assets.length} items as of ${reviewQueue.asOf}` : "Review items load automatically when this route opens."}
+              description={reviewQueue ? `${reviewQueue.assets.length} of ${reviewQueue.totalCount ?? reviewQueue.assets.length} items as of ${reviewQueue.asOf}. Approved drafts remain here until published.` : "Review items load automatically when this route opens."}
+              actions={<>{reviewQueueLoading ? <span role="status">Loading review queue…</span> : null}{reviewQueue?.nextOffset != null ? <Button onClick={() => void loadReviewQueue(true)} disabled={reviewQueueLoading}>Load more</Button> : null}</>}
               isEmpty={!reviewQueue || !reviewQueue.assets.length}
-              emptyTitle={reviewQueue ? "No review items" : loadingWorkspaceRoute === "review" ? "Loading review queue" : "Review queue not loaded"}
-              emptyDescription={reviewQueue ? "There are no assets currently waiting in the review queue." : "Use Refresh workspace if the route did not load automatically."}
+              emptyTitle={reviewQueueLoading ? "Loading review queue" : reviewQueueError ? "Review queue unavailable" : reviewQueue ? "No review items" : "Review queue not loaded"}
+              emptyDescription={reviewQueue && !reviewQueueError ? "There are no permitted pages currently waiting for review or publication." : "Use Retry or Refresh workspace to load the queue."}
             >
               <Table>
                 <TableHeader>
@@ -5759,7 +4903,7 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
                       tabIndex={0}
                     >
                       <TableCell>{asset.stableId}</TableCell>
-                      <TableCell><Badge variant={stateBadgeVariant(asset.status)}>{asset.status}</Badge></TableCell>
+                      <TableCell><Badge variant={stateBadgeVariant(asset.status)}>{asset.status === "approved" && asset.currentVersionId !== asset.publishedVersionId ? "Ready to publish" : asset.status}</Badge></TableCell>
                       <TableCell><Badge variant={stateBadgeVariant(asset.lifecycleState)}>{asset.lifecycleState}</Badge></TableCell>
                       <TableCell>{asset.reviewDueAt}</TableCell>
                     </TableRow>
@@ -5862,31 +5006,36 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
             ) : null}
           <TabsContent id="settings-policies" value="retention" className="grid gap-4">
             <h3>Telemetry retention</h3>
+            <p>Retention applies to stored telemetry. Enter a number of days or “forever”. Purges use the saved policy.</p>
+            {retentionError ? <Alert variant="destructive" role="alert"><AlertDescription>{retentionError}</AlertDescription></Alert> : null}
             <form className="grid gap-4 md:grid-cols-[repeat(auto-fit,minmax(160px,1fr))] md:items-end" onSubmit={(event) => void saveTelemetryRetentionPolicy(event)}>
               <label>
                 Retrieval days
                 <Input
+                  disabled={retentionLoadState !== "loaded" || retentionBusy}
                   value={retentionRetrievalDays}
                   onChange={(event) => setRetentionRetrievalDays(event.target.value)}
                 />
               </label>
               <label>
                 Audit days
-                <Input value={retentionAuditDays} onChange={(event) => setRetentionAuditDays(event.target.value)} />
+                <Input disabled={retentionLoadState !== "loaded" || retentionBusy} value={retentionAuditDays} onChange={(event) => setRetentionAuditDays(event.target.value)} />
               </label>
               <label>
                 Feedback days
                 <Input
+                  disabled={retentionLoadState !== "loaded" || retentionBusy}
                   value={retentionFeedbackDays}
                   onChange={(event) => setRetentionFeedbackDays(event.target.value)}
                 />
               </label>
-              <Button type="submit">Save retention</Button>
-              <Button type="button" variant="ghost" onClick={() => void loadTelemetryRetentionPolicy()}>Reload policy</Button>
-              <Button type="button" onClick={() => void purgeTelemetryRetention(true)}>Dry run purge</Button>
+              <Button type="submit" disabled={retentionLoadState !== "loaded" || retentionBusy}>Save retention</Button>
+              <Button type="button" variant="ghost" disabled={retentionLoadState === "loading" || retentionBusy} onClick={() => void loadTelemetryRetentionPolicy()}>{retentionLoadState === "error" ? "Retry loading policy" : "Reload policy"}</Button>
+              <Button type="button" disabled={retentionLoadState !== "loaded" || retentionBusy} onClick={() => void purgeTelemetryRetention(true)}>Dry run purge</Button>
               <Button
                 type="button"
                 variant="danger"
+                disabled={retentionLoadState !== "loaded" || retentionBusy}
                 onClick={() => {
                   if (window.confirm("Execute telemetry purge now? Run a dry run first if you are unsure.")) {
                     void purgeTelemetryRetention(false);
@@ -5904,7 +5053,7 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
                 audit {formatRetentionDays(telemetryRetentionPolicy.auditEventRetentionDays)},
                 feedback {formatRetentionDays(telemetryRetentionPolicy.feedbackRetentionDays)}
               </p>
-            ) : <p className="empty">No retention policy loaded.</p>}
+            ) : <p role="status">{retentionLoadState === "loading" || retentionLoadState === "idle" ? "Loading saved retention policy…" : "Policy unavailable. Retry loading to enable changes."}</p>}
             {telemetryRetentionPurgeResult ? (
               <p>
                 <strong>{telemetryRetentionPurgeResult.dryRun ? "dry-run" : "executed"}</strong>
@@ -7420,7 +6569,7 @@ export function AdminSurface({ onSessionEnded }: { onSessionEnded?: () => void }
       </main>
         </>
       ) : (
-        <main className="public-entry-main login-entry-main" id="main">
+        <main className="public-entry-main login-entry-main" id="main" tabIndex={-1}>
           <Card className="login-panel" aria-labelledby="login-title">
             <CardHeader className="login-dialog-header">
                 <span className="mark login-mark" aria-hidden="true">

@@ -355,7 +355,8 @@ export const assetReviewQueueInputSchema = z.object({
   tenantId: z.string().min(1).default("tenant_demo"),
   asOf: z.string().min(1).optional(),
   includeApproved: z.boolean().default(false),
-  limit: z.number().int().positive().max(200).default(50)
+  limit: z.number().int().positive().max(200).default(50),
+  offset: z.number().int().nonnegative().default(0)
 });
 
 export const assetVersionAssetSnapshotSchema = z.object({
@@ -440,7 +441,9 @@ export const assetListResponseSchema = z.object({
 export const assetReviewQueueResponseSchema = z.object({
   asOf: z.string().min(1),
   includeApproved: z.boolean(),
-  assets: z.array(assetRecordSchema)
+  assets: z.array(assetRecordSchema),
+  totalCount: z.number().int().nonnegative().optional(),
+  nextOffset: z.number().int().nonnegative().nullable().optional()
 });
 
 export const validationSeveritySchema = z.enum(["error", "warning"]);
