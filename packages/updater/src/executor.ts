@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   copyFile,
@@ -10,10 +10,11 @@ import {
   statfs,
   writeFile
 } from "node:fs/promises";
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import {
   productIdentitySchema,
   recoveryPointSchema,
+  releaseManifestSchema,
   type ProductIdentity,
   type RecoveryPoint,
   type ReleaseManifest
@@ -65,9 +66,9 @@ export class ManagedComposeExecutor implements UpdateExecutor {
     await this.ensureLayout();
     const details: Record<string, string> = {};
     const [docker, compose, configuration, disk, backupWritable, attachmentSnapshotAvailable] = await Promise.all([
-      this.tryCommand("docker", ["version", "--format", "{{.Server.Version}}"]),
-      this.tryCommand("docker", ["compose", "version", "--short"]),
-      this.tryCommand("docker", [...this.composeArgs(this.currentEnvPath), "config", "--quiet"]),
+      this.tryDocker(["version", "--format", "{{.Server.Version}}"]),
+      this.tryDocker(["compose", "version", "--short"]),
+      this.tryDocker([...this.composeArgs(this.currentEnvPath), "config", "--quiet"]),
       statfs(this.stateDir),
       this.checkBackupWritable(),
       this.checkAttachmentRecoverySupport()
@@ -116,11 +117,11 @@ export class ManagedComposeExecutor implements UpdateExecutor {
 
     try {
       await copyFile(this.currentEnvPath, configurationPath);
-      await this.run("bash", [join(this.bundleDir, "scripts/backup-set.sh"), backupSetDirectory], {
+      await this.runScript("scripts/backup-set.sh", [backupSetDirectory], {
         ...this.composeEnvironment(),
         FORGETBASE_BACKUP_DIR: directory
       });
-      await this.run("bash", [join(this.bundleDir, "scripts/verify-backup-set.sh"), backupSetDirectory], {
+      await this.runScript("scripts/verify-backup-set.sh", [backupSetDirectory], {
         ...this.composeEnvironment()
       });
 
@@ -158,8 +159,8 @@ export class ManagedComposeExecutor implements UpdateExecutor {
     this.failIfRequested("staging");
     await this.ensureLayout();
     await durableWriteFile(this.candidateEnvPath, buildReleaseEnvironment(manifest, this.options.currentIdentity.updaterVersion, false));
-    await this.run("docker", [...this.composeArgs(this.candidateEnvPath), "pull"]);
-    await this.run("docker", [
+    await this.runDocker([...this.composeArgs(this.candidateEnvPath), "pull"]);
+    await this.runDocker([
       ...this.composeArgs(this.candidateEnvPath),
       "run",
       "--no-deps",
@@ -181,19 +182,20 @@ export class ManagedComposeExecutor implements UpdateExecutor {
 
   async enterMaintenance(): Promise<void> {
     this.failIfRequested("maintenance");
-    await this.run("docker", [...this.composeArgs(this.currentEnvPath), "stop", "proxy", "api", "worker", "migrate"]);
+    await this.runDocker([...this.composeArgs(this.currentEnvPath), "stop", "proxy", "api", "worker", "migrate"]);
     await this.stopInterruptedMigration();
   }
 
   async resumeCurrent(): Promise<void> {
-    await this.run("docker", [...this.composeArgs(this.currentEnvPath), "up", "-d", "postgres", "clamav"]);
-    await this.run("docker", [...this.composeArgs(this.currentEnvPath), "up", "--no-deps", "-d", "api", "worker", "web", "proxy"]);
+    await this.runDocker([...this.composeArgs(this.currentEnvPath), "up", "-d", "postgres", "clamav"]);
+    await this.runDocker([...this.composeArgs(this.currentEnvPath), "up", "--no-deps", "-d", "api", "worker", "web", "proxy"]);
     await this.verifyServices(await this.refreshIdentity(), true);
   }
 
   async migrate(manifest: ReleaseManifest): Promise<void> {
+    manifest = releaseManifestSchema.parse(manifest);
     this.failIfRequested("migrating");
-    await this.run("docker", [
+    await this.runDocker([
       ...this.composeArgs(this.candidateEnvPath),
       "run",
       "--no-deps",
@@ -214,9 +216,9 @@ export class ManagedComposeExecutor implements UpdateExecutor {
 
   async startCandidate(_manifest: ReleaseManifest): Promise<void> {
     this.failIfRequested("starting");
-    await this.run("docker", [...this.composeArgs(this.candidateEnvPath), "up", "-d", "postgres", "clamav"]);
+    await this.runDocker([...this.composeArgs(this.candidateEnvPath), "up", "-d", "postgres", "clamav"]);
     // The candidate API is fenced by immutable container configuration. No worker starts here.
-    await this.run("docker", [...this.composeArgs(this.candidateEnvPath), "up", "--no-deps", "-d", "api", "web"]);
+    await this.runDocker([...this.composeArgs(this.candidateEnvPath), "up", "--no-deps", "-d", "api", "web"]);
   }
 
   async verifyCandidate(manifest: ReleaseManifest): Promise<void> {
@@ -242,7 +244,7 @@ export class ManagedComposeExecutor implements UpdateExecutor {
     });
     await durableWriteFile(this.identityPath, `${JSON.stringify(identity, null, 2)}\n`);
     await this.writeBundleReceipt();
-    await this.run("docker", [...this.composeArgs(this.currentEnvPath), "up", "--no-deps", "-d", "api", "worker", "web", "proxy"]);
+    await this.runDocker([...this.composeArgs(this.currentEnvPath), "up", "--no-deps", "-d", "api", "worker", "web", "proxy"]);
     await this.verifyServices(identity, true);
   }
 
@@ -264,11 +266,11 @@ export class ManagedComposeExecutor implements UpdateExecutor {
     await this.verifyRecoveryPoint(point);
     await durableWriteFile(this.currentEnvPath, await readFile(point.configurationPath, "utf8"));
     const database = this.options.postgresDatabase ?? this.options.environment?.FORGETBASE_POSTGRES_DATABASE ?? "forgetbase";
-    await this.run("bash", [join(this.bundleDir, "scripts/restore-postgres.sh"), point.backupPath, database], {
+    await this.runScript("scripts/restore-postgres.sh", [point.backupPath, database], {
       ...this.composeEnvironment(),
       FORGETBASE_RESTORE_CONFIRM: database
     });
-    await this.run("bash", [join(this.bundleDir, "scripts/restore-attachments.sh"), point.attachmentSnapshotId], {
+    await this.runScript("scripts/restore-attachments.sh", [point.attachmentSnapshotId], {
       ...this.composeEnvironment(),
       FORGETBASE_ATTACHMENT_RESTORE_CONFIRM: "attachments"
     });
@@ -336,27 +338,41 @@ export class ManagedComposeExecutor implements UpdateExecutor {
     };
   }
 
-  private async run(command: string, args: string[], extraEnvironment: NodeJS.ProcessEnv = {}): Promise<string> {
-    const result = await runCommand({
-      command,
-      args,
+  private commandOptions(extraEnvironment: NodeJS.ProcessEnv = {}) {
+    return {
       cwd: this.bundleDir,
       timeoutMs: this.options.commandTimeoutMs ?? 15 * 60_000,
       lockFileDescriptor: this.options.lockFileDescriptor,
       environment: this.commandEnvironment(extraEnvironment)
+    };
+  }
+
+  private async runDocker(args: string[]): Promise<string> {
+    const result = await runCommand({
+      ...this.commandOptions(),
+      launch: (options) => spawn("docker", args, { ...options, shell: false })
     });
-    if (!result.ok) throw new Error(`${basename(command)} failed: ${result.output}`);
+    if (!result.ok) throw new Error(`docker failed: ${result.output}`);
     return result.output;
   }
 
-  private async tryCommand(command: string, args: string[]): Promise<CommandResult> {
+  private async runScript(
+    script: "scripts/backup-set.sh" | "scripts/verify-backup-set.sh" | "scripts/restore-postgres.sh" | "scripts/restore-attachments.sh",
+    args: string[], extraEnvironment: NodeJS.ProcessEnv = {}
+  ): Promise<string> {
+    const result = await runCommand({
+      ...this.commandOptions(extraEnvironment),
+      launch: (options) => spawn("bash", ["--", join(this.bundleDir, script), ...args], { ...options, shell: false })
+    });
+    if (!result.ok) throw new Error(`bash failed: ${result.output}`);
+    return result.output;
+  }
+
+  private async tryDocker(args: string[]): Promise<CommandResult> {
     return runCommand({
-      command,
-      args,
-      cwd: this.bundleDir,
+      ...this.commandOptions(),
       timeoutMs: Math.min(this.options.commandTimeoutMs ?? 30_000, 30_000),
-      lockFileDescriptor: this.options.lockFileDescriptor,
-      environment: this.commandEnvironment()
+      launch: (options) => spawn("docker", args, { ...options, shell: false })
     });
   }
 
@@ -380,7 +396,7 @@ export class ManagedComposeExecutor implements UpdateExecutor {
   private async readDatabaseSchemaVersion(): Promise<string> {
     const database = this.options.postgresDatabase ?? this.options.environment?.FORGETBASE_POSTGRES_DATABASE ?? "forgetbase";
     const user = this.options.environment?.FORGETBASE_POSTGRES_USER ?? "forgetbase";
-    const schema = await this.run("docker", [...this.composeArgs(this.currentEnvPath), "exec", "-T", "postgres", "psql", "-U", user,
+    const schema = await this.runDocker([...this.composeArgs(this.currentEnvPath), "exec", "-T", "postgres", "psql", "-U", user,
       "-d", database, "-t", "-A", "-c", "SELECT id FROM schema_migrations ORDER BY applied_at DESC, id DESC LIMIT 1"]);
     if (!schema || !/^[A-Za-z0-9_-]+$/.test(schema)) throw new Error("Could not read restored database schema identity");
     return schema;
@@ -403,13 +419,13 @@ export class ManagedComposeExecutor implements UpdateExecutor {
 
   private async stopInterruptedMigration(): Promise<void> {
     const name = this.migrationContainerName();
-    const id = await this.run("docker", ["ps", "-aq", "--filter", `name=^/${name}$`]);
+    const id = await this.runDocker(["ps", "-aq", "--filter", `name=^/${name}$`]);
     if (!id) return;
-    const labels = JSON.parse(await this.run("docker", ["inspect", "--format", "{{json .Config.Labels}}", id])) as Record<string, string>;
+    const labels = JSON.parse(await this.runDocker(["inspect", "--format", "{{json .Config.Labels}}", id])) as Record<string, string>;
     if (labels["com.docker.compose.project"] !== (this.options.composeProjectName ?? "forgetbase") || labels["com.docker.compose.service"] !== "migrate") {
       throw new Error("Interrupted migration container ownership mismatch");
     }
-    await this.run("docker", ["rm", "--force", id]);
+    await this.runDocker(["rm", "--force", id]);
   }
 
   private async verifyRecoveryPoint(point: RecoveryPoint): Promise<void> {
@@ -433,7 +449,7 @@ export class ManagedComposeExecutor implements UpdateExecutor {
         receipt.manifestSha256 !== createHash("sha256").update(await readFile(join(dirname(point.backupPath), "manifest.json"))).digest("hex")) {
       throw new Error("Recovery receipt mismatch");
     }
-    await this.run("bash", [join(this.bundleDir, "scripts/verify-backup-set.sh"), dirname(point.backupPath)], this.composeEnvironment());
+    await this.runScript("scripts/verify-backup-set.sh", [dirname(point.backupPath)], this.composeEnvironment());
   }
 
   private async checkUrl(url: string, requireVersion: boolean): Promise<boolean> {
@@ -463,10 +479,10 @@ export class ManagedComposeExecutor implements UpdateExecutor {
     try {
       await Promise.all([
         "backup-attachments.sh",
-        "backup-set.sh",
-        "restore-attachments.sh",
-        "verify-backup-set.sh"
-      ].map((script) => stat(join(this.bundleDir, "scripts", script))));
+        "scripts/backup-set.sh",
+        "scripts/restore-attachments.sh",
+        "scripts/verify-backup-set.sh"
+      ].map((script) => stat(join(this.bundleDir, script))));
       return true;
     } catch {
       return false;
@@ -528,15 +544,14 @@ interface CommandResult {
 }
 
 async function runCommand(input: {
-  command: string;
-  args: string[];
+  launch(options: SpawnOptions): ChildProcess;
   cwd: string;
   timeoutMs: number;
   environment?: NodeJS.ProcessEnv;
   lockFileDescriptor?: number;
 }): Promise<CommandResult> {
   return new Promise((resolvePromise) => {
-    const child = spawn(input.command, input.args, {
+    const child = input.launch({
       cwd: input.cwd,
       env: input.environment ?? process.env,
       detached: process.platform !== "win32",
@@ -588,6 +603,7 @@ async function fetchWithRetries(url: string, attempts: number): Promise<Response
 }
 
 export function buildReleaseEnvironment(manifest: ReleaseManifest, updaterVersion?: string | null, writesEnabled = true): string {
+  manifest = releaseManifestSchema.parse(manifest);
   const values = new Map(manifest.images.map((image) => [image.component, image.reference]));
   const components = ["api", "web", "worker", "migrate", "proxy", "updater"] as const;
   return [

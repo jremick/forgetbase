@@ -53,7 +53,7 @@ const baseEnv: NodeJS.ProcessEnv = {
   FORGETBASE_UPDATER_API_TOKEN: token,
   FORGETBASE_SYSTEM_UPDATE_OWNER_EMAILS: "owner@example.test",
   FORGETBASE_UPDATER_URL: `http://host.docker.internal:${updaterPort}`,
-  FORGETBASE_REQUIRE_AUTHENTICATION: "true",
+  FORGETBASE_REQUIRE_AUTHENTICATION: "false",
   FORGETBASE_POSTGRES_PORT: `127.0.0.1:${portBase + 7}`,
   FORGETBASE_API_PORT: `127.0.0.1:${apiPort}`,
   FORGETBASE_WEB_PORT: `127.0.0.1:${webPort}`,
@@ -101,6 +101,7 @@ try {
   record("runner", { node: process.version, platform: process.platform, architecture: process.arch, docker: platform.trim(), runId });
   await Promise.all(servers.map((server, index) => new Promise<void>((done) => server.listen(index === 0 ? feedPort : healthPort, "127.0.0.1", done))));
   await writeFile(join(directory, "public-key.pem"), publicPem, { mode: 0o600 });
+  await writeFile(join(directory, "gc-stress.cjs"), "setInterval(() => global.gc(), 100).unref();\n", { mode: 0o600 });
   await mkdir(join(directory, "scripts"), { recursive: true });
   for (const filename of ["backup-postgres.sh", "backup-attachments.sh", "backup-set.sh", "verify-backup-set.sh", "restore-postgres.sh", "restore-attachments.sh"]) {
     await copyFile(join(root, "scripts", filename), join(directory, "scripts", filename));
@@ -135,7 +136,7 @@ fi
   await command("start disposable private registry", "docker", ["run", "-d", "--name", registryName, "--label", `forgetbase.proof=${runId}`, "-p", `127.0.0.1:${registryPort}:5000`, "registry:3"]);
   await waitUrl(`http://${host}:${registryPort}/v2/`, 60_000);
   const sourceRevision = process.env.MANAGED_PROOF_SOURCE_REVISION ?? "0000000000000000000000000000000000000000";
-  const buildArguments = ["--build-arg", `FORGETBASE_SOURCE_REVISION=${sourceRevision}`, "--build-arg", `FORGETBASE_SOURCE_DATE_EPOCH=${Math.floor(Date.now() / 1000)}`];
+  const buildArguments = ["--build-arg", `FORGETBASE_SOURCE_REVISION=${sourceRevision}`, "--build-arg", `FORGETBASE_SOURCE_DATE_EPOCH=${process.env.MANAGED_PROOF_SOURCE_DATE_EPOCH ?? Math.floor(Date.now() / 1000)}`];
   const images: ReleaseManifest["images"] = [];
   for (const component of ["api", "worker", "migrate", "web", "proxy"] as const) {
     const tag = `${registryPrefix}${component}:synthetic`;
@@ -150,17 +151,19 @@ fi
   const schemaVersion = migrations.at(-1)!.replace(/\.sql$/, "");
   const baseline = manifest(baselineVersion, images, schemaVersion, [], sourceRevision);
   await initializeManagedInstallation({ envelope: signed(baseline), publicKeys: new Map([[keyId, publicPem]]), allowedRegistryPrefixes: [registryPrefix], stateDir, updaterVersion: "0.1.0", bundleDigest: await computeComposeBundleDigest(directory, [composePath]) });
-  await composeCommand("start baseline database", ["up", "-d", "postgres"]);
-  await until(async () => (await composeCommand("database readiness", ["exec", "-T", "postgres", "pg_isready", "-U", "forgetbase"], false)).ok, 120_000);
+  await composeCommand("start baseline database", ["up", "--wait", "-d", "postgres"]);
   await sql("CREATE EXTENSION IF NOT EXISTS pgcrypto; CREATE EXTENSION IF NOT EXISTS vector;");
   await composeCommand("baseline migration", ["run", "--rm", "migrate"]);
-  await composeCommand("start baseline services", ["up", "-d", "api", "worker", "web", "proxy"]);
+  await composeCommand("start baseline services", ["up", "-d", "api", "worker", "web"]);
   await waitUrl(`${api}/ready`, 300_000);
-  await waitUrl(`http://${host}:${proxyPort}/`, 120_000);
   await sql("CREATE TABLE managed_e2e_canary (id text PRIMARY KEY, value text NOT NULL); INSERT INTO managed_e2e_canary VALUES ('before', 'original');");
   const bootstrap = await http(api, "/auth/bootstrap", { method: "POST", body: { tenantId: "tenant_demo", email: "owner@example.test", displayName: "Synthetic Update Owner", password, keyName: "managed-proof" } });
   ownerKey = bootstrap.body.secret;
   assert.ok(ownerKey); secrets.push(ownerKey);
+  baseEnv.FORGETBASE_REQUIRE_AUTHENTICATION = "true";
+  await composeCommand("enable authentication before update proof", ["up", "--no-deps", "-d", "api", "proxy"]);
+  await waitUrl(`${api}/ready`, 120_000);
+  await waitUrl(`http://${host}:${proxyPort}/`, 120_000);
   await command("import synthetic corpus", "pnpm", ["--filter", "@forgetbase/cli", "start", "--", "corpus", "import", "--api-url", api, "--file", "corpus/demo/assets.json"], { ...baseEnv, FORGETBASE_API_KEY: ownerKey });
   const upload = await fetch(`${api}/assets/${artifactId}/attachments`, { method: "POST", headers: { authorization: `Bearer ${ownerKey}`, "content-type": "application/octet-stream", "x-forgetbase-attachment-filename-encoded": "recovery-proof.txt", "x-forgetbase-attachment-media-type": "text/plain" }, body: attachmentContent });
   assert.ok(upload.ok, `attachment HTTP ${upload.status}: ${await upload.clone().text()}`);
@@ -289,6 +292,7 @@ fi
   }
   await restoreSeparateStack(recovery);
   await http(updater, "/v1/rollback", { method: "POST", token, body: { recoveryPointId: recovery.id }, expected: [409] });
+  await copyFile(recovery.backupPath, join(recovery.configurationPath, "..", "wrong.dump"));
   const corruptLedger = JSON.parse(await readFile(join(stateDir, "state.json"), "utf8"));
   corruptLedger.recoveryPoints.find((point: Json) => point.id === recovery.id).backupPath = join(recovery.configurationPath, "..", "wrong.dump");
   await writeFile(join(stateDir, "state.json"), JSON.stringify(corruptLedger));
@@ -370,6 +374,7 @@ function record(name: string, data: Json): void { entries.push({ at: new Date().
 function parseEnv(source: string): Record<string, string> { return Object.fromEntries(source.split("\n").filter((line) => /^[A-Z_]+=/.test(line)).map((line) => [line.slice(0, line.indexOf("=")), line.slice(line.indexOf("=") + 1)])); }
 function delay(ms: number): Promise<void> { return new Promise((done) => setTimeout(done, ms)); }
 async function command(name: string, command: string, args: string[], environment = baseEnv, timeoutMs = 120_000, required = true): Promise<string> {
+  console.log(JSON.stringify({ step: name, phase: "running" }));
   const result = await execute(command, args, environment, timeoutMs);
   entries.push({ name, ok: result.ok, status: result.code, durationMs: result.durationMs, command: clean([command, ...args].join(" ")), output: clean(result.output).slice(-12_000) });
   if (required && !result.ok) throw new Error(`${name}: ${clean(result.output).slice(-12_000)}`);
@@ -378,12 +383,22 @@ async function command(name: string, command: string, args: string[], environmen
 async function execute(command: string, args: string[], environment: NodeJS.ProcessEnv, timeoutMs: number): Promise<{ ok: boolean; code: number | null; output: string; durationMs: number }> {
   const start = Date.now();
   return new Promise((done) => {
-    const process = spawn(command, args, { cwd: root, env: environment, stdio: ["ignore", "pipe", "pipe"], shell: false });
+    const options = { cwd: root, env: environment, stdio: ["ignore", "pipe", "pipe"] as ["ignore", "pipe", "pipe"], shell: false };
+    const runningCommand = (() => {
+      switch (command) {
+        case "docker": return spawn("docker", args, options);
+        case "pnpm": return spawn("pnpm", args, options);
+        case "bash": return spawn("bash", args, options);
+        case "which": return spawn("which", args, options);
+        case process.execPath: return spawn("node", args, options);
+        default: throw new Error("Unsupported proof executable");
+      }
+    })();
     let output = "";
-    for (const stream of [process.stdout, process.stderr]) stream.on("data", (chunk) => { output = (output + chunk.toString()).slice(-64_000); });
-    const timeout = setTimeout(() => process.kill("SIGKILL"), timeoutMs);
-    process.once("error", (error) => { clearTimeout(timeout); done({ ok: false, code: null, output: error.message, durationMs: Date.now() - start }); });
-    process.once("close", (code) => { clearTimeout(timeout); done({ ok: code === 0, code, output, durationMs: Date.now() - start }); });
+    for (const stream of [runningCommand.stdout, runningCommand.stderr]) stream.on("data", (chunk) => { output = (output + chunk.toString()).slice(-64_000); });
+    const timeout = setTimeout(() => runningCommand.kill("SIGKILL"), timeoutMs);
+    runningCommand.once("error", (error) => { clearTimeout(timeout); done({ ok: false, code: null, output: error.message, durationMs: Date.now() - start }); });
+    runningCommand.once("close", (code) => { clearTimeout(timeout); done({ ok: code === 0, code, output, durationMs: Date.now() - start }); });
   });
 }
 async function composeCommand(name: string, args: string[], required?: true): Promise<string>;
@@ -396,7 +411,7 @@ async function composeCommand(name: string, args: string[], required = true): Pr
 async function sql(statement: string, targetProject = project): Promise<string> {
   return command("synthetic database assertion", "docker", ["compose", "--project-name", targetProject, "--env-file", releaseEnv, "-f", composePath, "exec", "-T", "postgres", "psql", "-U", "forgetbase", "-d", "forgetbase", "-v", "ON_ERROR_STOP=1", "-t", "-A", "-c", statement]);
 }
-async function until(check: () => Promise<boolean>, timeoutMs: number): Promise<void> { const started = Date.now(); while (Date.now() - started < timeoutMs) { if (await check()) return; await delay(500); } throw new Error(`Condition timed out after ${timeoutMs}ms`); }
+async function until(check: () => Promise<boolean>, timeoutMs: number): Promise<void> { const started = Date.now(); while (Date.now() - started < timeoutMs) { if (await check()) return; await delay(1000); } throw new Error(`Condition timed out after ${timeoutMs}ms`); }
 async function waitUrl(url: string, timeoutMs: number): Promise<void> { await until(async () => { try { return (await fetch(url, { signal: AbortSignal.timeout(2000) })).ok; } catch { return false; } }, timeoutMs); }
 async function http(base: string, path: string, input: { method?: string; body?: Json; token?: string; expected?: number[] } = {}): Promise<{ status: number; body: Json }> {
   const response = await fetch(`${base}${path}`, { method: input.method, headers: { ...(input.token ? { authorization: `Bearer ${input.token}` } : {}), ...(input.body ? { "content-type": "application/json" } : {}) }, body: input.body ? JSON.stringify(input.body) : undefined, signal: AbortSignal.timeout(120_000) });
@@ -408,7 +423,7 @@ async function control(path: string, body: Json = {}): Promise<Json> { return (a
 async function status(): Promise<Json> { return (await http(updater, "/v1/status", { token })).body; }
 async function startUpdater(): Promise<void> {
   updaterEnvironment = { ...baseEnv, PATH: `${join(directory, "bin")}:${process.env.PATH}`, PORT: String(updaterPort), HOST: "0.0.0.0", FORGETBASE_INSTALLATION_MODE: "managed", FORGETBASE_UPDATES_ENABLED: "true", FORGETBASE_UPDATE_BUNDLE_DIR: directory, FORGETBASE_UPDATE_COMPOSE_FILES: "compose.managed.yaml", FORGETBASE_UPDATER_STATE_DIR: stateDir, FORGETBASE_UPDATE_COMPOSE_PROJECT_NAME: project, FORGETBASE_UPDATE_PUBLIC_KEY_ID: keyId, FORGETBASE_UPDATE_PUBLIC_KEY_FILE: join(directory, "public-key.pem"), FORGETBASE_UPDATE_FEED_URL: `http://127.0.0.1:${feedPort}/manifest`, FORGETBASE_UPDATE_ALLOW_LOCAL_HTTP: "true", FORGETBASE_UPDATE_ALLOWED_REGISTRIES: registryPrefix, FORGETBASE_UPDATE_API_HEALTH_URL: `http://127.0.0.1:${healthPort}/health`, FORGETBASE_UPDATE_WEB_HEALTH_URL: `http://${host}:${webPort}/`, FORGETBASE_UPDATE_MINIMUM_FREE_BYTES: "1" };
-  child = spawn(process.execPath, [join(root, "apps/updater/dist/index.js")], { cwd: directory, env: updaterEnvironment, stdio: ["ignore", "pipe", "pipe"] });
+  child = spawn(process.execPath, ["--expose-gc", "--require", join(directory, "gc-stress.cjs"), join(root, "apps/updater/dist/index.js")], { cwd: directory, env: updaterEnvironment, stdio: ["ignore", "pipe", "pipe"] });
   let log = "";
   child.stdout?.on("data", (chunk) => { log = (log + clean(chunk.toString())).slice(-24_000); });
   child.stderr?.on("data", (chunk) => { log = (log + clean(chunk.toString())).slice(-24_000); });
@@ -460,7 +475,7 @@ async function restoreSeparateStack(point: Json): Promise<void> {
   for (const [key, network] of Object.entries(configuration.networks) as [string, Json][]) network.name = `${restoreProject}_${key}`;
   await writeFile(restoreFile, JSON.stringify(configuration), { mode: 0o600 });
   const restoreEnv = { ...baseEnv, COMPOSE_PROJECT_NAME: restoreProject, COMPOSE_FILE: restoreFile, FORGETBASE_RESTORE_CONFIRM: "forgetbase", FORGETBASE_ATTACHMENT_RESTORE_CONFIRM: "attachments" };
-  await command("start independent restore database", "docker", ["compose", "-p", restoreProject, "-f", restoreFile, "up", "-d", "postgres"], restoreEnv);
+  await command("start independent restore database", "docker", ["compose", "-p", restoreProject, "-f", restoreFile, "up", "--wait", "-d", "postgres"], restoreEnv);
   await until(async () => (await execute("docker", ["compose", "-p", restoreProject, "-f", restoreFile, "exec", "-T", "postgres", "pg_isready", "-U", "forgetbase"], restoreEnv, 10_000)).ok, 120_000);
   await command("restore backup into new database volume", "bash", [join(root, "scripts/restore-postgres.sh"), point.backupPath, "forgetbase"], restoreEnv);
   await command("restore backup into new attachment volume", "bash", [join(root, "scripts/restore-attachments.sh"), point.attachmentSnapshotId], restoreEnv);

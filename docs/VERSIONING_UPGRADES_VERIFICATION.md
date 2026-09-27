@@ -10,7 +10,15 @@ Focused regression suites cover signature/receipt tampering, restricted deployme
 
 ## Evidence status
 
-Feature completion evidence is being collected against the candidate commit. Do not treat the archived prototype's historical results as evidence for this implementation. Record the final tested commit and results here before merge.
+The feature remains a draft. Host mutation authorization is under review, and the complete update/recovery drill must pass before activation. Do not treat the archived prototype's historical results as evidence for this implementation.
+
+The initial candidate tree `149e57d61bf5198ea82354262a5e4cfe754cba4c` passed 672 tests with PostgreSQL, the 58 public contract checks, and GitHub Verify on commit `fa6e283eef45d636b410d9a00c333f1e6f8c3301`. Subsequent review repairs require their own final evidence; those earlier checks do not establish the final branch state.
+
+The third isolated Linux AMD64 drill verified signed-feed rejection, owner/non-owner transport checks, scheduling/cancellation, and direct candidate API/worker write fences. It then exposed a Node 26 lock-file handle lifetime failure. That drill did not complete successfully.
+
+A verified recovery set from that drill was transferred from the Windows-hosted Docker engine to a separate Mac and restored into native PostgreSQL 17.11 ARM64 with pgvector 0.8.5. Verification matched 35 migration IDs/checksums, 20 synthetic assets and their instruction/document content, the original canary, and the exact attachment bytes and metadata. The source backup manifest SHA-256 was `e8e0dda88b55e51ace82c2237ef1f6aa58ac0910268ddb0d8fbb656ef0d931d3`. The temporary native database was stopped after verification. This establishes recovery of that backup point, independently of the incomplete update drill.
+
+Final commit, complete drill, rendered UI evidence, and current CI/review results remain required before merge.
 
 ## Supported boundary
 

@@ -62,6 +62,9 @@ importers:
 
   apps/updater:
     dependencies:
+      '@fastify/rate-limit':
+        specifier: 11.2.0
+        version: 11.2.0
       '@forgetbase/schema':
         specifier: workspace:*
         version: link:../../packages/schema

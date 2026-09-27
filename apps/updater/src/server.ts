@@ -1,4 +1,5 @@
 import { timingSafeEqual } from "node:crypto";
+import rateLimit from "@fastify/rate-limit";
 import fastify, { type FastifyInstance } from "fastify";
 import {
   updateApplyInputSchema,
@@ -19,7 +20,16 @@ export function buildUpdaterServer(options: BuildUpdaterServerOptions): FastifyI
     throw new Error("FORGETBASE_UPDATER_API_TOKEN must contain at least 32 bytes");
   }
 
-  const server = fastify({ logger: options.logger ?? true, bodyLimit: 64 * 1024 });
+  const server = fastify({ logger: options.logger ?? true, bodyLimit: 64 * 1024, trustProxy: false });
+  // Match the API's root-hook convention so synchronous route registration and
+  // unknown routes cannot bypass the limiter. Bound work before token comparison.
+  server.register(rateLimit, { global: false, hook: "onRequest", max: 120, timeWindow: 60_000, cache: 5000 });
+  let limitRequest: ReturnType<FastifyInstance["rateLimit"]>;
+  server.after(() => { limitRequest = server.rateLimit(); });
+  server.addHook("onRequest", async (request, reply) => {
+    if (request.routeOptions.url === "/health") return;
+    return limitRequest.call(server, request, reply);
+  });
 
   server.addHook("onRequest", async (request, reply) => {
     if (!request.url.startsWith("/v1/")) return;
@@ -50,6 +60,8 @@ export function buildUpdaterServer(options: BuildUpdaterServerOptions): FastifyI
   });
 
   server.setErrorHandler((error, _request, reply) => {
+    const candidateStatus = error && typeof error === "object" && "statusCode" in error ? error.statusCode : undefined;
+    if (candidateStatus === 429) return reply.code(429).send({ error: "rate_limit_exceeded" });
     server.log.error({ err: error, code: "updater_request_failed" }, "Updater request failed");
     const message = error instanceof Error ? error.message : String(error);
     const name = error instanceof Error ? error.name : "Error";

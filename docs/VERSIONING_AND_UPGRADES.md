@@ -53,7 +53,7 @@ The page shows:
 - summary, highlights, security changes, breaking changes, configuration changes, and known issues
 - risk, expected downtime, migration compatibility, and rollback mode
 
-Only a deployment owner can see and use update controls. A deployment owner must be an authenticated tenant admin whose normalized email is in the exact `FORGETBASE_SYSTEM_UPDATE_OWNER_EMAILS` allowlist. Tenant admin status alone does not grant host update authority.
+The draft control routes require an authenticated tenant admin whose normalized email is in the exact `FORGETBASE_SYSTEM_UPDATE_OWNER_EMAILS` allowlist. Review found that this check does not establish an independent host-operator identity under the existing account-management model. Host mutation authorization is unresolved; do not activate this draft workflow until that boundary and its verification are complete.
 
 The operator chooses one of three outcomes:
 

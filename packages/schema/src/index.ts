@@ -2279,8 +2279,8 @@ export const releaseManifestSchema = z.object({
   rollbackMode: rollbackModeSchema,
   migration: z.object({
     compatibility: migrationCompatibilitySchema,
-    targetSchemaVersion: z.string().min(1),
-    migrationIds: z.array(z.string().min(1)).max(10_000)
+    targetSchemaVersion: z.string().regex(/^[A-Za-z0-9_-]{1,255}$/),
+    migrationIds: z.array(z.string().regex(/^[A-Za-z0-9_-]{1,255}$/)).max(10_000)
   }),
   recovery: z.object({
     components: z.array(z.enum(["database", "configuration", "attachments"])).min(1),

@@ -24,6 +24,24 @@ afterEach(async () => {
 });
 
 describe("signed release manifests", () => {
+  // Release fields reach a Compose env file and a comma-delimited migration plan.
+  // A valid publisher signature must not admit extra env lines, interpolation,
+  // shell syntax, or additional migration IDs through one field.
+  it.each(["039_ok\nFORGETBASE_MANAGED_WRITES_ENABLED=true", "039_ok\rBAD=value", "$(touch marker)", "${UNTRUSTED}", "039_ok,040_extra", "../039_bad", "039 ok"])(
+    "rejects unsafe migration identifiers even in a signed release: %s", (value) => {
+      const { publicKey, privateKey } = generateKeyPairSync("ed25519");
+      const keys = new Map([["test-key", publicKey.export({ type: "spki", format: "pem" }).toString()]]);
+      for (const field of ["targetSchemaVersion", "migrationIds"] as const) {
+        const manifest = buildManifest();
+        if (field === "targetSchemaVersion") manifest.migration.targetSchemaVersion = value;
+        else manifest.migration.migrationIds = [value];
+        const envelope = { keyId: "test-key", manifest,
+          signature: sign(null, Buffer.from(canonicalJson(manifest)), privateKey).toString("base64") };
+        expect(() => verifySignedManifest(envelope, keys)).toThrow();
+      }
+    }
+  );
+
   it("verifies canonical Ed25519 signatures and rejects tampering", () => {
     const { publicKey, privateKey } = generateKeyPairSync("ed25519");
     const manifest = buildManifest();
