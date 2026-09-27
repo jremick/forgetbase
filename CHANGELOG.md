@@ -2,6 +2,14 @@
 
 Published tags are immutable. Beta releases support self-hosted trials with synthetic data; they do not promise stable APIs or production support.
 
+## Unreleased
+
+- Add a searchable, sortable content library and source-preserving rich Markdown editing with a separate Source mode for unsupported syntax.
+- Use the shared Markdown renderer for reader pages, content details, and authoring previews.
+- Restore canonical navigation URLs and exercise the governed Versions tab in release browser checks.
+
+These changes are on `main`. A deployment's build version does not establish a published GitHub release; use the release tags and attached verification evidence when selecting an installable release.
+
 ## 0.1.0-beta.5 - 2026-09-05
 
 - Reject redirects on credential-bearing SDK, model, embedding, OIDC and worker requests.
