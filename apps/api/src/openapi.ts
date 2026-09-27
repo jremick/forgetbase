@@ -1,4 +1,5 @@
 import { forgetBaseVersion } from "@forgetbase/schema";
+import { importPlanRequestSchema, importPlanSchema } from "@forgetbase/schema/import-planner";
 
 export function buildOpenApiDocument() {
   return {
@@ -305,6 +306,28 @@ export function buildOpenApiDocument() {
           responses: {
             "200": jsonResponse("Removed group membership record"),
             "404": jsonResponse("Group membership not found")
+          }
+        }
+      },
+      "/imports/plan": {
+        post: {
+          summary: "Plan a governed import without changing assets",
+          description: "Returns a classification report only, never an executable import request. Requires an authenticated maintainer or administrator with asset:read and asset:write scopes and current read and write access to every relevant target on the request surface. tenantId must match the authenticated tenant. Supply a raw source snapshot and at most 200 governed candidates; candidate hashes, target state and mapping assertions are forbidden. The server reads current editing heads and grants. Changed or oversized target state returns 409; retry planning against current state. Asset content, versions, permissions and publication are unchanged; normal authentication bookkeeping may occur.",
+          requestBody: {
+            required: true,
+            content: { "application/json": { schema: importPlanRequestSchema.toJSONSchema({ io: "input" }) } }
+          },
+          responses: {
+            "200": {
+              description: "Report-only classifications, completeness, conflicts and a deterministic plan digest",
+              content: { "application/json": { schema: importPlanSchema.toJSONSchema() } }
+            },
+            "400": jsonResponse("Invalid source snapshot, candidate, provenance or request assertion"),
+            "401": jsonResponse("Authentication required"),
+            "403": jsonResponse("Tenant, scope, surface or target access denied"),
+            "409": jsonResponse("import_target_changed or import_target_limit_exceeded; no report returned"),
+            "413": jsonResponse("Request exceeds the API body limit"),
+            "503": jsonResponse("Import planning registry or authentication unavailable")
           }
         }
       },

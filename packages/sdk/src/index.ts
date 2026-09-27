@@ -204,6 +204,7 @@ import {
   type TelemetryRetentionPurgeInput,
   type TelemetryRetentionPurgeResult
 } from "@forgetbase/schema";
+import { importPlanRequestSchema, importPlanSchema, type ImportPlan, type ImportPlanRequest } from "@forgetbase/schema/import-planner";
 
 export interface ForgetBaseClientOptions {
   baseUrl: string;
@@ -374,6 +375,14 @@ export class ForgetBaseClient {
       method: "POST",
       headers: this.authHeaders({ "content-type": "application/json" }),
       body: JSON.stringify(assetValidationInputSchema.parse(input))
+    });
+  }
+
+  async planImport(input: ImportPlanRequest): Promise<ImportPlan> {
+    return this.request("/imports/plan", importPlanSchema, {
+      method: "POST",
+      headers: this.authHeaders({ "content-type": "application/json" }),
+      body: JSON.stringify(importPlanRequestSchema.parse(input))
     });
   }
 

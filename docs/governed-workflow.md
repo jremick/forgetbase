@@ -137,6 +137,10 @@ fb assets publish playbook.release-checklist
 
 Version-history reads require the same permission as preview. Restoring an archived asset does not silently republish it.
 
+## Preview a governed import
+
+Use `fb corpus plan --file plan.json --fail-on-conflicts` to compare a declared source snapshot with current governed versions. The API, SDK and MCP expose the same permission-checked, report-only workflow. See [Import planning](IMPORT_PLANNING.md) for the input, synthetic example, classifications and failure behavior. A plan never executes an import.
+
 ## Import a small corpus
 
 `corpus import` accepts one asset object, a JSON array of assets, or `{ "assets": [...] }`:
