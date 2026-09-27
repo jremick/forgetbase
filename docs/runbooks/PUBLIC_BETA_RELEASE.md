@@ -15,7 +15,7 @@ The current public beta tag is `v0.1.0-beta.7`. Tags `v0.1.0-beta.1` through `v0
 
 ## Release Inputs
 
-Record these before running the final gates:
+Set `PUBLIC_BETA_TAG` to the approved, unused release tag before running the final gates. Do not reuse the published tag listed above. Record these inputs:
 
 - release commit SHA
 - intended release tag
@@ -167,7 +167,7 @@ Collect and validate the proof manifest after the live demo, UAT reports, stack 
 
 ```bash
 PUBLIC_BETA_LIVE_DEMO_URL=https://demo.example.com \
-PUBLIC_BETA_TAG=v0.1.0-beta.7 \
+PUBLIC_BETA_TAG="${PUBLIC_BETA_TAG:?Set an approved unused release tag}" \
 npx -y pnpm@11.7.0 release-proof:collect
 
 npx -y pnpm@11.7.0 release-proof:check work/public-beta-proof/public-beta-release-proof.json
@@ -180,8 +180,8 @@ The proof check must pass before tagging or announcing public beta. A failing re
 Only after the proof check passes:
 
 ```bash
-git tag -a v0.1.0-beta.7 -m "ForgetBase v0.1.0-beta.7"
-git push origin v0.1.0-beta.7
+git tag -a "${PUBLIC_BETA_TAG:?Set an approved unused release tag}" -m "ForgetBase $PUBLIC_BETA_TAG"
+git push origin "refs/tags/${PUBLIC_BETA_TAG:?Set an approved unused release tag}"
 ```
 
 Create the GitHub release from the tag. Keep the release notes plain:
