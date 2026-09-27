@@ -28,9 +28,14 @@ export function createAppNavigation(
   getBlocker: () => NavigationBlocker | null
 ) {
   const location = () => `${window.location.pathname}${window.location.search}${window.location.hash}`;
-  let acceptedLocation = location();
+  const canonicalLocation = (value: string) => {
+    const url = new URL(value, window.location.href);
+    if (url.hash) url.hash = canonicalAppHash(url.hash);
+    return `${url.pathname}${url.search}${url.hash}`;
+  };
+  let acceptedLocation = canonicalLocation(location());
   let acceptedIndex = Number.isInteger(window.history.state?.[indexKey]) ? window.history.state[indexKey] as number : 0;
-  window.history.replaceState({ ...window.history.state, [indexKey]: acceptedIndex }, "");
+  window.history.replaceState({ ...window.history.state, [indexKey]: acceptedIndex }, "", acceptedLocation);
   const candidate = (window as Window & { navigation?: NativeNavigation }).navigation;
   const nativeNavigation = candidate?.currentEntry?.key && typeof candidate.traverseTo === "function" ? candidate : null;
   let acceptedKey = nativeNavigation?.currentEntry?.key;
@@ -42,11 +47,11 @@ export function createAppNavigation(
   let allowedTarget: string | null = null;
 
   const accept = (nextLocation: string, index: number) => {
-    acceptedLocation = nextLocation;
+    acceptedLocation = canonicalLocation(nextLocation);
     acceptedIndex = index;
     acceptedKey = nativeNavigation?.currentEntry?.key;
-    window.history.replaceState({ ...window.history.state, [indexKey]: index }, "");
-    onLocation(nextLocation);
+    window.history.replaceState({ ...window.history.state, [indexKey]: index }, "", acceptedLocation);
+    onLocation(acceptedLocation);
   };
 
   const traverseToKey = (key: string): Promise<unknown> => {
