@@ -1,7 +1,8 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { Pool } from "pg";
 import type { AssetCreateInput, ManagedQueryEvalReport } from "@forgetbase/schema";
 import {
@@ -22,6 +23,7 @@ import {
   InMemorySecretReferencePolicyRepository,
   InMemoryTelemetryRetentionPolicyRepository,
   PostgresAgentActionExecutionRepository,
+  PostgresAttachmentRepository,
   PostgresAuthRepository,
   PostgresAuthProviderConfigRepository,
   PostgresManagedQueryEvalRunRepository,
@@ -142,6 +144,26 @@ class TestEmbeddingProvider implements EmbeddingProvider {
 }
 
 describe("OpenAiEmbeddingProvider", () => {
+  it.each([
+    ["https://provider.example.test/v1", "https://provider.example.test/v1/embeddings"],
+    ["https://provider.example.test/v1///", "https://provider.example.test/v1/embeddings"],
+    ["/".repeat(200_000) + "x///", "/".repeat(200_000) + "x/embeddings"],
+    ["/".repeat(200_000), "/embeddings"],
+    ["", "/embeddings"]
+  ])("normalizes trailing slashes without changing the request prefix (case %#)", async (baseUrl, expectedUrl) => {
+    const requests: string[] = [];
+    const provider = new OpenAiEmbeddingProvider({
+      apiKey: "test-openai-key",
+      baseUrl,
+      fetchImpl: async (input) => {
+        requests.push(String(input));
+        return new Response(JSON.stringify({ data: [{ index: 0, embedding: Array(DEFAULT_EMBEDDING_DIMENSIONS).fill(0) }] }));
+      }
+    });
+    await provider.embedTexts(["synthetic input"]);
+    expect(requests).toEqual([expectedUrl]);
+  });
+
   it("posts embedding batches to the OpenAI-compatible embeddings endpoint", async () => {
     const embedding = Array.from({ length: DEFAULT_EMBEDDING_DIMENSIONS }, (_, index) => index / 1000);
     const requests: Array<{
@@ -196,7 +218,7 @@ describe("InMemoryRegistryRepository", () => {
     expect(fetched?.humanDocuments[0]?.format).toBe("markdown");
   });
 
-  it("creates complete governed snapshots and restores prior state and content", async () => {
+  it("creates complete governed snapshots and restores content as a draft under current permissions", async () => {
     const repository: RegistryRepository = new InMemoryRegistryRepository();
     await repository.createAsset({
       ...sampleAsset,
@@ -276,20 +298,20 @@ describe("InMemoryRegistryRepository", () => {
       versionNumber: 1
     });
 
-    expect(restored?.asset.currentVersionId).toBe(restored?.versions.find((version) => version.versionNumber === 1)?.id);
+    expect(restored?.asset.currentVersionId).not.toBe(restored?.versions.find((version) => version.versionNumber === 1)?.id);
     expect(restored?.instructionObjects[0]?.body).toContain("Keep model context");
     expect(restored?.asset).toMatchObject({
       title: "Context Boundary Guardrail",
       summary: "Original summary",
-      lifecycleState: "active",
-      sensitivity: "internal",
-      audience: ["ai-team"],
-      status: "approved",
+      lifecycleState: "draft",
+      sensitivity: "restricted",
+      audience: ["security-team"],
+      status: "draft",
       reviewDueAt: "2027-01-31",
       sourceRef: "source://original",
-      allowedSurfaces: ["api", "cli", "mcp", "web"],
-      allowedExports: ["internal-pack"],
-      allowedActions: ["original-action"],
+      allowedSurfaces: ["api", "web"],
+      allowedExports: [],
+      allowedActions: ["updated-action"],
       metadata: { readerIcon: "policy", readerNavOrder: 10 }
     });
   });
@@ -1165,6 +1187,66 @@ describe("InMemoryTelemetryRetentionPolicyRepository", () => {
 });
 
 describe("InMemoryRetrievalRepository", () => {
+  it("applies telemetry date windows before list limits across repositories", async () => {
+    const retrievalRepository = new InMemoryRetrievalRepository();
+    const authRepository = new InMemoryAuthRepository();
+    const feedbackRepository = new InMemoryManagedQueryFeedbackRepository();
+
+    try {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-07-15T12:00:00.000Z"));
+      await retrievalRepository.recordRetrievalEvent({
+        query: "in-window",
+        surface: "api",
+        resultCount: 1,
+        latencyMs: 1
+      });
+      await authRepository.recordAuditEvent({
+        action: "asset.read",
+        targetType: "asset",
+        outcome: "success"
+      });
+      await feedbackRepository.recordFeedback({
+        telemetryEventId: "retrieval_in_window",
+        query: "in-window",
+        outcome: "accepted"
+      });
+
+      vi.setSystemTime(new Date("2026-08-15T12:00:00.000Z"));
+      await retrievalRepository.recordRetrievalEvent({
+        query: "out-of-window",
+        surface: "api",
+        resultCount: 1,
+        latencyMs: 1
+      });
+      await authRepository.recordAuditEvent({
+        action: "asset.update",
+        targetType: "asset",
+        outcome: "success"
+      });
+      await feedbackRepository.recordFeedback({
+        telemetryEventId: "retrieval_out_of_window",
+        query: "out-of-window",
+        outcome: "rejected"
+      });
+
+      const window = {
+        since: "2026-07-01T00:00:00.000Z",
+        until: "2026-07-31T23:59:59.999Z",
+        limit: 1
+      };
+
+      expect((await retrievalRepository.listRetrievalEvents(window)).map((event) => event.query))
+        .toEqual(["in-window"]);
+      expect((await authRepository.listAuditEvents(window)).map((event) => event.action))
+        .toEqual(["asset.read"]);
+      expect((await feedbackRepository.listFeedback(window)).map((feedback) => feedback.query))
+        .toEqual(["in-window"]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("indexes assets and returns citation-bearing search results", async () => {
     const registryRepository = new InMemoryRegistryRepository();
     const retrievalRepository = new InMemoryRetrievalRepository();
@@ -1832,6 +1914,84 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("PostgresRegistryRepository", ()
     await pool.end();
   });
 
+  it("persists tenant-scoped attachment metadata and its retryable deletion lifecycle", async () => {
+    const registryRepository = new PostgresRegistryRepository(pool);
+    const attachmentRepository = new PostgresAttachmentRepository(pool);
+    const authRepository = new PostgresAuthRepository(pool);
+    const suffix = randomUUID();
+    const tenantId = `tenant_attachment_${suffix}`;
+    const uploader = await authRepository.createUser({
+      tenantId,
+      email: `attachment-${suffix}@example.test`,
+      displayName: "Attachment Operator",
+      role: "maintainer"
+    });
+    const createdAsset = await registryRepository.createAsset({
+      ...sampleAsset,
+      tenantId,
+      stableId: `human-document.attachment-${suffix}`,
+      type: "human-document",
+      instruction: undefined,
+      humanDocument: {
+        format: "markdown",
+        body: "# Attachment persistence"
+      }
+    });
+    const blobId = randomUUID();
+    const created = await attachmentRepository.createAttachment({
+      tenantId,
+      assetId: createdAsset.asset.id,
+      filename: "restore-evidence.txt",
+      mediaType: "text/plain",
+      sizeBytes: 8,
+      contentSha256: "a".repeat(64),
+      storageKey: `${blobId.slice(0, 2)}/${blobId}`,
+      uploadedByUserId: uploader.id,
+      metadata: { fixture: true }
+    });
+
+    expect(await attachmentRepository.listAttachments({
+      tenantId,
+      assetId: createdAsset.asset.id
+    })).toEqual([created]);
+    expect(await attachmentRepository.getAttachment(created.id, { tenantId: "tenant_other" })).toBeNull();
+    expect(await attachmentRepository.getAttachmentUsage({ tenantId })).toEqual({
+      fileCount: 1,
+      totalBytes: 8
+    });
+    expect(await attachmentRepository.getAttachmentUsage({
+      tenantId,
+      uploadedByUserId: uploader.id
+    })).toEqual({ fileCount: 1, totalBytes: 8 });
+    expect((await attachmentRepository.listAttachmentsForReconciliation({ limit: 1000 }))
+      .some((attachment) => attachment.id === created.id)).toBe(true);
+
+    const deleting = await attachmentRepository.markAttachmentDeleting({
+      tenantId,
+      attachmentId: created.id
+    });
+    expect(deleting?.lifecycleState).toBe("deleting");
+    expect((await attachmentRepository.markAttachmentDeleting({
+      tenantId,
+      attachmentId: created.id
+    }))?.lifecycleState).toBe("deleting");
+    expect(await attachmentRepository.getAttachment(created.id, { tenantId })).toBeNull();
+
+    const deleted = await attachmentRepository.markAttachmentDeleted({
+      tenantId,
+      attachmentId: created.id
+    });
+    expect(deleted?.lifecycleState).toBe("deleted");
+    expect((await attachmentRepository.getAttachment(created.id, {
+      tenantId,
+      includeUnavailable: true
+    }))?.deletedAt).toBeTruthy();
+    expect(await attachmentRepository.getAttachmentUsage({ tenantId })).toEqual({
+      fileCount: 0,
+      totalBytes: 0
+    });
+  });
+
   it("serializes concurrent migration runners with an advisory lock", async () => {
     const suffix = `${Date.now()}_${Math.floor(Math.random() * 1_000_000)}`;
     const id = `900_concurrent_lock_${suffix}`;
@@ -1935,12 +2095,12 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("PostgresRegistryRepository", ()
       versionNumber: 1
     });
 
-    expect(restored?.asset.currentVersionId).toBe(restored?.versions.find((version) => version.versionNumber === 1)?.id);
+    expect(restored?.asset.currentVersionId).not.toBe(restored?.versions.find((version) => version.versionNumber === 1)?.id);
     expect(restored?.instructionObjects[0]?.body).toContain("Keep model context");
     expect(restored?.asset).toMatchObject({
       title: "Context Boundary Guardrail",
-      lifecycleState: "active",
-      sensitivity: "internal",
+      lifecycleState: "draft",
+      sensitivity: "restricted",
       metadata: {}
     });
 
@@ -2721,7 +2881,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("PostgresRegistryRepository", ()
     expect((await retrievalRepository.listRetrievalEvents({ tenantId }))[0]?.id).toBe(event.id);
   });
 
-  it("never returns chunks from a non-current asset version", async () => {
+  it("retains published chunks through draft edits and excludes the old version immediately after publication", async () => {
     const registryRepository = new PostgresRegistryRepository(pool);
     const retrievalRepository = new PostgresRetrievalRepository(pool);
     const tenantId = `tenant_retrieval_version_${Date.now()}`;
@@ -2752,12 +2912,29 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("PostgresRegistryRepository", ()
     });
 
     expect(versionTwo).not.toBeNull();
+    expect(versionTwo!.asset.publishedVersionId).toBe(versionOne.asset.currentVersionId);
+    expect(await retrievalRepository.indexAsset(versionTwo!)).toMatchObject({ chunksIndexed: 0 });
+    const retained = await retrievalRepository.search({ tenantId, query: oldToken });
+    expect(retained).toHaveLength(1);
+    expect(retained[0]?.asset.currentVersionId).toBe(versionOne.asset.currentVersionId);
+    expect(retained[0]?.citation.versionId).toBe(versionOne.asset.currentVersionId);
+    expect(await retrievalRepository.search({ tenantId, query: newToken })).toEqual([]);
+
+    const published = await registryRepository.publishAsset(stableId, { tenantId });
+    expect(published?.asset.publishedVersionId).toBe(published?.asset.currentVersionId);
+    expect(published?.asset.publishedVersionId).not.toBe(versionOne.asset.currentVersionId);
+    // The publication pointer changes before asynchronous indexing completes.
+    // Old chunks must be excluded during that gap and stale jobs must not restore them.
     expect(await retrievalRepository.search({ tenantId, query: oldToken })).toEqual([]);
+    expect(await retrievalRepository.search({ tenantId, query: newToken })).toEqual([]);
     await expect(retrievalRepository.indexAsset(versionOne)).rejects.toThrow("Refusing to index stale asset detail");
-    await retrievalRepository.indexAsset(versionTwo!);
+    await retrievalRepository.indexAsset(published!);
     expect(await retrievalRepository.search({ tenantId, query: oldToken })).toEqual([]);
-    expect((await retrievalRepository.search({ tenantId, query: newToken })).map((result) => result.asset.stableId))
-      .toContain(stableId);
+    const refreshed = await retrievalRepository.search({ tenantId, query: newToken });
+    expect(refreshed).toHaveLength(1);
+    expect(refreshed[0]?.asset.stableId).toBe(stableId);
+    expect(refreshed[0]?.asset.currentVersionId).toBe(published?.asset.currentVersionId);
+    expect(refreshed[0]?.citation.versionId).toBe(published?.asset.currentVersionId);
   });
 
   it("persists weighted ranking metadata for Postgres search results", async () => {

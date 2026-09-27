@@ -45,7 +45,7 @@ docker compose -f compose.yaml -f compose.same-origin.yaml config --quiet
 docker compose -f compose.yaml -f compose.same-origin.yaml -f compose.tls.yaml config --quiet
 ```
 
-The deployment-default check is a static/template gate. It preserves local Compose bootstrap defaults, verifies the same-origin/TLS/Railway public template guardrails, and only enforces public-deployment env requirements when `FORGETBASE_PUBLIC_DEPLOYMENT=true`.
+The deployment-default check inspects templates and resolved Compose configurations. It requires Docker Compose but does not require a running Docker daemon. It preserves local Compose bootstrap defaults, verifies the same-origin/TLS/Railway public template guardrails, and only enforces public-deployment env requirements when `FORGETBASE_PUBLIC_DEPLOYMENT=true`.
 
 Run the Compose/API/export/leakage smoke gate against a running local stack after importing the demo corpus:
 
@@ -400,7 +400,7 @@ curl --insecure --silent --show-error --fail https://127.0.0.1:8443/api/health
 https://127.0.0.1:8443/
 ```
 
-The UI defaults to `http://127.0.0.1:3000` on the local `5175` preview and to `/api` through the same-origin proxy. The UI should show API status, password/OIDC cookie-backed login controls, a sign-out control, manual API key entry, visible assets, asset detail, release controls, current-versus-selected version previews, citation-backed search results, a compact managed-query runner, and the public `demo-agent-pack` export summary. With an admin key, manual API key, or CSRF-protected browser session, the Operations panel can also load a review queue, mark selected assets reviewed, load a telemetry summary, retrieval telemetry, audit events, create/list/update/disable users and service accounts, configure service-account policy, configure retrieval ranking weights, configure managed-query mode/citation/grounding policy, configure managed-query cache policy, configure managed-query prompt/response retention posture, configure eval schedule policy, configure action execution policy including the tenant hourly request cap and approval-expiry window, request internal action records with optional idempotency keys using admin or `agent:execute`, approve/deny pending non-expired action requests, configure secret-reference policy, inspect and delete cache metadata, create/list/delete groups, add/list/remove group members, list/create/rotate/revoke user-owned or service-owned API keys, list/revoke browser login sessions, inspect managed-query feedback, run deterministic demo evals, and manage provider/auth-provider configuration including OIDC account-linking and group-sync settings.
+The UI defaults to `http://127.0.0.1:3000` on the local `5175` preview and to `/api` through the same-origin proxy. The UI should show API status, password/OIDC cookie-backed login controls, a sign-out control, manual API key entry, visible assets, asset detail, downloadable page attachments with inspection state, release controls, current-versus-selected version previews, citation-backed search results, a compact managed-query runner, and the public `demo-agent-pack` export summary. With an admin key, manual API key, or CSRF-protected browser session, the Operations panel can also upload/delete inspected attachments, preview attachment storage drift and run a deeper dry-run integrity check, compare 7/30/90-day search quality, page activity, content health, and daily trends, load a review queue, mark selected assets reviewed, load retrieval telemetry and audit events, create/list/update/disable users and service accounts, configure service-account policy, configure retrieval ranking weights, configure managed-query mode/citation/grounding policy, configure managed-query cache policy, configure managed-query prompt/response retention posture, configure eval schedule policy, configure action execution policy including the tenant hourly request cap and approval-expiry window, request internal action records with optional idempotency keys using admin or `agent:execute`, approve/deny pending non-expired action requests, configure secret-reference policy, inspect and delete cache metadata, create/list/delete groups, add/list/remove group members, list/create/rotate/revoke user-owned or service-owned API keys, list/revoke browser login sessions, inspect managed-query feedback, run deterministic demo evals, and manage provider/auth-provider configuration including OIDC account-linking and group-sync settings.
 
 ## Worker Smoke Check
 
@@ -426,13 +426,50 @@ Managed-query eval schedule maintenance runs due tenant schedule policies and de
 
 Action approval expiry maintenance finds `approval-required` action requests whose `approvalExpiresAt` is in the past and defaults to dry-run. Add `--execute` after reviewing candidate counts. Execution marks each stale request `expired`, records `agent.action.approval_expiry` audit evidence without executing the action, and leaves non-expired pending requests untouched. For the long-running worker, scheduled action approval expiry is disabled by default; set `FORGETBASE_ACTION_APPROVAL_EXPIRY_ENABLED=true` to schedule it, keep `FORGETBASE_ACTION_APPROVAL_EXPIRY_DRY_RUN=true` for previews, set `FORGETBASE_ACTION_APPROVAL_EXPIRY_LIMIT`, and set `FORGETBASE_ACTION_APPROVAL_EXPIRY_INTERVAL_MS`.
 
+## Request Limits And Browser Credentials
+
+The API limits requests before body parsing and database-backed authentication.
+Each API process allows 1,000 requests per socket IP in a 60-second window. The
+general counter keeps at most 5,000 IP buckets. IPv6 addresses share a /64 bucket. The API ignores
+forwarded client-IP headers, so callers behind the same reverse proxy share its
+bucket. Keep the API private behind the existing proxy. This conservative limit
+is for the single-instance beta; it is not a distributed abuse-control service.
+
+Use `FORGETBASE_REQUEST_RATE_LIMIT_MAX` (1–100,000),
+`FORGETBASE_REQUEST_RATE_LIMIT_WINDOW_MS` (1–3,600,000), and
+`FORGETBASE_REQUEST_RATE_LIMIT_MAX_ENTRIES` (1–100,000) to size the bounded limit.
+Exhausted requests receive HTTP 429 and `Retry-After`. `/health` is exempt because
+it only reports process identity. `/ready` has its own 60-request/minute budget.
+Login-failure and attachment limits still apply. CORS preflight performs no
+database work and does not consume the general budget.
+
+Same-origin browser login uses the existing HttpOnly session cookie. The local
+split-origin Vite fallback holds its bearer credential only in memory shared by
+the reader and admin surfaces. Reloading that page requires signing in again.
+Startup removes legacy `forgetbase-api-key` localStorage entries without reading
+them. A legacy bearer-only session must sign in again after upgrading.
+
+## Attachment Safety Configuration
+
+Docker Compose requires its internal ClamAV service with `FORGETBASE_ATTACHMENT_SCAN_REQUIRED=true`, `FORGETBASE_ATTACHMENT_CLAMD_HOST=clamav`, port `3310`, and a 15-second default scan timeout. Do not expose the ClamD port outside the Compose network. A deployment that requires scanning is not ready and does not accept uploads when the scanner is unavailable.
+
+The self-hosted defaults limit one attachment to 10 MiB, one tenant to 1 GiB or 1,000 non-deleted files, and one uploader to 256 MiB or 250 non-deleted files. `FORGETBASE_ATTACHMENT_UPLOADS_PER_MINUTE=30` and `FORGETBASE_ATTACHMENT_MAX_CONCURRENT_UPLOADS=4` bound one API process. Adjust `FORGETBASE_ATTACHMENT_MAX_BYTES`, `FORGETBASE_ATTACHMENT_TENANT_MAX_BYTES`, `FORGETBASE_ATTACHMENT_TENANT_MAX_FILES`, `FORGETBASE_ATTACHMENT_PRINCIPAL_MAX_BYTES`, and `FORGETBASE_ATTACHMENT_PRINCIPAL_MAX_FILES` only after sizing storage and memory. These counters are suitable for the single-API Compose prototype; multi-instance deployment needs shared rate limiting and transactional quota reservation.
+
+`FORGETBASE_ATTACHMENT_RECONCILIATION_ENABLED=true` schedules a global storage check in Compose. It defaults to dry-run through `FORGETBASE_ATTACHMENT_RECONCILIATION_DRY_RUN=true` and runs hourly through `FORGETBASE_ATTACHMENT_RECONCILIATION_INTERVAL_MS=3600000`. Review bounded reports and take a verified backup before enabling execution. The admin API uses tenant-scoped reconciliation and does not expose global storage or orphan totals.
+
 ## Backup And Restore Smoke Check
 
-With Docker Compose Postgres running:
+With Docker Compose running, preview reconciliation, stop both writers, create one coordinated set, then verify it:
 
 ```bash
-npx -y pnpm@11.7.0 db:backup
-npx -y pnpm@11.7.0 db:verify-backup-restore
+curl --silent --show-error --fail -X POST http://127.0.0.1:3000/admin/attachments/reconcile \
+  -H "authorization: Bearer $FORGETBASE_API_KEY" \
+  -H 'content-type: application/json' -d '{"dryRun":true,"verifyContent":true}'
+docker compose stop api worker
+backup_json="$(npx -y pnpm@11.7.0 backup:set)"
+backup_path="$(node -e 'const fs=require("node:fs"); console.log(JSON.parse(fs.readFileSync(0,"utf8")).backupSet)' <<<"$backup_json")"
+npx -y pnpm@11.7.0 backup:set:verify -- "$backup_path"
+docker compose up -d migrate clamav api worker web
 ```
 
 Operational runbooks:
@@ -444,7 +481,7 @@ Operational runbooks:
 - [Restricted Leakage Investigation Runbook](runbooks/RESTRICTED_LEAKAGE_INVESTIGATION.md)
 - [Railway Private Alpha Template](runbooks/DEPLOY_RAILWAY_PRIVATE_TEMPLATE.md)
 
-The restore verifier creates a backup, restores it into a temporary `forgetbase_restore_*` database, compares core table counts, and drops the temporary database. See [Backup And Restore Runbook](runbooks/BACKUP_RESTORE.md) and [Rollback Runbook](runbooks/ROLLBACK.md).
+The backup-set verifier checks both manifest digests, rejects unsafe archive entries, restores into a temporary `forgetbase_restore_set_*` database, and proves the restored database and blob archive form one exact attachment recovery point without overwriting live state. See [Backup And Restore Runbook](runbooks/BACKUP_RESTORE.md) and [Rollback Runbook](runbooks/ROLLBACK.md).
 
 ## MCP Smoke Check
 

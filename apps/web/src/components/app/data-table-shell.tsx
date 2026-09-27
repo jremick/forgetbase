@@ -7,6 +7,7 @@ export type DataTableShellProps = Omit<React.ComponentProps<"section">, "title">
   title?: React.ReactNode;
   description?: React.ReactNode;
   actions?: React.ReactNode;
+  toolbar?: React.ReactNode;
   isEmpty?: boolean;
   emptyState?: React.ReactNode;
   emptyTitle?: React.ReactNode;
@@ -19,6 +20,7 @@ export function DataTableShell({
   title,
   description,
   actions,
+  toolbar,
   isEmpty = false,
   emptyState,
   emptyTitle = "No records",
@@ -72,6 +74,7 @@ export function DataTableShell({
             ) : null}
           </Stack>
         ) : null}
+        {toolbar}
         {isEmpty ? (
           <Box p="4">
             {emptyState ?? <EmptyState title={emptyTitle} description={emptyDescription} />}
