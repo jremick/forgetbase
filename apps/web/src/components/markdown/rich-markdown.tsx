@@ -10,15 +10,30 @@ type MarkdownNode = {
   alt?: string | null;
   depth?: number;
   children?: MarkdownNode[];
-  data?: { hProperties?: Record<string, unknown> };
+  data?: { hName?: string; hProperties?: Record<string, unknown> };
 };
+
+function boundMarkdownNesting(tree: MarkdownNode, body: string): void {
+  // Check iteratively before heading traversal and mdast-to-hast recurse.
+  const pending = [{ node: tree, depth: 0 }];
+  while (pending.length) {
+    const { node, depth } = pending.pop()!;
+    if (depth > 64) {
+      // A text node preserves the exact source; raw HTML stays escaped.
+      tree.children = [{ type: "paragraph", data: { hName: "pre" }, children: [{ type: "text", value: body }] }];
+      return;
+    }
+    for (const child of node.children ?? []) pending.push({ node: child, depth: depth + 1 });
+  }
+}
 
 function nodeText(node: MarkdownNode): string {
   return node.value ?? node.alt ?? (node.children ?? []).map(nodeText).join("");
 }
 
 // The renderer and outline use the same tree walk, including nested headings.
-function prepareHeadings(tree: MarkdownNode, title: string): ReaderSectionHeading[] {
+function prepareHeadings(tree: MarkdownNode, title: string, body: string): ReaderSectionHeading[] {
+  boundMarkdownNesting(tree, body);
   const headings: ReaderSectionHeading[] = [];
   const usedIds = new Set<string>();
   const normalizedTitle = title.trim().toLowerCase();
@@ -48,16 +63,16 @@ function prepareHeadings(tree: MarkdownNode, title: string): ReaderSectionHeadin
 }
 
 export function extractRichHeadings(body: string, title: string): ReaderSectionHeading[] {
-  return prepareHeadings(unified().use(remarkParse).use(remarkGfm).parse(body), title);
+  return prepareHeadings(unified().use(remarkParse).use(remarkGfm).parse(body), title, body);
 }
 
-function headingPlugin(options: { title: string }) {
-  return (tree: MarkdownNode) => { prepareHeadings(tree, options.title); };
+function headingPlugin(options: { title: string; body: string }) {
+  return (tree: MarkdownNode) => { prepareHeadings(tree, options.title, options.body); };
 }
 
 export function RichMarkdownDocument({ body, title }: { body: string; title: string }) {
   return <ReactMarkdown
-    remarkPlugins={[remarkGfm, [headingPlugin, { title }]]}
+    remarkPlugins={[remarkGfm, [headingPlugin, { title, body }]]}
     urlTransform={(url) => sanitizeMarkdownHref(url) ?? ""}
     components={{
       a: ({ href, children }) => href ? <a href={href} target="_blank" rel="noreferrer">{children}</a> : <span>{children}</span>,

@@ -1685,6 +1685,8 @@ export function AdminSurface({ onSessionEnded, locationKey, onNavigate, register
   }
 
   function hasPendingAuthoringChanges(): boolean {
+    // Save/cancel ends the session before React unmounts the editor and blocker.
+    if (!authoringInitialFormRef.current) return false;
     // Nested editor cells can hold an edit before the root onChange callback.
     let dirty = authoringDirtyRef.current;
     if (richEditorEnabled && markdownEditorRef.current) {
