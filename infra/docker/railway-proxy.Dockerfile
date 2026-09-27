@@ -21,7 +21,7 @@ RUN node scripts/write-build-manifest.mjs
 RUN pnpm install --frozen-lockfile
 RUN pnpm --filter @forgetbase/web build
 
-FROM nginx:1.30.4-alpine-slim@sha256:77da26c31397bf6694b4bf93275f5b40b0b120ba1b8f114264b603e592c561d6
+FROM nginx:1.31.0-alpine-slim@sha256:241b0d0fe06250e026e7a35a008d022c9a1d3bec19442d65cc33b84d0b5dd64d
 
 ENV PORT=8080
 ENV FORGETBASE_API_UPSTREAM_PORT=8080
