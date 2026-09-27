@@ -1003,6 +1003,7 @@ export class ForgetBaseClient {
   private async request<T>(path: string, schema: { parse(input: unknown): T }, init?: RequestInit): Promise<T> {
     const response = await this.fetchImpl(`${this.baseUrl}${path}`, {
       ...init,
+      redirect: "error",
       headers: this.authHeaders(init?.headers)
     });
 

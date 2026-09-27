@@ -1,6 +1,6 @@
 # Contributing
 
-ForgetBase is a public-beta candidate. Contributions are welcome after the repository is public, but the project is still changing quickly.
+ForgetBase is experimental self-hosted software. Contributions are welcome, but the project is still changing quickly.
 
 Review [Public Beta Compatibility](docs/PUBLIC_BETA_COMPATIBILITY.md) before proposing behavior that would create a compatibility promise.
 
@@ -17,7 +17,7 @@ Review [Public Beta Compatibility](docs/PUBLIC_BETA_COMPATIBILITY.md) before pro
 Run the core checks:
 
 ```bash
-npx -y pnpm@11.7.0 install
+npx -y pnpm@11.7.0 install --frozen-lockfile
 npx -y pnpm@11.7.0 typecheck
 npx -y pnpm@11.7.0 test
 npx -y pnpm@11.7.0 --filter @forgetbase/cli start -- validate --file corpus/demo/assets.json --as-of 2026-06-16 --fail-on-warnings

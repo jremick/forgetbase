@@ -1,5 +1,6 @@
 import { PostgresAssetChangeOutboxRepository, type AssetChangeOutboxRepository, type AssetChangeWork } from "@forgetbase/db";
 import { readReleaseIdentity } from "./release-identity.js";
+import { safeErrorCode, safeRequestLogger } from "./request-security.js";
 import { InvalidAssetCursorError, readAccessibleAssetPage, readAllAccessibleAssets } from "./asset-collections.js";
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { readFile } from "node:fs/promises";
@@ -10,7 +11,8 @@ import fastify, {
   type FastifyRequest,
   type FastifyServerOptions
 } from "fastify";
-import { createRemoteJWKSet, jwtVerify, type JWTPayload } from "jose";
+import rateLimit from "@fastify/rate-limit";
+import { createRemoteJWKSet, errors as joseErrors, jwtVerify, type JWTPayload } from "jose";
 import {
 	  aiExportPackageSchema,
   aiExportFormatSchema,
@@ -318,6 +320,9 @@ export interface BuildServerOptions extends FastifyServerOptions {
   loginThrottleWindowMs?: number;
   loginThrottleBlockMs?: number;
   loginThrottleMaxEntries?: number;
+  requestRateLimitMax?: number;
+  requestRateLimitWindowMs?: number;
+  requestRateLimitMaxEntries?: number;
   requireAuthentication?: boolean;
   readinessCheck?: () => Promise<void>;
 }
@@ -377,7 +382,32 @@ export interface ModelRuntimeUsage {
 
 export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
   const server = fastify({
-    logger: options.logger ?? true
+    logger: safeRequestLogger(options.logger),
+    // Forwarded headers must not let clients choose a fresh rate-limit bucket.
+    trustProxy: false
+  });
+  server.setErrorHandler((error, request, reply) => {
+    const candidateStatus = error && typeof error === "object" && "statusCode" in error ? error.statusCode : undefined;
+    const statusCode = typeof candidateStatus === "number" && Number.isInteger(candidateStatus) && candidateStatus >= 400 && candidateStatus < 500
+      ? candidateStatus : 500;
+    const code = safeErrorCode(error);
+    request.log[statusCode >= 500 ? "error" : "info"]({ code, statusCode }, "Request failed");
+    return reply.code(statusCode).send({ error: statusCode >= 500 ? "internal_server_error" : code === "internal_server_error" ? "invalid_request" : code });
+  });
+  server.register(rateLimit, {
+    // The synchronous builder declares routes before plugins finish loading.
+    // Apply the plugin's limiter through a root hook, including unknown routes.
+    global: false,
+    hook: "onRequest",
+    max: readRateLimitOption(options.requestRateLimitMax, "FORGETBASE_REQUEST_RATE_LIMIT_MAX", 1000, 100_000),
+    timeWindow: readRateLimitOption(options.requestRateLimitWindowMs, "FORGETBASE_REQUEST_RATE_LIMIT_WINDOW_MS", 60_000, 3_600_000),
+    cache: readRateLimitOption(options.requestRateLimitMaxEntries, "FORGETBASE_REQUEST_RATE_LIMIT_MAX_ENTRIES", 5000, 100_000)
+  });
+  let limitRequest: ReturnType<FastifyInstance["rateLimit"]>;
+  let limitReadiness: ReturnType<FastifyInstance["rateLimit"]>;
+  server.after(() => {
+    limitRequest = server.rateLimit();
+    limitReadiness = server.rateLimit({ max: 60, timeWindow: 60_000 });
   });
   const databaseUrl = options.databaseUrl ?? process.env.DATABASE_URL;
   const pool = (
@@ -569,7 +599,12 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
   );
 
   server.addHook("onRequest", async (request, reply) => {
-    if (request.method !== "POST" || !/^\/assets\/[^/?]+\/attachments(?:\?|$)/.test(request.url)) return;
+    const isAttachmentUpload = request.method === "POST" && request.routeOptions.url === "/assets/:stableId/attachments";
+    const isBinaryBody = request.headers["content-type"]?.split(";")[0]?.trim().toLowerCase() === "application/octet-stream";
+    if (isBinaryBody && !isAttachmentUpload) {
+      return reply.code(415).send({ error: "unsupported_media_type" });
+    }
+    if (!isAttachmentUpload) return;
 
     const rate = attachmentUploadRateLimiter.consume(request.ip);
     if (!rate.allowed) {
@@ -594,7 +629,7 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
       reply.header("vary", "Origin");
 
       if (!allowedOrigins.has(origin)) {
-        if (request.method === "OPTIONS") {
+        if (request.method === "OPTIONS" || requiresCsrfProtection(request)) {
           return reply.code(403).send({ error: "origin_not_allowed" });
         }
       } else {
@@ -611,6 +646,14 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
     if (request.method === "OPTIONS") {
       return reply.code(204).send();
     }
+  });
+
+  server.addHook("onRequest", async (request, reply) => {
+    // Only the cheap liveness route is exempt. Readiness has a separate budget.
+    if (request.routeOptions.url === "/health") return;
+    return request.routeOptions.url === "/ready"
+      ? limitReadiness.call(server, request, reply)
+      : limitRequest.call(server, request, reply);
   });
 
   server.addHook("preHandler", async (request, reply) => {
@@ -7981,6 +8024,7 @@ async function postModelJson(
     method: "POST",
     headers,
     body: JSON.stringify(body),
+    redirect: "error",
     signal: AbortSignal.timeout(timeoutMs)
   });
 
@@ -8107,24 +8151,37 @@ function isObjectRecord(value: unknown): value is Record<string, unknown> {
 
 const defaultOidcRuntime: OidcRuntime = {
   async discover(config) {
+    const issuer = assertOidcEndpoint(config.issuerUrl, true);
+    if (issuer.search) {
+      throw new OidcLoginError("oidc_discovery_invalid", 502, "OIDC issuer must not contain a query.");
+    }
     const discoveryUrl = `${config.issuerUrl.replace(/\/$/, "")}/.well-known/openid-configuration`;
     const response = await fetch(discoveryUrl, {
       headers: {
         accept: "application/json"
-      }
+      },
+      redirect: "error",
+      signal: AbortSignal.timeout(10_000)
     });
 
     if (!response.ok) {
       throw new OidcLoginError("oidc_discovery_failed", 502, `OIDC discovery failed with HTTP ${response.status}.`);
     }
 
-    const document = await response.json() as Record<string, unknown>;
-    return {
+    const document = await readOidcJson(response);
+    const discovery = {
       issuer: readRequiredDiscoveryField(document, "issuer"),
       authorizationEndpoint: readRequiredDiscoveryField(document, "authorization_endpoint"),
       tokenEndpoint: readRequiredDiscoveryField(document, "token_endpoint"),
       jwksUri: readRequiredDiscoveryField(document, "jwks_uri")
     };
+    if (discovery.issuer !== config.issuerUrl) {
+      throw new OidcLoginError("oidc_issuer_mismatch", 502, "OIDC discovery issuer does not match the configured issuer.");
+    }
+    for (const endpoint of [discovery.authorizationEndpoint, discovery.tokenEndpoint, discovery.jwksUri]) {
+      assertOidcEndpoint(endpoint, issuer.protocol === "http:");
+    }
+    return discovery;
   },
 
   async exchangeCode({ config, discovery, code, redirectUri, codeVerifier }) {
@@ -8155,13 +8212,16 @@ const defaultOidcRuntime: OidcRuntime = {
         accept: "application/json",
         "content-type": "application/x-www-form-urlencoded"
       },
-      body
+      body,
+      redirect: "error",
+      signal: AbortSignal.timeout(10_000)
     });
-    const tokenBody = await response.json().catch(() => ({})) as Record<string, unknown>;
 
     if (!response.ok) {
+      await response.body?.cancel();
       throw new OidcLoginError("oidc_token_exchange_failed", 401, "OIDC token exchange failed.");
     }
+    const tokenBody = await readOidcJson(response);
 
     const idToken = tokenBody.id_token;
 
@@ -8174,15 +8234,63 @@ const defaultOidcRuntime: OidcRuntime = {
 
   async verifyIdToken({ config, discovery, idToken }) {
     const jwks = createRemoteJWKSet(new URL(discovery.jwksUri));
-    const { payload } = await jwtVerify(idToken, jwks, {
-      issuer: discovery.issuer,
-      audience: config.clientId,
-      algorithms: OIDC_JWT_ALGORITHMS
-    });
-
-    return payload;
+    try {
+      const { payload } = await jwtVerify(idToken, jwks, {
+        issuer: config.issuerUrl,
+        audience: config.clientId,
+        algorithms: OIDC_JWT_ALGORITHMS,
+        requiredClaims: ["sub", "iat", "exp", "nonce"]
+      });
+      return payload;
+    } catch (error) {
+      if (error instanceof joseErrors.JOSEError) {
+        throw new OidcLoginError("oidc_id_token_invalid", 401, "OIDC ID token validation failed.");
+      }
+      throw error;
+    }
   }
 };
+
+function assertOidcEndpoint(value: string, allowLocalHttp: boolean): URL {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new OidcLoginError("oidc_discovery_invalid", 502, "OIDC endpoint must be an absolute URL.");
+  }
+  const localHttp = allowLocalHttp && url.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
+  if ((url.protocol !== "https:" && !localHttp) || url.username || url.password || url.hash) {
+    throw new OidcLoginError("oidc_discovery_invalid", 502, "OIDC endpoints require HTTPS without credentials or fragments; local HTTP is limited to loopback development issuers.");
+  }
+  return url;
+}
+
+async function readOidcJson(response: Response): Promise<Record<string, unknown>> {
+  const reader = response.body?.getReader();
+  if (!reader) throw new OidcLoginError("oidc_response_invalid", 502, "OIDC response is empty.");
+  const chunks: Uint8Array[] = [];
+  let bytes = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      bytes += value.byteLength;
+      if (bytes > 1024 * 1024) {
+        await reader.cancel();
+        throw new OidcLoginError("oidc_response_invalid", 502, "OIDC response exceeds the byte limit.");
+      }
+      chunks.push(value);
+    }
+    const body: unknown = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    if (!isObjectRecord(body)) throw new Error("Invalid OIDC document");
+    return body;
+  } catch (error) {
+    if (error instanceof OidcLoginError) throw error;
+    throw new OidcLoginError("oidc_response_invalid", 502, "OIDC response is invalid.");
+  } finally {
+    reader.releaseLock();
+  }
+}
 
 async function findEnabledAuthProviderConfig(
   repository: AuthProviderConfigRepository,
@@ -9015,6 +9123,14 @@ function readIntegerEnv(name: string): number | undefined {
   }
 
   return Number.parseInt(value.trim(), 10);
+}
+
+function readRateLimitOption(configured: number | undefined, name: string, fallback: number, maximum: number): number {
+  const value = readPositiveIntegerOption(configured, process.env[name], fallback, name);
+  if (!Number.isSafeInteger(value) || value > maximum) {
+    throw new Error(`${name} must be an integer between 1 and ${maximum}.`);
+  }
+  return value;
 }
 
 function readPositiveIntegerOption(

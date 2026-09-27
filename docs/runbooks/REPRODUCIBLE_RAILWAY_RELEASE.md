@@ -1,7 +1,8 @@
-# Reproducible private Railway release
+# Reproducible Railway release
 
-Use the existing personal project and its approved HTTPS origin. Keep the
-repository private. This procedure releases the single-instance core; it does
+Use the existing personal project and its approved HTTPS origin. Repository
+publication follows the separate [public release gates](PUBLIC_BETA_RELEASE.md).
+This procedure releases the single-instance core; it does
 not activate the managed-upgrade or local-agent candidate branches.
 
 ## Release inputs
@@ -20,7 +21,7 @@ database and attachment recovery.
 Prepare artifacts from the clean release commit:
 
 ```bash
-pnpm release:prepare 0.1.0-beta.3 work/releases/0.1.0-beta.3
+pnpm release:prepare 0.1.0-beta.5 work/releases/0.1.0-beta.5
 ```
 
 The command produces a Git source archive, `release-manifest.json` and
@@ -35,6 +36,11 @@ Every Railway application build requires the manifest's three `buildVariables`:
 - `FORGETBASE_SOURCE_REVISION`: full Git commit hash.
 - `FORGETBASE_SOURCE_DATE_EPOCH`: source commit time in seconds.
 - `FORGETBASE_RELEASE_VERSION`: immutable release version.
+
+For the rich editor, also set `VITE_ENABLE_RICH_EDITOR=true` on `web` and
+`proxy` before building. Both Dockerfiles accept this build argument. It defaults
+to `false`; rebuilding with that value restores textarea authoring without a
+data migration. CI builds with the editor enabled and enforces its bundle caps.
 
 Set these on `api`, `worker`, `web` and `proxy` with `--skip-deploys`, then deploy
 the same extracted archive. The Dockerfiles pin the Node and NGINX base images by
@@ -87,6 +93,12 @@ reviewed capacity change requires different limits. The API has one replica;
 the filesystem quota implementation is not a multi-replica reservation system.
 Do not expose the scanner publicly or disable scanning to make readiness pass.
 
+The API's general request limit defaults to 1,000 requests/minute per socket IP.
+Forwarded IP headers remain untrusted, so public traffic shares the proxy bucket.
+Readiness has an independent 60-request/minute limit. Retain these defaults for
+this beta and record any later capacity adjustment. See the bounded configuration
+in [Development](../DEVELOPMENT.md#request-limits-and-browser-credentials).
+
 ## Backup and deployment sequence
 
 1. Restore the pre-release database into an isolated target. Apply the candidate
@@ -112,7 +124,7 @@ Do not expose the scanner publicly or disable scanning to make readiness pass.
    identifiable synthetic fixtures created for the check.
 6. Capture and verify the post-release database/blob recovery set. Publish the
    source archive, manifest, checksums and concise verification record on the
-   private prerelease. Preserve all prior immutable tags and release assets.
+   prerelease after its disclosure review. Preserve all prior immutable tags and release assets.
 
 ## Rollback boundary
 

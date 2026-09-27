@@ -244,7 +244,11 @@ describe("schema package", () => {
     expect(config.clientSecretEnvVar).toBe("ENTRA_CLIENT_SECRET");
   });
 
-  it("builds versioned OKF export bundles from AI export packages", () => {
+  it.each([
+    ["OKF Export Policy", "OKF Export Policy"],
+    [String.raw`Policy \](https://untrusted.example.test) [label]`, String.raw`Policy \\\](https://untrusted.example.test) \[label\]`],
+    [String.raw`Policy \\[nested]`, String.raw`Policy \\\\\[nested\]`]
+  ])("builds versioned OKF bundles with a literal link label: %s", (title, escapedTitle) => {
     const bundle = buildOkfExportPackage({
       packageName: "demo-agent-pack",
       generatedAt: "2026-06-18T00:00:00.000Z",
@@ -256,7 +260,7 @@ describe("schema package", () => {
           stableId: "policy.okf-export",
           assetId: "asset_okf",
           type: "policy",
-          title: "OKF Export Policy",
+          title,
           summary: "Public package material for OKF export.",
           audience: ["ai-team"],
           status: "approved",
@@ -300,5 +304,8 @@ describe("schema package", () => {
     expect(bundle.files.find((file) => file.path.startsWith("policies/"))?.content)
       .toContain('source_version_number: 1');
     expect(bundle.projectionHash).toMatch(/^sha256:/);
+    const conceptPath = bundle.files.find((file) => file.path.startsWith("policies/"))?.path;
+    expect(bundle.files.find((file) => file.path === "index.md")?.content)
+      .toContain(`* [${escapedTitle}](${conceptPath}) - Public package material for OKF export.`);
   });
 });

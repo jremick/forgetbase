@@ -1436,6 +1436,7 @@ async function sendApiKeyRotationReminderWebhook(
       method: "POST",
       headers,
       body,
+      redirect: "error",
       signal: controller.signal
     });
 

@@ -5,6 +5,7 @@ import { loadAssetCollection } from "./lib/asset-collection.js";
 import type { NavigationBlocker } from "./lib/app-navigation.js";
 import { canAccessAppRoute, getAppCapabilities } from "./lib/app-routing.js";
 import { forwardRef, useImperativeHandle, lazy, Suspense, useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { useBrowserApiKey } from "./lib/browser-auth.js";
 import type {
   AccountLinkingMode,
   AgentActionExecutionPolicy,
@@ -519,7 +520,7 @@ type AdminSurfaceProps = {
 
 export function AdminSurface({ onSessionEnded, locationKey, onNavigate, registerNavigationBlocker }: AdminSurfaceProps) {
   const [apiUrl, setApiUrl] = useState(() => readInitialApiUrl(configuredApiUrl));
-  const [apiKey, setApiKey] = useState(() => localStorage.getItem("forgetbase-api-key") ?? "");
+  const [apiKey, setApiKey] = useBrowserApiKey();
   const [sessionCookieActive, setSessionCookieActive] = useState(
     () => localStorage.getItem(sessionCookieActiveStorageKey) === "true"
   );
@@ -901,14 +902,6 @@ export function AdminSurface({ onSessionEnded, locationKey, onNavigate, register
   useEffect(() => {
     localStorage.setItem(apiUrlStorageKey, apiUrl);
   }, [apiUrl]);
-
-  useEffect(() => {
-    if (apiKey) {
-      localStorage.setItem("forgetbase-api-key", apiKey);
-    } else {
-      localStorage.removeItem("forgetbase-api-key");
-    }
-  }, [apiKey]);
 
   useEffect(() => {
     if (sessionCookieActive) {

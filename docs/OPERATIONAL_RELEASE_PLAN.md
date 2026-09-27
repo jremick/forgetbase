@@ -1,8 +1,7 @@
 # Operational release plan
 
 Date: 2026-09-05
-Status: implementation verified; hosted release gates pending
-Owner: Jarel Remick
+Status: gates 1–4 completed in `v0.1.0-beta.3`; extension candidates remain separate
 
 ## Outcome and authority
 
@@ -12,10 +11,9 @@ surface, and an operator can identify, deploy, back up, and recover the release.
 Use the existing personal Railway deployment for the reproducible hosted release.
 Docker Compose remains the supported self-hosted installation contract.
 
-The owner requested this plan and authorized execution and use of the existing
-Railway deployment on 2026-09-05. This includes the necessary implementation,
-tests, reviewed Git integration, private release artifacts, and deployment.
-Repository visibility stays private. Production data must be preserved.
+The beta.3 release completed this operational plan in the existing Railway
+deployment and preserved production data. Its [verification asset](https://github.com/jremick/forgetbase/releases/download/v0.1.0-beta.3/release-verification.json)
+is the completion record. Public promotion follows [Publication](PUBLICATION.md).
 
 Source baseline: remote main `d002642ea84b4697f8f097e55f71254fc458375d`.
 Work in an isolated `codex/operational-release` checkout. Preserve all existing
@@ -43,10 +41,10 @@ candidates that need integration and verification.
 
 | Gate | Required work | Exit evidence | State |
 | --- | --- | --- | --- |
-| 1. Governed core | Lifecycle authorization; individual grant list/revoke; draft/published separation; complete list/search/export; durable indexing and truthful save results; resolved Compose auth/cookie checks; dependency remediation; deterministic analytics test | Unit and PostgreSQL integration tests for negative roles/surfaces, drafts, >200 assets, denied leading search hits, retry/outage/revocation behavior; clean supported-runtime install/build/contracts | Local checks pass; exact release CI pending |
-| 2. Human and agent workflow | Publish/update/revoke a linked instruction and document; complete reader navigation/search; usable instruction authoring/import path; source/citation parity through API/CLI/MCP | Rendered desktop/mobile reader/admin checks and synthetic end-to-end task, denial, and citation evidence | Isolated proof passes; hosted checks pending |
-| 3. Reproducible release | Integrate approved candidate; version and source identity in artifacts/runtime; current CI; private release notes and checksums; use the existing Railway project and services | Exact Git SHA and build identity, successful migrations, authenticated readiness/UAT, protected-route denial, coherent API/web/worker deployment | Pending |
-| 4. Operation and recovery | Verify stopped-writer database/blob backup and isolated restore; health/index/worker observability; deployment rollback and key-rotation runbooks | Recovery manifest and integrity/access checks; named rollback target and preserved production data; deployment readback | Pending |
+| 1. Governed core | Lifecycle authorization; individual grant list/revoke; draft/published separation; complete list/search/export; durable indexing and truthful save results; resolved Compose auth/cookie checks; dependency remediation; deterministic analytics test | Unit and PostgreSQL integration tests for negative roles/surfaces, drafts, >200 assets, denied leading search hits, retry/outage/revocation behavior; clean supported-runtime install/build/contracts | Passed in beta.3 |
+| 2. Human and agent workflow | Publish/update/revoke a linked instruction and document; complete reader navigation/search; usable instruction authoring/import path; source/citation parity through API/CLI/MCP | Rendered desktop/mobile reader/admin checks and synthetic end-to-end task, denial, and citation evidence | Passed in beta.3 |
+| 3. Reproducible release | Integrate approved candidate; version and source identity in artifacts/runtime; current CI; private release notes and checksums; use the existing Railway project and services | Exact Git SHA and build identity, successful migrations, authenticated readiness/UAT, protected-route denial, coherent API/web/worker deployment | Passed in beta.3 |
+| 4. Operation and recovery | Verify stopped-writer database/blob backup and isolated restore; health/index/worker observability; deployment rollback and key-rotation runbooks | Recovery manifest and integrity/access checks; named rollback target and preserved production data; deployment readback | Passed in beta.3 |
 | 5. Extension graduation | Review and integrate managed-upgrade and local-runtime candidates, including safety WIP; verify write fencing, concurrent revocation/sync, snapshot serialization, credential rollback, and restore behavior; complete bounded import semantics where needed for the supported workflow | Focused security/contract tests and isolated failure injection; real activation only after its own gates pass | Pending |
 
 ## Implementation lanes

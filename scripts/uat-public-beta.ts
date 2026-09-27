@@ -2,7 +2,7 @@ import { createServer, type Server } from "node:http";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { extname, join, normalize, resolve } from "node:path";
-import { chromium, type Browser, type Page } from "@playwright/test";
+import { chromium, type Browser, type Page, type Request } from "@playwright/test";
 
 type UatMode = "public" | "release";
 type ExpectedRole = "admin" | "reader";
@@ -27,6 +27,7 @@ const expectedAttachmentFilename = process.env.UAT_EXPECT_ATTACHMENT_FILENAME ??
 const commitSha = commandOutput("git", ["rev-parse", "HEAD"]) ?? "";
 const checks: CheckResult[] = [];
 const consoleProblems: string[] = [];
+const pageTraffic = new WeakMap<Page, { pending: Set<Request>; changedAt: number }>();
 let server: Server | undefined;
 let browser: Browser | undefined;
 
@@ -50,10 +51,12 @@ try {
 
   if (mode === "release") {
     await checkReleaseFlow(desktop, "desktop");
+    await checkBrowserCredentialLifetime(desktop, "desktop");
 
     const releaseMobile = await browser.newPage({ viewport: { width: 390, height: 844 } });
     trackConsole(releaseMobile);
     await checkReleaseFlow(releaseMobile, "mobile");
+    await checkBrowserCredentialLifetime(releaseMobile, "mobile");
     await releaseMobile.close();
   }
 
@@ -171,6 +174,18 @@ async function startStaticDistServer(urlString: string): Promise<Server> {
 }
 
 function trackConsole(page: Page): void {
+  const traffic = { pending: new Set<Request>(), changedAt: Date.now() };
+  pageTraffic.set(page, traffic);
+  page.on("request", (request) => {
+    traffic.pending.add(request);
+    traffic.changedAt = Date.now();
+  });
+  const finished = (request: Request) => {
+    traffic.pending.delete(request);
+    traffic.changedAt = Date.now();
+  };
+  page.on("requestfinished", finished);
+  page.on("requestfailed", finished);
   page.on("console", (message) => {
     if (message.type() === "error" || message.type() === "warning") {
       consoleProblems.push(`${message.type()}: ${message.text()}`);
@@ -296,7 +311,7 @@ async function checkReleaseFlow(page: Page, viewportName: "desktop" | "mobile"):
 
   if (expectedRole === "reader") {
     await assertReaderHasNoAdminControls(page, `release ${viewportName}: reader has no admin controls`);
-    await page.goto(`${baseUrl.replace(/#.*$/, "")}#admin/system/settings`, { waitUntil: "domcontentloaded" });
+    await page.goto(routeUrl(page, "admin/system/settings"), { waitUntil: "domcontentloaded" });
     await page.waitForSelector(".reader-article", { timeout: 10000 });
     const hash = await page.evaluate(() => window.location.hash);
     if (hash !== "#reader") {
@@ -311,7 +326,7 @@ async function checkReleaseFlow(page: Page, viewportName: "desktop" | "mobile"):
     return;
   }
 
-  await page.goto(routeUrl("admin/content"), { waitUntil: "domcontentloaded" });
+  await page.goto(routeUrl(page, "admin/content"), { waitUntil: "domcontentloaded" });
   await page.waitForSelector(".side-nav", { timeout: 10000 });
   await expectHash(page, "#admin/content", "release: admin canonical content route");
   await expectVisibleText(page, "Manage ForgetBase", "release: admin console shell title");
@@ -411,7 +426,7 @@ async function applyTenantOverride(page: Page): Promise<void> {
     }
 
     window.sessionStorage.setItem("forgetbase-uat-storage-initialized", "true");
-    window.localStorage.removeItem("forgetbase-api-key");
+    window.localStorage.setItem("forgetbase-api-key", "legacy-uat-token");
     window.localStorage.removeItem("forgetbase-session-cookie-active");
     window.localStorage.removeItem("forgetbase-login-email");
 
@@ -423,14 +438,45 @@ async function applyTenantOverride(page: Page): Promise<void> {
   }, tenantId);
 }
 
-function routeUrl(route: string): string {
+async function checkBrowserCredentialLifetime(page: Page, viewportName: string): Promise<void> {
+  await page.goto(routeUrl(page, "reader"), { waitUntil: "domcontentloaded" });
+  await page.waitForSelector(".reader-article", { timeout: 15000 });
+  const hasStoredKey = await page.evaluate(() =>
+    window.localStorage.getItem("forgetbase-api-key") !== null ||
+    window.sessionStorage.getItem("forgetbase-api-key") !== null
+  );
+  if (hasStoredKey) throw new Error("Browser bearer credential persisted after login or navigation");
+  checks.push({ name: `release ${viewportName}: reader return and no persisted bearer credential`, status: "pass" });
+
+  // Finish background reads before deliberately replacing the document. Otherwise
+  // this test creates ERR_ABORTED failures in its own request-failure gate.
+  await waitForSettledRequests(page);
+  await page.reload({ waitUntil: "domcontentloaded" });
   const url = new URL(baseUrl);
+  const splitOrigin = isLocalUrl(baseUrl) && ["5173", "5175"].includes(url.port);
+  await page.waitForSelector(splitOrigin ? "#login-email" : ".reader-article", { timeout: 15000 });
+  await waitForSettledRequests(page);
+  checks.push({ name: `release ${viewportName}: ${splitOrigin ? "reload discards development bearer credential" : "cookie session survives reload"}`, status: "pass" });
+}
+
+async function waitForSettledRequests(page: Page): Promise<void> {
+  const traffic = pageTraffic.get(page);
+  if (!traffic) throw new Error("Page request tracking was not initialized");
+  const deadline = Date.now() + 15000;
+  while (traffic.pending.size || Date.now() - traffic.changedAt < 500) {
+    if (Date.now() >= deadline) throw new Error("Background requests did not settle before the credential reload check");
+    await new Promise((resolveWait) => setTimeout(resolveWait, 50));
+  }
+}
+
+function routeUrl(page: Page, route: string): string {
+  const url = new URL(page.url());
   url.hash = route;
   return url.toString();
 }
 
 async function checkMobileAdminShell(page: Page): Promise<void> {
-  await page.goto(routeUrl("admin/content"), { waitUntil: "domcontentloaded" });
+  await page.goto(routeUrl(page, "admin/content"), { waitUntil: "domcontentloaded" });
   await page.waitForSelector(".app-shell.admin-shell", { timeout: 10000 });
   await expectHash(page, "#admin/content", "release mobile: admin canonical content route");
   await page.getByRole("button", { name: "Open navigation" }).click();
@@ -441,13 +487,13 @@ async function checkMobileAdminShell(page: Page): Promise<void> {
 }
 
 async function assertLegacyAdminHashCanonicalizes(page: Page): Promise<void> {
-  await page.goto(routeUrl("settings"), { waitUntil: "domcontentloaded" });
+  await page.goto(routeUrl(page, "settings"), { waitUntil: "domcontentloaded" });
   await expectVisibleText(page, "Settings", "release: legacy settings route loaded");
   await expectHash(page, "#admin/system/settings", "release: legacy settings route canonicalized");
-  await page.goto(routeUrl("exports"), { waitUntil: "domcontentloaded" });
+  await page.goto(routeUrl(page, "exports"), { waitUntil: "domcontentloaded" });
   await expectVisibleText(page, "Package builder", "release: legacy exports route loaded");
   await expectHash(page, "#admin/exports", "release: legacy exports route canonicalized");
-  await page.goto(routeUrl("admin/content"), { waitUntil: "domcontentloaded" });
+  await page.goto(routeUrl(page, "admin/content"), { waitUntil: "domcontentloaded" });
   await expectHash(page, "#admin/content", "release: admin content route restored");
 }
 
@@ -458,10 +504,14 @@ async function screenshotAdminRoute(
   fileName: string,
   name: string
 ): Promise<void> {
-  await page.goto(routeUrl(route), { waitUntil: "domcontentloaded" });
+  await page.goto(routeUrl(page, route), { waitUntil: "domcontentloaded" });
   await expectVisibleText(page, expectedText, `${name}: route loaded`);
   if (route.startsWith("admin/")) {
     await expectHash(page, `#${route}`, `${name}: canonical hash`);
+  }
+  if (route === "admin/system/access") {
+    await page.locator("strong").filter({ hasText: email }).first().waitFor({ state: "visible", timeout: 15000 });
+    checks.push({ name: `${name}: user records loaded`, status: "pass" });
   }
   await assertNoHorizontalOverflow(page, `${name}: overflow`);
   await assertNoClippedText(page, `${name}: clipped text`);
@@ -469,7 +519,7 @@ async function screenshotAdminRoute(
 }
 
 async function screenshotExportRoute(page: Page): Promise<void> {
-  await page.goto(routeUrl("admin/exports"), { waitUntil: "domcontentloaded" });
+  await page.goto(routeUrl(page, "admin/exports"), { waitUntil: "domcontentloaded" });
   await expectVisibleText(page, "Package builder", "release: admin exports route loaded");
   await page.getByRole("button", { name: /^Generate$/ }).click();
   await expectVisibleText(page, "Included stable IDs", "release: admin export generated");
@@ -912,7 +962,9 @@ async function assertElementInViewport(page: Page, selector: string, name: strin
 }
 
 async function assertProtectedSessionApiRequiresAuthentication(page: Page, name: string): Promise<void> {
-  const response = await page.context().request.get(new URL("/api/auth/me", baseUrl).toString(), {
+  const apiBase = await page.evaluate(() => window.localStorage.getItem("forgetbase-api-url") ?? "/api");
+  const apiUrl = new URL(apiBase.endsWith("/") ? apiBase : `${apiBase}/`, baseUrl);
+  const response = await page.context().request.get(new URL("auth/me", apiUrl).toString(), {
     headers: { accept: "application/json" }
   });
   let error = "";
@@ -925,7 +977,7 @@ async function assertProtectedSessionApiRequiresAuthentication(page: Page, name:
   }
 
   if (response.status() !== 401 || error !== "authentication_required") {
-    throw new Error(`${name}: expected 401 authentication_required from /api/auth/me, got ${JSON.stringify({
+    throw new Error(`${name}: expected 401 authentication_required from auth/me, got ${JSON.stringify({
       status: response.status(),
       error
     })}`);
@@ -956,6 +1008,7 @@ async function assertHeroFits(page: Page, name: string): Promise<void> {
 
 async function screenshot(page: Page, fileName: string, name: string): Promise<void> {
   const filePath = join(outputDir, fileName);
+  await page.evaluate(() => window.scrollTo(0, 0));
   await page.screenshot({ path: filePath, fullPage: true });
   checks.push({ name, status: "pass", detail: filePath });
 }

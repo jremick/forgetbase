@@ -7,6 +7,7 @@ import { Input } from "./components/ui/input.js";
 import { Label } from "./components/ui/label.js";
 import { createAppBinaryRequest, createAppRequest, shouldProbeAuthenticatedSession } from "./lib/app-api.js";
 import { canAccessAppRoute, canUseAdministration, firstPermittedAdministrationRoute, isAdminRoute, isReaderRoute, normalizeAppRoute, type AppRoute } from "./lib/app-routing.js";
+import { useBrowserApiKey } from "./lib/browser-auth.js";
 import {
   apiUrlStorageKey,
   localDevLoginDefaults,
@@ -81,7 +82,7 @@ function principalFromLogin(response: AuthLoginResponse | AuthOidcLoginResponse)
 
 export function App() {
   const [apiUrl] = useState(() => readInitialApiUrl(configuredApiUrl));
-  const [apiKey, setApiKey] = useState(() => localStorage.getItem("forgetbase-api-key") ?? "");
+  const [apiKey, setApiKey] = useBrowserApiKey();
   const [sessionCookieActive, setSessionCookieActive] = useState(() => localStorage.getItem(sessionCookieActiveStorageKey) === "true");
   const [authState, setAuthState] = useState<AuthState>("checking");
   const [principal, setPrincipal] = useState<AuthPrincipal | null>(null);
@@ -107,11 +108,6 @@ export function App() {
   useEffect(() => {
     localStorage.setItem(apiUrlStorageKey, apiUrl);
   }, [apiUrl]);
-
-  useEffect(() => {
-    if (apiKey) localStorage.setItem("forgetbase-api-key", apiKey);
-    else localStorage.removeItem("forgetbase-api-key");
-  }, [apiKey]);
 
   useEffect(() => {
     if (sessionCookieActive) localStorage.setItem(sessionCookieActiveStorageKey, "true");
