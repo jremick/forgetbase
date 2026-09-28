@@ -1,3 +1,5 @@
+import { importPlanRequestSchema } from "@forgetbase/schema/import-planner";
+import { ImportPlanningError, planGovernedImport, withinImportJsonBudget } from "./import-planning.js";
 import { PostgresAssetChangeOutboxRepository, type AssetChangeOutboxRepository, type AssetChangeWork } from "@forgetbase/db";
 import { PostgresBrandingRepository } from "@forgetbase/db";
 import { brandingSchema, brandingTenantQuerySchema, defaultBranding } from "@forgetbase/schema";
@@ -2900,6 +2902,38 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
       params.stableId,
       { versionId: params.versionId }
     );
+  });
+
+  server.post("/imports/plan", async (request, reply) => {
+    reply.header("cache-control", "no-store");
+    if (!registryRepository || !authRepository) {
+      return reply.code(503).send({ error: "import_planning_unavailable" });
+    }
+    const principal = await requirePrincipal(request, reply, authRepository, loginSessionIdleTimeoutSeconds);
+    if (!principal) return;
+    const surface = readSurface(request, principal);
+    if (!roleCanWriteAssets(principal) || !principalHasScope(principal, "asset:read") ||
+        !principalHasScope(principal, "asset:write") || !principal.allowedSurfaces.includes(surface)) {
+      return reply.code(403).send({ error: "access_denied" });
+    }
+    if (!withinImportJsonBudget(request.body)) return reply.code(400).send({ error: "invalid_import_input" });
+    const parsed = importPlanRequestSchema.safeParse(request.body);
+    if (!parsed.success) return sendValidationError(reply, parsed.error.issues);
+    if (parsed.data.tenantId !== principal.tenantId) return reply.code(403).send({ error: "access_denied" });
+    try {
+      const report = await planGovernedImport(parsed.data, { registry: registryRepository, auth: authRepository, principal, surface });
+      // Revalidate through the normal cookie/CSRF path, bypassing request-local auth.
+      authenticationByRequest.delete(request);
+      const currentPrincipal = await requirePrincipal(request, reply, authRepository, loginSessionIdleTimeoutSeconds);
+      if (!currentPrincipal) return;
+      if (JSON.stringify(currentPrincipal) !== JSON.stringify(principal)) {
+        return reply.code(409).send({ error: "import_target_changed" });
+      }
+      return report;
+    } catch (error) {
+      if (error instanceof ImportPlanningError) return reply.code(error.statusCode).send({ error: error.code });
+      throw error;
+    }
   });
 
   server.post("/assets", async (request, reply) => {

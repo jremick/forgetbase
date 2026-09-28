@@ -1,3 +1,4 @@
+import { hashGovernedAssetSnapshot, type GovernedVersionContent } from "@forgetbase/schema/governed-hash";
 import { createHash } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -1576,11 +1577,6 @@ function assetCreatorGrants(input: ParsedAssetCreateInput, context?: AssetCreate
   }));
 }
 
-interface GovernedVersionContent {
-  instructionObjects: AgentInstructionInput[];
-  humanDocuments: HumanDocumentInput[];
-}
-
 function buildAssetSnapshotFromCreate(input: ParsedAssetCreateInput): AssetVersionAssetSnapshot {
   return assetVersionAssetSnapshotSchema.parse({
     stableId: input.stableId,
@@ -1663,55 +1659,6 @@ function assetRecordFromVersionSnapshot(
     metadata: snapshot.metadata,
     updatedAt
   });
-}
-
-function hashGovernedAssetSnapshot(
-  assetSnapshot: AssetVersionAssetSnapshot,
-  content: GovernedVersionContent
-): string {
-  const canonicalSnapshot = {
-    asset: assetVersionAssetSnapshotSchema.parse(assetSnapshot),
-    instructionObjects: content.instructionObjects.map((instruction) => ({
-      instructionKind: instruction.instructionKind,
-      targetAgents: instruction.targetAgents,
-      body: instruction.body,
-      inputContract: instruction.inputContract,
-      outputContract: instruction.outputContract,
-      constraints: instruction.constraints,
-      examples: instruction.examples,
-      failureModes: instruction.failureModes,
-      escalation: instruction.escalation ?? null
-    })),
-    humanDocuments: content.humanDocuments.map((document) => ({
-      format: document.format,
-      body: document.body,
-      renderOptions: document.renderOptions,
-      linkedInstructionIds: document.linkedInstructionIds
-    }))
-  };
-
-  return createHash("sha256").update(stableJson(canonicalSnapshot)).digest("hex");
-}
-
-function stableJson(value: unknown): string {
-  return JSON.stringify(sortJsonValue(value));
-}
-
-function sortJsonValue(value: unknown): unknown {
-  if (Array.isArray(value)) {
-    return value.map(sortJsonValue);
-  }
-
-  if (value && typeof value === "object") {
-    return Object.fromEntries(
-      Object.entries(value as Record<string, unknown>)
-        .filter(([, entry]) => entry !== undefined)
-        .sort(([left], [right]) => left.localeCompare(right))
-        .map(([key, entry]) => [key, sortJsonValue(entry)])
-    );
-  }
-
-  return value;
 }
 
 function mapInstructionInputRow(row: InstructionObjectRow): AgentInstructionInput {

@@ -43,6 +43,7 @@ import {
   type PiiRedactionRuleKind,
   type Surface
 } from "@forgetbase/schema";
+import { importPlanRequestSchema } from "@forgetbase/schema/import-planner";
 import { ForgetBaseClient } from "@forgetbase/sdk";
 import { validateAssetCollection } from "@forgetbase/validation";
 
@@ -791,6 +792,13 @@ async function handleAssets(args: string[]): Promise<number> {
 
 async function handleCorpus(args: string[]): Promise<number> {
   const [subcommand] = args;
+
+  if (subcommand === "plan") {
+    const input = importPlanRequestSchema.parse(await readJsonFile(requireOption(args, "--file")));
+    const report = await createClient(args, "cli").planImport(input);
+    console.log(JSON.stringify(report, null, 2));
+    return hasFlag(args, "--fail-on-conflicts") && (!report.classificationComplete || report.counts.conflict > 0) ? 1 : 0;
+  }
 
   if (subcommand !== "import") {
     throw new Error(`Unknown corpus command: ${subcommand ?? "(missing)"}`);
@@ -1544,6 +1552,7 @@ Usage:
   forgetbase assets publish <stable-id> [--expected-version-id version-id] [--review-due-at 2027-01-31] [--change-note "..."] [--api-key ...] [--api-url http://127.0.0.1:3000]
   forgetbase assets restore <stable-id> --version-number 1 [--expected-version-id version-id] [--api-key ...] [--api-url http://127.0.0.1:3000]
   forgetbase corpus import [--file corpus/demo/assets.json] [--api-key ...] [--api-url http://127.0.0.1:3000]
+  forgetbase corpus plan --file import-plan-request.json [--fail-on-conflicts] [--api-key ...] [--api-url http://127.0.0.1:3000]
 `);
 }
 

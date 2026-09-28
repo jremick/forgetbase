@@ -8,6 +8,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
   piiRedactionRuleKindSchema
 } from "@forgetbase/schema";
 import { ForgetBaseClient, ForgetBaseHttpError } from "@forgetbase/sdk";
+import { importPlanRequestSchema } from "@forgetbase/schema/import-planner";
 import { z } from "zod";
 
 const DEFAULT_API_URL = "http://127.0.0.1:3000";
@@ -1446,6 +1447,19 @@ export function createMcpServer(options: CreateMcpServerOptions = {}): McpServer
           text: JSON.stringify(await client.validateAssets({ assets, asOf, publicExportPackages }), null, 2)
         }
       ]
+    })
+  );
+
+  server.registerTool(
+    "plan_import",
+    {
+      title: "Plan governed import",
+      description: "Classify a proposed import against current authorized target state. Returns a report only; never creates, updates, publishes or deletes assets. Requires a maintainer or administrator with read and write access to every relevant target.",
+      inputSchema: z.object({ input: importPlanRequestSchema }).strict(),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true }
+    },
+    async ({ input }) => ({
+      content: [{ type: "text", text: JSON.stringify(await client.planImport(input), null, 2) }]
     })
   );
 
