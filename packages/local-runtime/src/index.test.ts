@@ -122,6 +122,7 @@ async function setup(options: {
   configurationChange?: boolean;
   rejectConfiguration?: boolean;
   counterRollback?: boolean;
+  leaseDurationSeconds?: number;
 } = {}) {
   const root = await mkdtemp(join(tmpdir(), "forgetbase-local-runtime-"));
   temporaryRoots.push(root);
@@ -136,7 +137,7 @@ async function setup(options: {
     principalId: "user_device",
     signingKeyId: signer.keyId,
     signingPublicKey: signer.publicKey,
-    leaseDurationSeconds: 3_600,
+    leaseDurationSeconds: options.leaseDurationSeconds ?? 3_600,
     minimumClientVersion: "0.1.0",
     allowedSensitivities: ["public-demo", "internal"],
     maxRecords: 5_000,
@@ -283,6 +284,54 @@ function deviceTokenResponse(suffix: string) {
 }
 
 describe("local agent runtime", () => {
+  it.each(["store", "exported helper"] as const)("enforces hourly guidance freshness through the %s with a longer signed lease", async (entryPoint) => {
+    const { root, fetchImpl, credentialStore } = await setup({ leaseDurationSeconds: 7_200 });
+    const options = { root, profile: "work", credentialStore };
+    await syncLocalProfile({ ...options, fetchImpl, now: new Date("2026-09-03T00:01:00Z") });
+    const store = new LocalKnowledgeStore(options);
+    const guidance = (now: Date) => entryPoint === "store"
+      ? store.guidance("secure", { now })
+      : getLocalGuidance("secure", { ...options, now });
+    try {
+      const boundary = await guidance(new Date("2026-09-03T01:01:00Z"));
+      expect(boundary.sources.length).toBeGreaterThan(0);
+      expect(boundary.sources.every((source) => source.authority === "mandatory")).toBe(true);
+      const staleAt = new Date("2026-09-03T01:01:00.001Z");
+      // The two-hour hard lease still permits ordinary retrieval, so a hard
+      // expiry refusal cannot accidentally satisfy the guidance regression.
+      expect((await store.search("secure", { now: staleAt })).length).toBeGreaterThan(0);
+      expect((await store.source("policy.secure-build", staleAt))?.asset.stableId).toBe("policy.secure-build");
+      await expect(guidance(staleAt)).rejects.toThrow(/guidance.*authorization.*one hour/i);
+      await syncLocalProfile({ ...options, fetchImpl, now: new Date("2026-09-03T01:02:00Z") });
+      expect((await guidance(new Date("2026-09-03T01:02:01Z"))).sources.length).toBeGreaterThan(0);
+    } finally { store.close(); }
+  });
+
+  it("rejects guidance crossing the hourly freshness boundary during its final trust check", async () => {
+    const { root, fetchImpl, credentialStore } = await setup({ leaseDurationSeconds: 7_200 });
+    const options = { root, profile: "work", credentialStore };
+    await syncLocalProfile({ ...options, fetchImpl, now: new Date("2026-09-03T00:01:00Z") });
+    const store = new LocalKnowledgeStore(options);
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-09-03T01:00:59Z"));
+    // Return a real cached mandatory source, then cross the boundary on the
+    // aggregate's credential read. Per-source checks alone are insufficient.
+    const source = store.source.bind(store);
+    const get = credentialStore.get.bind(credentialStore);
+    vi.spyOn(store, "source").mockImplementation(async (stableId, now) => {
+      const result = await source(stableId, now);
+      vi.spyOn(credentialStore, "get").mockImplementationOnce(async (account) => {
+        const credential = await get(account);
+        vi.setSystemTime(new Date("2026-09-03T01:01:01Z"));
+        return credential;
+      });
+      return result;
+    });
+    try {
+      await expect(store.guidance("secure", { limit: 1 })).rejects.toThrow(/guidance.*authorization.*one hour/i);
+    } finally { store.close(); }
+  });
+
   it.each(["search", "source", "guidance"] as const)("rejects %s when the lease expires during its final credential read", async (method) => {
     const { root, fetchImpl, credentialStore } = await setup();
     const options = { root, profile: "work", credentialStore };

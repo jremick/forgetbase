@@ -64,6 +64,7 @@ const DEFAULT_GUIDANCE_BYTES = 32 * 1024;
 const PROFILE_INTEGRITY_DOMAIN = "forgetbase.local-profile.v3";
 const CLOCK_ROLLBACK_TOLERANCE_MILLISECONDS = 5 * 60 * 1_000;
 const GENERAL_FRESHNESS_WARNING_MILLISECONDS = 24 * 60 * 60 * 1_000;
+const GUIDANCE_AUTHORIZATION_MAX_AGE_MILLISECONDS = 60 * 60 * 1_000;
 const SYNC_MARKER_MAXIMUM_BYTES = 16 * 1024;
 const SYNC_MARKER_DOMAIN = "forgetbase.local-sync-state.v1";
 
@@ -733,6 +734,7 @@ export class LocalKnowledgeStore {
     const effectiveNow = options.now ?? new Date();
     await this.readyDatabase(effectiveNow);
     const profile = this.requireReadyProfile();
+    assertGuidanceAuthorizationFresh(profile, effectiveNow);
     const results = await this.search(query, options);
     const maxBytes = options.maxBytes ?? DEFAULT_GUIDANCE_BYTES;
     if (!Number.isInteger(maxBytes) || maxBytes < 1_024 || maxBytes > 1024 * 1024) {
@@ -772,6 +774,7 @@ export class LocalKnowledgeStore {
     // Each source has its own check; the aggregate must also belong to the
     // generation captured before the first read, including across awaits.
     await this.assertDatabaseStillTrusted(profile, options.now);
+    assertGuidanceAuthorizationFresh(profile, options.now ?? new Date());
     return { query, sources, truncated, freshness: freshnessForProfile(profile, effectiveNow) };
   }
 
@@ -1892,6 +1895,13 @@ function effectiveTrustedNow(profile: LocalRuntimeProfile, now: Date): number {
   if (!profile.trustedServerTime || !profile.trustedTimeObservedAt) return now.getTime();
   const elapsed = Math.max(0, now.getTime() - Date.parse(profile.trustedTimeObservedAt));
   return Math.max(now.getTime(), Date.parse(profile.trustedServerTime) + elapsed);
+}
+
+function assertGuidanceAuthorizationFresh(profile: LocalRuntimeProfile, now: Date): void {
+  if (!profile.lastAuthorizationCheckAt
+    || now.getTime() - Date.parse(profile.lastAuthorizationCheckAt) > GUIDANCE_AUTHORIZATION_MAX_AGE_MILLISECONDS) {
+    throw new Error("Local guidance requires an authorization check within one hour; run local sync before retrying");
+  }
 }
 
 function freshnessForProfile(profile: LocalRuntimeProfile, now: Date): LocalFreshness {

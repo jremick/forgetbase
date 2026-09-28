@@ -246,6 +246,8 @@ forgetbase local mcp [--profile <name>]
 
 Commands emit bounded JSON for agents. MCP is the preferred path for sensitive or repeated queries so query text does not need to appear in shell history. If more than one profile exists, every local command requires explicit `--profile` selection.
 
+The exported core guidance APIs require an authorization check within the last hour, even when the signed lease permits longer ordinary retrieval. They refuse stale guidance without making a network call and direct the caller to sync. CLI and MCP guidance wrappers refresh first when needed; the core checks freshness again before returning the complete result.
+
 ### Persistent MCP Contract
 
 The separately named local MCP server exposes only:

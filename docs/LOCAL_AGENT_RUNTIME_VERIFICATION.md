@@ -45,6 +45,8 @@ An initial full suite over the LAN database tunnel hit existing five-second and 
 
 ## Security regression evidence
 
+PR review follow-up: core `LocalKnowledgeStore.guidance()` and the exported `getLocalGuidance()` now require an authorization check no more than one hour old, even when the signed hard lease is longer. They fail closed and tell the caller to sync; ordinary search/source reads retain their hard-lease behavior. The guidance check runs before retrieval and after the final asynchronous trust checks. Three signed-SQLite controls failed before the repair and pass afterward: both core entry points, the exact hourly boundary and renewal recovery, and a query crossing the boundary during its final check. Existing CLI/MCP refresh behavior is preserved.
+
 Failing controls were recorded before repairs for these material paths:
 
 | Failure | Required behavior |
