@@ -2,7 +2,7 @@
 
 This runbook defines the installation boundary for app-requested, host-approved ForgetBase updates.
 
-Draft status: the host-approval implementation is under verification. Use this runbook only for isolated synthetic validation until the authorization and complete update/recovery checks pass. See [verification status](../VERSIONING_UPGRADES_VERIFICATION.md).
+Draft status: the host-approval implementation has passed isolated synthetic Linux AMD64 update and recovery drills. Use this runbook only for such trials. Production activation and conversion of older prototype installations are not covered. See [verification status](../VERSIONING_UPGRADES_VERIFICATION.md).
 
 ## Boundary
 

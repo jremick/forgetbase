@@ -120,7 +120,7 @@ Still future work:
 
 ## Docs
 
-Source builds include a draft [managed Compose update and recovery workflow](docs/VERSIONING_AND_UPGRADES.md). Each update or manual restore requires separate host CLI approval. This workflow remains under verification and is not activated on released installations.
+Source builds include a draft [managed Compose update and recovery workflow](docs/VERSIONING_AND_UPGRADES.md). Each update or manual restore requires separate host CLI approval. The workflow has been verified in isolated synthetic Linux AMD64 trials. It currently supports newly initialized managed installations and is not activated on released installations.
 
 - [Publication Checklist](docs/PUBLICATION.md)
 - [Public Beta Goal](docs/PUBLIC_BETA_GOAL.md)
