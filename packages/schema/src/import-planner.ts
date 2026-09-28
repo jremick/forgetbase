@@ -1151,7 +1151,7 @@ function normalizeAccess(access: ImportEffectiveAccess): ImportEffectiveAccess {
 
 function bindGovernedAccess(access: ImportEffectiveAccess | null | undefined, snapshot: AssetVersionAssetSnapshot): ImportEffectiveAccess | null {
   if (!access) return null;
-  const reviewState = snapshot.status === "draft" || snapshot.status === "review" || snapshot.status === "pending" ? "pending"
+  const reviewState = snapshot.status === "draft" || snapshot.status === "review" || snapshot.status === "reviewing" || snapshot.status === "pending" ? "pending"
     : snapshot.status === "approved" || snapshot.status === "rejected" ? snapshot.status : null;
   if (reviewState === null) return null;
   const normalized = normalizeAccess(access);

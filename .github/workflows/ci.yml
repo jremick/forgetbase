@@ -112,5 +112,17 @@ jobs:
       - name: Check beta contracts
         run: pnpm contracts:check
 
+      - name: Verify admin branding with PostgreSQL
+        run: BRANDING_PROOF_DIR="${RUNNER_TEMP}/branding-proof" pnpm exec tsx scripts/verify-branding.ts
+
+      - name: Upload branding evidence
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: branding-proof
+          path: ${{ runner.temp }}/branding-proof
+          if-no-files-found: error
+          retention-days: 14
+
       - name: Test
         run: pnpm test

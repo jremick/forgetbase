@@ -298,7 +298,7 @@ async function createFixture(adapter: Adapter) {
   for (const sourceId of ["same", "changed", "missing"]) {
     details.push(await author.createAsset({
       stableId: `guide.${sourceId}`, type: "guideline", ownerId: bootstrap.user.id, title: `Synthetic ${sourceId} guidance`,
-      summary: "Synthetic report-only fixture", lifecycleState: "draft", status: "review", sensitivity: "restricted",
+      summary: "Synthetic report-only fixture", lifecycleState: "draft", status: sourceId === "same" ? "reviewing" : "review", sensitivity: "restricted",
       audience: ["reviewers"], reviewDueAt: "2027-12-31", sourceKind: "synthetic", sourceRef: `${source.sourceRefPrefix}${sourceId}`,
       allowedSurfaces: surfaces, metadata: { importSource: sourceIdentity(sourceId), "10": "ten", "2": "two", nested: { "20": "twenty", "3": "three" } },
       instruction: { instructionKind: "guideline", body: `Synthetic current body ${sourceId}.` },

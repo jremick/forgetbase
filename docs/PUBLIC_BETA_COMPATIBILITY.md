@@ -10,7 +10,7 @@ This document defines what public beta users can reasonably expect from ForgetBa
 The public beta supports a self-hosted trial using:
 
 - macOS or Linux development host
-- Node.js 26.10.0 for beta.7 and current `main`; historical beta.5 uses Node.js 22
+- Node.js 26.10.0 for beta.7 onward and current `main`; historical beta.5 uses Node.js 22
 - pnpm 11.7.0
 - Docker Compose v2
 - Postgres 17 with `pgvector`
@@ -42,7 +42,9 @@ Operational limits:
 - Publish the current page version before adding or deleting attachments.
 - Browser authoring edits Markdown; structured instructions use CLI or SDK JSON.
 - Clients must send `expectedVersionId` to receive stale-edit protection. The browser does so.
-- Local-agent runtime and import planning are future features and are not included in this beta. Managed updates are a draft in source builds: app requests require separate host CLI approval, with verification limited to isolated synthetic Linux AMD64 trials on newly initialized managed installations. Released beta installations are not activated or migrated automatically. See [Versioning and upgrades](VERSIONING_AND_UPGRADES.md).
+- [Import planning](IMPORT_PLANNING.md) is report-only through API, SDK, CLI and MCP; it does not execute an import.
+- The [local-agent runtime](LOCAL_AGENT_RUNTIME_VERIFICATION.md) is a private pilot. Native credential integration is verified on macOS arm64. Internal-content activation remains disabled by default; restricted and more sensitive content remain outside the pilot.
+- [Managed updates](VERSIONING_AND_UPGRADES.md) require separate host CLI approval, with verification limited to isolated synthetic Linux AMD64 trials on newly initialized managed installations. Hosted deployments do not activate a privileged updater. A signed update feed and managed image bundle are separate from this source release.
 - External identity providers and paid model quality have not been verified by the operational release evidence.
 
 Still volatile:

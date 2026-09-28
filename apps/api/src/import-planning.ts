@@ -164,7 +164,7 @@ async function readGrants(auth: AuthRepository, tenantId: string, stableId: stri
 function effectiveAccess(detail: AssetDetail, grants: PermissionGrant[]): ImportEffectiveAccess | null {
   const asset = detail.asset;
   const reviewState = asset.status === "approved" ? "approved" : asset.status === "rejected" ? "rejected" :
-    ["draft", "review", "pending"].includes(asset.status) ? "pending" : null;
+    ["draft", "review", "reviewing", "pending"].includes(asset.status) ? "pending" : null;
   if (!reviewState) return null;
   const effectiveGrants = new Map<string, ImportEffectiveAccess["effectiveGrants"][number]>();
   for (const grant of grants) for (const surface of grant.surfaces) {

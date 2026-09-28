@@ -21,7 +21,7 @@ database and attachment recovery.
 Prepare artifacts from the clean release commit:
 
 ```bash
-pnpm release:prepare 0.1.0-beta.7 work/releases/0.1.0-beta.7
+pnpm release:prepare 0.1.0-beta.8 work/releases/0.1.0-beta.8
 ```
 
 The command produces a Git source archive, `release-manifest.json` and
