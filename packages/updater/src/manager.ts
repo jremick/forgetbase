@@ -274,6 +274,8 @@ export class UpdateManager {
   async apply(input: UpdateApplyInput): Promise<UpdateJob> {
     const parsed = updateApplyInputSchema.parse(input);
     this.assertManagedMutation();
+    this.identity = productIdentitySchema.parse(await this.options.executor.refreshIdentity());
+    this.assertManagedMutation();
     await this.authority.initialize();
     if (!this.options.feedUrl || !this.options.publicKeys?.size) throw new Error("A verified signed feed is required for an update request");
     await this.checkForUpdates();
@@ -323,6 +325,8 @@ export class UpdateManager {
 
   async rollback(input: UpdateRollbackInput): Promise<UpdateJob> {
     const parsed = updateRollbackInputSchema.parse(input);
+    this.assertManagedMutation();
+    this.identity = productIdentitySchema.parse(await this.options.executor.refreshIdentity());
     this.assertManagedMutation();
     await this.authority.initialize();
     const state = await this.options.store.read();

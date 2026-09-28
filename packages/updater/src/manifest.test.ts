@@ -130,7 +130,7 @@ describe("update manager", () => {
     const observed = (await manager.status()).jobs.find((job) => job.id === requested.id);
     if (observed?.phase !== "awaiting-approval") await waitForTerminalJob(manager, requested.id);
     expect(observed?.phase).toBe("awaiting-approval");
-    expect(executor.phases.filter((phase) => phase !== "probe")).toEqual([]);
+    expect(executor.phases).toEqual(["identity"]);
   });
 
   it("keeps an API restore request pending even with exact data-loss consent", async () => {
@@ -146,7 +146,7 @@ describe("update manager", () => {
     await new Promise((resolve) => setTimeout(resolve, 30));
 
     expect((await manager.status()).jobs.find((job) => job.id === requested.id)?.phase).toBe("awaiting-approval");
-    expect(executor.phases).toEqual([]);
+    expect(executor.phases).toEqual(["identity"]);
   });
 
   it("runs preflight, persists phases, and completes a managed update", async () => {
@@ -165,6 +165,7 @@ describe("update manager", () => {
     expect(completed.writesReopened).toBe(true);
     expect(executor.phases).toEqual([
       "probe",
+      "identity",
       "identity",
       "probe",
       "stage",
@@ -207,6 +208,7 @@ describe("update manager", () => {
     expect(completed.phase).toBe("failed");
     expect(completed.message).toContain("current release resumed");
     expect(executor.phases).toEqual([
+      "identity",
       "identity",
       "probe",
       "stage",
