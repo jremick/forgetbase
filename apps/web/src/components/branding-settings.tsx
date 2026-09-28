@@ -101,7 +101,7 @@ export function BrandingSettings({ request, onSaved, onBlockerChange }: Props) {
     } finally { setBusy(false); }
   }
   return <section aria-labelledby="branding-title" className="branding-settings">
-    <div><h2 id="branding-title">Branding</h2><p>Set the logo and text shown on the login, reader, and admin screens. These are visible before login.</p></div>
+    <div><h2 id="branding-title">Branding</h2><p>Set the logo and text shown on the login, reader, and admin screens and in the browser tab. These are visible before login.</p></div>
     {error ? <Alert variant="destructive" role="alert"><AlertDescription>{error}</AlertDescription></Alert> : null}
     {notice ? <p role="status" className="branding-notice">{notice}</p> : null}
     {!saved ? <div><p>{error ? "Settings unavailable." : "Loading branding…"}</p>{error ? <Button type="button" onClick={() => setReload(value => value + 1)}>Retry</Button> : null}</div> :

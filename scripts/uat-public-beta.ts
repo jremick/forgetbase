@@ -400,7 +400,9 @@ async function checkPublicBrowserBranding(): Promise<void> {
     await assertBrowserBranding(page, "R&D <Knowledge>", logoUrl, "image/png", "browser branding: public login treats custom name as text and loads favicon");
     await screenshot(page, "branding-login.png", "browser branding: custom login screenshot");
     response = "unreadable branding response";
+    const unreadableResponse = page.waitForResponse(response => new URL(response.url()).pathname.endsWith("/branding"));
     await page.reload({ waitUntil: "domcontentloaded" });
+    await unreadableResponse;
     await page.getByRole("heading", { name: "Log in to ForgetBase", exact: true }).waitFor();
     await assertBrowserBranding(page, "ForgetBase", "/favicon.svg", "image/svg+xml", "browser branding: unreadable public branding falls back to defaults");
   } finally {
@@ -473,7 +475,12 @@ async function checkAdminBranding(page: Page): Promise<void> {
     await assertBrowserBranding(brandingPage, "Field Notes & Research", `data:image/webp;base64,${readFileSync(resolve(root, "scripts/fixtures/branding/logo.webp")).toString("base64")}`, "image/webp", "browser branding: reader uses saved title and favicon");
     await brandingPage.goto(routeUrl(page, "admin/system/settings"), { waitUntil: "domcontentloaded" });
     await field.waitFor({ state: "visible" });
+    await brandingPage.getByRole("button", { name: "Use default image", exact: true }).click();
+    await brandingPage.getByRole("button", { name: "Save", exact: true }).click();
+    await expectVisibleText(brandingPage, "Branding saved.", "branding: default image saved independently");
+    await assertBrowserBranding(brandingPage, "Field Notes & Research", "/favicon.svg", "image/svg+xml", "browser branding: default image preserves custom tab title");
     await brandingPage.getByRole("button", { name: "Restore defaults", exact: true }).click();
+    await assertBrowserBranding(brandingPage, "Field Notes & Research", "/favicon.svg", "image/svg+xml", "browser branding: staged defaults do not change the tab before Save");
     await brandingPage.getByRole("button", { name: "Save", exact: true }).click();
     await expectVisibleText(brandingPage, "Branding saved.", "branding: defaults restored");
     await assertBrowserBranding(brandingPage, "ForgetBase", "/favicon.svg", "image/svg+xml", "browser branding: restore defaults resets title and favicon without reload");

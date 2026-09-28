@@ -3,9 +3,9 @@
 ## Approved scope and failure checks
 
 Admins can change the logo text and image in Settings. The saved branding appears
-on the login, reader, and admin headers. Save persists both fields together;
+on the login, reader, and admin headers and in the browser tab. Save persists both fields together;
 Cancel restores the last saved values; Restore defaults stages the ForgetBase
-defaults until Save is pressed. No changes to theme colours or the favicon.
+defaults until Save is pressed. Theme colours do not change.
 
 Before implementation, these are the material failure paths to verify:
 
@@ -18,6 +18,8 @@ Before implementation, these are the material failure paths to verify:
 - A late request replaces a new tenant's branding with an old tenant's result.
 - Preview edits change live headers before Save, Cancel retains edits, or Reset removes values before Save.
 - A wide logo is stretched, long text overflows, or a broken image leaves an unusable header.
+- The tab title or favicon stays stale after save, reload, image replacement, tenant change or restore defaults.
+- A draft changes the tab before Save, the favicon has the wrong media type, or a custom title is interpreted as markup.
 
 The primary automated check is `scripts/verify-branding.ts`: real HTTP requests
 against the API and a disposable PostgreSQL database, including process-level
@@ -31,6 +33,14 @@ Open **Admin → System → Settings → Branding**. Enter logo text and choose 
 Review the preview, then select **Save**. Each field can change independently.
 **Use default image** keeps the text. **Restore defaults** stages both defaults;
 select **Save** to apply them. **Cancel** restores the last saved settings.
+
+The browser title uses the saved logo text followed by
+` | Knowledge Base for People and AI Tools`. The favicon uses the saved image;
+**Use default image** restores the built-in favicon while keeping the title.
+Changes apply to the current tab after Save. Reload other open tabs to receive
+them. Browser metadata follows the same tenant context as the page, and uses the
+ForgetBase defaults while branding loads or if it cannot be read. The static HTML
+and social-sharing metadata keep the product defaults.
 
 Logo text is 1–64 characters. Images must be static PNG, JPEG or WebP, no larger
 than 256 KiB and 2048 pixels on either side. SVG, remote image URLs and animated
