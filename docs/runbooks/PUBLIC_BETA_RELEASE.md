@@ -2,7 +2,7 @@
 
 Use this runbook for the final promotion from public beta candidate to public beta release.
 
-The current public beta tag is `v0.1.0-beta.8`. Tags `v0.1.0-beta.1` through `v0.1.0-beta.3` are historical private-beta snapshots. Preserve their tags, source identity and release assets.
+The current public beta tag is `v0.1.0-beta.9`. Tags `v0.1.0-beta.1` through `v0.1.0-beta.3` are historical private-beta snapshots. Preserve their tags, source identity and release assets.
 
 ## Scope
 
