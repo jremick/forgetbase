@@ -385,7 +385,7 @@ async function checkAdminBranding(page: Page): Promise<void> {
     await brandingPage.goto(routeUrl(page, "admin/system/settings"), { waitUntil: "domcontentloaded" });
     const field = brandingPage.getByRole("textbox", { name: "Logo text", exact: true });
     await field.waitFor({ state: "visible" });
-    if (await field.inputValue() !== "ForgetBase" || await brandingPage.locator(".branding-preview img").count()) {
+    if (await field.inputValue() !== "ForgetBase" || await brandingPage.locator(".branding-preview img").getAttribute("src") !== "/favicon.svg") {
       throw new Error("Branding UAT requires default branding in a disposable synthetic tenant");
     }
     const logo = readFileSync(resolve(root, "scripts/fixtures/branding/logo.png"));
@@ -413,6 +413,12 @@ async function checkAdminBranding(page: Page): Promise<void> {
     await brandingPage.getByRole("button", { name: "Restore defaults", exact: true }).click();
     await brandingPage.getByRole("button", { name: "Save", exact: true }).click();
     await expectVisibleText(brandingPage, "Branding saved.", "branding: defaults restored");
+    await brandingPage.reload({ waitUntil: "domcontentloaded" });
+    await field.waitFor({ state: "visible" });
+    if (await field.inputValue() !== "ForgetBase" || await brandingPage.locator(".branding-preview img").getAttribute("src") !== "/favicon.svg") {
+      throw new Error("Default branding did not persist after restoration");
+    }
+    checks.push({ name: "branding: defaults persist after reload", status: "pass" });
   } finally {
     await brandingPage.close();
   }
