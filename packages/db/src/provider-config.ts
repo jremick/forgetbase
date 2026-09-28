@@ -1,4 +1,5 @@
 import type { Pool, QueryResultRow } from "pg";
+import { assertProviderSecretReferenceAllowed } from "./secret-reference-policy.js";
 import {
   modelProviderConfigInputSchema,
   modelProviderConfigSchema,
@@ -36,6 +37,7 @@ export class PostgresModelProviderConfigRepository implements ModelProviderConfi
 
   async upsertProviderConfig(input: ModelProviderConfigInput): Promise<ModelProviderConfig> {
     const parsed = modelProviderConfigInputSchema.parse(input);
+    assertProviderSecretReferenceAllowed(parsed.apiKeyEnvVar);
     const result = await this.pool.query<ModelProviderConfigRow>(
       `
         INSERT INTO model_provider_configs (
@@ -95,6 +97,7 @@ export class InMemoryModelProviderConfigRepository implements ModelProviderConfi
 
   async upsertProviderConfig(input: ModelProviderConfigInput): Promise<ModelProviderConfig> {
     const parsed = modelProviderConfigInputSchema.parse(input);
+    assertProviderSecretReferenceAllowed(parsed.apiKeyEnvVar);
     const key = `${parsed.tenantId}:${parsed.provider}`;
     const existing = this.configs.get(key);
     this.sequence += existing ? 0 : 1;

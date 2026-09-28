@@ -2232,6 +2232,9 @@ export const updateRiskSchema = z.enum(["low", "medium", "high", "critical"]);
 export const migrationCompatibilitySchema = z.enum(["application-only", "additive", "destructive"]);
 export const rollbackModeSchema = z.enum(["application", "database-restore", "platform-managed", "unavailable"]);
 export const updateJobPhaseSchema = z.enum([
+  "awaiting-approval",
+  "denied",
+  "expired",
   "queued",
   "scheduled",
   "preflight",
@@ -2352,6 +2355,25 @@ export const recoveryPointSchema = z.object({
   sizeBytes: z.number().int().nonnegative().nullable()
 });
 
+export const updateApprovalDescriptorSchema = z.object({
+  schemaVersion: z.literal("1"),
+  installationId: z.string().uuid(),
+  jobId: z.string().regex(/^[A-Za-z0-9_-]+$/),
+  kind: z.enum(["update", "rollback"]),
+  requestedAt: z.string().datetime(),
+  scheduledFor: z.string().datetime().nullable(),
+  expiresAt: z.string().datetime(),
+  sourceIdentity: productIdentitySchema,
+  targetVersion: z.string().min(1),
+  automaticRollback: z.boolean(),
+  manifestKeyId: z.string().min(1).nullable(),
+  manifestDigest: z.string().regex(/^[a-f0-9]{64}$/).nullable(),
+  release: releaseManifestSchema.nullable(),
+  recoveryPoint: recoveryPointSchema.nullable(),
+  recoveryReceiptDigest: z.string().regex(/^[a-f0-9]{64}$/).nullable(),
+  confirmDataLossAfter: z.string().datetime().nullable()
+});
+
 export const updateJobSchema = z.object({
   id: z.string().min(1),
   kind: z.enum(["update", "rollback"]),
@@ -2368,7 +2390,14 @@ export const updateJobSchema = z.object({
   message: z.string().min(1),
   errorCode: z.string().min(1).nullable(),
   automaticRollback: z.boolean(),
-  writesReopened: z.boolean()
+  writesReopened: z.boolean(),
+  approval: z.object({
+    requestDigest: z.string().regex(/^[a-f0-9]{64}$/),
+    descriptor: updateApprovalDescriptorSchema,
+    decision: z.enum(["approved", "denied"]).nullable(),
+    decidedAt: z.string().datetime().nullable(),
+    consumedAt: z.string().datetime().nullable()
+  }).nullable().default(null)
 });
 
 export const availableUpdateSchema = z.object({
@@ -2380,6 +2409,7 @@ export const availableUpdateSchema = z.object({
 });
 
 export const updateSystemStatusSchema = z.object({
+  hostApprovalRequired: z.boolean().default(false),
   enabled: z.boolean(),
   identity: productIdentitySchema,
   availableUpdate: availableUpdateSchema.nullable(),

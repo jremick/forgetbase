@@ -21,8 +21,10 @@ import {
 } from "@forgetbase/schema";
 import { compareSemver, fetchSignedManifest, supportsUpgradeFrom, validateManifestImages } from "./manifest.js";
 import { JsonUpdateStore, type PersistedUpdateState } from "./store.js";
+import { approvalDigest, HostApprovalAuthority } from "./approval.js";
 
 const activePhases = new Set<UpdateJobPhase>([
+  "awaiting-approval",
   "queued",
   "scheduled",
   "preflight",
@@ -49,6 +51,7 @@ export interface UpdateSystemProbe {
 }
 
 export interface UpdateExecutor {
+  recoveryReceiptDigest(point: RecoveryPoint): Promise<string>;
   probe(manifest: ReleaseManifest): Promise<UpdateSystemProbe>;
   createRecoveryPoint(input: { identity: ProductIdentity; manifest: ReleaseManifest }): Promise<RecoveryPoint>;
   stage(manifest: ReleaseManifest): Promise<void>;
@@ -82,21 +85,35 @@ export class UpdateManager {
   private identity: ProductIdentity;
   private readonly runningJobs = new Map<string, Promise<void>>();
   private mutationTail: Promise<void> = Promise.resolve();
+  private tickTail: Promise<void> = Promise.resolve();
+  private readonly authority: HostApprovalAuthority;
 
   constructor(private readonly options: UpdateManagerOptions) {
     this.identity = productIdentitySchema.parse(options.identity);
+    this.authority = new HostApprovalAuthority(options.store.directory);
   }
 
   /** Call once under the service's exclusive process lock, before accepting work. */
   async reconcileInterruptedJobs(): Promise<void> {
     if (this.runningJobs.size) throw new Error("Cannot reconcile while an updater operation is running");
-    await this.mutate((state) => {
+    await this.mutate(async (state) => {
       const active = state.jobs.filter((job) => activePhases.has(job.phase));
       return {
         ...state,
-        jobs: state.jobs.map((job) => {
+        jobs: await Promise.all(state.jobs.map(async (job) => {
           if (!activePhases.has(job.phase)) return job;
-          if (active.length === 1 && job.phase === "scheduled" && job.scheduledFor && !job.startedAt && !job.writesReopened) return job;
+          if (active.length === 1 && ["awaiting-approval", "scheduled"].includes(job.phase) && job.approval && !job.startedAt && !job.writesReopened) {
+            try {
+              await this.authority.validate(job);
+              if (job.approval.consumedAt || await this.authority.consumed(job)) {
+                return { ...job, phase: "needs-attention" as const, completedAt: this.now().toISOString(), errorCode: "approval_consumption_interrupted", message: "Host approval was consumed before interruption; execution was not replayed" };
+              }
+              if (this.now().getTime() >= Date.parse(job.approval.descriptor.expiresAt)) {
+                return { ...job, phase: "expired" as const, completedAt: this.now().toISOString(), message: "Host approval request expired before execution" };
+              }
+              return job;
+            } catch { /* Invalid or missing authority remains quarantined below. */ }
+          }
           const mayHaveMutated = !["queued", "scheduled", "preflight", "staging"].includes(job.phase);
           const recovery = job.recoveryPointId
             ? `Inspect the installation and recovery point ${job.recoveryPointId}; explicitly confirm any manual restore and possible data loss.`
@@ -109,7 +126,7 @@ export class UpdateManager {
             errorCode: "updater_interrupted",
             message: `Updater interrupted during ${job.phase}; no operation was replayed. ${recovery}`
           });
-        })
+        }))
       };
     });
   }
@@ -117,6 +134,7 @@ export class UpdateManager {
   async status(): Promise<UpdateSystemStatus> {
     const state = await this.options.store.read();
     return updateSystemStatusSchema.parse({
+      hostApprovalRequired: true,
       enabled: this.enabled,
       identity: this.identity,
       availableUpdate: state.availableUpdate,
@@ -173,12 +191,12 @@ export class UpdateManager {
     return this.status();
   }
 
-  async preflight(version?: string, currentJobId?: string): Promise<UpdatePreflight> {
-    const { envelope, state } = await this.requireAvailableRelease(version);
-    const manifest = envelope.manifest;
+  async preflight(version?: string, currentJobId?: string, approvedManifest?: ReleaseManifest): Promise<UpdatePreflight> {
+    const state = await this.options.store.read();
+    const manifest = approvedManifest ?? (await this.requireAvailableRelease(version)).envelope.manifest;
     const probe = await this.options.executor.probe(manifest);
     const checks = [
-      check("updates-enabled", "Updates enabled", this.enabled, "Managed updates must be enabled before host mutation"),
+      check("updates-enabled", "Updates enabled", this.enabled, "Managed updates and a separate host approval are required before execution"),
       check("managed-install", "Managed installation", this.identity.installationMode === "managed", "Updates can be applied only to managed installations"),
       check("newer-release", "Newer release", compareSemver(manifest.version, this.identity.version) > 0, `${this.identity.version} → ${manifest.version}`),
       check("release-channel", "Release channel", manifest.channel === this.identity.channel, `Installed ${this.identity.channel}; release ${manifest.channel}`),
@@ -256,12 +274,9 @@ export class UpdateManager {
   async apply(input: UpdateApplyInput): Promise<UpdateJob> {
     const parsed = updateApplyInputSchema.parse(input);
     this.assertManagedMutation();
-    if (this.options.feedUrl && this.options.publicKeys?.size) await this.checkForUpdates();
-    const preflight = await this.preflight(parsed.version);
-
-    if (!preflight.eligible) {
-      throw new Error("Update preflight failed");
-    }
+    await this.authority.initialize();
+    if (!this.options.feedUrl || !this.options.publicKeys?.size) throw new Error("A verified signed feed is required for an update request");
+    await this.checkForUpdates();
 
     const scheduledFor = parsed.scheduledFor ?? null;
     if (scheduledFor && Date.parse(scheduledFor) <= this.now().getTime()) {
@@ -277,7 +292,7 @@ export class UpdateManager {
     const job = updateJobSchema.parse({
       id: `update_${randomUUID()}`,
       kind: "update",
-      phase: scheduledFor ? "scheduled" : "queued",
+      phase: "awaiting-approval",
       requestedAt: this.now().toISOString(),
       scheduledFor,
       startedAt: null,
@@ -287,11 +302,13 @@ export class UpdateManager {
       manifestKeyId: state.availableUpdate?.manifestKeyId ?? null,
       recoveryPointId: null,
       progressPercent: 0,
-      message: scheduledFor ? `Update scheduled for ${scheduledFor}` : "Update queued",
+      message: "Awaiting a separate host operator approval",
       errorCode: null,
       automaticRollback: parsed.automaticRollback,
       writesReopened: false
     });
+    job.approval = await this.approvalFor(job, manifest, null, null, null);
+    await this.authority.validate(job);
 
     await this.mutate((current) => {
       this.assertNoActiveJob(current);
@@ -301,16 +318,13 @@ export class UpdateManager {
       return { ...current, jobs: [job, ...current.jobs].slice(0, 200) };
     });
 
-    if (!scheduledFor) {
-      this.launch(job.id, manifest);
-    }
-
     return job;
   }
 
   async rollback(input: UpdateRollbackInput): Promise<UpdateJob> {
     const parsed = updateRollbackInputSchema.parse(input);
     this.assertManagedMutation();
+    await this.authority.initialize();
     const state = await this.options.store.read();
     if (state.jobs.some((job) => activePhases.has(job.phase))) {
       throw new Error("Another update operation is already active");
@@ -321,14 +335,14 @@ export class UpdateManager {
       throw new Error("Recovery point is unavailable or unverified");
     }
 
-    if (point.backupPath && parsed.confirmDataLossAfter !== point.createdAt) {
+    if (parsed.confirmDataLossAfter !== point.createdAt) {
       throw new Error("Rollback may discard post-update writes; explicit data-loss confirmation is required");
     }
 
     const job = updateJobSchema.parse({
       id: `rollback_${randomUUID()}`,
       kind: "rollback",
-      phase: "queued",
+      phase: "awaiting-approval",
       requestedAt: this.now().toISOString(),
       scheduledFor: null,
       startedAt: null,
@@ -338,11 +352,14 @@ export class UpdateManager {
       manifestKeyId: null,
       recoveryPointId: point.id,
       progressPercent: 0,
-      message: "Rollback queued",
+      message: "Awaiting a separate host operator approval for this recovery timestamp",
       errorCode: null,
       automaticRollback: false,
       writesReopened: false
     });
+    const receiptDigest = await this.options.executor.recoveryReceiptDigest(point);
+    job.approval = await this.approvalFor(job, null, point, receiptDigest, parsed.confirmDataLossAfter);
+    await this.authority.validate(job);
 
     await this.mutate((current) => {
       this.assertNoActiveJob(current);
@@ -351,14 +368,13 @@ export class UpdateManager {
       }
       return { ...current, jobs: [job, ...current.jobs].slice(0, 200) };
     });
-    this.launchRollback(job.id, point);
     return job;
   }
 
   async cancel(jobId: string): Promise<UpdateJob> {
     return this.updateJob(jobId, (job) => {
-      if (!new Set<UpdateJobPhase>(["queued", "scheduled"]).has(job.phase)) {
-        throw new Error("Only queued or scheduled jobs can be cancelled safely");
+      if (!new Set<UpdateJobPhase>(["awaiting-approval", "queued", "scheduled"]).has(job.phase) || job.approval?.consumedAt) {
+        throw new Error("Only pending unconsumed jobs can be cancelled safely");
       }
 
       return {
@@ -371,22 +387,129 @@ export class UpdateManager {
   }
 
   async tick(): Promise<void> {
-    const state = await this.options.store.read();
-    const now = this.now().getTime();
+    const result = this.tickTail.then(() => this.tickPending());
+    this.tickTail = result.catch(() => undefined);
+    return result;
+  }
 
-    for (const job of state.jobs) {
-      if (job.phase === "scheduled" && job.scheduledFor && Date.parse(job.scheduledFor) <= now) {
-        try {
-          if (this.options.feedUrl && this.options.publicKeys?.size) await this.checkForUpdates();
-          const currentState = await this.options.store.read();
-          const manifest = currentState.availableUpdate?.release;
-          if (currentState.feedStatus === "available" && manifest?.version === job.targetVersion) this.launch(job.id, manifest);
-          else await this.failScheduledJob(job.id, "scheduled_release_unavailable", "Scheduled release is no longer verified and available");
-        } catch {
-          await this.failScheduledJob(job.id, "scheduled_release_verification_failed", "Scheduled release could not be re-verified");
+  private async tickPending(): Promise<void> {
+    const state = await this.options.store.read();
+    for (const snapshot of state.jobs) {
+      if (!["awaiting-approval", "scheduled", "queued"].includes(snapshot.phase)) continue;
+      try {
+        if (!snapshot.approval) {
+          await this.finishPending(snapshot.id, "needs-attention", "host_approval_missing", "Legacy request has no host approval; submit a new request");
+          continue;
         }
+        await this.authority.validate(snapshot);
+        if (snapshot.approval.consumedAt || await this.authority.consumed(snapshot)) {
+          await this.finishPending(snapshot.id, "needs-attention", "approval_consumption_interrupted", "Consumed approval cannot be replayed");
+          continue;
+        }
+        if (this.now().getTime() >= Date.parse(snapshot.approval.descriptor.expiresAt)) {
+          await this.finishPending(snapshot.id, "expired", "host_approval_expired", "Host approval request expired before execution");
+          continue;
+        }
+        const decision = await this.authority.readDecision(snapshot);
+        if (!decision) continue;
+        if (decision.decision === "denied") {
+          await this.updateJob(snapshot.id, (job) => this.pending(job) ? {
+            ...job, phase: "denied", completedAt: this.now().toISOString(), message: "Host operator denied this request",
+            approval: { ...job.approval!, decision: "denied", decidedAt: decision.decidedAt }
+          } : job);
+          continue;
+        }
+        if (snapshot.scheduledFor && Date.parse(snapshot.scheduledFor) > this.now().getTime()) {
+          await this.updateJob(snapshot.id, (job) => this.pending(job) ? {
+            ...job, phase: "scheduled", message: `Host-approved update scheduled for ${job.scheduledFor}`,
+            approval: { ...job.approval!, decision: "approved", decidedAt: decision.decidedAt }
+          } : job);
+          continue;
+        }
+
+        // All external checks are read-only. The final serialized claim below
+        // rechecks phase, exact request, timing and the exclusive decision.
+        this.assertManagedMutation();
+        const descriptor = snapshot.approval.descriptor;
+        const identity = productIdentitySchema.parse(await this.options.executor.refreshIdentity());
+        if (approvalDigest(identity) !== approvalDigest(descriptor.sourceIdentity)) throw new Error("Installed source identity changed after the request");
+        let manifest: ReleaseManifest | null = null;
+        let point: RecoveryPoint | null = null;
+        if (snapshot.kind === "update") {
+          if (!this.options.feedUrl || !this.options.publicKeys?.size) throw new Error("Signed release verification is unavailable");
+          const envelope = await fetchSignedManifest({ feedUrl: this.options.feedUrl, publicKeys: this.options.publicKeys,
+            allowHttpForLocalhost: this.options.allowLocalHttpFeed, fetchImplementation: this.options.fetchImplementation });
+          validateManifestImages(envelope.manifest, this.options.allowedRegistryPrefixes);
+          if (envelope.keyId !== descriptor.manifestKeyId || approvalDigest(envelope.manifest) !== descriptor.manifestDigest) {
+            throw new Error("Signed release or signing key changed after host approval");
+          }
+          manifest = envelope.manifest;
+          this.identity = identity;
+          const preflight = await this.preflight(manifest.version, snapshot.id, manifest);
+          if (!preflight.eligible) throw new Error("Update preflight failed before host approval consumption");
+        } else {
+          point = (await this.options.store.read()).recoveryPoints.find((candidate) => candidate.id === snapshot.recoveryPointId) ?? null;
+          if (!point || !point.verified || approvalDigest(point) !== approvalDigest(descriptor.recoveryPoint) ||
+              await this.options.executor.recoveryReceiptDigest(point) !== descriptor.recoveryReceiptDigest) {
+            throw new Error("Recovery point or verified receipt changed after host approval");
+          }
+        }
+
+        let claimed = false;
+        await this.mutate(async (current) => {
+          const job = current.jobs.find((candidate) => candidate.id === snapshot.id);
+          if (!job || !this.pending(job)) return current;
+          await this.authority.validate(job);
+          if (job.approval!.requestDigest !== snapshot.approval!.requestDigest) throw new Error("Host approval request changed during validation");
+          if (this.now().getTime() >= Date.parse(job.approval!.descriptor.expiresAt)) {
+            return { ...current, jobs: current.jobs.map((entry) => entry.id === job.id ? {
+              ...entry, phase: "expired", completedAt: this.now().toISOString(), errorCode: "host_approval_expired", message: "Host approval expired during validation"
+            } : entry) };
+          }
+          if (job.scheduledFor && Date.parse(job.scheduledFor) > this.now().getTime()) return current;
+          if (current.jobs.some((candidate) => candidate.id !== job.id && activePhases.has(candidate.phase))) throw new Error("Another update operation is already active");
+          // Exclusive durable consumption precedes the ledger claim. A crash in
+          // between is detectable and must never cause an automatic replay.
+          const consumed = await this.authority.consume(job);
+          const claimedAt = this.now().toISOString();
+          claimed = true;
+          return { ...current, jobs: current.jobs.map((entry) => entry.id === job.id ? {
+            ...entry, phase: "preflight", progressPercent: 5, startedAt: claimedAt, message: "Host approval consumed; validating execution preflight",
+            approval: { ...entry.approval!, decision: "approved", decidedAt: consumed.decidedAt, consumedAt: claimedAt }
+          } : entry) };
+        });
+        if (claimed) {
+          this.identity = identity;
+          if (manifest) this.launch(snapshot.id, manifest);
+          else this.launchRollback(snapshot.id, point!);
+        }
+      } catch (error) {
+        const consumed = await this.authority.consumed(snapshot).catch(() => false);
+        await this.finishPending(snapshot.id, consumed ? "needs-attention" : "failed",
+          consumed ? "approval_consumption_interrupted" : "host_approval_validation_failed", errorMessage(error));
       }
     }
+  }
+
+  private pending(job: UpdateJob): boolean {
+    return ["awaiting-approval", "scheduled", "queued"].includes(job.phase) && !job.startedAt && !job.approval?.consumedAt;
+  }
+
+  private async finishPending(jobId: string, phase: "failed" | "needs-attention" | "expired", errorCode: string, message: string): Promise<void> {
+    await this.updateJob(jobId, (job) => this.pending(job) ? { ...job, phase, completedAt: this.now().toISOString(), errorCode, message } : job);
+  }
+
+  private async approvalFor(job: UpdateJob, release: ReleaseManifest | null, recoveryPoint: RecoveryPoint | null,
+    recoveryReceiptDigest: string | null, confirmDataLossAfter: string | null): Promise<NonNullable<UpdateJob["approval"]>> {
+    const descriptor = {
+      schemaVersion: "1" as const, installationId: await this.authority.installationId(), jobId: job.id, kind: job.kind,
+      requestedAt: job.requestedAt, scheduledFor: job.scheduledFor,
+      expiresAt: new Date(Date.parse(job.scheduledFor ?? job.requestedAt) + (job.scheduledFor ? 3_600_000 : 86_400_000)).toISOString(),
+      sourceIdentity: this.identity, targetVersion: job.targetVersion, automaticRollback: job.automaticRollback,
+      manifestKeyId: job.manifestKeyId, manifestDigest: release ? approvalDigest(release) : null,
+      release, recoveryPoint, recoveryReceiptDigest, confirmDataLossAfter
+    };
+    return { descriptor, requestDigest: approvalDigest(descriptor), decision: null, decidedAt: null, consumedAt: null };
   }
 
   private get enabled(): boolean {
@@ -436,10 +559,6 @@ export class UpdateManager {
     let maintenanceEntered = false;
 
     try {
-      if (!await this.claimJob(jobId, "preflight", 5, "Rechecking update preflight")) return;
-      const preflight = await this.preflight(manifest.version, jobId);
-      if (!preflight.eligible) throw new Error("Update preflight failed at execution time");
-
       await this.setPhase(jobId, "staging", 20, "Pulling digest-pinned release images");
       await this.options.executor.stage(manifest);
       await this.setPhase(jobId, "maintenance", 35, "Entering maintenance mode and stopping writers");
@@ -549,7 +668,7 @@ export class UpdateManager {
 
   private async executeRollback(jobId: string, point: RecoveryPoint): Promise<void> {
     try {
-      if (!await this.claimJob(jobId, "maintenance", 20, "Stopping writers before rollback")) return;
+      await this.setPhase(jobId, "maintenance", 20, "Stopping writers before rollback");
       await this.options.executor.enterMaintenance();
       await this.setPhase(jobId, "rolling-back", 55, `Restoring recovery point ${point.id}`, { writesReopened: true });
       await this.restoreRecoveryPoint(point, Boolean(point.backupPath));
@@ -589,22 +708,6 @@ export class UpdateManager {
     if (!this.enabled || this.identity.installationMode !== "managed") {
       throw new Error("An enabled managed installation is required for update operations");
     }
-  }
-
-  private async claimJob(jobId: string, phase: UpdateJobPhase, progressPercent: number, message: string): Promise<boolean> {
-    let claimed = false;
-    await this.updateJob(jobId, (job) => {
-      if (!["queued", "scheduled"].includes(job.phase)) return job;
-      claimed = true;
-      return { ...job, phase, progressPercent, message, startedAt: this.now().toISOString() };
-    });
-    return claimed;
-  }
-
-  private async failScheduledJob(jobId: string, errorCode: string, message: string): Promise<void> {
-    await this.updateJob(jobId, (job) => job.phase === "scheduled"
-      ? { ...job, phase: "failed", completedAt: this.now().toISOString(), errorCode, message }
-      : job);
   }
 
   private async setPhase(
@@ -660,7 +763,7 @@ export class UpdateManager {
     await this.mutate((current) => ({ ...current, recoveryPoints: retained }));
   }
 
-  private async mutate(update: (state: PersistedUpdateState) => PersistedUpdateState): Promise<void> {
+  private async mutate(update: (state: PersistedUpdateState) => PersistedUpdateState | Promise<PersistedUpdateState>): Promise<void> {
     let release: (() => void) | undefined;
     const previous = this.mutationTail;
     this.mutationTail = new Promise<void>((resolve) => { release = resolve; });
@@ -668,7 +771,7 @@ export class UpdateManager {
 
     try {
       const current = await this.options.store.read();
-      await this.options.store.write(update(current));
+      await this.options.store.write(await update(current));
     } finally {
       release?.();
     }

@@ -2,24 +2,32 @@ import { generateKeyPairSync, sign } from "node:crypto";
 import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   productIdentitySchema,
   recoveryPointSchema,
   releaseManifestSchema,
   type ProductIdentity,
   type RecoveryPoint,
-  type ReleaseManifest
+  type ReleaseManifest,
+  type UpdateJob
 } from "@forgetbase/schema";
 import { canonicalJson, compareSemver, verifySignedManifest } from "./manifest.js";
 import { initializeManagedInstallation } from "./bootstrap.js";
 import { HttpUpdateControlClient } from "./client.js";
 import { UpdateManager, type UpdateExecutor, type UpdateManagerOptions, type UpdateSystemProbe } from "./manager.js";
 import { JsonUpdateStore } from "./store.js";
+import { HostApprovalAuthority } from "./approval.js";
 
 const temporaryDirectories: string[] = [];
 
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-09-02T00:00:00.000Z"));
+});
+
 afterEach(async () => {
+  vi.useRealTimers();
   await Promise.all(temporaryDirectories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
 });
 
@@ -109,6 +117,38 @@ describe("updater control transport", () => {
 });
 
 describe("update manager", () => {
+  it("keeps an API update request pending without any host mutation", async () => {
+    const directory = await createTemporaryDirectory();
+    const executor = new FakeExecutor();
+    const { manager } = buildManager(directory, executor);
+    await seedAvailableRelease(manager, buildManifest());
+
+    const requested = await manager.apply({ version: "0.2.0", automaticRollback: true });
+    await manager.tick();
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    const observed = (await manager.status()).jobs.find((job) => job.id === requested.id);
+    if (observed?.phase !== "awaiting-approval") await waitForTerminalJob(manager, requested.id);
+    expect(observed?.phase).toBe("awaiting-approval");
+    expect(executor.phases.filter((phase) => phase !== "probe")).toEqual([]);
+  });
+
+  it("keeps an API restore request pending even with exact data-loss consent", async () => {
+    const directory = await createTemporaryDirectory();
+    const executor = new FakeExecutor();
+    const { manager, store } = buildManager(directory, executor);
+    const recovery = await executor.createRecoveryPoint();
+    executor.phases.length = 0;
+    await store.write({ ...await store.read(), recoveryPoints: [recovery] });
+
+    const requested = await manager.rollback({ recoveryPointId: recovery.id, confirmDataLossAfter: recovery.createdAt });
+    await manager.tick();
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    expect((await manager.status()).jobs.find((job) => job.id === requested.id)?.phase).toBe("awaiting-approval");
+    expect(executor.phases).toEqual([]);
+  });
+
   it("runs preflight, persists phases, and completes a managed update", async () => {
     const directory = await createTemporaryDirectory();
     const executor = new FakeExecutor();
@@ -118,13 +158,14 @@ describe("update manager", () => {
     const preflight = await manager.preflight("0.2.0");
     expect(preflight.eligible).toBe(true);
     const job = await manager.apply({ version: "0.2.0", automaticRollback: true });
+    await approveRequest(directory, manager, job);
     const completed = await waitForTerminalJob(manager, job.id);
 
     expect(completed.phase, completed.message).toBe("completed");
     expect(completed.writesReopened).toBe(true);
     expect(executor.phases).toEqual([
       "probe",
-      "probe",
+      "identity",
       "probe",
       "stage",
       "maintenance",
@@ -145,6 +186,7 @@ describe("update manager", () => {
     await seedAvailableRelease(manager, buildManifest());
 
     const job = await manager.apply({ version: "0.2.0", automaticRollback: true });
+    await approveRequest(directory, manager, job);
     const completed = await waitForTerminalJob(manager, job.id);
 
     expect(completed.phase, completed.message).toBe("rolled-back");
@@ -159,12 +201,13 @@ describe("update manager", () => {
     await seedAvailableRelease(manager, buildManifest());
 
     const job = await manager.apply({ version: "0.2.0", automaticRollback: true });
+    await approveRequest(directory, manager, job);
     const completed = await waitForTerminalJob(manager, job.id);
 
     expect(completed.phase).toBe("failed");
     expect(completed.message).toContain("current release resumed");
     expect(executor.phases).toEqual([
-      "probe",
+      "identity",
       "probe",
       "stage",
       "maintenance",
@@ -222,6 +265,7 @@ describe("update manager", () => {
     await seedAvailableRelease(manager, buildManifest());
 
     const job = await manager.apply({ version: "0.2.0", automaticRollback: true });
+    await approveRequest(directory, manager, job);
     const completed = await waitForTerminalJob(manager, job.id);
 
     expect(completed.phase).toBe("needs-attention");
@@ -254,13 +298,15 @@ describe("update manager", () => {
         message: "Updated",
         errorCode: null,
         automaticRollback: true,
-        writesReopened: true
+        writesReopened: true,
+        approval: null
       }]
     });
 
     await expect(manager.rollback({ recoveryPointId: point.id, confirmDataLossAfter: "2026-09-02T00:00:01.000Z" }))
       .rejects.toThrow("explicit data-loss confirmation");
     const job = await manager.rollback({ recoveryPointId: point.id, confirmDataLossAfter: point.createdAt });
+    await approveRequest(directory, manager, job);
     expect((await waitForTerminalJob(manager, job.id)).phase).toBe("rolled-back");
   });
 
@@ -286,13 +332,16 @@ describe("update manager", () => {
     });
 
     const job = await manager.apply({ version: "0.2.0", scheduledFor: "2026-09-02T01:00:00.000Z" });
+    await approveRequest(directory, manager, job);
     tampered = true;
     now = new Date("2026-09-02T01:00:01.000Z");
     await manager.tick();
 
     const failed = (await manager.status()).jobs.find((candidate) => candidate.id === job.id);
     expect(failed?.phase).toBe("failed");
-    expect(failed?.errorCode).toBe("scheduled_release_verification_failed");
+    expect(failed?.errorCode).toBe("host_approval_validation_failed");
+    expect(failed?.message).toContain("signature verification failed");
+    expect(executor.phases.filter((phase) => phase !== "identity")).toEqual([]);
   });
 });
 
@@ -317,6 +366,7 @@ function buildManager(
   });
   executor.identity = identity;
   const store = new JsonUpdateStore(join(directory, "state.json"));
+  const { publicKey, privateKey } = generateKeyPairSync("ed25519");
   return {
     manager: new UpdateManager({
       identity,
@@ -324,10 +374,25 @@ function buildManager(
       executor,
       allowedRegistryPrefixes: ["registry.example.test/forgetbase/"],
       enabled: true,
+      feedUrl: "https://updates.example.test/beta.json",
+      publicKeys: new Map([["test-key", publicKey.export({ type: "spki", format: "pem" }).toString()]]),
+      fetchImplementation: async () => {
+        const manifest = (await store.read()).availableUpdate?.release ?? buildManifest();
+        return new Response(JSON.stringify({ keyId: "test-key", manifest,
+          signature: sign(null, Buffer.from(canonicalJson(manifest)), privateKey).toString("base64") }),
+        { headers: { "content-type": "application/json" } });
+      },
       ...optionOverrides
     }),
     store
   };
+}
+
+async function approveRequest(directory: string, manager: UpdateManager, job: UpdateJob) {
+  expect(job.phase).toBe("awaiting-approval");
+  expect(job.approval?.requestDigest).toMatch(/^[a-f0-9]{64}$/);
+  await new HostApprovalAuthority(directory).decide(job, job.approval!.requestDigest, "approved");
+  await manager.tick();
 }
 
 async function seedAvailableRelease(manager: UpdateManager, manifest: ReleaseManifest): Promise<void> {
@@ -392,6 +457,8 @@ class FakeExecutor implements UpdateExecutor {
   identity!: ProductIdentity;
 
   constructor(private readonly failPhase?: string) {}
+
+  async recoveryReceiptDigest(): Promise<string> { return "b".repeat(64); }
 
   async probe(_manifest: ReleaseManifest): Promise<UpdateSystemProbe> {
     this.phases.push("probe");

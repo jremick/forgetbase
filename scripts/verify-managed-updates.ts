@@ -102,6 +102,7 @@ try {
   await Promise.all(servers.map((server, index) => new Promise<void>((done) => server.listen(index === 0 ? feedPort : healthPort, "127.0.0.1", done))));
   await writeFile(join(directory, "public-key.pem"), publicPem, { mode: 0o600 });
   await writeFile(join(directory, "gc-stress.cjs"), "setInterval(() => global.gc(), 100).unref();\n", { mode: 0o600 });
+  await writeFile(join(directory, "approval-faults.cjs"), "'use strict';\nconst fs = require('node:fs');\nconst fsp = require('node:fs/promises');\nconst path = require('node:path');\nconst { syncBuiltinESMExports } = require('node:module');\nconst control = process.env.MANAGED_PROOF_CONTROL_DIR;\nif (!control) throw new Error('Private proof control directory required');\nconst NativeDate = Date;\nfunction offset() { try { return Number(fs.readFileSync(path.join(control, 'clock-offset-ms'), 'utf8')) || 0; } catch { return 0; } }\nglobal.Date = class extends NativeDate {\n  constructor(...args) { if (args.length === 0) super(NativeDate.now() + offset()); else super(...args); }\n  static now() { return NativeDate.now() + offset(); }\n};\nfunction selected() { try { return JSON.parse(fs.readFileSync(path.join(control, 'approval-fault.json'), 'utf8')); } catch { return null; } }\nasync function pause(boundary, destination) {\n  const fault = selected();\n  if (!fault || fault.boundary !== boundary) return;\n  const consumed = path.join(control, 'state/host-approvals/consumed', `${fault.jobId}.json`);\n  if (boundary === 'before-consumption-link' && destination !== consumed) return;\n  if (boundary === 'consumed-before-ledger' && (destination !== path.join(control,'state/state.json') || !fs.existsSync(consumed))) return;\n  fs.writeFileSync(path.join(control, 'approval-fault-ready.json'), JSON.stringify({boundary,jobId:fault.jobId,pid:process.pid,consumedExists:fs.existsSync(consumed),observedAt:new NativeDate().toISOString()}));\n  while (fs.existsSync(path.join(control, 'approval-fault-hold'))) await new Promise(resolve => setTimeout(resolve, 50));\n}\nconst originalLink = fsp.link;\nfsp.link = async function(source, destination) {\n  await pause('before-consumption-link', String(destination));\n  return originalLink.call(this, source, destination);\n};\nconst originalRename = fsp.rename;\nfsp.rename = async function(source, destination) {\n  await pause('consumed-before-ledger', String(destination));\n  return originalRename.call(this, source, destination);\n};\nsyncBuiltinESMExports();\n", { mode: 0o600 });
   await mkdir(join(directory, "scripts"), { recursive: true });
   for (const filename of ["backup-postgres.sh", "backup-attachments.sh", "backup-set.sh", "verify-backup-set.sh", "restore-postgres.sh", "restore-attachments.sh"]) {
     await copyFile(join(root, "scripts", filename), join(directory, "scripts", filename));
@@ -116,10 +117,16 @@ try {
   await writeFile(join(directory, "bin/docker"), `#!/usr/bin/env bash
 set -euo pipefail
 args=("$@")
+printf '%s\\n' "$*" >> "$MANAGED_PROOF_CONTROL_DIR/updater-docker-commands.log"
 "$MANAGED_PROOF_REAL_DOCKER" "\${args[@]}"
 up=-1
 for i in "\${!args[@]}"; do if [[ "\${args[$i]}" == up ]]; then up=$i; break; fi; done
 joined=" $* "
+if [[ "$joined" == *" config --quiet " && -f "$MANAGED_PROOF_CONTROL_DIR/hold-probe" ]]; then
+  touch "$MANAGED_PROOF_CONTROL_DIR/probe-ready"
+  while [[ -f "$MANAGED_PROOF_CONTROL_DIR/hold-probe" ]]; do sleep 0.1; done
+  touch "$MANAGED_PROOF_CONTROL_DIR/probe-released"
+fi
 if [[ $up -ge 0 && "$joined" == *" api "* && "$joined" == *" worker "* && "$joined" == *" proxy "* ]]; then
   if [[ -f "$MANAGED_PROOF_CONTROL_DIR/fail-restored-api" ]]; then
     "$MANAGED_PROOF_REAL_DOCKER" "\${args[@]:0:$up}" stop api
@@ -222,18 +229,45 @@ fi
   const preflight = await control("/v1/preflight", { version: candidateVersion });
   assert.equal(preflight.eligible, true, JSON.stringify(preflight.checks.filter((check: Json) => check.status === "fail")));
   record("authorization/signature/preflight", { missingToken: 401, wrongToken: 401, tamperRejected: true, eligible: true });
+  await verifyImpersonationCannotApprove(cookie);
+  const noApprovalMark = await mutationCheckpoint();
+  const unapproved = await control("/v1/jobs", { version: candidateVersion, automaticRollback: true });
+  assert.equal(unapproved.phase, "awaiting-approval", "The application request token must not authorize host execution");
+  await killUpdater(); await startUpdater();
+  await delay(31_000);
+  assert.equal((await status()).jobs.find((job: Json) => job.id === unapproved.id).phase, "awaiting-approval");
+  await assertNoMutationSince(noApprovalMark, "request token and restart before approval");
+  assert.equal((await http(api, "/health")).body.version, baselineVersion);
+  await control(`/v1/jobs/${unapproved.id}/cancel`);
+  record("request token requires host approval", { awaitingApproval: true, applicationVersionUnchanged: true });
   const scheduled = await control("/v1/jobs", { version: candidateVersion, scheduledFor: new Date(Date.now() + 60 * 60_000).toISOString(), automaticRollback: true });
-  assert.equal(scheduled.phase, "scheduled");
+  assert.equal(scheduled.phase, "awaiting-approval");
+  await approveOnHost(scheduled);
+  await waitPhase(scheduled.id, "scheduled");
   assert.equal((await http(api, "/health")).body.version, baselineVersion);
   await http(updater, "/v1/jobs", { method: "POST", token, body: { version: candidateVersion }, expected: [409] });
   const cancelled = await control(`/v1/jobs/${scheduled.id}/cancel`);
   assert.equal(cancelled.phase, "cancelled");
   record("scheduled operator approval", { scheduledWithoutApplying: true, concurrentMutationRejected: true, cancellationRecorded: true });
 
+  await verifyApprovalBindingRejections(candidate);
+  await verifyHeldProbeRevalidation("cancel");
+  await verifyHeldProbeRevalidation("expire");
+  await verifyApprovalClaimCrash("before-consumption-link");
+  const consumedCrash = await verifyApprovalClaimCrash("consumed-before-ledger");
+  await verifyDecisionReplay(scheduled, "decisions");
+  await verifyDecisionReplay(consumedCrash, "consumed");
+
   // Hold only the real health dependency, leaving the actual updater, executor,
   // Docker, API, worker and Postgres active and observable.
   verificationHeld = true;
-  const failedJob = await control("/v1/jobs", { version: candidateVersion, automaticRollback: true });
+  const scheduledMark = await mutationCheckpoint();
+  const failedJob = await control("/v1/jobs", { version: candidateVersion, scheduledFor: new Date(Date.now() + 60_000).toISOString(), automaticRollback: true });
+  child!.kill("SIGSTOP"); await approveOnHost(failedJob); await killUpdater(); await startUpdater();
+  record("crash after approval before claim", { jobId: failedJob.id, approvedDecisionPreserved: Boolean(await approvalFile("decisions", failedJob.id)) });
+  await waitPhase(failedJob.id, "scheduled");
+  assert.ok(Date.now() < Date.parse(failedJob.scheduledFor));
+  await assertNoMutationSince(scheduledMark, "approved scheduled operation waits until due after restart");
   await waitPhase(failedJob.id, "verifying");
   await verifyFences();
   await composeCommand("inject actual candidate Docker outage", ["stop", "api"]);
@@ -244,9 +278,10 @@ fi
   await waitUrl(`${api}/ready`, 120_000);
   await verifyCanary("automatic rollback after Docker outage", "original");
   record("Docker failure rollback", { job: rolledBack, identity: await (await fetch(`${api}/health`)).json() });
+  await verifyManualApprovalBindings((await status()).recoveryPoints.find((point: Json) => point.id === rolledBack.recoveryPointId));
 
   verificationHeld = true;
-  const interrupted = await control("/v1/jobs", { version: candidateVersion, automaticRollback: true });
+  const interrupted = await approvedControl("/v1/jobs", { version: candidateVersion, automaticRollback: true });
   await waitPhase(interrupted.id, "verifying");
   await verifyFences();
   await killUpdater();
@@ -262,11 +297,11 @@ fi
   record("updater SIGKILL restart", { recovered, secondRestartHasNoActiveJob: true, candidateDatabasePreserved: true, noAutomaticReplay: true });
   const interruptedPoint = (await status()).recoveryPoints.find((point: Json) => point.id === recovered.recoveryPointId);
   assert.ok(interruptedPoint?.verified);
-  const explicitRecovery = await control("/v1/rollback", { recoveryPointId: interruptedPoint.id, confirmDataLossAfter: interruptedPoint.createdAt });
+  const explicitRecovery = await approvedControl("/v1/rollback", { recoveryPointId: interruptedPoint.id, confirmDataLossAfter: interruptedPoint.createdAt });
   assert.equal((await waitTerminal(explicitRecovery.id)).phase, "rolled-back");
   await verifyCanary("explicit restart recovery", "original");
 
-  const cleanJob = await control("/v1/jobs", { version: candidateVersion, automaticRollback: true });
+  const cleanJob = await approvedControl("/v1/jobs", { version: candidateVersion, automaticRollback: true });
   const completed = await waitTerminal(cleanJob.id);
   assert.equal(completed.phase, "completed", completed.message);
   assert.equal(completed.writesReopened, true);
@@ -296,22 +331,24 @@ fi
   const corruptLedger = JSON.parse(await readFile(join(stateDir, "state.json"), "utf8"));
   corruptLedger.recoveryPoints.find((point: Json) => point.id === recovery.id).backupPath = join(dirname(recovery.backupPath), "wrong.dump");
   await writeFile(join(stateDir, "state.json"), JSON.stringify(corruptLedger));
-  const refused = await control("/v1/rollback", { recoveryPointId: recovery.id, confirmDataLossAfter: recovery.createdAt });
-  const refusedResult = await waitTerminal(refused.id);
-  assert.equal(refusedResult.phase, "needs-attention");
-  assert.match(refusedResult.message, /canonical verified path/);
+  const canonicalMark = await mutationCheckpoint();
+  const jobsBeforeRefusal = (await status()).jobs.length;
+  const refused = await http(updater, "/v1/rollback", { method: "POST", token, body: { recoveryPointId: recovery.id, confirmDataLossAfter: recovery.createdAt }, expected: [500] });
+  assert.match(refused.body.message, /canonical verified path/);
+  assert.equal((await status()).jobs.length, jobsBeforeRefusal, "Invalid recovery path must be refused before a host approval request is created");
+  await assertNoMutationSince(canonicalMark, "canonical recovery path admission");
   assert.match(await sql("SELECT value FROM managed_e2e_canary WHERE id='after';"), /accepted-after-reopen/);
   const repairedLedger = JSON.parse(await readFile(join(stateDir, "state.json"), "utf8"));
   repairedLedger.recoveryPoints.find((point: Json) => point.id === recovery.id).backupPath = recovery.backupPath;
   await writeFile(join(stateDir, "state.json"), JSON.stringify(repairedLedger));
-  record("recovery ledger path substitution rejected", { needsAttention: true, acceptedWritePreserved: true });
+  record("recovery ledger path substitution rejected", { rejectedAtAdmission: true, canonicalPathMessage: refused.body.message, acceptedWritePreserved: true });
   await writeFile(join(directory, "fail-restored-api"), "synthetic Docker readiness failure");
-  const badRestart = await control("/v1/rollback", { recoveryPointId: recovery.id, confirmDataLossAfter: recovery.createdAt });
+  const badRestart = await approvedControl("/v1/rollback", { recoveryPointId: recovery.id, confirmDataLossAfter: recovery.createdAt });
   const badRestartResult = await waitTerminal(badRestart.id);
   assert.equal(badRestartResult.phase, "needs-attention", badRestartResult.message);
   await rm(join(directory, "fail-restored-api"));
   record("restored API start failure", { result: badRestartResult, successfulRollbackNotClaimed: true });
-  const rollback = await control("/v1/rollback", { recoveryPointId: recovery.id, confirmDataLossAfter: recovery.createdAt });
+  const rollback = await approvedControl("/v1/rollback", { recoveryPointId: recovery.id, confirmDataLossAfter: recovery.createdAt });
   const manualResult = await waitTerminal(rollback.id);
   assert.equal(manualResult.phase, "rolled-back", manualResult.message);
   await waitUrl(`${api}/ready`, 120_000);
@@ -319,7 +356,7 @@ fi
   assert.doesNotMatch(await sql("SELECT value FROM managed_e2e_canary WHERE id='after';"), /accepted-after-reopen/);
   record("manual rollback", { dataLossConfirmationRequired: true, result: manualResult, priorDatabaseAndAttachmentRestored: true });
   await writeFile(join(directory, "hold-reopen"), "pause real Docker result after reopening writers");
-  const boundaryJob = await control("/v1/jobs", { version: candidateVersion, automaticRollback: true });
+  const boundaryJob = await approvedControl("/v1/jobs", { version: candidateVersion, automaticRollback: true });
   await until(async () => { try { await readFile(join(directory, "reopen-ready")); return true; } catch { return false; } }, 10 * 60_000);
   await waitUrl(`${api}/ready`, 120_000);
   assert.equal((await status()).jobs.find((job: Json) => job.id === boundaryJob.id).writesReopened, true);
@@ -337,7 +374,7 @@ fi
   assert.match(await sql("SELECT email FROM users WHERE email='boundary-write@example.test';"), /boundary-write@example.test/);
   record("SIGKILL after durable write boundary", { result: boundaryRecovered, apiAcceptedWritePreserved: true, databaseCanaryPreserved: true, orphanCommandRetainedLock: true, noAutomaticRestore: true });
   const boundaryPoint = (await status()).recoveryPoints.find((point: Json) => point.id === boundaryRecovered.recoveryPointId);
-  const boundaryRollback = await control("/v1/rollback", { recoveryPointId: boundaryPoint.id, confirmDataLossAfter: boundaryPoint.createdAt });
+  const boundaryRollback = await approvedControl("/v1/rollback", { recoveryPointId: boundaryPoint.id, confirmDataLossAfter: boundaryPoint.createdAt });
   assert.equal((await waitTerminal(boundaryRollback.id)).phase, "rolled-back");
   await verifyCanary("explicit recovery after reopened-write crash", "original");
   for (const service of ["api", "worker"]) await composeCommand(`${service} Node version`, ["run", "--rm", "--no-deps", service, "node", "--version"]);
@@ -353,7 +390,7 @@ fi
   failure = clean(error instanceof Error ? `${error.stack}` : String(error));
   console.error(failure);
 } finally {
-  await rm(join(directory, "hold-reopen"), { force: true });
+  for (const marker of ["hold-reopen", "hold-probe", "approval-fault-hold"]) await rm(join(directory, marker), { force: true });
   verificationHeld = false;
   await killUpdater();
   for (const server of servers) server.closeAllConnections();
@@ -422,17 +459,222 @@ async function sql(statement: string, targetProject = project): Promise<string> 
 }
 async function until(check: () => Promise<boolean>, timeoutMs: number): Promise<void> { const started = Date.now(); while (Date.now() - started < timeoutMs) { if (await check()) return; await delay(1000); } throw new Error(`Condition timed out after ${timeoutMs}ms`); }
 async function waitUrl(url: string, timeoutMs: number): Promise<void> { await until(async () => { try { return (await fetch(url, { signal: AbortSignal.timeout(2000) })).ok; } catch { return false; } }, timeoutMs); }
-async function http(base: string, path: string, input: { method?: string; body?: Json; token?: string; expected?: number[] } = {}): Promise<{ status: number; body: Json }> {
-  const response = await fetch(`${base}${path}`, { method: input.method, headers: { ...(input.token ? { authorization: `Bearer ${input.token}` } : {}), ...(input.body ? { "content-type": "application/json" } : {}) }, body: input.body ? JSON.stringify(input.body) : undefined, signal: AbortSignal.timeout(120_000) });
+async function http(base: string, path: string, input: { method?: string; body?: Json; token?: string; cookie?: string; expected?: number[] } = {}): Promise<{ status: number; body: Json }> {
+  const response = await fetch(`${base}${path}`, { method: input.method, headers: { ...(input.token ? { authorization: `Bearer ${input.token}` } : {}), ...(input.cookie ? { cookie: input.cookie } : {}), ...(input.body ? { "content-type": "application/json" } : {}) }, body: input.body ? JSON.stringify(input.body) : undefined, signal: AbortSignal.timeout(120_000) });
   const text = await response.text();
   assert.ok(input.expected ? input.expected.includes(response.status) : response.ok, `${input.method ?? "GET"} ${path}: HTTP ${response.status}: ${clean(text)}`);
   return { status: response.status, body: text ? JSON.parse(text) : {} };
 }
 async function control(path: string, body: Json = {}): Promise<Json> { return (await http(updater, path, { method: "POST", body, token })).body; }
 async function status(): Promise<Json> { return (await http(updater, "/v1/status", { token })).body; }
+async function mutationCheckpoint(): Promise<number> {
+  return (await readFile(join(directory, "updater-docker-commands.log"), "utf8").catch(() => "")).split("\n").filter(Boolean).length;
+}
+async function assertNoMutationSince(checkpoint: number, name: string): Promise<void> {
+  const commands = (await readFile(join(directory, "updater-docker-commands.log"), "utf8").catch(() => "")).split("\n").filter(Boolean).slice(checkpoint);
+  const mutations = commands.filter((line) => !(/^(?:version|info|inspect|ps)(?: |$)/.test(line) || /^image inspect(?: |$)/.test(line) ||
+    (/^compose /.test(line) && / (?:version --short|config --quiet)$/.test(line))));
+  assert.deepEqual(mutations, [], `${name} dispatched a host mutation before approval`);
+  record(name, { mutatingDockerCommands: 0, observedDockerCommands: commands.length });
+}
+async function loginCookie(email: string, loginPassword: string, tenantId = "tenant_demo"): Promise<string> {
+  const response = await fetch(`${api}/auth/login`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email, password: loginPassword, tenantId }) });
+  assert.ok(response.ok, `Synthetic login HTTP ${response.status}`);
+  const cookie = response.headers.getSetCookie().map((value) => value.split(";")[0]).join("; ");
+  assert.ok(cookie); secrets.push(cookie); return cookie;
+}
+async function verifyImpersonationCannotApprove(nonOwnerCookie: string): Promise<void> {
+  const owner = (await http(api, "/auth/users", { token: ownerKey })).body.users.find((user: Json) => user.email === "owner@example.test");
+  assert.ok(owner);
+  const minted = await http(api, "/auth/api-keys", { method: "POST", cookie: nonOwnerCookie, body: { userId: owner.id, name: "synthetic impersonation proof", scopes: ["admin"] } });
+  const impersonatedKey = minted.body.secret; assert.ok(impersonatedKey); secrets.push(impersonatedKey);
+  const resetPassword = randomBytes(24).toString("hex"); secrets.push(resetPassword);
+  await http(api, `/auth/users/${owner.id}`, { method: "PUT", cookie: nonOwnerCookie, body: { password: resetPassword } });
+  const resetCookie = await loginCookie("owner@example.test", resetPassword);
+  await http(api, `/auth/users/${owner.id}`, { method: "PUT", cookie: nonOwnerCookie, body: { password } });
+  const otherTenant = "tenant_host_approval_other";
+  const bootstrap = await http(api, "/auth/bootstrap", { method: "POST", token: ownerKey, body: { tenantId: otherTenant, email: "tenant-admin@example.test", displayName: "Synthetic Other Tenant", password, keyName: "synthetic other tenant" } });
+  const otherKey = bootstrap.body.secret; assert.ok(otherKey); secrets.push(otherKey);
+  await http(api, "/auth/users", { method: "POST", token: otherKey, body: { email: "owner@example.test", displayName: "Duplicate Allowlisted Email", role: "admin", password } });
+  const duplicateCookie = await loginCookie("owner@example.test", password, otherTenant);
+  for (const [name, authentication] of [
+    ["ordinary admin minted owner key", { token: impersonatedKey }],
+    ["ordinary admin reset owner password", { cookie: resetCookie }],
+    ["other tenant duplicated owner email", { cookie: duplicateCookie }]
+  ] as [string, { token?: string; cookie?: string }][]) {
+    const checkpoint = await mutationCheckpoint();
+    const requested = (await http(api, "/system/updates/jobs", { ...authentication, method: "POST", body: { version: candidateVersion, automaticRollback: true } })).body;
+    assert.equal(requested.phase, "awaiting-approval");
+    await http(api, `/system/updates/jobs/${requested.id}/approve`, { ...authentication, method: "POST", body: {}, expected: [404] });
+    await http(updater, `/v1/jobs/${requested.id}/approve`, { token, method: "POST", body: {}, expected: [404] });
+    await delay(31_000);
+    assert.equal((await status()).jobs.find((job: Json) => job.id === requested.id).phase, "awaiting-approval");
+    await assertNoMutationSince(checkpoint, name);
+    await control(`/v1/jobs/${requested.id}/cancel`);
+  }
+  const apiContainerId = (await composeCommand("API container identity", ["ps", "-q", "api"])).trim();
+  assert.ok(apiContainerId);
+  const mountInfo = JSON.parse(await dockerCommand("inspect API protected host paths", ["inspect", "--format", "{{json .Mounts}}", apiContainerId]));
+  assert.ok(!mountInfo.some((mount: Json) => String(mount.Source).includes(stateDir) || String(mount.Destination).includes("host-approvals") || mount.Destination === "/var/run/docker.sock"));
+  await composeCommand("application cannot access host approval authority", ["exec", "-T", "api", "node", "-e", "const fs=require('node:fs');for(const p of process.argv.slice(1)){try{fs.accessSync(p,fs.constants.R_OK);process.exit(9)}catch(e){if(!['ENOENT','EACCES'].includes(e.code))throw e}}", join(stateDir, "host-approvals/installation-id"), "/var/run/docker.sock"]);
+  record("application has no host approval channel", { approvalHttpRoute: 404, protectedPathInaccessible: true, dockerSocketInaccessible: true, authorityMountAbsent: true });
+}
+
+async function editJob(id: string, edit: (job: Json) => void): Promise<void> {
+  const path = join(stateDir, "state.json"); const state = JSON.parse(await readFile(path, "utf8"));
+  const job = state.jobs.find((entry: Json) => entry.id === id); assert.ok(job); edit(job);
+  await writeFile(path, JSON.stringify(state));
+}
+async function approvalFile(kind: string, id: string): Promise<Json | null> {
+  try { return JSON.parse(await readFile(join(stateDir, "host-approvals", kind, `${id}.json`), "utf8")); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return null; throw error; }
+}
+async function cliDecision(job: Json, operation: "approve" | "deny", digest = job.approval.requestDigest): Promise<CommandResult> {
+  return executeNode(["--require", join(directory, "approval-faults.cjs"), join(root, "apps/updater/dist/approval.js"), operation, "--state-dir", stateDir, "--job-id", job.id, "--request-digest", digest], updaterEnvironment, 30_000);
+}
+async function verifyApprovalBindingRejections(candidate: ReleaseManifest): Promise<void> {
+  const denied = await control("/v1/jobs", { version: candidateVersion }); const deniedMark = await mutationCheckpoint();
+  assert.equal((await cliDecision(denied, "approve", "0".repeat(64))).ok, false, "CLI must reject a digest the operator did not inspect");
+  assert.equal((await cliDecision(denied, "deny")).ok, true);
+  assert.equal((await waitTerminal(denied.id)).phase, "denied");
+  assert.equal((await cliDecision(denied, "approve")).ok, false);
+  await assertNoMutationSince(deniedMark, "host denial and wrong CLI digest");
+  const fields: [string, (job: Json) => void][] = [
+    ["operation kind", (job) => { job.kind = "rollback"; }],
+    ["request timestamp", (job) => { job.requestedAt = new Date(Date.parse(job.requestedAt) + 1).toISOString(); }],
+    ["target version", (job) => { job.targetVersion = "0.1.9"; }],
+    ["signing key", (job) => { job.manifestKeyId = "different-signer"; }],
+    ["schedule", (job) => { job.scheduledFor = new Date(Date.now() + 60_000).toISOString(); }],
+    ["automatic rollback", (job) => { job.automaticRollback = !job.automaticRollback; }],
+    ["manifest payload", (job) => { job.approval.descriptor.release.notes.summary = "changed after approval"; }],
+    ["expiry", (job) => { job.approval.descriptor.expiresAt = new Date(Date.parse(job.approval.descriptor.expiresAt) + 1000).toISOString(); }],
+    ["cross-installation", (job) => { job.approval.descriptor.installationId = "00000000-0000-4000-8000-000000000001"; }]
+  ];
+  for (const [name, edit] of fields) {
+    const requested = await control("/v1/jobs", { version: candidateVersion, automaticRollback: true });
+    const checkpoint = await mutationCheckpoint(); child!.kill("SIGSTOP");
+    try {
+      await approveOnHost(requested);
+      assert.equal((await cliDecision(requested, "approve")).ok, false, "Duplicate approval cannot replace the first decision");
+      await editJob(requested.id, edit);
+    } finally { child!.kill("SIGCONT"); }
+    const rejected = await waitTerminal(requested.id); assert.equal(rejected.phase, "failed", rejected.message);
+    assert.match(rejected.message, /approval|digest|request|installation|binding/i);
+    assert.equal(await approvalFile("consumed", requested.id), null);
+    await assertNoMutationSince(checkpoint, `host approval binds ${name}`);
+  }
+  for (const mode of ["decision job ID", "signed feed replacement", "installed source identity"] as const) {
+    const requested = await control("/v1/jobs", { version: candidateVersion }); const checkpoint = await mutationCheckpoint();
+    const identityPath = join(stateDir, "identity.json"); const originalIdentity = await readFile(identityPath);
+    child!.kill("SIGSTOP");
+    try {
+      await approveOnHost(requested);
+      if (mode === "decision job ID") {
+        const decision = (await approvalFile("decisions", requested.id))!; decision.jobId += "_different";
+        await writeFile(join(stateDir, "host-approvals/decisions", `${requested.id}.json`), JSON.stringify(decision));
+      } else if (mode === "signed feed replacement") feed = signed({ ...candidate, notes: { ...candidate.notes, summary: "signed but changed after host approval" } });
+      else await writeFile(identityPath, JSON.stringify({ ...JSON.parse(originalIdentity.toString()), sourceRevision: "f".repeat(40) }));
+    } finally { child!.kill("SIGCONT"); }
+    try {
+      const rejected = await waitTerminal(requested.id); assert.equal(rejected.phase, "failed", rejected.message);
+      assert.match(rejected.message, /decision|request|identity|signed|approval|signing/i);
+      assert.equal(await approvalFile("consumed", requested.id), null);
+      await assertNoMutationSince(checkpoint, `host approval rejects ${mode}`);
+    } finally { feed = signed(candidate); await writeFile(identityPath, originalIdentity); }
+  }
+  const expiring = await control("/v1/jobs", { version: candidateVersion }); const expiryMark = await mutationCheckpoint();
+  child!.kill("SIGSTOP"); await approveOnHost(expiring);
+  await writeFile(join(directory, "clock-offset-ms"), String(Date.parse(expiring.approval.descriptor.expiresAt) - Date.now() + 1000)); child!.kill("SIGCONT");
+  try { assert.equal((await waitTerminal(expiring.id)).phase, "expired"); }
+  finally { await writeFile(join(directory, "clock-offset-ms"), "0"); }
+  assert.equal(await approvalFile("consumed", expiring.id), null);
+  assert.equal((await cliDecision(expiring, "approve")).ok, false);
+  await assertNoMutationSince(expiryMark, "approval expiry before claim");
+}
+async function verifyHeldProbeRevalidation(mode: "cancel" | "expire"): Promise<void> {
+  const requested = await control("/v1/jobs", { version: candidateVersion }); const checkpoint = await mutationCheckpoint();
+  for (const file of ["probe-ready", "probe-released"]) await rm(join(directory, file), { force: true });
+  await writeFile(join(directory, "hold-probe"), "hold actual read-only Compose probe");
+  await approveOnHost(requested);
+  try {
+    await until(async () => { try { await readFile(join(directory, "probe-ready")); return true; } catch { return false; } }, 90_000);
+    if (mode === "cancel") await control(`/v1/jobs/${requested.id}/cancel`);
+    else await writeFile(join(directory, "clock-offset-ms"), String(Date.parse(requested.approval.descriptor.expiresAt) - Date.now() + 1000));
+    await rm(join(directory, "hold-probe"));
+    const terminal = await waitTerminal(requested.id); assert.equal(terminal.phase, mode === "cancel" ? "cancelled" : "expired");
+    await delay(1000); assert.equal(await approvalFile("consumed", requested.id), null);
+    await assertNoMutationSince(checkpoint, `${mode} while actual preflight is in flight`);
+  } finally { await rm(join(directory, "hold-probe"), { force: true }); await writeFile(join(directory, "clock-offset-ms"), "0"); }
+}
+async function verifyApprovalClaimCrash(boundary: "before-consumption-link" | "consumed-before-ledger"): Promise<Json> {
+  const requested = await control("/v1/jobs", { version: candidateVersion }); const checkpoint = await mutationCheckpoint();
+  await rm(join(directory, "approval-fault-ready.json"), { force: true });
+  await writeFile(join(directory, "approval-fault.json"), JSON.stringify({ boundary, jobId: requested.id }));
+  await writeFile(join(directory, "approval-fault-hold"), "hold actual filesystem commit boundary");
+  await approveOnHost(requested);
+  await until(async () => { try { return JSON.parse(await readFile(join(directory, "approval-fault-ready.json"), "utf8")).jobId === requested.id; } catch { return false; } }, 90_000);
+  const receipt = JSON.parse(await readFile(join(directory, "approval-fault-ready.json"), "utf8")); assert.equal(receipt.boundary, boundary);
+  await killUpdater();
+  assert.equal(Boolean(await approvalFile("consumed", requested.id)), boundary === "consumed-before-ledger");
+  await rm(join(directory, "approval-fault-hold")); await rm(join(directory, "approval-fault.json"));
+  await startUpdater();
+  const recovered = (await status()).jobs.find((job: Json) => job.id === requested.id);
+  if (boundary === "before-consumption-link") {
+    assert.equal(recovered.phase, "awaiting-approval");
+    await control(`/v1/jobs/${requested.id}/cancel`);
+  } else {
+    assert.equal(recovered.phase, "needs-attention"); assert.match(recovered.message, /consum|interrupted/i);
+    assert.equal((await cliDecision(recovered, "approve")).ok, false);
+  }
+  await delay(1000); await assertNoMutationSince(checkpoint, `SIGKILL at ${boundary}`);
+  record("approval claim crash receipt", { boundary, receipt, recoveredPhase: recovered.phase, noReplay: true });
+  return recovered;
+}
+async function verifyDecisionReplay(previous: Json, source: "decisions" | "consumed"): Promise<void> {
+  const requested = await control("/v1/jobs", { version: candidateVersion }); const checkpoint = await mutationCheckpoint();
+  const copied = await approvalFile(source, previous.id); assert.ok(copied);
+  await writeFile(join(stateDir, "host-approvals/decisions", `${requested.id}.json`), JSON.stringify(copied), { mode: 0o600 });
+  const rejected = await waitTerminal(requested.id); assert.equal(rejected.phase, "failed"); assert.match(rejected.message, /decision|request/i);
+  assert.equal(await approvalFile("consumed", requested.id), null);
+  await assertNoMutationSince(checkpoint, `replayed ${source} approval rejected`);
+}
+async function verifyManualApprovalBindings(point: Json): Promise<void> {
+  for (const mode of ["timestamp", "receipt", "request-only"] as const) {
+    const requested = await control("/v1/rollback", { recoveryPointId: point.id, confirmDataLossAfter: point.createdAt });
+    assert.equal(requested.phase, "awaiting-approval"); const checkpoint = await mutationCheckpoint();
+    const receiptPath = join(dirname(point.configurationPath), "recovery-receipt.json"); const receipt = await readFile(receiptPath);
+    if (mode === "request-only") { await delay(31_000); await control(`/v1/jobs/${requested.id}/cancel`); }
+    else {
+      child!.kill("SIGSTOP");
+      try {
+        await approveOnHost(requested);
+        if (mode === "timestamp") await editJob(requested.id, (job) => { job.approval.descriptor.confirmDataLossAfter = new Date(Date.parse(point.createdAt) + 1).toISOString(); });
+        else await writeFile(receiptPath, Buffer.concat([receipt, Buffer.from("\n")]));
+      } finally { child!.kill("SIGCONT"); }
+      try { assert.equal((await waitTerminal(requested.id)).phase, "failed"); }
+      finally { await writeFile(receiptPath, receipt); }
+    }
+    assert.equal(await approvalFile("consumed", requested.id), null);
+    await assertNoMutationSince(checkpoint, `manual restore host authority ${mode}`);
+  }
+}
+
+async function approveOnHost(job: Json): Promise<void> {
+  assert.equal(job.phase, "awaiting-approval");
+  assert.match(job.approval?.requestDigest ?? "", /^[a-f0-9]{64}$/);
+  const args = ["--require", join(directory, "approval-faults.cjs"), join(root, "apps/updater/dist/approval.js"), "approve", "--state-dir", stateDir, "--job-id", job.id, "--request-digest", job.approval.requestDigest];
+  const approval = await executeNode(args, updaterEnvironment, 30_000);
+  entries.push({ at: new Date().toISOString(), name: "host CLI approves exact operation", jobId: job.id, requestDigest: job.approval.requestDigest, code: approval.code, output: clean(approval.output) });
+  assert.equal(approval.ok, true, clean(approval.output));
+}
+async function approvedControl(path: string, body: Json): Promise<Json> {
+  const requested = await control(path, body);
+  await approveOnHost(requested);
+  return requested;
+}
 async function startUpdater(): Promise<void> {
   updaterEnvironment = { ...baseEnv, PATH: `${join(directory, "bin")}:${process.env.PATH}`, PORT: String(updaterPort), HOST: "0.0.0.0", FORGETBASE_INSTALLATION_MODE: "managed", FORGETBASE_UPDATES_ENABLED: "true", FORGETBASE_UPDATE_BUNDLE_DIR: directory, FORGETBASE_UPDATE_COMPOSE_FILES: "compose.managed.yaml", FORGETBASE_UPDATER_STATE_DIR: stateDir, FORGETBASE_UPDATE_COMPOSE_PROJECT_NAME: project, FORGETBASE_UPDATE_PUBLIC_KEY_ID: keyId, FORGETBASE_UPDATE_PUBLIC_KEY_FILE: join(directory, "public-key.pem"), FORGETBASE_UPDATE_FEED_URL: `http://127.0.0.1:${feedPort}/manifest`, FORGETBASE_UPDATE_ALLOW_LOCAL_HTTP: "true", FORGETBASE_UPDATE_ALLOWED_REGISTRIES: registryPrefix, FORGETBASE_UPDATE_API_HEALTH_URL: `http://127.0.0.1:${healthPort}/health`, FORGETBASE_UPDATE_WEB_HEALTH_URL: `http://${host}:${webPort}/`, FORGETBASE_UPDATE_MINIMUM_FREE_BYTES: "1" };
-  child = spawn(process.execPath, ["--expose-gc", "--require", join(directory, "gc-stress.cjs"), join(root, "apps/updater/dist/index.js")], { cwd: directory, env: updaterEnvironment, shell: false, stdio: ["ignore", "pipe", "pipe"] });
+  child = spawn(process.execPath, ["--expose-gc", "--require", join(directory, "gc-stress.cjs"), "--require", join(directory, "approval-faults.cjs"), join(root, "apps/updater/dist/index.js")], { cwd: directory, env: updaterEnvironment, shell: false, stdio: ["ignore", "pipe", "pipe"] });
   let log = "";
   child.stdout?.on("data", (chunk) => { log = (log + clean(chunk.toString())).slice(-24_000); });
   child.stderr?.on("data", (chunk) => { log = (log + clean(chunk.toString())).slice(-24_000); });
@@ -450,8 +692,8 @@ async function duplicateUpdaterMustFail(): Promise<void> {
   record("duplicate updater process rejected", { rejected: true, existingServiceHealthy: true, changedModeRejected: true });
 }
 async function killUpdater(): Promise<void> { if (!child || child.exitCode !== null || child.signalCode !== null) return; const current = child; current.kill("SIGKILL"); await new Promise<void>((done) => current.once("exit", () => done())); child = undefined; }
-async function waitPhase(id: string, phase: string): Promise<Json> { let job: Json = {}; await until(async () => { job = (await status()).jobs.find((entry: Json) => entry.id === id); if (job) rememberPhase(job); if (["failed", "needs-attention", "rolled-back", "completed"].includes(job?.phase) && job.phase !== phase) throw new Error(`Job reached ${job.phase} instead of ${phase}: ${job.message}`); return job?.phase === phase; }, 10 * 60_000); return job; }
-async function waitTerminal(id: string): Promise<Json> { let job: Json = {}; await until(async () => { job = (await status()).jobs.find((entry: Json) => entry.id === id); if (job) rememberPhase(job); return ["failed", "needs-attention", "rolled-back", "completed", "cancelled"].includes(job?.phase); }, 10 * 60_000); return job; }
+async function waitPhase(id: string, phase: string): Promise<Json> { let job: Json = {}; await until(async () => { job = (await status()).jobs.find((entry: Json) => entry.id === id); if (job) rememberPhase(job); if (["failed", "needs-attention", "rolled-back", "completed", "denied", "expired"].includes(job?.phase) && job.phase !== phase) throw new Error(`Job reached ${job.phase} instead of ${phase}: ${job.message}`); return job?.phase === phase; }, 10 * 60_000); return job; }
+async function waitTerminal(id: string): Promise<Json> { let job: Json = {}; await until(async () => { job = (await status()).jobs.find((entry: Json) => entry.id === id); if (job) rememberPhase(job); return ["failed", "needs-attention", "rolled-back", "completed", "cancelled", "denied", "expired"].includes(job?.phase); }, 10 * 60_000); return job; }
 function rememberPhase(job: Json): void { if (!phaseHistory.some((entry) => entry.id === job.id && entry.phase === job.phase)) phaseHistory.push({ id: job.id, phase: job.phase, writesReopened: job.writesReopened, at: new Date().toISOString() }); }
 async function verifyFences(): Promise<void> {
   await waitUrl(`${api}/health`, 120_000);

@@ -7,6 +7,7 @@ import {
 } from "@forgetbase/schema";
 import { buildReleaseEnvironment } from "./executor.js";
 import { validateManifestImages, verifySignedManifest } from "./manifest.js";
+import { HostApprovalAuthority } from "./approval.js";
 
 export interface InitializeManagedInstallationInput {
   envelope: unknown;
@@ -47,6 +48,7 @@ export async function initializeManagedInstallation(
   });
 
   await mkdir(stateDir, { recursive: true, mode: 0o700 });
+  await new HostApprovalAuthority(stateDir).initialize();
   const created: string[] = [];
 
   try {

@@ -65,7 +65,7 @@ export function buildUpdaterServer(options: BuildUpdaterServerOptions): FastifyI
     server.log.error({ err: error, code: "updater_request_failed" }, "Updater request failed");
     const message = error instanceof Error ? error.message : String(error);
     const name = error instanceof Error ? error.name : "Error";
-    const statusCode = /preflight|active|unavailable|confirmation|managed installation|scheduledFor/i.test(message)
+    const statusCode = /preflight|active|unavailable|confirmation|managed installation|scheduledFor|approval|request.*large|ledger.*exceeds/i.test(message)
       ? 409
       : name === "ZodError" ? 400 : 500;
     return reply.code(statusCode).send({ error: "updater_request_failed", message });

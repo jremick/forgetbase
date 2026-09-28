@@ -202,6 +202,7 @@ import { HttpUpdateControlClient, type UpdateControlService } from "@forgetbase/
   defaultPiiRedactionPolicy,
   defaultSecretReferencePolicy,
   isSecretEnvVarAllowed,
+  isReservedProviderSecretEnvVar,
   principalHasScope,
   purgeTelemetryForRetentionPolicy,
   roleCanManagePermissions,
@@ -4461,7 +4462,7 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
     if (!isSecretEnvVarAllowed(secretReferencePolicy, parsed.data.apiKeyEnvVar)) {
       return reply.code(400).send({
         error: "secret_reference_rejected",
-        message: "Provider config env-var reference is not allowed by tenant secret-reference policy.",
+        message: "Provider config env-var reference is not allowed by deployment or tenant secret-reference policy.",
         field: "apiKeyEnvVar"
       });
     }
@@ -4544,7 +4545,7 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
     if (!isSecretEnvVarAllowed(secretReferencePolicy, parsed.data.clientSecretEnvVar)) {
       return reply.code(400).send({
         error: "secret_reference_rejected",
-        message: "Auth provider config env-var reference is not allowed by tenant secret-reference policy.",
+        message: "Auth provider config env-var reference is not allowed by deployment or tenant secret-reference policy.",
         field: "clientSecretEnvVar"
       });
     }
@@ -6741,11 +6742,17 @@ type DeploymentSecretResolution =
   }
   | {
     ok: false;
-    reason: "secret_env_var_unset" | "secret_file_path_invalid" | "secret_file_unreadable" | "secret_file_empty";
+    reason: "secret_reference_rejected" | "secret_env_var_unset" | "secret_file_path_invalid" | "secret_file_unreadable" | "secret_file_empty";
     fileEnvVar: string;
   };
 
 async function resolveDeploymentSecret(envVarName: string): Promise<DeploymentSecretResolution> {
+  // Revalidate stored configurations before reading either an environment value
+  // or its file fallback. Tenant policy cannot grant access to host credentials.
+  if (isReservedProviderSecretEnvVar(envVarName)) {
+    return { ok: false, reason: "secret_reference_rejected", fileEnvVar: `${envVarName}_FILE` };
+  }
+
   const directValue = process.env[envVarName];
 
   if (directValue) {
@@ -6808,6 +6815,8 @@ function providerApiKeyResolutionReason(resolution: DeploymentSecretResolution):
   }
 
   switch (resolution.reason) {
+    case "secret_reference_rejected":
+      return "api_key_secret_reference_rejected";
     case "secret_file_path_invalid":
       return "api_key_secret_file_path_invalid";
     case "secret_file_unreadable":
@@ -6825,6 +6834,8 @@ function oidcClientSecretResolutionError(resolution: DeploymentSecretResolution)
   }
 
   switch (resolution.reason) {
+    case "secret_reference_rejected":
+      return new OidcLoginError("oidc_client_secret_reference_rejected", 503, "Configured OIDC client secret reference is reserved for host control.");
     case "secret_file_path_invalid":
       return new OidcLoginError("oidc_client_secret_file_path_invalid", 503, "Configured OIDC client secret file path is invalid.");
     case "secret_file_unreadable":

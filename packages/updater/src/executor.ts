@@ -1,8 +1,12 @@
 import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
 import { createHash } from "node:crypto";
+import { constants } from "node:fs";
 import {
+  access,
   copyFile,
+  lstat,
   mkdir,
+  open,
   readFile,
   realpath,
   rm,
@@ -21,6 +25,7 @@ import {
 } from "@forgetbase/schema";
 import { durableWriteFile } from "./store.js";
 import type { UpdateExecutor, UpdateSystemProbe } from "./manager.js";
+import { approvalDigest } from "./approval.js";
 
 const maxCommandOutputBytes = 32_768;
 
@@ -63,7 +68,10 @@ export class ManagedComposeExecutor implements UpdateExecutor {
   }
 
   async probe(manifest: ReleaseManifest): Promise<UpdateSystemProbe> {
-    await this.ensureLayout();
+    // Discovery/preflight must not create directories, files or containers.
+    await stat(this.currentEnvPath);
+    const realBundle = await realpath(this.bundleDir);
+    for (const file of this.composeFiles) assertWithin(realBundle, await realpath(file), "Compose file");
     const details: Record<string, string> = {};
     const [docker, compose, configuration, disk, backupWritable, attachmentSnapshotAvailable] = await Promise.all([
       this.tryDocker(["version", "--format", "{{.Server.Version}}"]),
@@ -289,9 +297,15 @@ export class ManagedComposeExecutor implements UpdateExecutor {
 
   async refreshIdentity(): Promise<ProductIdentity> {
     try {
-      return productIdentitySchema.parse(JSON.parse(await readFile(this.identityPath, "utf8")));
+      const installed = productIdentitySchema.parse(JSON.parse(await readFile(this.identityPath, "utf8")));
+      // Host runtime replacement does not rewrite the installed application.
+      // Keep its fresh identity, using metadata from this running updater.
+      return productIdentitySchema.parse({ ...installed, updaterVersion: this.options.currentIdentity.updaterVersion });
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return this.options.currentIdentity;
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        if (this.options.currentIdentity.installationMode === "managed") throw new Error("Managed installation identity is missing");
+        return this.options.currentIdentity;
+      }
       throw error;
     }
   }
@@ -428,12 +442,13 @@ export class ManagedComposeExecutor implements UpdateExecutor {
     await this.runDocker(["rm", "--force", id]);
   }
 
-  private async verifyRecoveryPoint(point: RecoveryPoint): Promise<void> {
+  async recoveryReceiptDigest(point: RecoveryPoint): Promise<string> {
     if (!point.configurationPath || !point.backupPath || !point.attachmentSnapshotId) throw new Error("Incomplete recovery point");
     const root = await realpath(this.recoveryDir);
     const expectedDirectory = resolve(this.recoveryDir, point.id);
     assertWithin(this.recoveryDir, expectedDirectory, "Recovery directory");
     const directory = await realpath(expectedDirectory);
+    if ((await lstat(expectedDirectory)).isSymbolicLink()) throw new Error("Recovery directory must not be a symlink");
     assertWithin(root, directory, "Recovery directory");
     if (directory === root) throw new Error("Recovery point cannot be the recovery root");
     for (const [path, name] of [[point.configurationPath, "release.env"], [point.backupPath, "backup-set/database.dump"],
@@ -442,14 +457,28 @@ export class ManagedComposeExecutor implements UpdateExecutor {
         throw new Error("Recovery artifact must use its canonical verified path");
       }
     }
-    const receipt = JSON.parse(await readFile(join(directory, "recovery-receipt.json"), "utf8")) as { point: RecoveryPoint; configurationSha256: string; manifestSha256: string };
-    if (receipt.point.id !== point.id || receipt.point.version !== point.version || receipt.point.sourceRevision !== point.sourceRevision ||
-        receipt.point.databaseSchemaVersion !== point.databaseSchemaVersion || receipt.point.createdAt !== point.createdAt ||
-        receipt.configurationSha256 !== createHash("sha256").update(await readFile(point.configurationPath)).digest("hex") ||
-        receipt.manifestSha256 !== createHash("sha256").update(await readFile(join(dirname(point.backupPath), "manifest.json"))).digest("hex")) {
+    const receiptBytes = await boundedRecoveryFile(join(directory, "recovery-receipt.json"));
+    const manifestBytes = await boundedRecoveryFile(join(dirname(point.backupPath), "manifest.json"));
+    const receipt = JSON.parse(receiptBytes.toString("utf8")) as { point: RecoveryPoint; configurationSha256: string; manifestSha256: string };
+    if (approvalDigest(receipt.point) !== approvalDigest(point) ||
+        receipt.configurationSha256 !== await recoveryFileHash(point.configurationPath) ||
+        receipt.manifestSha256 !== createHash("sha256").update(manifestBytes).digest("hex")) {
       throw new Error("Recovery receipt mismatch");
     }
-    await this.runScript("scripts/verify-backup-set.sh", [dirname(point.backupPath)], this.composeEnvironment());
+    const manifest = JSON.parse(manifestBytes.toString("utf8")) as {
+      format: string; consistency: string; files: { database: { path: string; sha256: string; bytes: number }; attachments: { path: string; sha256: string; bytes: number } }
+    };
+    if (manifest.format !== "forgetbase-backup-set-v1" || manifest.consistency !== "writers-stopped") throw new Error("Invalid recovery backup manifest");
+    for (const [path, entry, name] of [[point.backupPath, manifest.files.database, "database.dump"], [point.attachmentSnapshotId, manifest.files.attachments, "attachments.tar"]] as const) {
+      if (entry.path !== name || entry.bytes !== (await stat(path)).size || entry.sha256 !== await recoveryFileHash(path)) throw new Error("Recovery artifact checksum mismatch");
+    }
+    return createHash("sha256").update(receiptBytes).digest("hex");
+  }
+
+  private async verifyRecoveryPoint(point: RecoveryPoint): Promise<void> {
+    await this.recoveryReceiptDigest(point);
+    // Full restore verification is mutating and is only called after approval.
+    await this.runScript("scripts/verify-backup-set.sh", [dirname(point.backupPath!)], this.composeEnvironment());
   }
 
   private async checkUrl(url: string, requireVersion: boolean): Promise<boolean> {
@@ -465,10 +494,9 @@ export class ManagedComposeExecutor implements UpdateExecutor {
   }
 
   private async checkBackupWritable(): Promise<boolean> {
-    const probePath = join(this.recoveryDir, `.write-probe-${process.pid}`);
     try {
-      await writeFile(probePath, "probe", { encoding: "utf8", mode: 0o600 });
-      await rm(probePath);
+      await access(this.stateDir, constants.W_OK);
+      await access(this.recoveryDir, constants.W_OK).catch((error: NodeJS.ErrnoException) => { if (error.code !== "ENOENT") throw error; });
       return true;
     } catch {
       return false;
@@ -644,4 +672,28 @@ function assertWithin(root: string, target: string, label: string): void {
 
 function safeTimestamp(date: Date): string {
   return date.toISOString().replace(/[:.]/g, "-");
+}
+
+async function boundedRecoveryFile(path: string): Promise<Buffer> {
+  const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+  try {
+    const info = await file.stat();
+    if (!info.isFile() || info.size > 1024 * 1024) throw new Error("Invalid or oversized recovery receipt file");
+    return await file.readFile();
+  } finally { await file.close(); }
+}
+
+async function recoveryFileHash(path: string): Promise<string> {
+  const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+  try {
+    const info = await file.stat();
+    if (!info.isFile()) throw new Error("Recovery artifact must be a regular file");
+    const hash = createHash("sha256"); const buffer = Buffer.alloc(1024 * 1024);
+    for (;;) {
+      const { bytesRead } = await file.read(buffer);
+      if (!bytesRead) break;
+      hash.update(buffer.subarray(0, bytesRead));
+    }
+    return hash.digest("hex");
+  } finally { await file.close(); }
 }

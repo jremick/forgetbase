@@ -2,7 +2,7 @@ import { generateKeyPairSync, sign } from "node:crypto";
 import { mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   productIdentitySchema, recoveryPointSchema, releaseManifestSchema, updateJobSchema,
   type ProductIdentity, type RecoveryPoint, type ReleaseManifest, type UpdateJob, type UpdateJobPhase
@@ -10,6 +10,7 @@ import {
 import { canonicalJson } from "./manifest.js";
 import { UpdateManager, type UpdateExecutor, type UpdateManagerOptions } from "./manager.js";
 import { emptyUpdateState, JsonUpdateStore } from "./store.js";
+import { HostApprovalAuthority } from "./approval.js";
 
 const timestamp = "2026-09-28T00:00:00.000Z";
 const future = "2026-09-29T00:00:00.000Z";
@@ -18,12 +19,13 @@ const point = recoveryPointSchema.parse({ id: "recovery_synthetic", createdAt: t
 
 
 const directories: string[] = [];
-afterEach(async () => { await Promise.all(directories.splice(0).map((path) => rm(path, { recursive: true, force: true }))); });
+beforeEach(() => { vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(new Date(timestamp)); });
+afterEach(async () => { vi.useRealTimers(); await Promise.all(directories.splice(0).map((path) => rm(path, { recursive: true, force: true }))); });
 
 describe("durable interrupted update recovery", () => {
   it.each<UpdateJobPhase>(["queued", "preflight", "staging", "maintenance", "backing-up", "migrating", "starting", "verifying", "rolling-back"])(
     "reconciles interrupted %s without replay and permits explicit operator recovery", async (phase) => {
-      const { manager, store, executor, statePath } = await fixture();
+      const { manager, store, executor, statePath, authority } = await fixture();
       const interrupted = job({ phase, recoveryPointId: point.id, startedAt: phase === "queued" ? null : timestamp });
       await store.write({ ...await store.read(), jobs: [interrupted], recoveryPoints: [point] });
       await manager.reconcileInterruptedJobs();
@@ -39,12 +41,13 @@ describe("durable interrupted update recovery", () => {
       await manager.reconcileInterruptedJobs();
       expect(await readFile(statePath, "utf8")).toBe(reconciled);
       const recovery = await manager.rollback({ recoveryPointId: point.id, confirmDataLossAfter: point.createdAt });
+      await approveRequest(authority, manager, recovery);
       expect((await terminal(manager, recovery.id)).phase).toBe("rolled-back");
       expect(executor.effects.filter((effect) => effect === "restore")).toHaveLength(1);
     }
   );
 
-  it("retains one unstarted schedule, then re-verifies it at its approved time", async () => {
+  it("quarantines a legacy schedule without host approval before it can launch", async () => {
     let now = new Date(timestamp);
     const manifest = release();
     const feed = signedFeed(manifest);
@@ -56,9 +59,9 @@ describe("durable interrupted update recovery", () => {
     expect(feed.calls()).toBe(0);
     now = new Date("2026-09-28T01:00:01.000Z");
     await manager.tick();
-    expect((await terminal(manager, "update_interrupted")).phase).toBe("completed");
-    expect(feed.calls()).toBe(1);
-    expect(executor.effects.filter((effect) => effect === "migrate")).toHaveLength(1);
+    expect((await terminal(manager, "update_interrupted")).phase).toBe("needs-attention");
+    expect(feed.calls()).toBe(0);
+    expect(executor.effects).toEqual([]);
   });
 
   it("quarantines conflicting persisted schedules instead of launching either", async () => {
@@ -69,47 +72,63 @@ describe("durable interrupted update recovery", () => {
     expect((await manager.status()).jobs.map((entry) => entry.phase)).toEqual(["needs-attention", "needs-attention"]);
     expect(executor.effects).toEqual([]);
   });
+
+  it("retains an approved unstarted schedule across restart and verifies the signed release when due", async () => {
+    let now = new Date(timestamp);
+    const feed = signedFeed(release());
+    const { manager, store, executor, authority } = await fixture({ ...feed.options, now: () => now });
+    const requested = await manager.apply({ version: "0.2.0", scheduledFor: "2026-09-28T01:00:00.000Z" });
+    await approveRequest(authority, manager, requested, false);
+    const restarted = new UpdateManager({ identity, store, executor, allowedRegistryPrefixes: ["registry.example.test/forgetbase/"], ...feed.options, now: () => now });
+    await restarted.reconcileInterruptedJobs();
+    await restarted.tick();
+    expect(executor.effects).toEqual([]);
+    const checksBeforeDue = feed.calls();
+    now = new Date("2026-09-28T01:00:01.000Z");
+    await restarted.tick();
+    expect((await terminal(restarted, requested.id)).phase).toBe("completed");
+    expect(feed.calls()).toBeGreaterThan(checksBeforeDue);
+    expect(executor.effects.filter((effect) => effect === "migrate")).toHaveLength(1);
+  });
 });
 
 describe("single-operation admission and cancellation", () => {
-  it("admits only one of simultaneous apply requests after both preflights pass", async () => {
-    const { manager, executor } = await fixture();
+  it("admits only one of simultaneous apply requests after both signed feeds verify", async () => {
     const gate = deferred();
-    executor.probeGate = gate.promise;
+    const feed = signedFeed(release(), () => gate.promise);
+    const { manager, executor } = await fixture(feed.options);
     const requests = [manager.apply({ version: "0.2.0", scheduledFor: future }), manager.apply({ version: "0.2.0", scheduledFor: future })];
-    await until(() => executor.probes === 2);
+    await until(() => feed.calls() === 2);
     gate.resolve();
     const results = await Promise.allSettled(requests);
     expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
     expect((await manager.status()).jobs).toHaveLength(1);
+    expect(executor.effects).toEqual([]);
   });
 
-  it("admits only one competing rollback while its executor is paused", async () => {
-    const { manager, store, executor } = await fixture();
+  it("admits only one concurrent restore request and executes only its approved job", async () => {
+    const { manager, store, executor, authority } = await fixture();
     await store.write({ ...await store.read(), recoveryPoints: [point] });
-    const gate = deferred();
-    executor.maintenanceGate = gate.promise;
     const results = await Promise.allSettled([1, 2].map(() => manager.rollback({ recoveryPointId: point.id, confirmDataLossAfter: point.createdAt })));
-    gate.resolve();
+    expect(executor.effects).toEqual([]);
+    for (const result of results) if (result.status === "fulfilled") await approveRequest(authority, manager, result.value);
     for (const result of results) if (result.status === "fulfilled") await terminal(manager, result.value.id);
     expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
     expect(executor.effects.filter((effect) => effect === "restore")).toHaveLength(1);
   });
 
-  it("rejects apply when rollback was admitted during apply preflight", async () => {
-    const { manager, store, executor } = await fixture();
+  it("rejects apply when rollback was admitted during apply release verification", async () => {
+    const feedGate = deferred();
+    const feed = signedFeed(release(), () => feedGate.promise);
+    const { manager, store, authority } = await fixture(feed.options);
     await store.write({ ...await store.read(), recoveryPoints: [point] });
-    const probe = deferred();
-    const maintenance = deferred();
-    executor.probeGate = probe.promise;
-    executor.maintenanceGate = maintenance.promise;
     const applying = manager.apply({ version: "0.2.0", scheduledFor: future });
     const applyingResult = Promise.allSettled([applying]);
-    await until(() => executor.probes === 1);
+    await until(() => feed.calls() === 1);
     const rollingBack = await manager.rollback({ recoveryPointId: point.id, confirmDataLossAfter: point.createdAt });
-    probe.resolve();
+    feedGate.resolve();
     const results = await applyingResult;
-    maintenance.resolve();
+    await approveRequest(authority, manager, rollingBack);
     await terminal(manager, rollingBack.id);
     expect(results[0]?.status).toBe("rejected");
     expect((await manager.status()).jobs).toHaveLength(1);
@@ -117,12 +136,17 @@ describe("single-operation admission and cancellation", () => {
 
   it.each([false, true])("does not launch or overwrite cancellation while feed verification finishes (fails=%s)", async (failFeed) => {
     const gate = deferred();
-    const feed = signedFeed(release(), async () => { await gate.promise; if (failFeed) throw new Error("feed unavailable"); });
-    const { manager, store, executor } = await fixture(feed.options);
-    await store.write({ ...await store.read(), jobs: [job({ phase: "scheduled", scheduledFor: timestamp })] });
+    let blockFeed = false;
+    let now = new Date(timestamp);
+    const feed = signedFeed(release(), async () => { if (blockFeed) { await gate.promise; if (failFeed) throw new Error("feed unavailable"); } });
+    const { manager, executor, authority } = await fixture({ ...feed.options, now: () => now });
+    const requested = await manager.apply({ version: "0.2.0", scheduledFor: "2026-09-28T01:00:00.000Z" });
+    await approveRequest(authority, manager, requested, false);
+    blockFeed = true;
+    now = new Date("2026-09-28T01:00:01.000Z");
     const ticking = manager.tick();
-    await until(() => feed.calls() === 1);
-    await manager.cancel("update_interrupted");
+    await until(() => feed.calls() === 2);
+    await manager.cancel(requested.id);
     gate.resolve();
     await ticking;
     await new Promise((resolve) => setTimeout(resolve, 30));
@@ -151,9 +175,10 @@ describe("write boundary and explicit recovery", () => {
   });
 
   it("resumes the current release when recovery verification fails, without migrating or publishing that point", async () => {
-    const { manager, store, executor } = await fixture();
+    const { manager, store, executor, authority } = await fixture();
     executor.recoveryVerified = false;
     const update = await manager.apply({ version: "0.2.0", automaticRollback: true });
+    await approveRequest(authority, manager, update);
     expect((await terminal(manager, update.id)).phase).toBe("failed");
     expect(executor.effects).toContain("resume");
     expect(executor.effects).not.toContain("migrate");
@@ -170,20 +195,22 @@ describe("write boundary and explicit recovery", () => {
   });
 
   it("persists the write boundary before rollback can reopen writers and preserves it on failure", async () => {
-    const { manager, store, executor } = await fixture();
+    const { manager, store, executor, authority } = await fixture();
     await store.write({ ...await store.read(), recoveryPoints: [point] });
     executor.beforeRestore = async () => {
       expect((await store.read()).jobs[0]?.writesReopened).toBe(true);
       throw new Error("proxy reopened but identity persistence failed");
     };
     const recovery = await manager.rollback({ recoveryPointId: point.id, confirmDataLossAfter: point.createdAt });
+    await approveRequest(authority, manager, recovery);
     expect(await terminal(manager, recovery.id)).toMatchObject({ phase: "needs-attention", writesReopened: true });
   });
 
   it("never restores the database when reopening succeeds partially then fails", async () => {
-    const { manager, executor } = await fixture();
+    const { manager, executor, authority } = await fixture();
     executor.failReopen = true;
     const update = await manager.apply({ version: "0.2.0", automaticRollback: true });
+    await approveRequest(authority, manager, update);
     expect(await terminal(manager, update.id)).toMatchObject({ phase: "needs-attention", writesReopened: true });
     expect(executor.effects).not.toContain("restore");
   });
@@ -202,7 +229,7 @@ describe("durable state file boundary", () => {
     const path = join(directory, "state.json");
     const store = new JsonUpdateStore(path);
     expect(await store.read()).toEqual(emptyUpdateState());
-    await writeFile(path, raw);
+    await writeFile(path, raw, { mode: 0o600 });
     await expect(store.read()).rejects.toThrow();
     expect(await readFile(path, "utf8")).toBe(raw);
   });
@@ -231,12 +258,22 @@ function release(): ReleaseManifest {
 
 async function directoryForTest() { const path = await mkdtemp(join(tmpdir(), "forgetbase-recovery-")); directories.push(path); return path; }
 async function fixture(overrides: Partial<UpdateManagerOptions> = {}) {
-  const statePath = join(await directoryForTest(), "state.json");
+  const directory = await directoryForTest();
+  const statePath = join(directory, "state.json");
   const store = new JsonUpdateStore(statePath);
   const executor = new RecordingExecutor();
-  const manager = new UpdateManager({ identity, store, executor, allowedRegistryPrefixes: ["registry.example.test/forgetbase/"], now: () => new Date(timestamp), ...overrides });
+  const feed = signedFeed(release());
+  const manager = new UpdateManager({ identity, store, executor, allowedRegistryPrefixes: ["registry.example.test/forgetbase/"], ...feed.options, now: () => new Date(timestamp), ...overrides });
   await store.write({ ...emptyUpdateState(), feedStatus: "available", availableUpdate: { checkedAt: timestamp, updateAvailable: true, reason: "synthetic", manifestKeyId: "synthetic", release: release() } });
-  return { manager, store, executor, statePath };
+  const authority = new HostApprovalAuthority(directory);
+  await authority.initialize();
+  return { manager, store, executor, statePath, authority };
+}
+async function approveRequest(authority: HostApprovalAuthority, manager: UpdateManager, request: UpdateJob, launch = true) {
+  expect(request.phase).toBe("awaiting-approval");
+  expect(request.approval?.requestDigest).toMatch(/^[a-f0-9]{64}$/);
+  await authority.decide(request, request.approval!.requestDigest, "approved");
+  if (launch) await manager.tick();
 }
 function deferred() { let resolve!: () => void; const promise = new Promise<void>((done) => { resolve = done; }); return { promise, resolve }; }
 async function until(predicate: () => boolean) { for (let attempt = 0; attempt < 300; attempt++) { if (predicate()) return; await new Promise((resolve) => setTimeout(resolve, 5)); } throw new Error("Timed out waiting for controlled interleaving"); }
@@ -251,13 +288,14 @@ function signedFeed(manifest: ReleaseManifest, wait?: () => Promise<void>) {
   return { calls: () => calls, options: { feedUrl: "https://updates.example.test/beta.json", publicKeys: new Map([["synthetic", publicKey.export({ type: "spki", format: "pem" }).toString()]]), fetchImplementation: async () => { calls++; await wait?.(); return new Response(JSON.stringify(envelope), { headers: { "content-type": "application/json" } }); } } };
 }
 class RecordingExecutor implements UpdateExecutor {
-  effects: string[] = []; probes = 0; probeGate?: Promise<void>; maintenanceGate?: Promise<void>; failReopen = false;
+  effects: string[] = []; failReopen = false;
   recoveryVerified = true;
   beforeRestore?: () => Promise<void>; currentIdentity: ProductIdentity = identity;
-  async probe() { this.probes++; await this.probeGate; return { healthy: true, dockerAvailable: true, composeAvailable: true, configurationValid: true, configurationDrift: false, backupWritable: true, freeBytes: 10000, requiredBytes: 100, attachmentSnapshotAvailable: true, details: {} }; }
+  async recoveryReceiptDigest() { return "b".repeat(64); }
+  async probe() { return { healthy: true, dockerAvailable: true, composeAvailable: true, configurationValid: true, configurationDrift: false, backupWritable: true, freeBytes: 10000, requiredBytes: 100, attachmentSnapshotAvailable: true, details: {} }; }
   async createRecoveryPoint() { this.effects.push("backup"); return { ...point, verified: this.recoveryVerified }; }
   async stage() { this.effects.push("stage"); }
-  async enterMaintenance() { this.effects.push("maintenance"); await this.maintenanceGate; }
+  async enterMaintenance() { this.effects.push("maintenance"); }
   async resumeCurrent() { this.effects.push("resume"); }
   async migrate() { this.effects.push("migrate"); }
   async startCandidate() { this.effects.push("start"); }

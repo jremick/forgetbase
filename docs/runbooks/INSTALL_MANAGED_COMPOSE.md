@@ -1,14 +1,16 @@
 # Managed Docker Compose Installation
 
-This runbook defines the installation boundary required for UI-driven ForgetBase updates.
+This runbook defines the installation boundary for app-requested, host-approved ForgetBase updates.
 
-Draft status: host-operator authorization is unresolved. Use this runbook only for isolated synthetic validation until the authorization model and complete update/recovery drill are verified. See [verification status](../VERSIONING_UPGRADES_VERIFICATION.md).
+Draft status: the host-approval implementation is under verification. Use this runbook only for isolated synthetic validation until the authorization and complete update/recovery checks pass. See [verification status](../VERSIONING_UPGRADES_VERIFICATION.md).
 
 ## Boundary
 
 - Managed releases use `compose.managed.yaml` and digest-pinned images from a signed release manifest.
 - The host-level updater runs as the same operating-system user that owns the ForgetBase Docker Compose project.
 - The API and web containers do not receive the Docker socket.
+- The host CLI owns approval. The API token can submit, inspect and cancel pending requests, but cannot approve them.
+- Never mount the updater state, approval directory or runtime into application containers. Never expose an approval HTTP endpoint.
 - Source-checkout installs can check for updates, but they cannot apply them through the UI.
 - Hosted installs report platform-managed maintenance and do not expose self-hosted update controls.
 
@@ -16,7 +18,7 @@ Draft status: host-operator authorization is unresolved. Use this runbook only f
 
 The updater is a Linux host process. It requires Node 26.10.0, pnpm 11.7.0, Docker with Compose, Bash, and util-linux `flock`. Keep its state on a local filesystem; shared NFS/SMB state is unsupported. A Linux runner on Docker Desktop can exercise the synthetic proof. Native macOS and Windows updater services are not supported by the current evidence.
 
-The service takes an OS lock before reading or changing managed state. Child commands retain the lock across controller death until they exit. On restart, an interrupted active job becomes **needs attention** and is not replayed automatically. Review the recovery point and current services before choosing recovery. A database restore always requires the recovery timestamp and explicit data-loss confirmation.
+The service takes an OS lock before reading or changing managed state. Child commands retain the lock across controller death until they exit. On restart, an interrupted operation whose approval was consumed becomes **needs attention** and is not replayed automatically. Pending requests and unconsumed approved schedules remain subject to their original expiry and binding checks. Review the recovery point and current services before choosing recovery. A manual restore requires the recovery timestamp, explicit data-loss confirmation and a new host approval. Automatic recovery can run only under the original update's approved policy before writes reopen.
 
 ## Required Configuration
 
@@ -65,9 +67,11 @@ npx --yes --package node@26.10.0 --package pnpm@11.7.0 -c 'pnpm release:managed-
 
 The trusted command first verifies `bundle-receipt.sig.json` against the canonical `bundle-receipt.json` payload with the configured Ed25519 key. It then checks exact coverage of every regular bundle file except those two receipt metadata files, rejects duplicate/traversal paths and symbolic links, and compares every SHA-256 hash. The selected manifest and every selected Compose file must be covered. The manifest must verify with the same trusted key, and all image references must use approved repository boundaries and exact digests.
 
-Only after these checks does the installer create `current-release.env`, `identity.json`, and the Compose drift receipt with mode `0600`. It fails if managed state already exists. It does not start containers, replace data, or create secrets. Unsigned prototype receipts are intentionally rejected; rebuild and sign them through the trusted release process below.
+Only after these checks does the installer provision the protected approval authority with a stable installation ID and create `current-release.env`, `identity.json`, and the Compose drift receipt with mode `0600`. It fails if managed release state already exists. It does not start containers, replace data, or create secrets. Unsigned prototype receipts are intentionally rejected; rebuild and sign them through the trusted release process below.
 
-Generate and store the updater token with the other deployment secrets. Use at least 32 random bytes. Give the API and host updater the same value without printing it into logs.
+This draft supports newly initialized managed installations. It does not provide an in-place conversion command for prototype state created before host approval existed. The managed service refuses to start without its provisioned authority; it never regenerates a missing installation ID. Do not delete existing state or rerun the new-installation command over it to bypass that check. A supported conversion procedure remains required before using this feature with such an installation.
+
+Generate and store the updater request token with the other deployment secrets. Use at least 32 random bytes. Give the API and host updater the same value without printing it into logs. The token cannot approve host changes. Configurable model and OIDC providers reject this reserved secret reference and its file-backed variants at admission and runtime; tenant policy cannot override that rejection.
 
 Start the initial Compose release with the verified environment file and deployment secrets available to the process:
 
@@ -127,17 +131,45 @@ Feed downloads are limited to 2 MiB, use HTTPS without redirects, and require Ed
 2. Open **Admin > Updates**.
 3. Select **Check for updates** and review the signature identity, release notes, risk, downtime, migration, and rollback mode.
 4. Run preflight and resolve every blocking failure.
-5. Choose apply now or a future UTC time, keep automatic rollback enabled unless a release-specific runbook says otherwise, and confirm the exact version.
-6. Leave the page open or return later. Job state survives API and database restarts.
-7. Verify the installed version and recovery point after completion.
+5. Choose an immediate request or a future maintenance time, keep automatic rollback enabled unless a release-specific runbook says otherwise, and confirm the exact version. The browser records the schedule in UTC.
+6. Submit the request. It stays **Awaiting host approval** and cannot stage images or change the installation.
+7. Inspect and approve the exact request on the host using the commands below. Leave the page open or return later; it reads durable status without resubmitting the request.
+8. Verify the installed version and recovery point after completion.
 
-Direct requests from an admin with an unlisted email receive `403`, and that principal does not see the Updates navigation item. This email check does not establish an independent host-operator identity under the existing account-management model.
+Direct requests from an admin with an unlisted email receive `403`, and that principal does not see the Updates navigation item. This email check does not establish independent host authority under the existing account-management model. Even an impersonated allowlisted principal or holder of the request token needs the separate host approval.
+
+## Approve Or Deny On The Host
+
+Run the CLI as the operating-system account that owns the updater state, from the protected runtime copy. The state directory and its `host-approvals` subtree must stay private to that account. The CLI derives the operation from the ledger; it does not accept an arbitrary manifest, image, backup path or command.
+
+```bash
+cd /opt/forgetbase/updater-runtime/0.2.0
+node apps/updater/dist/approval.js show \
+  --state-dir /var/lib/forgetbase/updater \
+  --job-id UPDATE_JOB_ID
+```
+
+Read the installation identity, source and target version, signed manifest identity, risk, schedule, expiry and automatic recovery option. For a restore, also check the recovery receipt and exact data-loss timestamp. Use the request digest shown by this host readback:
+
+```bash
+node apps/updater/dist/approval.js approve \
+  --state-dir /var/lib/forgetbase/updater \
+  --job-id UPDATE_JOB_ID \
+  --request-digest REQUEST_DIGEST_FROM_HOST_READBACK
+```
+
+Replace `approve` with `deny` to reject that exact request. The CLI publishes one protected decision; it does not take over the running service's lifetime lock. The service validates the decision under that lock and consumes approval durably before the first installation change. A changed request, manifest, recovery receipt, installation identity, schedule or expiry cannot reuse approval. There is no browser or HTTP approval route.
+
+Immediate requests expire 24 hours after submission. Scheduled requests expire one hour after the selected time. Host approval does not extend either deadline. The app can cancel an unstarted request, including an approved schedule. A cancelled, denied, expired or consumed request needs a new job and new host approval before another attempt. Do not edit the ledger or approval files to retry an interrupted operation.
+
+Approval covers only the exact request and its selected automatic recovery policy. Every manual restore, including recovery after an interrupted update, requires a new request, exact data-loss confirmation and separate host approval.
 
 ## Recovery
 
 The updater state directory is outside Postgres and contains:
 
 - the update job ledger
+- a stable installation identity, immutable approval requests and protected one-use decisions
 - current and candidate release receipts
 - restore-verified database and attachment recovery sets
 - configuration snapshots without secret values

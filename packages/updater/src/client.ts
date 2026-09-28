@@ -59,6 +59,7 @@ export class HttpUpdateControlClient implements UpdateControlService {
   }
 
   async apply(input: UpdateApplyInput): Promise<UpdateJob> {
+    await this.requireHostApprovalCapability();
     return updateJobSchema.parse(await this.request("v1/jobs", { method: "POST", body: JSON.stringify(input) }));
   }
 
@@ -68,7 +69,15 @@ export class HttpUpdateControlClient implements UpdateControlService {
   }
 
   async rollback(input: UpdateRollbackInput): Promise<UpdateJob> {
+    await this.requireHostApprovalCapability();
     return updateJobSchema.parse(await this.request("v1/rollback", { method: "POST", body: JSON.stringify(input) }));
+  }
+
+  private async requireHostApprovalCapability(): Promise<void> {
+    // Check BEFORE posting: older updater versions execute these routes directly.
+    if ((await this.status()).hostApprovalRequired !== true) {
+      throw new Error("Host updater upgrade required: this service does not require separate host approval");
+    }
   }
 
   private async request(path: string, init: RequestInit = {}): Promise<unknown> {
@@ -82,13 +91,35 @@ export class HttpUpdateControlClient implements UpdateControlService {
       redirect: "error",
       signal: AbortSignal.timeout(15_000)
     });
-    const text = (await response.text()).slice(0, 256 * 1024);
-    if (!response.ok) throw new Error(`Updater returned HTTP ${response.status}: ${text}`);
+    const text = await readControlResponse(response);
+    if (!response.ok) throw new Error(`Updater returned HTTP ${response.status}: ${text.slice(0, 4096)}`);
 
     try {
       return JSON.parse(text);
     } catch {
       throw new Error("Updater returned invalid JSON");
     }
+  }
+}
+
+async function readControlResponse(response: Response): Promise<string> {
+  if (!response.body) return "";
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > 5 * 1024 * 1024) {
+        await reader.cancel().catch(() => undefined);
+        throw new Error("Updater control response exceeds 5 MiB");
+      }
+      chunks.push(value);
+    }
+    return Buffer.concat(chunks, size).toString("utf8");
+  } finally {
+    reader.releaseLock();
   }
 }

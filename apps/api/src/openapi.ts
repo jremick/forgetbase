@@ -79,9 +79,10 @@ export function buildOpenApiDocument() {
       },
       "/system/updates/jobs": {
         post: {
-          summary: "Apply or schedule an update after explicit confirmation",
+          summary: "Request an update or schedule for separate host approval",
+          description: "Returns an awaiting-approval job. The request credential cannot authorize host changes. A host operator must inspect and approve the exact request with the host CLI before execution; unstarted requests can expire, be denied, or be cancelled.",
           responses: {
-            "202": jsonResponse("Accepted update job"),
+            "202": jsonResponse("Update request awaiting host approval"),
             "403": jsonResponse("Deployment-owner authorization required"),
             "409": jsonResponse("Update cannot be started in the current state"),
             "503": jsonResponse("Update control service unavailable")
@@ -103,9 +104,10 @@ export function buildOpenApiDocument() {
       },
       "/system/updates/rollback": {
         post: {
-          summary: "Roll back to an eligible recovery point after explicit confirmation",
+          summary: "Request recovery with exact data-loss confirmation and separate host approval",
+          description: "Each manual restore needs a new host approval bound to this job, the verified recovery receipt and its exact timestamp. Browser confirmation alone does not start a restore.",
           responses: {
-            "202": jsonResponse("Accepted rollback job"),
+            "202": jsonResponse("Recovery request awaiting host approval"),
             "403": jsonResponse("Deployment-owner authorization required"),
             "409": jsonResponse("Recovery point cannot be restored in the current state"),
             "503": jsonResponse("Update control service unavailable")

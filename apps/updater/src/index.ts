@@ -6,13 +6,14 @@ import {
   productIdentitySchema,
   releaseChannelSchema
 } from "@forgetbase/schema";
-import { JsonUpdateStore, ManagedComposeExecutor, UpdateManager } from "@forgetbase/updater";
+import { HostApprovalAuthority, JsonUpdateStore, ManagedComposeExecutor, UpdateManager } from "@forgetbase/updater";
 import { buildUpdaterServer } from "./server.js";
 import { acquireHostLock } from "./host-lock.js";
 
 const apiToken = requiredEnv("FORGETBASE_UPDATER_API_TOKEN");
 const bundleDir = resolve(process.env.FORGETBASE_UPDATE_BUNDLE_DIR ?? process.cwd());
 const stateDir = resolve(process.env.FORGETBASE_UPDATER_STATE_DIR ?? "work/updater");
+if (process.env.FORGETBASE_INSTALLATION_MODE === "managed") await new HostApprovalAuthority(stateDir).installationId();
 const hostLock = process.env.FORGETBASE_INSTALLATION_MODE === "managed"
   ? await acquireHostLock(stateDir) : undefined;
 const configuredIdentity = productIdentitySchema.parse({

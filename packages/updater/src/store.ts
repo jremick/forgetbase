@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, open, readFile, rename, unlink } from "node:fs/promises";
+import { constants } from "node:fs";
+import { lstat, mkdir, open, rename, unlink } from "node:fs/promises";
 import { dirname } from "node:path";
 import {
   availableUpdateSchema,
@@ -35,11 +36,19 @@ export class JsonUpdateStore {
 
   constructor(private readonly statePath: string) {}
 
+  get directory(): string { return dirname(this.statePath); }
+
   async read(): Promise<PersistedUpdateState> {
     return this.serialize(async () => {
       let contents: string;
       try {
-        contents = await readFile(this.statePath, "utf8");
+        const file = await open(this.statePath, constants.O_RDONLY | constants.O_NOFOLLOW);
+        try {
+          const info = await file.stat();
+          if (!info.isFile() || info.size > 4 * 1024 * 1024 || (info.mode & 0o077) !== 0 ||
+              (process.getuid && info.uid !== process.getuid())) throw new Error("Updater ledger must be a private owned regular file within 4 MiB");
+          contents = await file.readFile("utf8");
+        } finally { await file.close(); }
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code === "ENOENT") {
           return emptyUpdateState();
@@ -53,7 +62,16 @@ export class JsonUpdateStore {
   }
 
   async write(state: PersistedUpdateState): Promise<void> {
-    const contents = `${JSON.stringify(parseState(state), null, 2)}\n`;
+    const bounded = parseState(state);
+    let contents = `${JSON.stringify(bounded, null, 2)}\n`;
+    const terminal = new Set(["completed", "failed", "rolled-back", "cancelled", "denied", "expired"]);
+    while (Buffer.byteLength(contents) > 4 * 1024 * 1024) {
+      let removable = bounded.jobs.length - 1;
+      while (removable >= 0 && !terminal.has(bounded.jobs[removable]!.phase)) removable--;
+      if (removable < 0) throw new Error("Updater ledger exceeds 4 MiB; active requests and recovery points cannot be pruned");
+      bounded.jobs.splice(removable, 1);
+      contents = `${JSON.stringify(bounded, null, 2)}\n`;
+    }
     await this.serialize(() => durableWriteFile(this.statePath, contents));
   }
 
@@ -67,6 +85,9 @@ export class JsonUpdateStore {
 /** Atomically replace a host control file and persist its contents and rename. */
 export async function durableWriteFile(path: string, contents: string, mode = 0o600): Promise<void> {
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+  const parent = await lstat(dirname(path));
+  if (!parent.isDirectory() || parent.isSymbolicLink() || (parent.mode & 0o077) !== 0 ||
+      (process.getuid && parent.uid !== process.getuid())) throw new Error("Host control files require a private owned directory");
   const temporaryPath = `${path}.${process.pid}.${randomUUID()}.tmp`;
 
   try {
