@@ -470,9 +470,12 @@ async function checkAdminBranding(page: Page): Promise<void> {
       await expectVisibleText(brandingPage, "Branding saved.", `branding: ${extension} image saved`);
       await assertBrowserBranding(brandingPage, "Field Notes & Research", `data:${type};base64,${readFileSync(path).toString("base64")}`, type, `browser branding: replacement ${extension} favicon and media type`);
     }
+    await waitForSettledRequests(brandingPage);
     await brandingPage.goto(routeUrl(page, "reader"), { waitUntil: "domcontentloaded" });
     await brandingPage.getByRole("link", { name: "Field Notes & Research pages", exact: true }).waitFor();
     await assertBrowserBranding(brandingPage, "Field Notes & Research", `data:image/webp;base64,${readFileSync(resolve(root, "scripts/fixtures/branding/logo.webp")).toString("base64")}`, "image/webp", "browser branding: reader uses saved title and favicon");
+    await brandingPage.waitForSelector(".reader-article", { timeout: 15000 });
+    await waitForSettledRequests(brandingPage);
     await brandingPage.goto(routeUrl(page, "admin/system/settings"), { waitUntil: "domcontentloaded" });
     await field.waitFor({ state: "visible" });
     await brandingPage.getByRole("button", { name: "Use default image", exact: true }).click();
