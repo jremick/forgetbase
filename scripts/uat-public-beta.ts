@@ -59,6 +59,8 @@ try {
   await checkPublicEntry(mobile, "mobile");
   await mobile.close();
 
+  if (shouldStartServer) await checkPublicBrowserBranding();
+
   if (mode === "release") {
     await checkReleaseFlow(desktop, "desktop");
     await checkBrowserCredentialLifetime(desktop, "desktop");
@@ -224,7 +226,7 @@ async function checkPublicEntry(page: Page, viewportName: "desktop" | "mobile"):
   }
 
   await expectText(page, "h1", `Log in to ${expectedBrandName}`, `${viewportName}: login h1`);
-  await expectTitle(page, "ForgetBase | Knowledge Base for People and AI Tools", `${viewportName}: page title`);
+  await expectTitle(page, `${expectedBrandName} | Knowledge Base for People and AI Tools`, `${viewportName}: page title`);
   await expectVisibleText(page, "Use your account to read pages or manage the knowledge base.", `${viewportName}: login description`);
   await page.waitForSelector(".login-panel", { timeout: 15000 });
   await page.waitForSelector(".public-login-form", { timeout: 15000 });
@@ -367,6 +369,45 @@ async function checkReleaseFlow(page: Page, viewportName: "desktop" | "mobile"):
   await screenshotExportRoute(page);
 }
 
+async function assertBrowserBranding(page: Page, displayName: string, href: string, type: string, name: string): Promise<void> {
+  const title = `${displayName} | Knowledge Base for People and AI Tools`;
+  try {
+    await page.waitForFunction(expected => {
+      const icon = document.querySelector<HTMLLinkElement>('link[rel="icon"]');
+      return document.title === expected.title && icon?.getAttribute("href") === expected.href && icon.type === expected.type;
+    }, { title, href, type }, { timeout: 10000 });
+  } catch {
+    const actual = await page.evaluate(expectedHref => ({
+      title: document.title,
+      iconType: document.querySelector<HTMLLinkElement>('link[rel="icon"]')?.type,
+      iconMatches: document.querySelector<HTMLLinkElement>('link[rel="icon"]')?.getAttribute("href") === expectedHref
+    }), href);
+    throw new Error(`${name}: expected title ${JSON.stringify(title)} and ${type} favicon; got ${JSON.stringify(actual)}`);
+  }
+  checks.push({ name, status: "pass", detail: title });
+}
+
+async function checkPublicBrowserBranding(): Promise<void> {
+  const context = await browser!.newContext();
+  const page = await context.newPage();
+  trackConsole(page);
+  const logoUrl = `data:image/png;base64,${readFileSync(resolve(root, "scripts/fixtures/branding/logo.png")).toString("base64")}`;
+  let response = JSON.stringify({ displayName: "R&D <Knowledge>", logoDataUrl: logoUrl });
+  await page.route("**/branding?**", route => route.fulfill({ contentType: "application/json", body: response }));
+  try {
+    await page.goto(baseUrl, { waitUntil: "domcontentloaded" });
+    await page.getByRole("heading", { name: "Log in to R&D <Knowledge>", exact: true }).waitFor();
+    await assertBrowserBranding(page, "R&D <Knowledge>", logoUrl, "image/png", "browser branding: public login treats custom name as text and loads favicon");
+    await screenshot(page, "branding-login.png", "browser branding: custom login screenshot");
+    response = "unreadable branding response";
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await page.getByRole("heading", { name: "Log in to ForgetBase", exact: true }).waitFor();
+    await assertBrowserBranding(page, "ForgetBase", "/favicon.svg", "image/svg+xml", "browser branding: unreadable public branding falls back to defaults");
+  } finally {
+    await context.close();
+  }
+}
+
 async function checkAdminBranding(page: Page): Promise<void> {
   // Exercise the actual Railway image policy even when the isolated Compose
   // proxy does not add it. Upload previews must not require a weaker policy.
@@ -401,27 +442,48 @@ async function checkAdminBranding(page: Page): Promise<void> {
       return Boolean(image?.complete && image.naturalWidth > 0);
     });
     await expectHiddenText(brandingPage, "This image could not be read", "branding: image preview works under the production CSP");
+    await assertBrowserBranding(brandingPage, "ForgetBase", "/favicon.svg", "image/svg+xml", "browser branding: unsaved preview preserves default tab");
     await brandingPage.getByRole("button", { name: "Save", exact: true }).click();
     await expectVisibleText(brandingPage, "Branding saved.", "branding: custom image and text saved");
+    await assertBrowserBranding(brandingPage, "Field Notes & Research", logoUrl, "image/png", "browser branding: save updates title and PNG favicon without reload");
+    await field.fill("Unsaved tab title");
+    await assertBrowserBranding(brandingPage, "Field Notes & Research", logoUrl, "image/png", "browser branding: draft text leaves the saved tab unchanged");
+    await brandingPage.getByRole("button", { name: "Cancel", exact: true }).click();
+    await assertBrowserBranding(brandingPage, "Field Notes & Research", logoUrl, "image/png", "browser branding: cancel preserves saved tab");
     await brandingPage.reload({ waitUntil: "domcontentloaded" });
     await field.waitFor({ state: "visible" });
     if (await field.inputValue() !== "Field Notes & Research" || await brandingPage.locator(".branding-preview img").getAttribute("src") !== logoUrl) {
       throw new Error("Branding did not persist the exact uploaded image and text after reload");
     }
     checks.push({ name: "branding: exact image and text persist after reload", status: "pass" });
+    await assertBrowserBranding(brandingPage, "Field Notes & Research", logoUrl, "image/png", "browser branding: custom title and favicon persist after reload");
     await screenshot(brandingPage, "branding-desktop.png", "branding: desktop screenshot");
     await brandingPage.setViewportSize({ width: 390, height: 844 });
     await assertNoHorizontalOverflow(brandingPage, "branding: mobile overflow");
     await screenshot(brandingPage, "branding-mobile.png", "branding: mobile screenshot");
+    for (const [extension, type] of [["jpg", "image/jpeg"], ["webp", "image/webp"]] as const) {
+      const path = resolve(root, `scripts/fixtures/branding/logo.${extension}`);
+      await brandingPage.getByLabel("Logo image", { exact: true }).setInputFiles(path);
+      await brandingPage.getByRole("button", { name: "Save", exact: true }).click();
+      await expectVisibleText(brandingPage, "Branding saved.", `branding: ${extension} image saved`);
+      await assertBrowserBranding(brandingPage, "Field Notes & Research", `data:${type};base64,${readFileSync(path).toString("base64")}`, type, `browser branding: replacement ${extension} favicon and media type`);
+    }
+    await brandingPage.goto(routeUrl(page, "reader"), { waitUntil: "domcontentloaded" });
+    await brandingPage.getByRole("link", { name: "Field Notes & Research pages", exact: true }).waitFor();
+    await assertBrowserBranding(brandingPage, "Field Notes & Research", `data:image/webp;base64,${readFileSync(resolve(root, "scripts/fixtures/branding/logo.webp")).toString("base64")}`, "image/webp", "browser branding: reader uses saved title and favicon");
+    await brandingPage.goto(routeUrl(page, "admin/system/settings"), { waitUntil: "domcontentloaded" });
+    await field.waitFor({ state: "visible" });
     await brandingPage.getByRole("button", { name: "Restore defaults", exact: true }).click();
     await brandingPage.getByRole("button", { name: "Save", exact: true }).click();
     await expectVisibleText(brandingPage, "Branding saved.", "branding: defaults restored");
+    await assertBrowserBranding(brandingPage, "ForgetBase", "/favicon.svg", "image/svg+xml", "browser branding: restore defaults resets title and favicon without reload");
     await brandingPage.reload({ waitUntil: "domcontentloaded" });
     await field.waitFor({ state: "visible" });
     if (await field.inputValue() !== "ForgetBase" || await brandingPage.locator(".branding-preview img").getAttribute("src") !== "/favicon.svg") {
       throw new Error("Default branding did not persist after restoration");
     }
     checks.push({ name: "branding: defaults persist after reload", status: "pass" });
+    await assertBrowserBranding(brandingPage, "ForgetBase", "/favicon.svg", "image/svg+xml", "browser branding: default title and favicon persist after reload");
   } finally {
     await brandingContext.close();
   }
