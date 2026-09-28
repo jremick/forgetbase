@@ -23,3 +23,7 @@ infra/docker/tls/*
 # Generated immutable identity for release builds
 /build-info.json
 /apps/web/public/release.json
+
+# Swift package build output
+.build/
+.swiftpm/
