@@ -43,6 +43,9 @@ importers:
       '@forgetbase/schema':
         specifier: workspace:*
         version: link:../../packages/schema
+      '@forgetbase/updater':
+        specifier: workspace:*
+        version: link:../../packages/updater
       '@forgetbase/validation':
         specifier: workspace:*
         version: link:../../packages/validation
@@ -52,6 +55,28 @@ importers:
       jose:
         specifier: ^6.2.3
         version: 6.2.3
+    devDependencies:
+      tsx:
+        specifier: ^4.21.0
+        version: 4.22.4
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+
+  apps/updater:
+    dependencies:
+      '@fastify/rate-limit':
+        specifier: 11.2.0
+        version: 11.2.0
+      '@forgetbase/schema':
+        specifier: workspace:*
+        version: link:../../packages/schema
+      '@forgetbase/updater':
+        specifier: workspace:*
+        version: link:../../packages/updater
+      fastify:
+        specifier: ^5.12.1
+        version: 5.12.1
     devDependencies:
       tsx:
         specifier: ^4.21.0
@@ -342,6 +367,16 @@ importers:
         version: 5.9.3
 
   packages/sdk:
+    dependencies:
+      '@forgetbase/schema':
+        specifier: workspace:*
+        version: link:../schema
+    devDependencies:
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+
+  packages/updater:
     dependencies:
       '@forgetbase/schema':
         specifier: workspace:*

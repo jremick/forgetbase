@@ -129,6 +129,24 @@ export interface MigrationResult {
   skipped: string[];
 }
 
+export interface MigrationPlan {
+  currentSchemaVersion: string | null;
+  targetSchemaVersion: string | null;
+  applied: string[];
+  pending: string[];
+  checksumMismatches: string[];
+  missingAppliedIds: string[];
+  expectedPendingMatches: boolean;
+  expectedSchemaVersionMatches: boolean;
+}
+
+export interface RunMigrationOptions {
+  releaseVersion?: string;
+  expectedPendingIds?: string[];
+  expectedSchemaVersion?: string;
+  allowAlreadyAppliedExpectedIds?: boolean;
+}
+
 export class DuplicateAssetError extends Error {
   constructor(stableId: string) {
     super(`Asset already exists for stable ID: ${stableId}`);
@@ -157,7 +175,79 @@ export function createPool(connectionString = process.env.DATABASE_URL): Pool {
   return new Pool({ connectionString });
 }
 
-export async function runMigrations(pool: Pool, migrationsDir = DEFAULT_MIGRATIONS_DIR): Promise<MigrationResult> {
+export async function planMigrations(
+  pool: Pool,
+  migrationsDir = DEFAULT_MIGRATIONS_DIR,
+  expectedPendingIds?: string[],
+  expectedSchemaVersion?: string,
+  allowAlreadyAppliedExpectedIds = false
+): Promise<MigrationPlan> {
+  const migrationFiles = await readMigrationFiles(migrationsDir);
+  const table = await pool.query<{ exists: boolean }>("SELECT to_regclass('public.schema_migrations') IS NOT NULL AS exists");
+
+  if (!table.rows[0]?.exists) {
+    return buildMigrationPlan(migrationFiles, [], expectedPendingIds, expectedSchemaVersion, allowAlreadyAppliedExpectedIds);
+  }
+
+  const checksumColumn = await pool.query<{ exists: boolean }>(`
+    SELECT EXISTS (
+      SELECT 1 FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'schema_migrations' AND column_name = 'checksum'
+    ) AS exists
+  `);
+  const appliedResult = checksumColumn.rows[0]?.exists
+    ? await pool.query<{ id: string; checksum: string | null }>("SELECT id, checksum FROM schema_migrations ORDER BY applied_at, id")
+    : await pool.query<{ id: string; checksum: null }>("SELECT id, NULL::text AS checksum FROM schema_migrations ORDER BY applied_at, id");
+  return buildMigrationPlan(migrationFiles, appliedResult.rows, expectedPendingIds, expectedSchemaVersion, allowAlreadyAppliedExpectedIds);
+}
+
+function buildMigrationPlan(
+  migrationFiles: MigrationFile[],
+  appliedRows: { id: string; checksum: string | null }[],
+  expectedPendingIds?: string[],
+  expectedSchemaVersion?: string,
+  allowAlreadyAppliedExpectedIds = false
+): MigrationPlan {
+  if (allowAlreadyAppliedExpectedIds && (expectedPendingIds === undefined || expectedSchemaVersion === undefined)) {
+    throw new Error("Already-applied expected migrations require the signed migration set and target schema");
+  }
+  const appliedById = new Map(appliedRows.map((row) => [row.id, row.checksum]));
+  const candidateById = new Map(migrationFiles.map((migration) => [migration.id, migration]));
+  const pending = migrationFiles.filter((migration) => !appliedById.has(migration.id)).map((migration) => migration.id);
+  const expectedPending = expectedPendingIds?.filter((id) => !(
+    allowAlreadyAppliedExpectedIds
+    && appliedById.get(id) !== undefined
+    && appliedById.get(id) !== null
+    && appliedById.get(id) === candidateById.get(id)?.checksum
+  ));
+  const checksumMismatches = migrationFiles
+    .filter((migration) => {
+      const checksum = appliedById.get(migration.id);
+      return checksum !== undefined && checksum !== null && checksum !== migration.checksum;
+    })
+    .map((migration) => migration.id);
+  const currentSchemaVersion = appliedRows.at(-1)?.id ?? null;
+  const targetSchemaVersion = pending.at(-1) ?? currentSchemaVersion;
+
+  return {
+    currentSchemaVersion,
+    targetSchemaVersion,
+    applied: appliedRows.map((row) => row.id),
+    pending,
+    checksumMismatches,
+    missingAppliedIds: appliedRows.filter((row) => !candidateById.has(row.id)).map((row) => row.id),
+    expectedPendingMatches: expectedPendingIds === undefined || (
+      new Set(expectedPendingIds).size === expectedPendingIds.length && sameStringSet(pending, expectedPending!)
+    ),
+    expectedSchemaVersionMatches: expectedSchemaVersion === undefined || targetSchemaVersion === expectedSchemaVersion
+  };
+}
+
+export async function runMigrations(
+  pool: Pool,
+  migrationsDir = DEFAULT_MIGRATIONS_DIR,
+  options: RunMigrationOptions = {}
+): Promise<MigrationResult> {
   const client = await pool.connect();
 
   try {
@@ -165,36 +255,71 @@ export async function runMigrations(pool: Pool, migrationsDir = DEFAULT_MIGRATIO
     await client.query(`
       CREATE TABLE IF NOT EXISTS schema_migrations (
         id text PRIMARY KEY,
-        applied_at timestamptz NOT NULL DEFAULT now()
+        applied_at timestamptz NOT NULL DEFAULT now(),
+        checksum text,
+        release_version text
       )
     `);
+    await client.query("ALTER TABLE schema_migrations ADD COLUMN IF NOT EXISTS checksum text");
+    await client.query("ALTER TABLE schema_migrations ADD COLUMN IF NOT EXISTS release_version text");
 
-    const migrationFiles = (await readdir(migrationsDir))
-      .filter((file) => file.endsWith(".sql"))
-      .sort();
+    const migrationFiles = await readMigrationFiles(migrationsDir);
+    const appliedRows = await client.query<{ id: string; checksum: string | null }>("SELECT id, checksum FROM schema_migrations ORDER BY applied_at, id");
+    const appliedById = new Map(appliedRows.rows.map((row) => [row.id, row.checksum]));
+    const plan = buildMigrationPlan(
+      migrationFiles, appliedRows.rows, options.expectedPendingIds, options.expectedSchemaVersion, options.allowAlreadyAppliedExpectedIds
+    );
+
+    // Validate the entire candidate under the lock before adopting historical
+    // checksums or applying any SQL, even if a mismatch sorts after pending work.
+    if (plan.checksumMismatches.length > 0) {
+      throw new Error(`Applied migration checksum mismatch: ${plan.checksumMismatches.join(", ")}`);
+    }
+    const signedCandidate = options.expectedPendingIds !== undefined || options.expectedSchemaVersion !== undefined;
+    if (signedCandidate && plan.missingAppliedIds.length > 0) {
+      throw new Error(`Candidate is missing applied migrations: ${plan.missingAppliedIds.join(", ")}`);
+    }
+    if (!plan.expectedPendingMatches) {
+      throw new Error(
+        `Pending migration set does not match the signed release manifest: expected [${options.expectedPendingIds!.join(", ")}], actual [${plan.pending.join(", ")}]`
+      );
+    }
+    if (!plan.expectedSchemaVersionMatches) {
+      throw new Error(
+        `Target schema version does not match the signed release manifest: expected ${options.expectedSchemaVersion}, actual ${plan.targetSchemaVersion ?? "none"}`
+      );
+    }
 
     const result: MigrationResult = {
       applied: [],
       skipped: []
     };
 
-    for (const file of migrationFiles) {
-      const id = file.replace(/\.sql$/, "");
-      const existing = await client.query("SELECT id FROM schema_migrations WHERE id = $1", [id]);
+    for (const migration of migrationFiles) {
+      const existingChecksum = appliedById.get(migration.id);
 
-      if (existing.rowCount && existing.rowCount > 0) {
-        result.skipped.push(id);
+      if (appliedById.has(migration.id)) {
+        // NULL predates checksum tracking. Adoption creates a future baseline;
+        // it cannot prove the bytes of the SQL originally applied.
+        if (existingChecksum === null) {
+          await client.query(
+            "UPDATE schema_migrations SET checksum = $2, release_version = COALESCE(release_version, $3) WHERE id = $1",
+            [migration.id, migration.checksum, options.releaseVersion ?? null]
+          );
+        }
+        result.skipped.push(migration.id);
         continue;
       }
 
-      const sql = await readFile(join(migrationsDir, file), "utf8");
-
       try {
         await client.query("BEGIN");
-        await client.query(sql);
-        await client.query("INSERT INTO schema_migrations (id) VALUES ($1)", [id]);
+        await client.query(migration.sql);
+        await client.query(
+          "INSERT INTO schema_migrations (id, checksum, release_version) VALUES ($1, $2, $3)",
+          [migration.id, migration.checksum, options.releaseVersion ?? null]
+        );
         await client.query("COMMIT");
-        result.applied.push(id);
+        result.applied.push(migration.id);
       } catch (error) {
         await client.query("ROLLBACK");
         throw error;
@@ -223,6 +348,30 @@ const localSyncPublishedEligibility = `
   AND 'local-cache' = ANY(assets.allowed_surfaces)
   AND published_version.asset_snapshot->'allowedSurfaces' ? 'local-cache'
 `;
+
+interface MigrationFile {
+  id: string;
+  sql: string;
+  checksum: string;
+}
+
+async function readMigrationFiles(migrationsDir: string): Promise<MigrationFile[]> {
+  const files = (await readdir(migrationsDir)).filter((file) => file.endsWith(".sql")).sort();
+  return Promise.all(files.map(async (file) => {
+    const sql = await readFile(join(migrationsDir, file), "utf8");
+    return {
+      id: file.replace(/\.sql$/, ""),
+      sql,
+      checksum: createHash("sha256").update(sql).digest("hex")
+    };
+  }));
+}
+
+function sameStringSet(left: string[], right: string[]): boolean {
+  if (left.length !== right.length) return false;
+  const expected = new Set(right);
+  return left.every((value) => expected.has(value));
+}
 
 export class PostgresRegistryRepository implements RegistryRepository {
   constructor(private readonly pool: Pool) {}

@@ -15,6 +15,7 @@
     "@forgetbase/db": "workspace:*",
     "@forgetbase/local-sync": "workspace:*",
     "@forgetbase/schema": "workspace:*",
+    "@forgetbase/updater": "workspace:*",
     "@forgetbase/validation": "workspace:*",
     "fastify": "^5.12.1",
     "jose": "^6.2.3"

@@ -1,0 +1,43 @@
+# Managed updates verification
+
+Managed updates remain a draft for newly initialized, isolated Linux Docker Compose installations using synthetic data. Public release/feed publication, conversion of older prototype state and production activation are separate work.
+
+The application can discover releases and submit or cancel requests. An update or manual restore stays pending until a host operator approves its exact immutable request through the protected CLI. The API token and an impersonated allowlisted admin cannot grant that approval. Configurable model and OIDC providers reject the reserved updater secret at both admission and runtime resolution.
+
+## Repeatable checks
+
+Run `scripts/verify-managed-updates.ts` with Node 26.10.0, pnpm 11.7.0, Docker Compose and Linux `flock` on an isolated host after building the workspace. Review its arguments first. It creates a disposable private registry, signed manifests, ten baseline/candidate images, database and attachment volumes. Its evidence directory records runtime versions, image digests, phase history, assertion results and cleanup. No production data is required.
+
+The drill exercises real API requests, host CLI decisions, updater processes and Docker commands. Private test preloads pause actual filesystem commit boundaries and shift the updater clock; the product has no fault-control or approval HTTP endpoint. A separate physical-host restore checks the database and attachment recovery set outside the source Docker engine.
+
+## Verified source
+
+Product revision: `904c70d2137416fcf1dd22a1dce05c4f38ce7a75`, build epoch `1790563372`. The exact 396-file archive SHA-256 is `fb2fa968cd2aee8837734df7e4a6c68354048455c858de3796337d4fcd963f1d`; every tracked file was checked on the runtime host.
+
+The committed drill helper SHA-256 is `d55c62a5d6c811f9a0de1a069a88606e3374372f16699175bc0def3656107bac`. The final attempt uses the complete helper without omitted cases and builds images identifying the same product revision and epoch. Final documentation does not alter those product inputs. Rebuilds can produce different registry index digests because attestations change; each drill signs and verifies its own immutable digests.
+
+## Evidence status
+
+Verification on 28 September 2026:
+
+- The exact product source passed **749 tests across 66 files, with zero skips**, on Linux AMD64 with real PostgreSQL 17. This includes all three Linux process-lock cases and six new recovery-retry regressions.
+- The 58 public API/SDK/CLI/MCP contract checks, typecheck/build, OpenAPI inventory, web bundle/UI/claims checks, 55 deployment-default checks, demo corpus validation and staged secret scan passed on the final product candidate. GitHub [Verify](https://github.com/jremick/forgetbase/actions/runs/36370891441) and [CodeQL](https://github.com/jremick/forgetbase/actions/runs/36370886697) also passed on `904c70d`, including the full PostgreSQL suite and public beta browser UAT. Check the PR current head before merge.
+- Independent review found two identity problems during development: runtime-version normalization and stale cached identity after restored-service readiness failure. Both were reproduced before repair. The second also failed in the unchanged real Docker drill. New requests now read and validate the installed identity before deriving availability or immutable approval details; execution still requires an exact fresh match. Independent final review found no unresolved actionable issue in these repairs.
+- A compiled-service control on the preceding implementation reached staging and dispatched Compose pull without approval. The earlier host-approval candidate `c908482` stayed in `awaiting-approval` and dispatched zero Docker commands. This bounded admission probe is distinct from the complete signed-image drill.
+- The **complete committed signed-image Docker drill passed** on `904c70d` without omitted cases. Three ordinary-admin impersonation routes could only create pending requests; the application container had no approval directory, Docker socket or approval endpoint. The drill rejected altered request fields, signed feeds, source identity, receipts, timing, cross-installation decisions and replayed approvals. Real held-preflight and filesystem-consumption crashes failed closed. Separately host-approved scheduling, update, automatic pre-write recovery, manual restore and same-process recovery retry all passed. Exact target identity, database migration/canary state and attachment bytes were checked. After writes reopened, a killed updater did not restore old data; accepted writes survived and an orphaned command retained the host lock until it exited.
+- The final recovery set was transferred from Windows Docker PostgreSQL 17.10 to a physically separate Mac running native PostgreSQL 17.11 ARM64 with pgvector 0.8.5. Restore verification matched all 35 migration IDs/checksums, 20 assets with their full instruction and human-document content, the original canary, and exact 45-byte attachment content and metadata. Candidate migration and post-update/post-reopening writes were absent as expected. The source manifest SHA-256 is `cfbd8c7d6ca33a11bc2d4c6d03e784e4f472b11e259e08d79bb3f61424d75723`. The private database was stopped, and the existing local PostgreSQL service was preserved.
+- The actual Updates panel passed synthetic-response browser checks for missing/false host capability, consent reset, immutable pending details after feed changes, cancellation, denial, expiry, approved schedules and timestamp-specific restore requests. The 390-pixel layout had no horizontal overflow and browser warning/error logs were empty. These checks do not substitute for live service proof.
+
+- The same final Docker stack passed live browser checks for owner discovery and all 19 preflight checks, a host-approved future schedule cancelled before execution, an immediate pending request approved through the host CLI and completed at version 0.1.1, and a separate timestamp-specific restore request cancelled without approval. Pausing the updater produced a reconnect banner and disabled request controls; resuming it restored the controls automatically. The durable ledger retained exactly the same 39 job IDs and phases with no replay or duplicate request. A dedicated loopback hostname isolated the disposable browser session after a suspected localhost cookie collision; no product source or authentication mechanism changed. The isolated session recorded no browser warnings or errors.
+
+Earlier failed attempts remain in private evidence and are not counted as successful final drills. They include a missing database environment export, latency/clock-sensitive remote test failures, a rejected helper request missing its CSRF header, a Docker Hub HTTP502 during an approved image pull, and the stale-identity restore retry regression described above. The helper and product failures were repaired before the final candidate; pinned dependency availability was checked before its complete drill.
+
+## Supported boundary
+
+The host updater requires Linux, Node 26, Bash, Docker Compose and util-linux `flock`, with state on a local filesystem. Application containers have no approval-state mount or Docker socket. Newly initialized managed installations are supported; an in-place conversion from older prototype state is not provided. See the [installation runbook](runbooks/INSTALL_MANAGED_COMPOSE.md).
+
+Immutable requests are limited to 256 KiB. Admission retains the newest 200 jobs and status returns 50; older `needs-attention` details can fall out of history. The separate decision and consumption records remain intact. Additional 4 MiB size pruning removes eligible terminal history but preserves pending work, recovery points and remaining `needs-attention` records. Retained state can exhaust that limit and block new requests; operator resolution is required. Preserve important incident evidence separately. See the [retention limits](VERSIONING_AND_UPGRADES.md#phase-3-discovery-and-operator-choice).
+
+A native Windows/macOS updater, Linux ARM64 updater runtime, real host power-loss survival, broad browser/accessibility coverage and production rollout are not established by these Linux AMD64 process-restart tests. Physical-host database restoration does not establish a native macOS updater.
+
+A separate copy issue remains: the passing managed-rollback-mode preflight check says that the selected supported mode cannot be applied. Its result is correct; its detail text needs correction. No production instance, public release feed or public image registry was activated by this work.

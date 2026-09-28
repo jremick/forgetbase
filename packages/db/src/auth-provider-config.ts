@@ -1,4 +1,5 @@
 import type { Pool, QueryResultRow } from "pg";
+import { assertProviderSecretReferenceAllowed } from "./secret-reference-policy.js";
 import {
   authProviderConfigInputSchema,
   authProviderConfigSchema,
@@ -37,6 +38,7 @@ export class PostgresAuthProviderConfigRepository implements AuthProviderConfigR
 
   async upsertAuthProviderConfig(input: AuthProviderConfigInput): Promise<AuthProviderConfig> {
     const parsed = authProviderConfigInputSchema.parse(input);
+    assertProviderSecretReferenceAllowed(parsed.clientSecretEnvVar);
     await ensureTenant(this.pool, parsed.tenantId);
     const result = await this.pool.query<AuthProviderConfigRow>(
       `
@@ -130,6 +132,7 @@ export class InMemoryAuthProviderConfigRepository implements AuthProviderConfigR
 
   async upsertAuthProviderConfig(input: AuthProviderConfigInput): Promise<AuthProviderConfig> {
     const parsed = authProviderConfigInputSchema.parse(input);
+    assertProviderSecretReferenceAllowed(parsed.clientSecretEnvVar);
     const key = `${parsed.tenantId}:${parsed.provider}`;
     const existing = this.configs.get(key);
     this.sequence += existing ? 0 : 1;

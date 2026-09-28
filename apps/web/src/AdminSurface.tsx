@@ -63,6 +63,8 @@ import type {
   ServiceAccount,
   ServiceAccountPolicy,
   SecretReferencePolicy,
+  SystemVersionResponse,
+  UpdateSystemStatus,
   TelemetryAnalyticsSummary,
   TelemetryRetentionPolicy,
   TelemetryRetentionPurgeResult
@@ -101,7 +103,7 @@ import {
   SectionCard,
   StatusAlert
 } from "./components/app/index.js";
-import { TrustStateSummary } from "./components/domain/index.js";
+import { TrustStateSummary } from "./components/domain/trust-state-summary.js";
 import type { AnalyticsWindowDays } from "./components/domain/analytics-dashboard.js";
 import {
   attachmentUploadErrorMessage,
@@ -227,6 +229,8 @@ const RichMarkdownEditor = richEditorEnabled ? lazy(() => import("./components/e
   .then((module) => ({ default: module.MarkdownEditor }))
   .catch(() => ({ default: PlainMarkdownEditor }))) : PlainMarkdownEditor;
 
+const LazyUpdateManagementPanel = lazy(() => import("./components/domain/update-management.js")
+  .then((module) => ({ default: module.UpdateManagementPanel })));
 const configuredApiUrl = import.meta.env.VITE_FORGETBASE_API_URL?.trim();
 const attachmentMaxBytes = 10 * 1024 * 1024;
 const demoEvalCases = [
@@ -315,6 +319,7 @@ const pageRouteValues = [
   "distribute",
   "activity",
   "health",
+  "updates",
   "integrations",
   "settings",
   "policies",
@@ -324,6 +329,7 @@ const pageRouteValues = [
 const operationsRouteValues = [
   "activity",
   "health",
+  "updates",
   "integrations",
   "settings",
   "policies",
@@ -348,6 +354,7 @@ const adminRouteAliases: Record<string, string> = {
   "admin/system": "health",
   "admin/system/activity": "activity",
   "admin/system/health": "health",
+  "admin/system/updates": "updates",
   "admin/system/integrations": "integrations",
   "admin/system/settings": "settings",
   "admin/system/policies": "policies",
@@ -365,6 +372,7 @@ const canonicalRouteHashes: Record<string, string> = {
   "distribute": "admin/exports",
   "activity": "admin/system/activity",
   "health": "admin/system/health",
+  "updates": "admin/system/updates",
   "integrations": "admin/system/integrations",
   "settings": "admin/system/settings",
   "policies": "admin/system/policies",
@@ -397,6 +405,10 @@ const operationsPageCopy: Record<string, { title: string; lede: string }> = {
   health: {
     title: "System Health",
     lede: "Check the API, providers, recent activity, approvals, and maintenance jobs."
+  },
+  updates: {
+    title: "Updates",
+    lede: "Review signed releases, run preflight checks, update the installation, and manage recovery points."
   },
   integrations: {
     title: "Integrations",
@@ -748,6 +760,8 @@ export function AdminSurface({ branding, brandingRequest, onBrandingSaved, onSes
     priority: "10"
   });
   const [health, setHealth] = useState<string>("checking");
+  const [systemVersion, setSystemVersion] = useState<SystemVersionResponse | null>(null);
+  const [updateAvailable, setUpdateAvailable] = useState(false);
   const [message, setMessage] = useState<string>("");
   const [error, setError] = useState<string>("");
   const [libraryQuery, setLibraryQuery] = useState("");
@@ -1151,6 +1165,24 @@ export function AdminSurface({ branding, brandingRequest, onBrandingSaved, onSes
     }
   }
 
+  async function loadSystemVersion(authKey = apiKey) {
+    const authenticationEpoch = authenticationEpochRef.current;
+    const nextSystemVersion = await request<SystemVersionResponse>("/system/version", {}, authKey);
+    if (authenticationEpoch !== authenticationEpochRef.current) return;
+    setSystemVersion(nextSystemVersion);
+    if (!nextSystemVersion.updateManagement.authorized || !nextSystemVersion.updateManagement.configured || nextSystemVersion.installationMode === "hosted") {
+      setUpdateAvailable(false);
+      return;
+    }
+    try {
+      const updateStatus = await request<UpdateSystemStatus>("/system/updates", {}, authKey);
+      if (authenticationEpoch !== authenticationEpochRef.current) return;
+      setUpdateAvailable(Boolean(updateStatus.availableUpdate?.updateAvailable));
+    } catch {
+      setUpdateAvailable(false);
+    }
+  }
+
   async function checkAuthenticatedSession(authKey = apiKey): Promise<AuthPrincipal | null> {
     try {
       const principal = await request<AuthPrincipal>("/auth/me", {}, authKey);
@@ -1193,7 +1225,10 @@ export function AdminSurface({ branding, brandingRequest, onBrandingSaved, onSes
     const principal = await checkAuthenticatedSession();
 
     if (principal) {
-      await refresh();
+      await Promise.all([
+        refresh(),
+        ...(getAppCapabilities(principal).manageSystem ? [loadSystemVersion()] : [])
+      ]);
     }
   }
 
@@ -1233,7 +1268,10 @@ export function AdminSurface({ branding, brandingRequest, onBrandingSaved, onSes
       setApiKey(localAuthKey);
       setLoginPassword("");
       setMessage(`Signed in as ${response.user.email}`);
-      await refresh(localAuthKey);
+      await Promise.all([
+        refresh(localAuthKey),
+        ...(response.user.role === "admin" && response.apiKey.scopes.includes("admin") ? [loadSystemVersion(localAuthKey)] : [])
+      ]);
     } catch (loginError) {
       setError(loginError instanceof Error ? loginError.message : String(loginError));
     }
@@ -1245,6 +1283,8 @@ export function AdminSurface({ branding, brandingRequest, onBrandingSaved, onSes
     setSessionCookieActive(false);
     setAuthState("unauthenticated");
     setCurrentPrincipal(null);
+    setSystemVersion(null);
+    setUpdateAvailable(false);
     setAssets([]);
     setSelectedStableId("");
     setAssetDetail(null);
@@ -3297,6 +3337,7 @@ export function AdminSurface({ branding, brandingRequest, onBrandingSaved, onSes
         return [
           () => refreshHealth(),
           () => loadAttachmentReconciliation(false),
+          loadSystemVersion,
           loadTelemetrySummary,
           loadProviderHealth,
           loadActionExecutionPolicy,
@@ -3305,6 +3346,8 @@ export function AdminSurface({ branding, brandingRequest, onBrandingSaved, onSes
           loadEvalSummary,
           loadManagedQueryCachePolicy
         ];
+      case "updates":
+        return [loadSystemVersion];
       case "integrations":
         return [loadProviderConfigs, loadProviderHealth, loadAuthProviderConfigs];
       case "policies":
@@ -3478,10 +3521,15 @@ export function AdminSurface({ branding, brandingRequest, onBrandingSaved, onSes
       folderIcon: <GearSix aria-hidden="true" />,
       folderRoute: "health",
       activeRoutes: [...operationsRouteValues],
-      count: 5,
+      count: systemVersion?.updateManagement.authorized ? 8 : 7,
       leaves: [
         { route: "activity", label: "Activity" },
         { route: "health", label: "Health", badge: health === "ok" ? { label: "ok", tone: "ok" } : { label: health, tone: "bad" } },
+        ...(systemVersion?.updateManagement.authorized ? [{
+          route: "updates",
+          label: "Updates",
+          badge: updateAvailable ? { label: "available", tone: "warn" as const } : undefined
+        }] : []),
         { route: "integrations", label: "Integrations", count: providerConfigs.length + authProviderConfigs.length },
         { route: "settings", label: "Settings" },
         { route: "policies", label: "Policies" },
@@ -4831,6 +4879,8 @@ export function AdminSurface({ branding, brandingRequest, onBrandingSaved, onSes
                 compact
                 items={[
                   { term: "API", description: <Badge variant={health === "ok" ? "success" : "destructive"}>{health}</Badge> },
+                  { term: "Version", description: systemVersion?.version ?? "not loaded" },
+                  { term: "Install mode", description: systemVersion?.installationMode ?? "not loaded" },
                   { term: "Providers checked", description: providerHealth.length },
                   { term: "Ready providers", description: providerHealth.filter((provider) => provider.status === "ready").length },
                   { term: "Retrieval sample", description: telemetrySummary?.retrieval.eventCount ?? telemetryEvents.length },
@@ -4877,6 +4927,13 @@ export function AdminSurface({ branding, brandingRequest, onBrandingSaved, onSes
                 <EmptyState title="No provider health loaded" description="Use Refresh workspace to check provider readiness." />
               )}
             </SectionCard>
+          </div>
+          <div className={routePanelClass(currentPage, ["updates"], "grid gap-4")}>
+            {currentPage === "updates" ? (
+              <Suspense fallback={<p>Loading update controls…</p>}>
+                <LazyUpdateManagementPanel key={`${currentPrincipal?.principalId}:${currentPrincipal?.apiKeyId}`} request={request} onAvailabilityChange={setUpdateAvailable} />
+              </Suspense>
+            ) : null}
           </div>
           <div className={routePanelClass(currentPage, ["review"], "grid gap-4")}>
             {reviewQueueError ? <Alert variant="destructive" role="alert"><AlertDescription>Could not load the review queue. {reviewQueueError}</AlertDescription><Button onClick={() => void loadReviewQueue()} disabled={reviewQueueLoading}>Retry</Button></Alert> : null}

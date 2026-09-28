@@ -21,13 +21,18 @@ export function createWorkerRuntime(
 
   return {
     getPool() {
+      if (process.env.FORGETBASE_INSTALLATION_MODE === "managed" && process.env.FORGETBASE_MANAGED_WRITES_ENABLED !== "true") {
+        return Promise.reject(new Error("Managed update maintenance: worker writes are fenced."));
+      }
       if (closed) {
         return Promise.reject(new Error("Worker runtime is closed."));
       }
 
       if (!ready) {
         pool = dependencies.createPool();
-        ready = dependencies.runMigrations(pool)
+        ready = (process.env.FORGETBASE_AUTO_MIGRATE === "false"
+          ? pool.query("SELECT 1 FROM schema_migrations LIMIT 1")
+          : dependencies.runMigrations(pool))
           .then(() => pool as WorkerPool)
           .catch(async (error: unknown) => {
             await pool?.end();
