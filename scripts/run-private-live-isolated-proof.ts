@@ -186,6 +186,7 @@ try {
       UAT_EXPECT_ROLE: "admin",
       UAT_TEST_AUTHORING: "true",
       UAT_TEST_RICH_EDITOR: "true",
+      UAT_TEST_BRANDING: "true",
       UAT_TENANT_ID: tenantId,
       UAT_EMAIL: adminEmail,
       UAT_PASSWORD: password,

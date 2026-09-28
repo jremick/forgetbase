@@ -62,21 +62,21 @@ export function BrandingSettings({ request, onSaved, onBlockerChange }: Props) {
       return;
     }
     setReading(true);
-    const objectUrl = URL.createObjectURL(file);
     try {
-      const image = new Image(); image.src = objectUrl;
-      await image.decode();
-      if (!image.naturalWidth || !image.naturalHeight || image.naturalWidth > brandingLogoMaxDimension || image.naturalHeight > brandingLogoMaxDimension) throw new Error("dimensions");
       const dataUrl = await new Promise<string>((resolve, reject) => {
         const reader = new FileReader();
         reader.onload = () => resolve(String(reader.result)); reader.onerror = reject;
         reader.readAsDataURL(file);
       });
+      // Use the same data URL as the saved logo. The production image policy
+      // allows data images but intentionally does not allow blob URLs.
+      const image = new Image(); image.src = dataUrl;
+      await image.decode();
+      if (!image.naturalWidth || !image.naturalHeight || image.naturalWidth > brandingLogoMaxDimension || image.naturalHeight > brandingLogoMaxDimension) throw new Error("dimensions");
       if (generation === fileEpoch.current) setDraft(current => ({ ...current, logoDataUrl: dataUrl }));
     } catch {
       if (generation === fileEpoch.current) setError("This image could not be read. Use a static image up to 2048 pixels per side.");
     } finally {
-      URL.revokeObjectURL(objectUrl);
       if (generation === fileEpoch.current) { setReading(false); if (fileInput.current) fileInput.current.value = ""; }
     }
   }

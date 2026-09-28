@@ -20,6 +20,10 @@ const expectedRole = parseExpectedRole(process.env.UAT_EXPECT_ROLE);
 const expectedBrandName = process.env.UAT_EXPECT_BRAND_NAME ?? "ForgetBase";
 const shouldTestAuthoring = process.env.UAT_TEST_AUTHORING === "true";
 const shouldTestRichEditor = process.env.UAT_TEST_RICH_EDITOR === "true";
+const shouldTestBranding = process.env.UAT_TEST_BRANDING === "true";
+if (shouldTestBranding && (mode !== "release" || expectedRole !== "admin")) {
+  throw new Error("Branding UAT requires release mode and an admin of a disposable synthetic tenant.");
+}
 if (shouldTestRichEditor && (!shouldTestAuthoring || mode !== "release" || expectedRole !== "admin")) {
   throw new Error("Rich-editor UAT requires release mode, admin role, and UAT_TEST_AUTHORING=true.");
 }
@@ -352,6 +356,7 @@ async function checkReleaseFlow(page: Page, viewportName: "desktop" | "mobile"):
     await checkAdminPageAuthoring(page);
     if (shouldTestRichEditor) await checkRichEditorAuthoring(page);
   }
+  if (shouldTestBranding) await checkAdminBranding(page);
   await screenshotAdminRoute(page, "admin/reviews", "Review queue", "reviews.png", "release: admin reviews screenshot");
   await screenshotAdminRoute(page, "admin/system/activity", "Search activity", "analytics.png", "release: admin analytics screenshot");
   await expectVisibleText(page, "Content health", "release: admin analytics content health");
@@ -360,6 +365,57 @@ async function checkReleaseFlow(page: Page, viewportName: "desktop" | "mobile"):
   await screenshotAdminRoute(page, "admin/system/access", "Users", "access-management.png", "release: admin access screenshot");
   await screenshotAdminRoute(page, "admin/system/approvals", "Action execution", "approvals.png", "release: admin approvals screenshot");
   await screenshotExportRoute(page);
+}
+
+async function checkAdminBranding(page: Page): Promise<void> {
+  // Exercise the actual Railway image policy even when the isolated Compose
+  // proxy does not add it. Upload previews must not require a weaker policy.
+  const proxyConfig = readFileSync(resolve(root, "infra/docker/nginx.railway-proxy.conf.template"), "utf8");
+  const policy = proxyConfig.match(/add_header Content-Security-Policy "([^"]+)"/)?.[1];
+  if (!policy) throw new Error("Railway content security policy was not found");
+  const brandingPage = await page.context().newPage();
+  trackConsole(brandingPage);
+  await brandingPage.setViewportSize({ width: 1280, height: 800 });
+  await brandingPage.route("**/*", async route => {
+    if (route.request().resourceType() !== "document") return route.continue();
+    const response = await route.fetch();
+    await route.fulfill({ response, headers: { ...response.headers(), "content-security-policy": policy } });
+  });
+  try {
+    await brandingPage.goto(routeUrl(page, "admin/system/settings"), { waitUntil: "domcontentloaded" });
+    const field = brandingPage.getByRole("textbox", { name: "Logo text", exact: true });
+    await field.waitFor({ state: "visible" });
+    if (await field.inputValue() !== "ForgetBase" || await brandingPage.locator(".branding-preview img").count()) {
+      throw new Error("Branding UAT requires default branding in a disposable synthetic tenant");
+    }
+    const logo = readFileSync(resolve(root, "scripts/fixtures/branding/logo.png"));
+    const logoUrl = `data:image/png;base64,${logo.toString("base64")}`;
+    await field.fill("Field Notes & Research");
+    await brandingPage.getByLabel("Logo image", { exact: true }).setInputFiles(resolve(root, "scripts/fixtures/branding/logo.png"));
+    await brandingPage.getByRole("button", { name: "Use default image", exact: true }).waitFor({ state: "visible" });
+    await brandingPage.waitForFunction(() => {
+      const image = document.querySelector<HTMLImageElement>(".branding-preview img");
+      return Boolean(image?.complete && image.naturalWidth > 0);
+    });
+    await expectHiddenText(brandingPage, "This image could not be read", "branding: image preview works under the production CSP");
+    await brandingPage.getByRole("button", { name: "Save", exact: true }).click();
+    await expectVisibleText(brandingPage, "Branding saved.", "branding: custom image and text saved");
+    await brandingPage.reload({ waitUntil: "domcontentloaded" });
+    await field.waitFor({ state: "visible" });
+    if (await field.inputValue() !== "Field Notes & Research" || await brandingPage.locator(".branding-preview img").getAttribute("src") !== logoUrl) {
+      throw new Error("Branding did not persist the exact uploaded image and text after reload");
+    }
+    checks.push({ name: "branding: exact image and text persist after reload", status: "pass" });
+    await screenshot(brandingPage, "branding-desktop.png", "branding: desktop screenshot");
+    await brandingPage.setViewportSize({ width: 390, height: 844 });
+    await assertNoHorizontalOverflow(brandingPage, "branding: mobile overflow");
+    await screenshot(brandingPage, "branding-mobile.png", "branding: mobile screenshot");
+    await brandingPage.getByRole("button", { name: "Restore defaults", exact: true }).click();
+    await brandingPage.getByRole("button", { name: "Save", exact: true }).click();
+    await expectVisibleText(brandingPage, "Branding saved.", "branding: defaults restored");
+  } finally {
+    await brandingPage.close();
+  }
 }
 
 async function checkAdminPageAuthoring(page: Page): Promise<void> {
