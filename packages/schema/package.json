@@ -5,6 +5,10 @@
   "license": "Apache-2.0",
   "type": "module",
   "exports": {
+    "./branding-defaults": {
+      "types": "./src/branding-defaults.ts",
+      "import": "./dist/branding-defaults.js"
+    },
     ".": {
       "types": "./src/index.ts",
       "import": "./dist/index.js"

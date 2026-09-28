@@ -1,5 +1,16 @@
 import { forgetBaseVersion } from "@forgetbase/schema";
 
+const brandingOpenApiSchema = {
+  type: "object", additionalProperties: false, required: ["displayName", "logoDataUrl"],
+  properties: {
+    displayName: { type: "string", minLength: 1, maxLength: 64 },
+    logoDataUrl: { type: ["string", "null"], maxLength: 349560, description: "Base64 data URL for a static PNG, JPEG or WebP logo, or null for the default logo." }
+  }
+};
+function brandingResponse() {
+  return { description: "Public branding fields", content: { "application/json": { schema: brandingOpenApiSchema } } };
+}
+
 export function buildOpenApiDocument() {
   return {
     openapi: "3.1.0",
@@ -19,6 +30,26 @@ export function buildOpenApiDocument() {
       }
     ],
     paths: {
+      "/branding": {
+        get: {
+          summary: "Read public logo text and raster image for the login or application header",
+          security: [],
+          parameters: [{ name: "tenantId", in: "query", required: false, schema: { type: "string", default: "tenant_demo", maxLength: 200 } }],
+          responses: { "200": brandingResponse(), "400": jsonResponse("Invalid tenant query") }
+        }
+      },
+      "/admin/branding": {
+        get: {
+          summary: "Read the current admin tenant's branding",
+          responses: { "200": brandingResponse(), "401": jsonResponse("Authentication required"), "403": jsonResponse("Admin role and scope required"), "503": jsonResponse("Branding storage unavailable") }
+        },
+        put: {
+          summary: "Save the current admin tenant's logo text and image atomically with an audit event",
+          description: "Both fields are required. Use ForgetBase and null to restore defaults. Static PNG, JPEG and WebP only, at most 256 KiB and 2048 pixels per side. Cookie sessions require CSRF protection. Branding is public before login.",
+          requestBody: { required: true, content: { "application/json": { schema: brandingOpenApiSchema } } },
+          responses: { "200": brandingResponse(), "400": jsonResponse("Invalid text or image"), "401": jsonResponse("Authentication required"), "403": jsonResponse("Admin role, scope or CSRF check failed"), "413": jsonResponse("Request exceeds 360000 bytes"), "503": jsonResponse("Branding storage unavailable") }
+        }
+      },
       "/health": {
         get: {
           summary: "Liveness check",

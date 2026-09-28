@@ -51,7 +51,8 @@ assertIncludes(readme, "Public Beta Goal", "README docs list");
 
 assertIncludes(routing, 'return pageRoutes.has(aliasedRoute) ? aliasedRoute as AppRoute : "reader";', "default route");
 assertIncludes(app, 'className="public-entry-main login-entry-main"', "login entry");
-assertIncludes(app, "Log in to ForgetBase", "login entry");
+// The name is configurable. Default branding is checked through the real API in
+// verify-branding.ts and rendered default login copy in uat-public-beta.ts.
 assertIncludes(app, "Use your account to read pages or manage the knowledge base.", "login entry");
 assertIncludes(app, "public-login-form", "login form");
 assertNotIncludes(productUi, "showLoginPanel", "login modal removed");

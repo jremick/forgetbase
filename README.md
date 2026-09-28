@@ -98,6 +98,7 @@ Included now:
 
 - reader UI for published pages
 - admin console for content, reviews, access, exports, settings, and system health
+- [admin branding controls](docs/branding.md) for the logo image and text on login, reader, and admin screens
 - local users, groups, service accounts, API keys, password login, and OIDC setup
 - permission-aware search, citations, question answering, and exports
 - permission-aware page attachments with content/signature checks, required malware scanning in Compose, per-tenant/uploader quotas, bounded upload concurrency, download-only reader access, and admin lifecycle controls

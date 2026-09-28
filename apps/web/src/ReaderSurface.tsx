@@ -1,3 +1,6 @@
+import type { Branding } from "@forgetbase/schema";
+import { Brand } from "./components/brand.js";
+
 import { MarkdownDocument, useMarkdownHeadings } from "./components/markdown/markdown-document.js";
 import { loadAssetCollection } from "./lib/asset-collection.js";
 import type { AssetDetail, AssetRecord, Attachment, AuthPrincipal, ManagedQueryResponse, SearchResponse } from "@forgetbase/schema";
@@ -51,6 +54,7 @@ const navCollapsedWidth = 64;
 const attachmentMaxBytes = 10 * 1024 * 1024;
 
 type ReaderSurfaceProps = {
+  branding: Branding;
   principal: AuthPrincipal;
   route: Extract<AppRoute, "reader" | "account-settings">;
   request: AppRequest;
@@ -88,7 +92,7 @@ function scrollReaderRegionIntoView(id: string): void {
   window.requestAnimationFrame(() => document.getElementById(id)?.scrollIntoView({ block: "start" }));
 }
 
-export function ReaderSurface({ principal, route, request, requestBinary, onLogout, onNavigate, canUseAdministration }: ReaderSurfaceProps) {
+export function ReaderSurface({ branding, principal, route, request, requestBinary, onLogout, onNavigate, canUseAdministration }: ReaderSurfaceProps) {
   const [assets, setAssets] = useState<AssetRecord[]>([]);
   const [selectedStableId, setSelectedStableId] = useState(() => readReaderPageId(window.location));
   const [collectionState, setCollectionState] = useState<"loading" | "loaded" | "error">("loading");
@@ -365,7 +369,7 @@ export function ReaderSurface({ principal, route, request, requestBinary, onLogo
   return <div className={`app-shell reader-shell ${isNavCollapsed ? "nav-collapsed" : ""} ${accountSettings ? "reader-shell--account" : ""}`} style={shellStyle}>
     <a className="skip-link" href="#main" onClick={(event) => { event.preventDefault(); document.getElementById("main")?.focus(); }}>Skip to content</a>
     <header className="topbar">
-      <a className="brand" aria-label="ForgetBase pages" href={readerPageHref(window.location, resolvedStableId)} onClick={(event) => openPageLink(event, resolvedStableId)}><span className="mark" aria-hidden="true"><img className="mark-image" src="/favicon.svg" alt="" /></span><span className="brand-name">ForgetBase</span></a>
+      <a className="brand" aria-label={`${branding.displayName} pages`} href={readerPageHref(window.location, resolvedStableId)} onClick={(event) => openPageLink(event, resolvedStableId)}><Brand branding={branding} /></a>
       <div className="topbar-main reader-topbar-main">
         {accountSettings ? <div className="reader-topbar-spacer" aria-hidden="true" /> : <form className="reader-topbar-search" onSubmit={(event) => void runSearch(event)}>
           <MagnifyingGlass aria-hidden="true" />

@@ -17,6 +17,7 @@ type CheckResult = {
 const root = process.cwd();
 const mode = parseMode(process.env.UAT_MODE);
 const expectedRole = parseExpectedRole(process.env.UAT_EXPECT_ROLE);
+const expectedBrandName = process.env.UAT_EXPECT_BRAND_NAME ?? "ForgetBase";
 const shouldTestAuthoring = process.env.UAT_TEST_AUTHORING === "true";
 const shouldTestRichEditor = process.env.UAT_TEST_RICH_EDITOR === "true";
 if (shouldTestRichEditor && (!shouldTestAuthoring || mode !== "release" || expectedRole !== "admin")) {
@@ -71,6 +72,7 @@ try {
 
   const report = {
     mode,
+    expectedBrandName,
     baseUrl,
     commitSha,
     outputDir,
@@ -217,7 +219,7 @@ async function checkPublicEntry(page: Page, viewportName: "desktop" | "mobile"):
     await assertProtectedSessionApiRequiresAuthentication(page, `${viewportName}: protected session API requires authentication`);
   }
 
-  await expectText(page, "h1", "Log in to ForgetBase", `${viewportName}: login h1`);
+  await expectText(page, "h1", `Log in to ${expectedBrandName}`, `${viewportName}: login h1`);
   await expectTitle(page, "ForgetBase | Knowledge Base for People and AI Tools", `${viewportName}: page title`);
   await expectVisibleText(page, "Use your account to read pages or manage the knowledge base.", `${viewportName}: login description`);
   await page.waitForSelector(".login-panel", { timeout: 15000 });

@@ -1,4 +1,7 @@
 import { PostgresAssetChangeOutboxRepository, type AssetChangeOutboxRepository, type AssetChangeWork } from "@forgetbase/db";
+import { PostgresBrandingRepository } from "@forgetbase/db";
+import { brandingSchema, brandingTenantQuerySchema, defaultBranding } from "@forgetbase/schema";
+import { validateBrandingImage } from "./branding-image.js";
 import { readReleaseIdentity } from "./release-identity.js";
 import { safeErrorCode, safeRequestLogger } from "./request-security.js";
 import { InvalidAssetCursorError, readAccessibleAssetPage, readAllAccessibleAssets } from "./asset-collections.js";
@@ -433,6 +436,7 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
     ? undefined
     : createPool(databaseUrl);
   const registryRepository = options.registryRepository ?? (pool ? new PostgresRegistryRepository(pool) : undefined);
+  const brandingRepository = pool ? new PostgresBrandingRepository(pool) : undefined;
   const assetChangeOutbox = pool ? new PostgresAssetChangeOutboxRepository(pool) : undefined;
   const attachmentRepository = options.attachmentRepository ?? (pool ? new PostgresAttachmentRepository(pool) : undefined);
   const authRepository = options.authRepository ?? (pool ? new PostgresAuthRepository(pool) : undefined);
@@ -866,6 +870,37 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
     }
 
     return reply.code(201).send(bootstrap);
+  });
+
+  // Only the public display fields are exposed before login. Branding is public
+  // by design; tenant IDs select a display context, never write authority.
+  server.get("/branding", async (request, reply) => {
+    reply.header("cache-control", "no-store");
+    const parsed = brandingTenantQuerySchema.safeParse(request.query);
+    if (!parsed.success) return sendValidationError(reply, parsed.error.issues);
+    return brandingRepository ? brandingRepository.get(parsed.data.tenantId) : { ...defaultBranding };
+  });
+
+  server.get("/admin/branding", async (request, reply) => {
+    reply.header("cache-control", "no-store");
+    if (!authRepository || !brandingRepository) return reply.code(503).send({ error: "branding_unavailable" });
+    const principal = await requireAdminPrincipal(request, reply, authRepository, loginSessionIdleTimeoutSeconds);
+    if (!principal) return;
+    return brandingRepository.get(principal.tenantId);
+  });
+
+  server.put("/admin/branding", { bodyLimit: 360_000 }, async (request, reply) => {
+    reply.header("cache-control", "no-store");
+    if (!authRepository || !brandingRepository) return reply.code(503).send({ error: "branding_unavailable" });
+    const principal = await requireAdminPrincipal(request, reply, authRepository, loginSessionIdleTimeoutSeconds);
+    if (!principal) return;
+    const parsed = brandingSchema.safeParse(request.body);
+    if (!parsed.success) return sendValidationError(reply, parsed.error.issues);
+    if (parsed.data.logoDataUrl) {
+      try { validateBrandingImage(parsed.data.logoDataUrl); }
+      catch { return reply.code(400).send({ error: "invalid_logo", message: "Use a static PNG, JPEG or WebP image up to 256 KB and 2048 pixels per side." }); }
+    }
+    return brandingRepository.save(principal, parsed.data);
   });
 
   server.post("/auth/login", async (request, reply) => {
@@ -8950,6 +8985,7 @@ function isPublicAuthenticationPath(requestUrl: string): boolean {
   const pathname = new URL(requestUrl, "http://forgetbase.local").pathname;
 
   return pathname === "/health" ||
+    pathname === "/branding" ||
     pathname === "/ready" ||
     pathname === "/auth/login" ||
     pathname === "/auth/oidc/authorize" ||

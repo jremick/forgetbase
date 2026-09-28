@@ -1,3 +1,9 @@
+import type { Branding } from "@forgetbase/schema";
+import { Brand, BrandLogo } from "./components/brand.js";
+import { BrandingSettings } from "./components/branding-settings.js";
+import type { AppRequest } from "./lib/app-api.js";
+import { useCallback } from "react";
+
 import type { MarkdownEditorHandle, MarkdownEditorProps } from "./components/editor/markdown-editor.js";
 import { MarkdownDocument } from "./components/markdown/markdown-document.js";
 import { ContentLibrary } from "./components/content/content-library.js";
@@ -512,13 +518,18 @@ function defaultAuthoringReviewDate(): string {
 }
 
 type AdminSurfaceProps = {
+  branding: Branding;
+  brandingRequest: AppRequest;
+  onBrandingSaved: (branding: Branding) => void;
   onSessionEnded?: () => void;
   locationKey: string;
   onNavigate: (route: string, pageId?: string, view?: string) => void;
   registerNavigationBlocker: (blocker: NavigationBlocker | null) => void;
 };
 
-export function AdminSurface({ onSessionEnded, locationKey, onNavigate, registerNavigationBlocker }: AdminSurfaceProps) {
+export function AdminSurface({ branding, brandingRequest, onBrandingSaved, onSessionEnded, locationKey, onNavigate, registerNavigationBlocker }: AdminSurfaceProps) {
+  const [brandingBlocker, setBrandingBlocker] = useState<NavigationBlocker | null>(null);
+  const onBrandingBlockerChange = useCallback((blocker: NavigationBlocker | null) => setBrandingBlocker(() => blocker), []);
   const [apiUrl, setApiUrl] = useState(() => readInitialApiUrl(configuredApiUrl));
   const [apiKey, setApiKey] = useBrowserApiKey();
   const [sessionCookieActive, setSessionCookieActive] = useState(
@@ -806,9 +817,9 @@ export function AdminSurface({ onSessionEnded, locationKey, onNavigate, register
     registerNavigationBlocker(authoringMode ? (proceed) => requestLeaveAuthoring(() => {
       cancelPageAuthoring();
       proceed();
-    }) : null);
+    }) : brandingBlocker);
     return () => registerNavigationBlocker(null);
-  }, [authoringMode, registerNavigationBlocker]);
+  }, [authoringMode, brandingBlocker, registerNavigationBlocker]);
 
   useEffect(() => {
     if (!authoringMode) return;
@@ -1702,6 +1713,7 @@ export function AdminSurface({ onSessionEnded, locationKey, onNavigate, register
   }
 
   function requestLeaveAuthoring(proceed: () => void) {
+    if (brandingBlocker) { brandingBlocker(proceed); return; }
     if (!hasPendingAuthoringChanges()) { proceed(); return; }
     pendingLeaveRef.current = proceed;
     setIsLeaveDialogOpen(true);
@@ -3623,10 +3635,7 @@ export function AdminSurface({ onSessionEnded, locationKey, onNavigate, register
       </AlertDialog>
       <header className="topbar">
         <div className="brand">
-          <span className="mark" aria-hidden="true">
-            <img className="mark-image" src="/favicon.svg" alt="" />
-          </span>
-          <span className="brand-name">ForgetBase</span>
+          <Brand branding={branding} />
           {isAuthenticated ? (
             <div className="health brand-health">
               <span className={`health-dot ${health === "ok" ? "ok" : "bad"}`}></span>
@@ -4965,6 +4974,7 @@ export function AdminSurface({ onSessionEnded, locationKey, onNavigate, register
             </SectionCard>
           </div>
           <div className={routePanelClass(currentPage, settingsOverviewRoutes, "grid gap-4")}>
+            {currentPage === "settings" && capabilities.manageSystem ? <BrandingSettings request={brandingRequest} onSaved={onBrandingSaved} onBlockerChange={onBrandingBlockerChange} /> : null}
             <SectionCard
               title="Choose a settings area"
               description="Use Policies for system rules and Access for people, service accounts, keys, and sessions."
@@ -6567,12 +6577,10 @@ export function AdminSurface({ onSessionEnded, locationKey, onNavigate, register
         <main className="public-entry-main login-entry-main" id="main" tabIndex={-1}>
           <Card className="login-panel" aria-labelledby="login-title">
             <CardHeader className="login-dialog-header">
-                <span className="mark login-mark" aria-hidden="true">
-                  <img className="mark-image" src="/favicon.svg" alt="" />
-                </span>
+                <BrandLogo branding={branding} className="login-mark" />
                 <div>
-                <CardDescription className="eyebrow">ForgetBase</CardDescription>
-                <CardTitle><h1 id="login-title">Log in to ForgetBase</h1></CardTitle>
+                <CardDescription className="eyebrow">{branding.displayName}</CardDescription>
+                <CardTitle><h1 id="login-title">Log in to {branding.displayName}</h1></CardTitle>
                 <CardDescription id="login-description" className="lede">
                   Use your account to read pages or manage the knowledge base.
                 </CardDescription>
