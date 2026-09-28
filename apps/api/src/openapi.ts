@@ -1,4 +1,16 @@
 import { forgetBaseVersion } from "@forgetbase/schema";
+import { importPlanRequestSchema, importPlanSchema } from "@forgetbase/schema/import-planner";
+
+const brandingOpenApiSchema = {
+  type: "object", additionalProperties: false, required: ["displayName", "logoDataUrl"],
+  properties: {
+    displayName: { type: "string", minLength: 1, maxLength: 64 },
+    logoDataUrl: { type: ["string", "null"], maxLength: 349560, description: "Base64 data URL for a static PNG, JPEG or WebP logo, or null for the default logo." }
+  }
+};
+function brandingResponse() {
+  return { description: "Public branding fields", content: { "application/json": { schema: brandingOpenApiSchema } } };
+}
 
 export function buildOpenApiDocument() {
   return {
@@ -19,6 +31,26 @@ export function buildOpenApiDocument() {
       }
     ],
     paths: {
+      "/branding": {
+        get: {
+          summary: "Read public logo text and raster image for the login or application header",
+          security: [],
+          parameters: [{ name: "tenantId", in: "query", required: false, schema: { type: "string", default: "tenant_demo", maxLength: 200 } }],
+          responses: { "200": brandingResponse(), "400": jsonResponse("Invalid tenant query") }
+        }
+      },
+      "/admin/branding": {
+        get: {
+          summary: "Read the current admin tenant's branding",
+          responses: { "200": brandingResponse(), "401": jsonResponse("Authentication required"), "403": jsonResponse("Admin role and scope required"), "503": jsonResponse("Branding storage unavailable") }
+        },
+        put: {
+          summary: "Save the current admin tenant's logo text and image atomically with an audit event",
+          description: "Both fields are required. Use ForgetBase and null to restore defaults. Static PNG, JPEG and WebP only, at most 256 KiB and 2048 pixels per side. Cookie sessions require CSRF protection. Branding is public before login.",
+          requestBody: { required: true, content: { "application/json": { schema: brandingOpenApiSchema } } },
+          responses: { "200": brandingResponse(), "400": jsonResponse("Invalid text or image"), "401": jsonResponse("Authentication required"), "403": jsonResponse("Admin role, scope or CSRF check failed"), "413": jsonResponse("Request exceeds 360000 bytes"), "503": jsonResponse("Branding storage unavailable") }
+        }
+      },
       "/health": {
         get: {
           summary: "Liveness check",
@@ -35,6 +67,195 @@ export function buildOpenApiDocument() {
           responses: {
             "200": jsonResponse("Service and dependencies are ready"),
             "503": jsonResponse("Service dependencies are not ready")
+          }
+        }
+      },
+      "/local-sync/v1/configuration": {
+        get: {
+          summary: "Read the pinned local-sync protocol and signing configuration",
+          responses: {
+            "200": jsonResponse("Local-sync configuration for the authenticated principal"),
+            "401": jsonResponse("Authentication required"),
+            "403": jsonResponse("Dedicated local-sync credential required"),
+            "503": jsonResponse("Local sync is not configured")
+          }
+        }
+      },
+      "/local-sync/v1/device-sessions": {
+        post: {
+          summary: "Start loopback PKCE enrollment for a named local device",
+          security: [],
+          responses: {
+            "201": jsonResponse("Browser approval URL and short-lived signed request"),
+            "400": jsonResponse("Invalid device or loopback redirect"),
+            "503": jsonResponse("Local device enrollment is not configured")
+          }
+        },
+        get: {
+          summary: "List local devices for the signed-in user",
+          parameters: [queryParameter("includeRevoked", false), queryParameter("userId", false)],
+          responses: {
+            "200": jsonResponse("Named local device sessions"),
+            "401": jsonResponse("Authentication required"),
+            "403": jsonResponse("Browser login session required")
+          }
+        }
+      },
+      "/local-sync/v1/device-sessions/authorization": {
+        post: {
+          summary: "Approve a local device and issue a one-time authorization code",
+          responses: {
+            "200": jsonResponse("Loopback redirect containing the one-time code and state"),
+            "400": jsonResponse("Approval request invalid or expired"),
+            "403": jsonResponse("Browser login session required")
+          }
+        }
+      },
+      "/local-sync/v1/device-sessions/authorization/preview": {
+        post: {
+          summary: "Preview a signed local-device approval request",
+          responses: {
+            "200": jsonResponse("Bound server, device, and loopback approval details"),
+            "400": jsonResponse("Approval request invalid or expired"),
+            "403": jsonResponse("Browser login session required")
+          }
+        }
+      },
+      "/local-sync/v1/device-sessions/token": {
+        post: {
+          summary: "Exchange a one-time PKCE authorization code for rotating local-device credentials",
+          security: [],
+          responses: {
+            "201": jsonResponse("Short-lived access token and rotating refresh token"),
+            "401": jsonResponse("Authorization code or PKCE proof invalid"),
+            "503": jsonResponse("Local device enrollment is not configured")
+          }
+        }
+      },
+      "/local-sync/v1/device-sessions/refresh": {
+        post: {
+          summary: "Rotate a local-device refresh token and short-lived access token",
+          security: [],
+          responses: {
+            "200": jsonResponse("Rotated local-device credential pair"),
+            "401": jsonResponse("Refresh token invalid, replayed, expired, disabled, or revoked")
+          }
+        }
+      },
+      "/local-sync/v1/device-sessions/current": {
+        delete: {
+          summary: "Revoke the current local device session",
+          responses: {
+            "200": jsonResponse("Revoked local device and access key"),
+            "401": jsonResponse("Authentication required"),
+            "404": jsonResponse("Local device not found")
+          }
+        }
+      },
+      "/local-sync/v1/device-sessions/{sessionId}": {
+        delete: {
+          summary: "Revoke a named local device from an authenticated browser session",
+          parameters: [pathParameter("sessionId")],
+          responses: {
+            "200": jsonResponse("Revoked local device and access key"),
+            "401": jsonResponse("Authentication required"),
+            "403": jsonResponse("Browser login session required"),
+            "404": jsonResponse("Local device not found")
+          }
+        }
+      },
+      "/local-sync/v1/manifest": {
+        get: {
+          summary: "Create a signed permission-filtered local knowledge snapshot",
+          parameters: [
+            queryParameter("knownAuthorizationEpoch", false),
+            queryParameter("knownContentGeneration", false),
+            queryParameter("knownRecordSetHash", false)
+          ],
+          responses: {
+            "200": jsonResponse("Signed full or unchanged local-sync manifest"),
+            "400": jsonResponse("Invalid high-water query"),
+            "401": jsonResponse("Authentication required"),
+            "403": jsonResponse("Dedicated local-sync credential required"),
+            "409": jsonResponse("Eligible local corpus exceeds the record cap"),
+            "413": jsonResponse("Eligible local corpus exceeds the payload cap"),
+            "503": jsonResponse("Local sync is not configured")
+          }
+        }
+      },
+      "/system/version": {
+        get: {
+          summary: "Inspect the installed product, schema, updater, and management mode versions",
+          responses: {
+            "200": jsonResponse("Installed system version and update-management capability"),
+            "401": jsonResponse("Authentication required")
+          }
+        }
+      },
+      "/system/updates": {
+        get: {
+          summary: "Inspect update availability, active work, history, and recovery points",
+          responses: {
+            "200": jsonResponse("Current update system status"),
+            "403": jsonResponse("Deployment-owner authorization required"),
+            "503": jsonResponse("Update control service unavailable")
+          }
+        }
+      },
+      "/system/updates/check": {
+        post: {
+          summary: "Fetch and verify the signed release feed",
+          responses: {
+            "200": jsonResponse("Verified update system status"),
+            "403": jsonResponse("Deployment-owner authorization required"),
+            "503": jsonResponse("Update control service unavailable")
+          }
+        }
+      },
+      "/system/updates/preflight": {
+        post: {
+          summary: "Run non-mutating update eligibility and recovery checks",
+          responses: {
+            "200": jsonResponse("Update preflight result"),
+            "403": jsonResponse("Deployment-owner authorization required"),
+            "503": jsonResponse("Update control service unavailable")
+          }
+        }
+      },
+      "/system/updates/jobs": {
+        post: {
+          summary: "Request an update or schedule for separate host approval",
+          description: "Returns an awaiting-approval job. The request credential cannot authorize host changes. A host operator must inspect and approve the exact request with the host CLI before execution; unstarted requests can expire, be denied, or be cancelled.",
+          responses: {
+            "202": jsonResponse("Update request awaiting host approval"),
+            "403": jsonResponse("Deployment-owner authorization required"),
+            "409": jsonResponse("Update cannot be started in the current state"),
+            "503": jsonResponse("Update control service unavailable")
+          }
+        }
+      },
+      "/system/updates/jobs/{jobId}/cancel": {
+        post: {
+          summary: "Cancel an update that has not started mutating the installation",
+          parameters: [pathParameter("jobId")],
+          responses: {
+            "200": jsonResponse("Canceled update job"),
+            "403": jsonResponse("Deployment-owner authorization required"),
+            "404": jsonResponse("Update job not found"),
+            "409": jsonResponse("Update job can no longer be canceled"),
+            "503": jsonResponse("Update control service unavailable")
+          }
+        }
+      },
+      "/system/updates/rollback": {
+        post: {
+          summary: "Request recovery with exact data-loss confirmation and separate host approval",
+          description: "Each manual restore needs a new host approval bound to this job, the verified recovery receipt and its exact timestamp. Browser confirmation alone does not start a restore.",
+          responses: {
+            "202": jsonResponse("Recovery request awaiting host approval"),
+            "403": jsonResponse("Deployment-owner authorization required"),
+            "409": jsonResponse("Recovery point cannot be restored in the current state"),
+            "503": jsonResponse("Update control service unavailable")
           }
         }
       },
@@ -305,6 +526,28 @@ export function buildOpenApiDocument() {
           responses: {
             "200": jsonResponse("Removed group membership record"),
             "404": jsonResponse("Group membership not found")
+          }
+        }
+      },
+      "/imports/plan": {
+        post: {
+          summary: "Plan a governed import without changing assets",
+          description: "Returns a classification report only, never an executable import request. Requires an authenticated maintainer or administrator with asset:read and asset:write scopes and current read and write access to every relevant target on the request surface. tenantId must match the authenticated tenant. Supply a raw source snapshot and at most 200 governed candidates; candidate hashes, target state and mapping assertions are forbidden. The server reads current editing heads and grants. Changed or oversized target state returns 409; retry planning against current state. Asset content, versions, permissions and publication are unchanged; normal authentication bookkeeping may occur.",
+          requestBody: {
+            required: true,
+            content: { "application/json": { schema: importPlanRequestSchema.toJSONSchema({ io: "input" }) } }
+          },
+          responses: {
+            "200": {
+              description: "Report-only classifications, completeness, conflicts and a deterministic plan digest",
+              content: { "application/json": { schema: importPlanSchema.toJSONSchema() } }
+            },
+            "400": jsonResponse("Invalid source snapshot, candidate, provenance or request assertion"),
+            "401": jsonResponse("Authentication required"),
+            "403": jsonResponse("Tenant, scope, surface or target access denied"),
+            "409": jsonResponse("import_target_changed or import_target_limit_exceeded; no report returned"),
+            "413": jsonResponse("Request exceeds the API body limit"),
+            "503": jsonResponse("Import planning registry or authentication unavailable")
           }
         }
       },

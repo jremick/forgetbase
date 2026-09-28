@@ -21,6 +21,8 @@ import {
 import { ReaderSurface } from "./ReaderSurface.js";
 import { appLocation, createAppNavigation, type NavigationBlocker } from "./lib/app-navigation.js";
 import "./styles.css";
+import { Brand, BrandLogo } from "./components/brand.js";
+import { useBranding } from "./lib/branding.js";
 
 const LazyAdminSurface = lazy(() => import("./AdminSurface.js").then((module) => ({ default: module.AdminSurface })));
 const configuredApiUrl = import.meta.env.VITE_FORGETBASE_API_URL?.trim();
@@ -103,6 +105,7 @@ export function App() {
   apiKeyRef.current = apiKey;
   const request = useMemo(() => createAppRequest(() => apiUrlRef.current, () => apiKeyRef.current), []);
   const requestBinary = useMemo(() => createAppBinaryRequest(() => apiUrlRef.current, () => apiKeyRef.current), []);
+  const { branding, updateBranding } = useBranding(request, principal?.tenantId ?? (loginTenantId || "tenant_demo"));
   const administrator = principal ? canUseAdministration(principal) : false;
 
   useEffect(() => {
@@ -262,20 +265,20 @@ export function App() {
       </main></div>;
     }
     if (isReaderRoute(route)) {
-      return <ReaderSurface principal={principal} route={route as Extract<AppRoute, "reader" | "account-settings">} request={request} requestBinary={requestBinary} onLogout={logout} onNavigate={navigate} canUseAdministration={administrator} />;
+      return <ReaderSurface branding={branding} principal={principal} route={route as Extract<AppRoute, "reader" | "account-settings">} request={request} requestBinary={requestBinary} onLogout={logout} onNavigate={navigate} canUseAdministration={administrator} />;
     }
 
     if (administrator) {
-      return <LazyBoundary><Suspense fallback={<div className="app-shell admin-shell"><main className="main" id="main"><Alert variant="info"><AlertDescription>Loading administration…</AlertDescription></Alert></main></div>}><LazyAdminSurface onSessionEnded={clearSession} locationKey={locationKey} onNavigate={navigate} registerNavigationBlocker={registerNavigationBlocker} /></Suspense></LazyBoundary>;
+      return <LazyBoundary><Suspense fallback={<div className="app-shell admin-shell"><main className="main" id="main"><Alert variant="info"><AlertDescription>Loading administration…</AlertDescription></Alert></main></div>}><LazyAdminSurface branding={branding} brandingRequest={request} onBrandingSaved={updateBranding} onSessionEnded={clearSession} locationKey={locationKey} onNavigate={navigate} registerNavigationBlocker={registerNavigationBlocker} /></Suspense></LazyBoundary>;
     }
   }
 
   return <div className="app-shell auth-shell">
     <a className="skip-link" href="#main" onClick={(event) => { event.preventDefault(); document.getElementById("main")?.focus(); }}>Skip to content</a>
-    <header className="topbar"><div className="brand"><span className="mark" aria-hidden="true"><img className="mark-image" src="/favicon.svg" alt="" /></span><span className="brand-name">ForgetBase</span></div><div className="topbar-main public-topbar-main"><span aria-hidden="true" /></div></header>
+    <header className="topbar"><div className="brand"><Brand branding={branding} /></div><div className="topbar-main public-topbar-main"><span aria-hidden="true" /></div></header>
     <main className="public-entry-main login-entry-main" id="main" tabIndex={-1}>
       <Card className="login-panel" aria-labelledby="login-title">
-        <CardHeader className="login-dialog-header"><span className="mark login-mark" aria-hidden="true"><img className="mark-image" src="/favicon.svg" alt="" /></span><div><CardDescription className="eyebrow">ForgetBase</CardDescription><CardTitle><h1 id="login-title">Log in to ForgetBase</h1></CardTitle><CardDescription id="login-description" className="lede">Use your account to read pages or manage the knowledge base.</CardDescription></div></CardHeader>
+        <CardHeader className="login-dialog-header"><BrandLogo branding={branding} className="login-mark" /><div><CardDescription className="eyebrow">{branding.displayName}</CardDescription><CardTitle><h1 id="login-title">Log in to {branding.displayName}</h1></CardTitle><CardDescription id="login-description" className="lede">Use your account to read pages or manage the knowledge base.</CardDescription></div></CardHeader>
         <CardContent className="login-panel-content">
           {authState === "checking" ? <Alert variant="info" className="public-session-alert"><AlertDescription>Checking session</AlertDescription></Alert> : null}
           <form className="public-login-form" onSubmit={(event) => void login(event)}><div className="public-login-field"><Label htmlFor="login-email">Username / email</Label><Input id="login-email" value={loginEmail} onChange={(event) => setLoginEmail(event.target.value)} type="text" autoComplete="username" required /></div><div className="public-login-field"><Label htmlFor="login-password">Password</Label><Input id="login-password" value={loginPassword} onChange={(event) => setLoginPassword(event.target.value)} type="password" autoComplete="current-password" required /></div><div className="public-login-actions"><Button type="submit" variant="primary" disabled={authState === "checking" || !loginEmail.trim() || !loginPassword}>Log in</Button></div></form>

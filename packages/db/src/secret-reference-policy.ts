@@ -134,7 +134,23 @@ export function defaultSecretReferencePolicy(tenantId: string): SecretReferenceP
   });
 }
 
+/** Host control credentials are never part of tenant-configurable provider authority. */
+export function isReservedProviderSecretEnvVar(envVar: string | null | undefined): boolean {
+  // Cover the direct value, the file reference, and chained file-reference aliases.
+  return typeof envVar === "string" && /^FORGETBASE_UPDATER_API_TOKEN(?:_FILE)*$/.test(envVar);
+}
+
+export function assertProviderSecretReferenceAllowed(envVar: string | null | undefined): void {
+  if (isReservedProviderSecretEnvVar(envVar)) {
+    throw new Error("Reserved host secret references cannot be used by providers");
+  }
+}
+
 export function isSecretEnvVarAllowed(policy: SecretReferencePolicy, envVar: string | null | undefined): boolean {
+  if (isReservedProviderSecretEnvVar(envVar)) {
+    return false;
+  }
+
   if (!envVar || policy.allowUnlistedEnvVars) {
     return true;
   }

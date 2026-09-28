@@ -4,12 +4,23 @@
   "private": true,
   "license": "Apache-2.0",
   "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/server.ts",
+      "import": "./dist/server.js"
+    },
+    "./local": {
+      "types": "./src/local-server.ts",
+      "import": "./dist/local-server.js"
+    }
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "start": "tsx src/index.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@forgetbase/local-runtime": "workspace:*",
     "@forgetbase/schema": "workspace:*",
     "@forgetbase/sdk": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.29.0",

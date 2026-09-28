@@ -2,6 +2,16 @@
 
 Published tags are immutable. Beta releases support self-hosted trials with synthetic data; they do not promise stable APIs or production support.
 
+## 0.1.0-beta.8 - 2026-09-28
+
+- Add admin controls for logo text and PNG, JPEG or WebP images, shared by login, reader and admin screens. Saves are tenant-scoped and audited; admins can restore the defaults.
+- Add report-only governed import planning through API, SDK, CLI and MCP, preserving the governed-v1 content hash contract. Reviewing assets remain eligible for planning.
+- Include the private-pilot local agent runtime with browser device approval, OS credential storage, signed content sync, leased SQLite retrieval and read-only local MCP tools. Internal-content activation remains disabled by default.
+- Include the managed Compose update and recovery trial workflow. Each update or restore requires a separate, exact, one-use host CLI approval; hosted deployments do not activate a privileged updater.
+- Update the pinned pnpm setup Action to 6.1.0.
+
+Upgrade applies migrations 040–043 for local sync and 044 for branding. Migration checksums are now recorded and checked. Back up the database and attachment files together before upgrading. Local-runtime platform limits and managed-update trial limits remain in their verification records; this release does not publish a signed update feed or a managed image bundle.
+
 ## 0.1.0-beta.7 - 2026-09-28
 
 - Move current development, CI and container builds to Node.js 26.10.0, update Nginx to 1.31.0, and refresh the pinned checkout, setup-node and pnpm Actions.

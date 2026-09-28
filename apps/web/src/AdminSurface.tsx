@@ -1,3 +1,9 @@
+import type { Branding } from "@forgetbase/schema";
+import { Brand, BrandLogo } from "./components/brand.js";
+import { BrandingSettings } from "./components/branding-settings.js";
+import type { AppRequest } from "./lib/app-api.js";
+import { useCallback } from "react";
+
 import type { MarkdownEditorHandle, MarkdownEditorProps } from "./components/editor/markdown-editor.js";
 import { MarkdownDocument } from "./components/markdown/markdown-document.js";
 import { ContentLibrary } from "./components/content/content-library.js";
@@ -57,6 +63,8 @@ import type {
   ServiceAccount,
   ServiceAccountPolicy,
   SecretReferencePolicy,
+  SystemVersionResponse,
+  UpdateSystemStatus,
   TelemetryAnalyticsSummary,
   TelemetryRetentionPolicy,
   TelemetryRetentionPurgeResult
@@ -95,7 +103,7 @@ import {
   SectionCard,
   StatusAlert
 } from "./components/app/index.js";
-import { TrustStateSummary } from "./components/domain/index.js";
+import { TrustStateSummary } from "./components/domain/trust-state-summary.js";
 import type { AnalyticsWindowDays } from "./components/domain/analytics-dashboard.js";
 import {
   attachmentUploadErrorMessage,
@@ -221,6 +229,8 @@ const RichMarkdownEditor = richEditorEnabled ? lazy(() => import("./components/e
   .then((module) => ({ default: module.MarkdownEditor }))
   .catch(() => ({ default: PlainMarkdownEditor }))) : PlainMarkdownEditor;
 
+const LazyUpdateManagementPanel = lazy(() => import("./components/domain/update-management.js")
+  .then((module) => ({ default: module.UpdateManagementPanel })));
 const configuredApiUrl = import.meta.env.VITE_FORGETBASE_API_URL?.trim();
 const attachmentMaxBytes = 10 * 1024 * 1024;
 const demoEvalCases = [
@@ -309,6 +319,7 @@ const pageRouteValues = [
   "distribute",
   "activity",
   "health",
+  "updates",
   "integrations",
   "settings",
   "policies",
@@ -318,6 +329,7 @@ const pageRouteValues = [
 const operationsRouteValues = [
   "activity",
   "health",
+  "updates",
   "integrations",
   "settings",
   "policies",
@@ -342,6 +354,7 @@ const adminRouteAliases: Record<string, string> = {
   "admin/system": "health",
   "admin/system/activity": "activity",
   "admin/system/health": "health",
+  "admin/system/updates": "updates",
   "admin/system/integrations": "integrations",
   "admin/system/settings": "settings",
   "admin/system/policies": "policies",
@@ -359,6 +372,7 @@ const canonicalRouteHashes: Record<string, string> = {
   "distribute": "admin/exports",
   "activity": "admin/system/activity",
   "health": "admin/system/health",
+  "updates": "admin/system/updates",
   "integrations": "admin/system/integrations",
   "settings": "admin/system/settings",
   "policies": "admin/system/policies",
@@ -391,6 +405,10 @@ const operationsPageCopy: Record<string, { title: string; lede: string }> = {
   health: {
     title: "System Health",
     lede: "Check the API, providers, recent activity, approvals, and maintenance jobs."
+  },
+  updates: {
+    title: "Updates",
+    lede: "Review signed releases, run preflight checks, update the installation, and manage recovery points."
   },
   integrations: {
     title: "Integrations",
@@ -512,13 +530,18 @@ function defaultAuthoringReviewDate(): string {
 }
 
 type AdminSurfaceProps = {
+  branding: Branding;
+  brandingRequest: AppRequest;
+  onBrandingSaved: (branding: Branding) => void;
   onSessionEnded?: () => void;
   locationKey: string;
   onNavigate: (route: string, pageId?: string, view?: string) => void;
   registerNavigationBlocker: (blocker: NavigationBlocker | null) => void;
 };
 
-export function AdminSurface({ onSessionEnded, locationKey, onNavigate, registerNavigationBlocker }: AdminSurfaceProps) {
+export function AdminSurface({ branding, brandingRequest, onBrandingSaved, onSessionEnded, locationKey, onNavigate, registerNavigationBlocker }: AdminSurfaceProps) {
+  const [brandingBlocker, setBrandingBlocker] = useState<NavigationBlocker | null>(null);
+  const onBrandingBlockerChange = useCallback((blocker: NavigationBlocker | null) => setBrandingBlocker(() => blocker), []);
   const [apiUrl, setApiUrl] = useState(() => readInitialApiUrl(configuredApiUrl));
   const [apiKey, setApiKey] = useBrowserApiKey();
   const [sessionCookieActive, setSessionCookieActive] = useState(
@@ -737,6 +760,8 @@ export function AdminSurface({ onSessionEnded, locationKey, onNavigate, register
     priority: "10"
   });
   const [health, setHealth] = useState<string>("checking");
+  const [systemVersion, setSystemVersion] = useState<SystemVersionResponse | null>(null);
+  const [updateAvailable, setUpdateAvailable] = useState(false);
   const [message, setMessage] = useState<string>("");
   const [error, setError] = useState<string>("");
   const [libraryQuery, setLibraryQuery] = useState("");
@@ -806,9 +831,9 @@ export function AdminSurface({ onSessionEnded, locationKey, onNavigate, register
     registerNavigationBlocker(authoringMode ? (proceed) => requestLeaveAuthoring(() => {
       cancelPageAuthoring();
       proceed();
-    }) : null);
+    }) : brandingBlocker);
     return () => registerNavigationBlocker(null);
-  }, [authoringMode, registerNavigationBlocker]);
+  }, [authoringMode, brandingBlocker, registerNavigationBlocker]);
 
   useEffect(() => {
     if (!authoringMode) return;
@@ -1140,6 +1165,24 @@ export function AdminSurface({ onSessionEnded, locationKey, onNavigate, register
     }
   }
 
+  async function loadSystemVersion(authKey = apiKey) {
+    const authenticationEpoch = authenticationEpochRef.current;
+    const nextSystemVersion = await request<SystemVersionResponse>("/system/version", {}, authKey);
+    if (authenticationEpoch !== authenticationEpochRef.current) return;
+    setSystemVersion(nextSystemVersion);
+    if (!nextSystemVersion.updateManagement.authorized || !nextSystemVersion.updateManagement.configured || nextSystemVersion.installationMode === "hosted") {
+      setUpdateAvailable(false);
+      return;
+    }
+    try {
+      const updateStatus = await request<UpdateSystemStatus>("/system/updates", {}, authKey);
+      if (authenticationEpoch !== authenticationEpochRef.current) return;
+      setUpdateAvailable(Boolean(updateStatus.availableUpdate?.updateAvailable));
+    } catch {
+      setUpdateAvailable(false);
+    }
+  }
+
   async function checkAuthenticatedSession(authKey = apiKey): Promise<AuthPrincipal | null> {
     try {
       const principal = await request<AuthPrincipal>("/auth/me", {}, authKey);
@@ -1182,7 +1225,10 @@ export function AdminSurface({ onSessionEnded, locationKey, onNavigate, register
     const principal = await checkAuthenticatedSession();
 
     if (principal) {
-      await refresh();
+      await Promise.all([
+        refresh(),
+        ...(getAppCapabilities(principal).manageSystem ? [loadSystemVersion()] : [])
+      ]);
     }
   }
 
@@ -1222,7 +1268,10 @@ export function AdminSurface({ onSessionEnded, locationKey, onNavigate, register
       setApiKey(localAuthKey);
       setLoginPassword("");
       setMessage(`Signed in as ${response.user.email}`);
-      await refresh(localAuthKey);
+      await Promise.all([
+        refresh(localAuthKey),
+        ...(response.user.role === "admin" && response.apiKey.scopes.includes("admin") ? [loadSystemVersion(localAuthKey)] : [])
+      ]);
     } catch (loginError) {
       setError(loginError instanceof Error ? loginError.message : String(loginError));
     }
@@ -1234,6 +1283,8 @@ export function AdminSurface({ onSessionEnded, locationKey, onNavigate, register
     setSessionCookieActive(false);
     setAuthState("unauthenticated");
     setCurrentPrincipal(null);
+    setSystemVersion(null);
+    setUpdateAvailable(false);
     setAssets([]);
     setSelectedStableId("");
     setAssetDetail(null);
@@ -1702,6 +1753,7 @@ export function AdminSurface({ onSessionEnded, locationKey, onNavigate, register
   }
 
   function requestLeaveAuthoring(proceed: () => void) {
+    if (brandingBlocker) { brandingBlocker(proceed); return; }
     if (!hasPendingAuthoringChanges()) { proceed(); return; }
     pendingLeaveRef.current = proceed;
     setIsLeaveDialogOpen(true);
@@ -3285,6 +3337,7 @@ export function AdminSurface({ onSessionEnded, locationKey, onNavigate, register
         return [
           () => refreshHealth(),
           () => loadAttachmentReconciliation(false),
+          loadSystemVersion,
           loadTelemetrySummary,
           loadProviderHealth,
           loadActionExecutionPolicy,
@@ -3293,6 +3346,8 @@ export function AdminSurface({ onSessionEnded, locationKey, onNavigate, register
           loadEvalSummary,
           loadManagedQueryCachePolicy
         ];
+      case "updates":
+        return [loadSystemVersion];
       case "integrations":
         return [loadProviderConfigs, loadProviderHealth, loadAuthProviderConfigs];
       case "policies":
@@ -3466,10 +3521,15 @@ export function AdminSurface({ onSessionEnded, locationKey, onNavigate, register
       folderIcon: <GearSix aria-hidden="true" />,
       folderRoute: "health",
       activeRoutes: [...operationsRouteValues],
-      count: 5,
+      count: systemVersion?.updateManagement.authorized ? 8 : 7,
       leaves: [
         { route: "activity", label: "Activity" },
         { route: "health", label: "Health", badge: health === "ok" ? { label: "ok", tone: "ok" } : { label: health, tone: "bad" } },
+        ...(systemVersion?.updateManagement.authorized ? [{
+          route: "updates",
+          label: "Updates",
+          badge: updateAvailable ? { label: "available", tone: "warn" as const } : undefined
+        }] : []),
         { route: "integrations", label: "Integrations", count: providerConfigs.length + authProviderConfigs.length },
         { route: "settings", label: "Settings" },
         { route: "policies", label: "Policies" },
@@ -3623,10 +3683,7 @@ export function AdminSurface({ onSessionEnded, locationKey, onNavigate, register
       </AlertDialog>
       <header className="topbar">
         <div className="brand">
-          <span className="mark" aria-hidden="true">
-            <img className="mark-image" src="/favicon.svg" alt="" />
-          </span>
-          <span className="brand-name">ForgetBase</span>
+          <Brand branding={branding} />
           {isAuthenticated ? (
             <div className="health brand-health">
               <span className={`health-dot ${health === "ok" ? "ok" : "bad"}`}></span>
@@ -4822,6 +4879,8 @@ export function AdminSurface({ onSessionEnded, locationKey, onNavigate, register
                 compact
                 items={[
                   { term: "API", description: <Badge variant={health === "ok" ? "success" : "destructive"}>{health}</Badge> },
+                  { term: "Version", description: systemVersion?.version ?? "not loaded" },
+                  { term: "Install mode", description: systemVersion?.installationMode ?? "not loaded" },
                   { term: "Providers checked", description: providerHealth.length },
                   { term: "Ready providers", description: providerHealth.filter((provider) => provider.status === "ready").length },
                   { term: "Retrieval sample", description: telemetrySummary?.retrieval.eventCount ?? telemetryEvents.length },
@@ -4868,6 +4927,13 @@ export function AdminSurface({ onSessionEnded, locationKey, onNavigate, register
                 <EmptyState title="No provider health loaded" description="Use Refresh workspace to check provider readiness." />
               )}
             </SectionCard>
+          </div>
+          <div className={routePanelClass(currentPage, ["updates"], "grid gap-4")}>
+            {currentPage === "updates" ? (
+              <Suspense fallback={<p>Loading update controls…</p>}>
+                <LazyUpdateManagementPanel key={`${currentPrincipal?.principalId}:${currentPrincipal?.apiKeyId}`} request={request} onAvailabilityChange={setUpdateAvailable} />
+              </Suspense>
+            ) : null}
           </div>
           <div className={routePanelClass(currentPage, ["review"], "grid gap-4")}>
             {reviewQueueError ? <Alert variant="destructive" role="alert"><AlertDescription>Could not load the review queue. {reviewQueueError}</AlertDescription><Button onClick={() => void loadReviewQueue()} disabled={reviewQueueLoading}>Retry</Button></Alert> : null}
@@ -4965,6 +5031,7 @@ export function AdminSurface({ onSessionEnded, locationKey, onNavigate, register
             </SectionCard>
           </div>
           <div className={routePanelClass(currentPage, settingsOverviewRoutes, "grid gap-4")}>
+            {currentPage === "settings" && capabilities.manageSystem ? <BrandingSettings request={brandingRequest} onSaved={onBrandingSaved} onBlockerChange={onBrandingBlockerChange} /> : null}
             <SectionCard
               title="Choose a settings area"
               description="Use Policies for system rules and Access for people, service accounts, keys, and sessions."
@@ -6567,12 +6634,10 @@ export function AdminSurface({ onSessionEnded, locationKey, onNavigate, register
         <main className="public-entry-main login-entry-main" id="main" tabIndex={-1}>
           <Card className="login-panel" aria-labelledby="login-title">
             <CardHeader className="login-dialog-header">
-                <span className="mark login-mark" aria-hidden="true">
-                  <img className="mark-image" src="/favicon.svg" alt="" />
-                </span>
+                <BrandLogo branding={branding} className="login-mark" />
                 <div>
-                <CardDescription className="eyebrow">ForgetBase</CardDescription>
-                <CardTitle><h1 id="login-title">Log in to ForgetBase</h1></CardTitle>
+                <CardDescription className="eyebrow">{branding.displayName}</CardDescription>
+                <CardTitle><h1 id="login-title">Log in to {branding.displayName}</h1></CardTitle>
                 <CardDescription id="login-description" className="lede">
                   Use your account to read pages or manage the knowledge base.
                 </CardDescription>

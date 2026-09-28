@@ -1,0 +1,126 @@
+{
+  "tenantId": "tenant_demo",
+  "snapshot": {
+    "schemaVersion": "3",
+    "kind": "forgetbase.import-snapshot",
+    "snapshotId": "synthetic-plan-example-1",
+    "source": {
+      "system": "synthetic",
+      "rootId": "planning-example",
+      "scopeId": "guides",
+      "sourceRefPrefix": "synthetic://planning-example/guides/"
+    },
+    "capturedAt": "2026-09-28T00:00:00.000Z",
+    "sourceReadRevision": "example-revision-1",
+    "correlationId": "example-plan-1",
+    "complete": true,
+    "totalCount": 1,
+    "continuation": {
+      "version": "continuation-v1",
+      "complete": true,
+      "nextCursor": null,
+      "proof": "exhaustive"
+    },
+    "records": [
+      {
+        "sourceId": "read-only-plan",
+        "sourceContentSha256": "bef0be8dd988cc4f36f707afdbec86e9b2e503ddce9d63d686983439c7da7186",
+        "effectiveAccess": {
+          "accessContractVersion": "effective-access-v1",
+          "lifecycleState": "draft",
+          "publicationState": "draft",
+          "reviewState": "pending",
+          "sensitivity": "internal",
+          "audience": [
+            "operators"
+          ],
+          "allowedSurfaces": [
+            "api",
+            "cli",
+            "mcp"
+          ],
+          "allowedExports": [],
+          "allowedActions": [],
+          "effectiveGrants": []
+        },
+        "provenance": {
+          "sourceParentId": null,
+          "sourcePath": "synthetic://planning-example/guides/read-only-plan"
+        }
+      }
+    ],
+    "truncated": false
+  },
+  "candidates": [
+    {
+      "sourceId": "read-only-plan",
+      "sourceContentSha256": "bef0be8dd988cc4f36f707afdbec86e9b2e503ddce9d63d686983439c7da7186",
+      "effectiveAccess": {
+        "accessContractVersion": "effective-access-v1",
+        "lifecycleState": "draft",
+        "publicationState": "draft",
+        "reviewState": "pending",
+        "sensitivity": "internal",
+        "audience": [
+          "operators"
+        ],
+        "allowedSurfaces": [
+          "api",
+          "cli",
+          "mcp"
+        ],
+        "allowedExports": [],
+        "allowedActions": [],
+        "effectiveGrants": []
+      },
+      "governedSnapshot": {
+        "assetSnapshot": {
+          "stableId": "guide.import-plan-example",
+          "type": "guideline",
+          "ownerId": "user_demo_operator",
+          "title": "Review an import plan",
+          "summary": "Synthetic report-only planning example.",
+          "lifecycleState": "draft",
+          "sensitivity": "internal",
+          "audience": [
+            "operators"
+          ],
+          "status": "review",
+          "reviewDueAt": "2027-12-31",
+          "sourceKind": "synthetic",
+          "sourceRef": "synthetic://planning-example/guides/read-only-plan",
+          "allowedSurfaces": [
+            "api",
+            "cli",
+            "mcp"
+          ],
+          "allowedExports": [],
+          "allowedActions": [],
+          "metadata": {
+            "2": "two",
+            "10": "ten",
+            "importSource": {
+              "system": "synthetic",
+              "rootId": "planning-example",
+              "scopeId": "guides",
+              "sourceScopeId": "source-scope-v1-0aa47b48c28446a042dcb78c42d6e201082259055c21dc28fdd70e1e5f375331",
+              "sourceId": "read-only-plan"
+            }
+          }
+        },
+        "instructionObjects": [
+          {
+            "instructionKind": "guideline",
+            "body": "Review the report before choosing any content change. Planning does not import content."
+          }
+        ],
+        "humanDocuments": [
+          {
+            "format": "markdown",
+            "body": "# Review an import plan\n\nReview the report before choosing any content change. Planning does not import content."
+          }
+        ]
+      }
+    }
+  ]
+}

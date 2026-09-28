@@ -15,7 +15,7 @@ import {
 
 const administrationRoutes: AppRoute[] = [
   "library", "search", "asset-read", "review", "versions", "distribute",
-  "activity", "health", "integrations", "settings", "policies", "access", "approvals"
+  "activity", "health", "updates", "integrations", "settings", "policies", "access", "approvals"
 ];
 
 function principal(
@@ -33,6 +33,8 @@ describe("app routing", () => {
     expect(normalizeAppRoute("exports")).toBe("distribute");
     expect(canonicalAppHash("library")).toBe("admin/content");
     expect(canonicalAppHash("settings")).toBe("admin/system/settings");
+    expect(normalizeAppRoute("admin/system/updates")).toBe("updates");
+    expect(canonicalAppHash("updates")).toBe("admin/system/updates");
   });
 
   it("defaults unknown routes to the reader", () => {
@@ -140,6 +142,9 @@ describe("app routing", () => {
     expect(canAccessAppRoute(maintainer, "#admin/system/access")).toBe(false);
     expect(canAccessAppRoute(maintainer, "operations")).toBe(false);
     expect(canAccessAppRoute(maintainer, "providers")).toBe(false);
+    expect(canAccessAppRoute(maintainer, "#admin/system/updates")).toBe(false);
+    expect(canAccessAppRoute(principal("admin", ["asset:read", "asset:write"]), "updates")).toBe(false);
+    expect(canAccessAppRoute(principal("admin", ["admin"]), "#admin/system/updates")).toBe(true);
   });
 
   it("requires read and write scopes before offering existing-page commands", () => {

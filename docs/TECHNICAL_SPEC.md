@@ -6,6 +6,12 @@ ForgetBase should be implemented as a TypeScript monorepo with containerized ser
 
 The MVP should keep orchestration interfaces present but inactive. The core build target is a permission-aware registry and retrieval platform.
 
+## Release And Host Update System
+
+Managed Docker Compose releases use an Ed25519-signed manifest and digest-pinned component images. A host-level updater, rather than the API container, owns Docker Compose, recovery storage, and the durable update ledger. The API forwards only authenticated deployment-owner operations. The web UI presents release notes, preflight, scheduling, progress, recovery points, and explicit rollback confirmation.
+
+Migrations record immutable checksums and release identity. The candidate plan must match the exact migration IDs in the signed manifest before maintenance starts. Update state remains outside the application database so it survives database failure or restore. The complete behavior and acceptance gates are defined in [Versioning And Upgrades](VERSIONING_AND_UPGRADES.md).
+
 ## Recommended Stack
 
 ### Language And Runtime

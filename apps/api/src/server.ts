@@ -1,8 +1,14 @@
+import { importPlanRequestSchema } from "@forgetbase/schema/import-planner";
+import { ImportPlanningError, planGovernedImport, withinImportJsonBudget } from "./import-planning.js";
 import { PostgresAssetChangeOutboxRepository, type AssetChangeOutboxRepository, type AssetChangeWork } from "@forgetbase/db";
+import { PostgresBrandingRepository } from "@forgetbase/db";
+import { brandingSchema, brandingTenantQuerySchema, defaultBranding } from "@forgetbase/schema";
+import { validateBrandingImage } from "./branding-image.js";
 import { readReleaseIdentity } from "./release-identity.js";
 import { safeErrorCode, safeRequestLogger } from "./request-security.js";
 import { InvalidAssetCursorError, readAccessibleAssetPage, readAllAccessibleAssets } from "./asset-collections.js";
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { lstatSync, readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { isAbsolute } from "node:path";
 import fastify, {
@@ -68,9 +74,25 @@ import {
   loginSessionListResponseSchema,
   loginSessionRefreshResponseSchema,
   loginSessionRevokeResponseSchema,
+  localDeviceAuthorizationApproveInputSchema,
+  localDeviceAuthorizationApproveResponseSchema,
+  localDeviceAuthorizationPreviewSchema,
+  localDeviceAuthorizationStartInputSchema,
+  localDeviceAuthorizationStartResponseSchema,
+  localDeviceSessionListResponseSchema,
+  localDeviceTokenExchangeInputSchema,
+  localDeviceTokenRefreshInputSchema,
+  localDeviceTokenResponseSchema,
   localUserCreateInputSchema,
   localUserListResponseSchema,
   localUserUpdateInputSchema,
+  localSyncConfigurationSchema,
+  localSyncManifestBundleSchema,
+  localSyncManifestRequestSchema,
+  localSyncMaxRecordBytes,
+  localSyncMaxRecords,
+  localSyncMaxRecordsPerPage,
+  localSyncMaxSnapshotBytes,
   managedQueryCacheEntrySchema,
   managedQueryCacheListResponseSchema,
   managedQueryCachePolicyInputSchema,
@@ -79,6 +101,7 @@ import {
   managedQueryCachePurgeResultSchema,
   managedQueryRetentionPolicyInputSchema,
   managedQueryRetentionPolicySchema,
+  installationModeSchema,
   managedQueryFeedbackInputSchema,
   managedQueryFeedbackListResponseSchema,
   managedQueryFeedbackSchema,
@@ -120,6 +143,12 @@ import {
   telemetryRetentionPolicySchema,
   telemetryRetentionPurgeInputSchema,
   telemetryRetentionPurgeResultSchema,
+  productIdentitySchema,
+  releaseChannelSchema,
+  systemVersionResponseSchema,
+  updateApplyInputSchema,
+  updateRollbackInputSchema,
+  forgetBaseVersion,
   createHealthResponse,
   buildOkfExportPackage,
   healthResponseSchema,
@@ -137,6 +166,7 @@ import {
   type ExternalAuthProvider,
   type LoginSessionRecord,
   type LoginSessionSource,
+  type LocalSyncRecord,
   type ManagedQueryCache,
   type ManagedQueryCachePolicy,
   type ManagedQueryPolicy,
@@ -149,6 +179,7 @@ import {
   type ManagedQueryGeneration,
   type ManagedQueryGenerationAttempt,
   type ManagedQueryGenerationUsage,
+  type ProductIdentity,
   type ModelProvider,
   type ModelProviderConfig,
   type ModelProviderHealth,
@@ -163,6 +194,7 @@ import {
   type TelemetryAnalyticsInput,
   type TelemetryAnalyticsSummary,
 } from "@forgetbase/schema";
+import { HttpUpdateControlClient, type UpdateControlService } from "@forgetbase/updater";
 	import {
   PostgresAgentActionExecutionRepository,
   PostgresAttachmentRepository,
@@ -175,6 +207,10 @@ import {
   PostgresManagedQueryEvalSchedulePolicyRepository,
 	  PostgresManagedQueryPolicyRepository,
   PostgresManagedQueryRetentionPolicyRepository,
+  PostgresLocalSyncStateRepository,
+  PostgresLocalSyncSnapshotRepository,
+  InMemoryLocalSyncSnapshotRepository,
+  LocalSyncSnapshotStaleError,
   PostgresModelProviderConfigRepository,
   PostgresPiiRedactionPolicyRepository,
   PostgresRetrievalRankingPolicyRepository,
@@ -193,6 +229,7 @@ import {
   defaultPiiRedactionPolicy,
   defaultSecretReferencePolicy,
   isSecretEnvVarAllowed,
+  isReservedProviderSecretEnvVar,
   principalHasScope,
   purgeTelemetryForRetentionPolicy,
   roleCanManagePermissions,
@@ -203,7 +240,9 @@ import {
   type AuthProviderConfigRepository,
   type AttachmentRepository,
 	  type AuthRepository,
-	  type LoginCredentialIssueResult,
+  type LoginCredentialIssueResult,
+  type LocalSyncStateRepository,
+  type LocalSyncSnapshotRepository,
 	  type AgentActionExecutionRepository,
   type ManagedQueryCachePolicyRepository,
   type ManagedQueryCacheRepository,
@@ -220,6 +259,17 @@ import {
   type SecretReferencePolicyRepository,
   type TelemetryRetentionPolicyRepository
 } from "@forgetbase/db";
+import {
+  createEd25519LocalSyncSigner,
+  createLocalDeviceAuthorizationCode,
+  createLocalDeviceAuthorizationRequest,
+  createLocalDevicePkceChallenge,
+  createLocalSyncManifestBundle,
+  createLocalSyncRecord,
+  verifyLocalDeviceAuthorizationCode,
+  verifyLocalDeviceAuthorizationRequest,
+  type LocalSyncSigner
+} from "@forgetbase/local-sync";
 import { redactText, validateAssetCollection, type RedactionFinding } from "@forgetbase/validation";
 import {
   LocalFilesystemAttachmentStorage,
@@ -271,6 +321,15 @@ const DEFAULT_ATTACHMENT_PRINCIPAL_MAX_BYTES = 256 * 1024 * 1024;
 const DEFAULT_ATTACHMENT_PRINCIPAL_MAX_FILES = 250;
 const DEFAULT_ATTACHMENT_UPLOADS_PER_MINUTE = 30;
 const DEFAULT_ATTACHMENT_MAX_CONCURRENT_UPLOADS = 4;
+const DEFAULT_LOCAL_SYNC_LEASE_SECONDS = 60 * 60;
+const MAX_LOCAL_SYNC_LEASE_SECONDS = 24 * 60 * 60;
+const DEFAULT_LOCAL_SYNC_MINIMUM_CLIENT_VERSION = "0.1.0";
+const DEFAULT_LOCAL_DEVICE_ACCESS_SECONDS = 10 * 60;
+const DEFAULT_LOCAL_DEVICE_ABSOLUTE_SECONDS = 30 * 24 * 60 * 60;
+const DEFAULT_LOCAL_DEVICE_REFRESH_SECONDS = 7 * 24 * 60 * 60;
+const MAX_LOCAL_DEVICE_ACCESS_SECONDS = 60 * 60;
+const MAX_LOCAL_DEVICE_ABSOLUTE_SECONDS = 90 * 24 * 60 * 60;
+const MAX_LOCAL_DEVICE_REFRESH_SECONDS = 30 * 24 * 60 * 60;
 const ALLOWED_ATTACHMENT_MEDIA_TYPES = new Set<string>(attachmentAllowedMediaTypes);
 
 export interface BuildServerOptions extends FastifyServerOptions {
@@ -306,6 +365,19 @@ export interface BuildServerOptions extends FastifyServerOptions {
   authProviderConfigRepository?: AuthProviderConfigRepository;
   secretReferencePolicyRepository?: SecretReferencePolicyRepository;
   telemetryRetentionPolicyRepository?: TelemetryRetentionPolicyRepository;
+  localSyncStateRepository?: LocalSyncStateRepository;
+  localSyncSnapshotRepository?: LocalSyncSnapshotRepository;
+  localSyncSigner?: LocalSyncSigner;
+  localSyncServerId?: string;
+  localSyncLeaseDurationSeconds?: number;
+  localSyncMinimumClientVersion?: string;
+  localSyncAllowInternal?: boolean;
+  localSyncEnrollmentSecret?: string;
+  localSyncPublicBaseUrl?: string;
+  localSyncWebBaseUrl?: string;
+  localDeviceAccessSeconds?: number;
+  localDeviceAbsoluteSeconds?: number;
+  localDeviceRefreshSeconds?: number;
   databaseUrl?: string;
   autoMigrate?: boolean;
   oidcRuntime?: OidcRuntime;
@@ -325,6 +397,9 @@ export interface BuildServerOptions extends FastifyServerOptions {
   requestRateLimitMaxEntries?: number;
   requireAuthentication?: boolean;
   readinessCheck?: () => Promise<void>;
+  productIdentity?: ProductIdentity;
+  updateControlService?: UpdateControlService;
+  systemUpdateOwnerEmails?: string[];
 }
 
 export interface OidcDiscoveryDocument {
@@ -433,6 +508,7 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
     ? undefined
     : createPool(databaseUrl);
   const registryRepository = options.registryRepository ?? (pool ? new PostgresRegistryRepository(pool) : undefined);
+  const brandingRepository = pool ? new PostgresBrandingRepository(pool) : undefined;
   const assetChangeOutbox = pool ? new PostgresAssetChangeOutboxRepository(pool) : undefined;
   const attachmentRepository = options.attachmentRepository ?? (pool ? new PostgresAttachmentRepository(pool) : undefined);
   const authRepository = options.authRepository ?? (pool ? new PostgresAuthRepository(pool) : undefined);
@@ -465,6 +541,73 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
     (pool ? new PostgresSecretReferencePolicyRepository(pool) : undefined);
   const telemetryRetentionPolicyRepository = options.telemetryRetentionPolicyRepository ??
     (pool ? new PostgresTelemetryRetentionPolicyRepository(pool) : undefined);
+  const localSyncStateRepository = options.localSyncStateRepository ??
+    (pool ? new PostgresLocalSyncStateRepository(pool) : undefined);
+  const localSyncSnapshotRepository = options.localSyncSnapshotRepository ??
+    (pool
+      ? new PostgresLocalSyncSnapshotRepository(pool)
+      : registryRepository && authRepository && localSyncStateRepository
+        ? new InMemoryLocalSyncSnapshotRepository(registryRepository, authRepository, localSyncStateRepository)
+        : undefined);
+  const localSyncSigner = options.localSyncSigner ?? readLocalSyncSignerFromEnv();
+  const localSyncServerId = readNonEmptyValue(
+    options.localSyncServerId ?? process.env.FORGETBASE_LOCAL_SYNC_SERVER_ID,
+    "forgetbase-development"
+  );
+  const localSyncLeaseDurationSeconds = readPositiveIntegerOption(
+    options.localSyncLeaseDurationSeconds,
+    process.env.FORGETBASE_LOCAL_SYNC_LEASE_SECONDS,
+    DEFAULT_LOCAL_SYNC_LEASE_SECONDS,
+    "FORGETBASE_LOCAL_SYNC_LEASE_SECONDS"
+  );
+  if (localSyncLeaseDurationSeconds > MAX_LOCAL_SYNC_LEASE_SECONDS) {
+    throw new Error(`FORGETBASE_LOCAL_SYNC_LEASE_SECONDS must not exceed ${MAX_LOCAL_SYNC_LEASE_SECONDS}.`);
+  }
+  const localSyncMinimumClientVersion = readNonEmptyValue(
+    options.localSyncMinimumClientVersion ?? process.env.FORGETBASE_LOCAL_SYNC_MINIMUM_CLIENT_VERSION,
+    DEFAULT_LOCAL_SYNC_MINIMUM_CLIENT_VERSION
+  );
+  const localSyncAllowInternal = options.localSyncAllowInternal
+    ?? readOptionalEnvBoolean(process.env.FORGETBASE_LOCAL_SYNC_ALLOW_INTERNAL)
+    ?? false;
+  const localSyncEnrollmentSecret = options.localSyncEnrollmentSecret
+    ?? process.env.FORGETBASE_LOCAL_SYNC_ENROLLMENT_SECRET;
+  const localSyncPublicBaseUrl = normalizeOptionalPublicBaseUrl(
+    options.localSyncPublicBaseUrl ?? process.env.FORGETBASE_PUBLIC_API_URL,
+    "FORGETBASE_PUBLIC_API_URL"
+  );
+  const localSyncWebBaseUrl = normalizeOptionalPublicBaseUrl(
+    options.localSyncWebBaseUrl ?? process.env.FORGETBASE_WEB_URL,
+    "FORGETBASE_WEB_URL"
+  );
+  const localDeviceAccessSeconds = readPositiveIntegerOption(
+    options.localDeviceAccessSeconds,
+    process.env.FORGETBASE_LOCAL_DEVICE_ACCESS_SECONDS,
+    DEFAULT_LOCAL_DEVICE_ACCESS_SECONDS,
+    "FORGETBASE_LOCAL_DEVICE_ACCESS_SECONDS"
+  );
+  const localDeviceAbsoluteSeconds = readPositiveIntegerOption(
+    options.localDeviceAbsoluteSeconds,
+    process.env.FORGETBASE_LOCAL_DEVICE_ABSOLUTE_SECONDS,
+    DEFAULT_LOCAL_DEVICE_ABSOLUTE_SECONDS,
+    "FORGETBASE_LOCAL_DEVICE_ABSOLUTE_SECONDS"
+  );
+  const localDeviceRefreshSeconds = readPositiveIntegerOption(
+    options.localDeviceRefreshSeconds,
+    process.env.FORGETBASE_LOCAL_DEVICE_REFRESH_SECONDS,
+    DEFAULT_LOCAL_DEVICE_REFRESH_SECONDS,
+    "FORGETBASE_LOCAL_DEVICE_REFRESH_SECONDS"
+  );
+  if (localDeviceAccessSeconds > MAX_LOCAL_DEVICE_ACCESS_SECONDS) {
+    throw new Error(`FORGETBASE_LOCAL_DEVICE_ACCESS_SECONDS must not exceed ${MAX_LOCAL_DEVICE_ACCESS_SECONDS}.`);
+  }
+  if (localDeviceAbsoluteSeconds > MAX_LOCAL_DEVICE_ABSOLUTE_SECONDS) {
+    throw new Error(`FORGETBASE_LOCAL_DEVICE_ABSOLUTE_SECONDS must not exceed ${MAX_LOCAL_DEVICE_ABSOLUTE_SECONDS}.`);
+  }
+  if (localDeviceRefreshSeconds > MAX_LOCAL_DEVICE_REFRESH_SECONDS
+    || localDeviceRefreshSeconds > localDeviceAbsoluteSeconds) {
+    throw new Error("FORGETBASE_LOCAL_DEVICE_REFRESH_SECONDS must not exceed its maximum or the device absolute lifetime.");
+  }
   const attachmentMaxBytes = readPositiveIntegerOption(
     options.attachmentMaxBytes,
     process.env.FORGETBASE_ATTACHMENT_MAX_BYTES,
@@ -591,12 +734,27 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
   const requireAuthentication = options.requireAuthentication ??
     readOptionalEnvBoolean(process.env.FORGETBASE_REQUIRE_AUTHENTICATION) ??
     false;
+  const productIdentity = productIdentitySchema.parse(options.productIdentity ?? readProductIdentityFromEnvironment());
+  // Managed candidates fail closed, including GET authentication and telemetry writes.
+  const managedWritesEnabled = productIdentity.installationMode !== "managed" ||
+    process.env.FORGETBASE_MANAGED_WRITES_ENABLED === "true";
+  const updateControlService = options.updateControlService ?? readUpdateControlServiceFromEnvironment();
+  const systemUpdateOwnerEmails = new Set(
+    (options.systemUpdateOwnerEmails ?? readCsvEnvironment(process.env.FORGETBASE_SYSTEM_UPDATE_OWNER_EMAILS))
+      .map((email) => email.toLowerCase())
+  );
 
   server.addContentTypeParser(
     "application/octet-stream",
     { parseAs: "buffer", bodyLimit: attachmentMaxBytes },
     (_request, body, done) => done(null, body)
   );
+
+  server.addHook("onRequest", async (request, reply) => {
+    if (!managedWritesEnabled && !["/health", "/ready"].includes(request.routeOptions.url ?? "")) {
+      return reply.header("retry-after", "5").code(503).send({ error: "managed_update_maintenance" });
+    }
+  });
 
   server.addHook("onRequest", async (request, reply) => {
     const isAttachmentUpload = request.method === "POST" && request.routeOptions.url === "/assets/:stableId/attachments";
@@ -657,6 +815,36 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
   });
 
   server.addHook("preHandler", async (request, reply) => {
+    if (
+      request.method === "OPTIONS" ||
+      isLocalSyncPath(request.url) ||
+      !authRepository
+    ) {
+      return;
+    }
+
+    const authenticated = await authenticate(
+      request,
+      authRepository,
+      loginSessionIdleTimeoutSeconds
+    );
+    if (!authenticated || !isDedicatedLocalSyncPrincipal(authenticated.principal)) {
+      return;
+    }
+
+    await recordDenied(
+      authRepository,
+      authenticated.principal,
+      authenticated.principal.tenantId,
+      "local_sync.route_restricted",
+      "local_sync",
+      undefined,
+      { requestedPath: new URL(request.url, "http://forgetbase.local").pathname }
+    );
+    return reply.code(403).send({ error: "local_sync_credential_route_restricted" });
+  });
+
+  server.addHook("preHandler", async (request, reply) => {
     if (!requireAuthentication || request.method === "OPTIONS" || isPublicAuthenticationPath(request.url)) {
       return;
     }
@@ -674,7 +862,7 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
 
   if (pool) {
     server.addHook("onReady", async () => {
-      if (options.autoMigrate ?? true) {
+      if (managedWritesEnabled && (options.autoMigrate ?? readOptionalEnvBoolean(process.env.FORGETBASE_AUTO_MIGRATE) ?? true)) {
         await runMigrations(pool);
       } else {
         const readiness = await pool.query<{ ready: boolean }>(
@@ -683,7 +871,9 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
               to_regclass('public.schema_migrations') IS NOT NULL
               AND to_regclass('public.assets') IS NOT NULL
               AND to_regclass('public.users') IS NOT NULL
-              AND to_regclass('public.api_keys') IS NOT NULL AS ready
+              AND to_regclass('public.api_keys') IS NOT NULL
+              AND to_regclass('public.local_sync_principal_state') IS NOT NULL
+              AND to_regclass('public.local_sync_serialization_state') IS NOT NULL AS ready
           `
         );
 
@@ -698,7 +888,7 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
     });
   }
 
-  if (attachmentReconciliationEnabled) {
+  if (attachmentReconciliationEnabled && managedWritesEnabled) {
     server.addHook("onReady", async () => {
       if (!attachmentRepository || !attachmentStorage?.inventory) {
         server.log.error("Attachment reconciliation is enabled but inventory support is unavailable");
@@ -727,7 +917,7 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
 
   const releaseIdentity = readReleaseIdentity();
   server.get("/health", async () => {
-    return { ...healthResponseSchema.parse(createHealthResponse("forgetbase-api")), ...(releaseIdentity ? { release: releaseIdentity } : {}) };
+    return { ...healthResponseSchema.parse(createHealthResponse("forgetbase-api", productIdentity.version)), ...(releaseIdentity ? { release: releaseIdentity } : {}), ...(productIdentity.installationMode === "managed" ? { managedWritesEnabled } : {}) };
   });
 
   server.get("/ready", async (_request, reply) => {
@@ -742,6 +932,8 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
               AND to_regclass('public.assets') IS NOT NULL
               AND to_regclass('public.users') IS NOT NULL
               AND to_regclass('public.api_keys') IS NOT NULL
+              AND to_regclass('public.local_sync_principal_state') IS NOT NULL
+              AND to_regclass('public.local_sync_serialization_state') IS NOT NULL
               AND EXISTS (SELECT 1 FROM schema_migrations) AS ready
           `
         );
@@ -783,6 +975,138 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
     }
   });
 
+  server.get("/system/version", async (request, reply) => {
+    const principal = authRepository
+      ? await requireAdminPrincipal(request, reply, authRepository, loginSessionIdleTimeoutSeconds)
+      : null;
+    if (authRepository && !principal) return;
+
+    let databaseSchemaVersion = productIdentity.databaseSchemaVersion;
+    if (pool) {
+      const result = await pool.query<{ id: string }>("SELECT id FROM schema_migrations ORDER BY applied_at DESC, id DESC LIMIT 1");
+      databaseSchemaVersion = result.rows[0]?.id ?? databaseSchemaVersion;
+    }
+
+    const email = principal?.email?.toLowerCase() ?? "";
+    return systemVersionResponseSchema.parse({
+      ...productIdentity,
+      databaseSchemaVersion,
+      updateManagement: {
+        configured: Boolean(updateControlService),
+        authorized: Boolean(email && systemUpdateOwnerEmails.has(email)),
+        mode: productIdentity.installationMode === "hosted"
+          ? "platform-managed"
+          : productIdentity.installationMode === "managed" ? "self-managed" : "source-advisory"
+      }
+    });
+  });
+
+  server.get("/system/updates", async (request, reply) => {
+    const principal = await requireSystemUpdatePrincipal(
+      request,
+      reply,
+      authRepository,
+      loginSessionIdleTimeoutSeconds,
+      systemUpdateOwnerEmails
+    );
+    if (!principal) return;
+    if (!updateControlService) return reply.code(503).send({ error: "updater_unavailable" });
+    return updateControlService.status();
+  });
+
+  server.post("/system/updates/check", async (request, reply) => {
+    const principal = await requireSystemUpdatePrincipal(
+      request,
+      reply,
+      authRepository,
+      loginSessionIdleTimeoutSeconds,
+      systemUpdateOwnerEmails
+    );
+    if (!principal) return;
+    if (!updateControlService) return reply.code(503).send({ error: "updater_unavailable" });
+    const status = await updateControlService.check();
+    await recordSystemUpdateAudit(authRepository, principal, "system.update.check", "success", {
+      updateAvailable: status.availableUpdate?.updateAvailable ?? false,
+      targetVersion: status.availableUpdate?.release?.version ?? null
+    });
+    return status;
+  });
+
+  server.post<{ Body: { version?: string } }>("/system/updates/preflight", async (request, reply) => {
+    const principal = await requireSystemUpdatePrincipal(
+      request,
+      reply,
+      authRepository,
+      loginSessionIdleTimeoutSeconds,
+      systemUpdateOwnerEmails
+    );
+    if (!principal) return;
+    if (!updateControlService) return reply.code(503).send({ error: "updater_unavailable" });
+    const preflight = await updateControlService.preflight(request.body?.version);
+    await recordSystemUpdateAudit(authRepository, principal, "system.update.preflight", preflight.eligible ? "success" : "denied", {
+      targetVersion: preflight.targetVersion,
+      eligible: preflight.eligible,
+      failedCheckIds: preflight.checks.filter((check) => check.status === "fail").map((check) => check.id)
+    });
+    return preflight;
+  });
+
+  server.post("/system/updates/jobs", async (request, reply) => {
+    const principal = await requireSystemUpdatePrincipal(
+      request,
+      reply,
+      authRepository,
+      loginSessionIdleTimeoutSeconds,
+      systemUpdateOwnerEmails
+    );
+    if (!principal) return;
+    if (!updateControlService) return reply.code(503).send({ error: "updater_unavailable" });
+    const input = updateApplyInputSchema.parse(request.body);
+    const job = await updateControlService.apply(input);
+    await recordSystemUpdateAudit(authRepository, principal, "system.update.apply", "success", {
+      jobId: job.id,
+      targetVersion: job.targetVersion,
+      scheduledFor: job.scheduledFor,
+      automaticRollback: job.automaticRollback
+    });
+    return reply.code(202).send(job);
+  });
+
+  server.post<{ Params: { jobId: string } }>("/system/updates/jobs/:jobId/cancel", async (request, reply) => {
+    const principal = await requireSystemUpdatePrincipal(
+      request,
+      reply,
+      authRepository,
+      loginSessionIdleTimeoutSeconds,
+      systemUpdateOwnerEmails
+    );
+    if (!principal) return;
+    if (!updateControlService) return reply.code(503).send({ error: "updater_unavailable" });
+    const job = await updateControlService.cancel(request.params.jobId);
+    await recordSystemUpdateAudit(authRepository, principal, "system.update.cancel", "success", { jobId: job.id });
+    return job;
+  });
+
+  server.post("/system/updates/rollback", async (request, reply) => {
+    const principal = await requireSystemUpdatePrincipal(
+      request,
+      reply,
+      authRepository,
+      loginSessionIdleTimeoutSeconds,
+      systemUpdateOwnerEmails
+    );
+    if (!principal) return;
+    if (!updateControlService) return reply.code(503).send({ error: "updater_unavailable" });
+    const input = updateRollbackInputSchema.parse(request.body);
+    const job = await updateControlService.rollback(input);
+    await recordSystemUpdateAudit(authRepository, principal, "system.update.rollback", "success", {
+      jobId: job.id,
+      recoveryPointId: job.recoveryPointId,
+      targetVersion: job.targetVersion
+    });
+    return reply.code(202).send(job);
+  });
+
   server.get("/", async () => {
     return {
       name: "ForgetBase API",
@@ -795,6 +1119,610 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
   });
 
   server.get("/openapi.json", async () => buildOpenApiDocument());
+
+  server.post("/local-sync/v1/device-sessions", async (request, reply) => {
+    if (!localSyncSigner || !localSyncEnrollmentSecret || !localSyncPublicBaseUrl || !localSyncWebBaseUrl) {
+      return reply.code(503).send({ error: "local_device_enrollment_unavailable" });
+    }
+    const parsed = localDeviceAuthorizationStartInputSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return sendValidationError(reply, parsed.error.issues);
+    }
+    let redirectUri: URL;
+    try {
+      redirectUri = requireLoopbackRedirectUri(parsed.data.redirectUri);
+    } catch {
+      return reply.code(400).send({ error: "local_device_redirect_uri_invalid" });
+    }
+    const serverOrigin = localSyncPublicBaseUrl;
+    const webBaseUrl = localSyncWebBaseUrl;
+    const created = createLocalDeviceAuthorizationRequest({
+      secret: localSyncEnrollmentSecret,
+      serverId: localSyncServerId,
+      serverOrigin,
+      signingKeyId: localSyncSigner.keyId,
+      deviceName: parsed.data.deviceName,
+      redirectUri: redirectUri.toString(),
+      state: parsed.data.state,
+      codeChallenge: parsed.data.codeChallenge
+    });
+    const approvalUrl = new URL(webBaseUrl);
+    approvalUrl.searchParams.set("local-device-request", created.token);
+    approvalUrl.hash = "account-settings";
+    reply.header("cache-control", "no-store");
+    return reply.code(201).send(localDeviceAuthorizationStartResponseSchema.parse({
+      approvalUrl: approvalUrl.toString(),
+      requestToken: created.token,
+      expiresAt: created.payload.expiresAt
+    }));
+  });
+
+  server.post("/local-sync/v1/device-sessions/authorization/preview", async (request, reply) => {
+    if (!authRepository || !localSyncSigner || !localSyncEnrollmentSecret || !localSyncPublicBaseUrl) {
+      return reply.code(503).send({ error: "local_device_enrollment_unavailable" });
+    }
+    const principal = await requireBrowserLoginPrincipal(
+      request,
+      reply,
+      authRepository,
+      loginSessionIdleTimeoutSeconds
+    );
+    if (!principal) return;
+    const parsed = localDeviceAuthorizationApproveInputSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return sendValidationError(reply, parsed.error.issues);
+    }
+    try {
+      const payload = verifyLocalDeviceAuthorizationRequest(parsed.data.requestToken, localSyncEnrollmentSecret);
+      assertCurrentLocalDeviceAuthorizationTarget(
+        payload,
+        localSyncServerId,
+        localSyncSigner.keyId,
+        localSyncPublicBaseUrl
+      );
+      const redirectUri = requireLoopbackRedirectUri(payload.redirectUri);
+      reply.header("cache-control", "no-store");
+      return localDeviceAuthorizationPreviewSchema.parse({
+        serverId: payload.serverId,
+        serverOrigin: payload.serverOrigin,
+        signingKeyId: payload.signingKeyId,
+        deviceName: payload.deviceName,
+        redirectHost: redirectUri.host,
+        expiresAt: payload.expiresAt
+      });
+    } catch {
+      return reply.code(400).send({ error: "local_device_request_invalid" });
+    }
+  });
+
+  server.post("/local-sync/v1/device-sessions/authorization", async (request, reply) => {
+    if (!authRepository || !localSyncSigner || !localSyncEnrollmentSecret || !localSyncPublicBaseUrl) {
+      return reply.code(503).send({ error: "local_device_enrollment_unavailable" });
+    }
+    const principal = await requireBrowserLoginPrincipal(
+      request,
+      reply,
+      authRepository,
+      loginSessionIdleTimeoutSeconds
+    );
+    if (!principal?.userId) return;
+    const parsed = localDeviceAuthorizationApproveInputSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return sendValidationError(reply, parsed.error.issues);
+    }
+    try {
+      const authorizationRequest = verifyLocalDeviceAuthorizationRequest(
+        parsed.data.requestToken,
+        localSyncEnrollmentSecret
+      );
+      assertCurrentLocalDeviceAuthorizationTarget(
+        authorizationRequest,
+        localSyncServerId,
+        localSyncSigner.keyId,
+        localSyncPublicBaseUrl
+      );
+      const redirectUrl = requireLoopbackRedirectUri(authorizationRequest.redirectUri);
+      const code = createLocalDeviceAuthorizationCode({
+        request: authorizationRequest,
+        tenantId: principal.tenantId,
+        userId: principal.userId,
+        secret: localSyncEnrollmentSecret
+      });
+      redirectUrl.searchParams.set("code", code.token);
+      redirectUrl.searchParams.set("state", authorizationRequest.state);
+      await authRepository.recordAuditEvent({
+        tenantId: principal.tenantId,
+        ...auditActor(principal),
+        action: "local_device.authorization.approve",
+        targetType: "local_device_enrollment",
+        targetId: authorizationRequest.enrollmentId,
+        outcome: "success",
+        metadata: {
+          deviceName: authorizationRequest.deviceName,
+          serverId: authorizationRequest.serverId,
+          signingKeyId: authorizationRequest.signingKeyId
+        }
+      });
+      reply.header("cache-control", "no-store");
+      return localDeviceAuthorizationApproveResponseSchema.parse({ redirectUrl: redirectUrl.toString() });
+    } catch {
+      return reply.code(400).send({ error: "local_device_request_invalid" });
+    }
+  });
+
+  server.post("/local-sync/v1/device-sessions/token", async (request, reply) => {
+    if (!authRepository || !localSyncSigner || !localSyncEnrollmentSecret || !localSyncPublicBaseUrl) {
+      return reply.code(503).send({ error: "local_device_enrollment_unavailable" });
+    }
+    const parsed = localDeviceTokenExchangeInputSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return sendValidationError(reply, parsed.error.issues);
+    }
+    try {
+      const code = verifyLocalDeviceAuthorizationCode(parsed.data.code, localSyncEnrollmentSecret);
+      assertCurrentLocalDeviceAuthorizationTarget(code, localSyncServerId, localSyncSigner.keyId, localSyncPublicBaseUrl);
+      if (!timingSafeStringEqual(createLocalDevicePkceChallenge(parsed.data.codeVerifier), code.codeChallenge)) {
+        return reply.code(401).send({ error: "local_device_authorization_invalid" });
+      }
+      const now = Date.now();
+      const accessExpiresAt = new Date(now + localDeviceAccessSeconds * 1_000).toISOString();
+      const absoluteExpiresAt = new Date(now + localDeviceAbsoluteSeconds * 1_000).toISOString();
+      const refreshExpiresAt = new Date(now + localDeviceRefreshSeconds * 1_000).toISOString();
+      const issued = await authRepository.issueLoginCredentials({
+        tenantId: code.tenantId,
+        userId: code.userId,
+        keyName: `local-device:${code.deviceName}`,
+        scopes: ["local:sync"],
+        allowedSurfaces: ["local-cache"],
+        expiresAt: accessExpiresAt,
+        source: "local-device",
+        deviceLabel: code.deviceName,
+        clientUserAgent: readBoundedUserAgent(request),
+        absoluteExpiresAt,
+        refreshTokenExpiresAt: refreshExpiresAt,
+        localDeviceEnrollmentId: code.enrollmentId,
+        auditAction: "local_device.enroll",
+        auditMetadata: { deviceName: code.deviceName, serverId: code.serverId }
+      });
+      if (!issued?.refreshToken) {
+        return reply.code(401).send({ error: "local_device_authorization_invalid" });
+      }
+      reply.header("cache-control", "no-store");
+      return reply.code(201).send(localDeviceTokenResponseSchema.parse({
+        accessToken: issued.secret,
+        accessTokenExpiresAt: issued.apiKey.expiresAt,
+        refreshToken: issued.refreshToken.token,
+        refreshTokenExpiresAt: issued.refreshToken.expiresAt,
+        deviceSession: issued.session
+      }));
+    } catch (error) {
+      if (isUniqueConstraintViolation(error)) {
+        return reply.code(401).send({ error: "local_device_authorization_invalid" });
+      }
+      if (error instanceof Error && /authorization/.test(error.message)) {
+        return reply.code(401).send({ error: "local_device_authorization_invalid" });
+      }
+      throw error;
+    }
+  });
+
+  server.post("/local-sync/v1/device-sessions/refresh", async (request, reply) => {
+    if (!authRepository) {
+      return reply.code(503).send({ error: "local_device_enrollment_unavailable" });
+    }
+    const parsed = localDeviceTokenRefreshInputSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return sendValidationError(reply, parsed.error.issues);
+    }
+    const now = Date.now();
+    const refreshed = await authRepository.refreshLoginSession({
+      refreshToken: parsed.data.refreshToken,
+      expiresAt: new Date(now + localDeviceAccessSeconds * 1_000).toISOString(),
+      refreshTokenExpiresAt: new Date(now + localDeviceRefreshSeconds * 1_000).toISOString(),
+      requiredSource: "local-device",
+      apiKeyName: "local-device refresh"
+    });
+    if (!refreshed) {
+      return reply.code(401).send({ error: "local_device_refresh_invalid" });
+    }
+    await authRepository.recordAuditEvent({
+      tenantId: refreshed.session.tenantId,
+      actorUserId: refreshed.session.userId,
+      actorApiKeyId: refreshed.apiKey.id,
+      action: "local_device.refresh",
+      targetType: "login_session",
+      targetId: refreshed.session.id,
+      outcome: "success",
+      metadata: {
+        rotatedFromApiKeyId: refreshed.rotatedFromApiKey.id,
+        rotatedToApiKeyId: refreshed.apiKey.id,
+        refreshTokenExpiresAt: refreshed.refreshTokenExpiresAt
+      }
+    });
+    reply.header("cache-control", "no-store");
+    return localDeviceTokenResponseSchema.parse({
+      accessToken: refreshed.secret,
+      accessTokenExpiresAt: refreshed.apiKey.expiresAt,
+      refreshToken: refreshed.refreshToken,
+      refreshTokenExpiresAt: refreshed.refreshTokenExpiresAt,
+      deviceSession: refreshed.session
+    });
+  });
+
+  server.get("/local-sync/v1/device-sessions", async (request, reply) => {
+    if (!authRepository) return reply.code(503).send({ error: "local_device_enrollment_unavailable" });
+    const principal = await requireBrowserLoginPrincipal(
+      request,
+      reply,
+      authRepository,
+      loginSessionIdleTimeoutSeconds
+    );
+    if (!principal) return;
+    const query = request.query as Record<string, string | undefined>;
+    const canListTenantDevices = principal.role === "admin" && principalHasScope(principal, "admin");
+    const requestedUserId = canListTenantDevices ? query.userId : principal.userId ?? undefined;
+    if (!requestedUserId && !canListTenantDevices) {
+      return reply.code(403).send({ error: "access_denied" });
+    }
+    const devices = await authRepository.listLoginSessions({
+      tenantId: principal.tenantId,
+      userId: requestedUserId,
+      includeRevoked: query.includeRevoked === "true",
+      source: "local-device",
+      limit: 100
+    });
+    reply.header("cache-control", "no-store");
+    return localDeviceSessionListResponseSchema.parse({ devices });
+  });
+
+  server.delete("/local-sync/v1/device-sessions/current", async (request, reply) => {
+    if (!authRepository) return reply.code(503).send({ error: "local_device_enrollment_unavailable" });
+    const principal = await requireDedicatedLocalSyncPrincipal(
+      request,
+      reply,
+      authRepository,
+      loginSessionIdleTimeoutSeconds
+    );
+    if (!principal) return;
+    const session = await authRepository.findActiveLoginSessionByApiKeyId({
+      tenantId: principal.tenantId,
+      apiKeyId: principal.apiKeyId
+    });
+    if (!session || session.source !== "local-device") {
+      return reply.code(401).send({ error: "local_device_session_invalid" });
+    }
+    const revoked = await authRepository.revokeLoginSession({
+      tenantId: principal.tenantId,
+      sessionId: session.id,
+      userId: principal.userId ?? undefined,
+      requiredSource: "local-device"
+    });
+    if (!revoked) return reply.code(404).send({ error: "local_device_not_found" });
+    await localSyncStateRepository?.bumpAuthorizationEpoch({
+      tenantId: principal.tenantId,
+      principalType: principal.principalType,
+      principalId: principal.principalId
+    });
+    reply.header("cache-control", "no-store");
+    return loginSessionRevokeResponseSchema.parse(revoked);
+  });
+
+  server.delete("/local-sync/v1/device-sessions/:sessionId", async (request, reply) => {
+    if (!authRepository) return reply.code(503).send({ error: "local_device_enrollment_unavailable" });
+    const principal = await requireBrowserLoginPrincipal(
+      request,
+      reply,
+      authRepository,
+      loginSessionIdleTimeoutSeconds
+    );
+    if (!principal) return;
+    const { sessionId } = request.params as { sessionId: string };
+    const canRevokeTenantDevice = principal.role === "admin" && principalHasScope(principal, "admin");
+    const revoked = await authRepository.revokeLoginSession({
+      tenantId: principal.tenantId,
+      sessionId,
+      userId: canRevokeTenantDevice ? undefined : principal.userId ?? undefined,
+      requiredSource: "local-device"
+    });
+    if (!revoked) return reply.code(404).send({ error: "local_device_not_found" });
+    await localSyncStateRepository?.bumpAuthorizationEpoch({
+      tenantId: principal.tenantId,
+      principalType: "user",
+      principalId: revoked.session.userId
+    });
+    await authRepository.recordAuditEvent({
+      tenantId: principal.tenantId,
+      ...auditActor(principal),
+      action: "local_device.revoke",
+      targetType: "login_session",
+      targetId: revoked.session.id,
+      outcome: "success",
+      metadata: { targetUserId: revoked.session.userId }
+    });
+    reply.header("cache-control", "no-store");
+    return loginSessionRevokeResponseSchema.parse(revoked);
+  });
+
+  server.get("/local-sync/v1/configuration", async (request, reply) => {
+    if (!authRepository || !localSyncSigner) {
+      return reply.code(503).send({ error: "local_sync_unavailable" });
+    }
+    const principal = await requireDedicatedLocalSyncPrincipal(
+      request,
+      reply,
+      authRepository,
+      loginSessionIdleTimeoutSeconds
+    );
+    if (!principal) {
+      return;
+    }
+
+    reply.header("cache-control", "no-store");
+    const configuration = localSyncConfigurationSchema.parse({
+      protocolVersion: "1",
+      serverId: localSyncServerId,
+      tenantId: principal.tenantId,
+      principalType: principal.principalType,
+      principalId: principal.principalId,
+      signingKeyId: localSyncSigner.keyId,
+      signingPublicKey: localSyncSigner.publicKey,
+      leaseDurationSeconds: localSyncLeaseDurationSeconds,
+      minimumClientVersion: localSyncMinimumClientVersion,
+      allowedSensitivities: localSyncAllowInternal ? ["public-demo", "internal"] : ["public-demo"],
+      maxRecords: localSyncMaxRecords,
+      maxRecordsPerPage: localSyncMaxRecordsPerPage,
+      maxRecordBytes: localSyncMaxRecordBytes,
+      maxSnapshotBytes: localSyncMaxSnapshotBytes
+    });
+    await authRepository.recordAuditEvent({
+      tenantId: principal.tenantId,
+      ...auditActor(principal),
+      action: "local_sync.configuration.read",
+      targetType: "local_sync_configuration",
+      targetId: localSyncServerId,
+      outcome: "success",
+      metadata: { protocolVersion: configuration.protocolVersion, signingKeyId: configuration.signingKeyId }
+    });
+    return configuration;
+  });
+
+  server.get("/local-sync/v1/manifest", async (request, reply) => {
+    if (!registryRepository || !authRepository || !localSyncStateRepository || !localSyncSnapshotRepository || !localSyncSigner) {
+      return reply.code(503).send({ error: "local_sync_unavailable" });
+    }
+    const principal = await requireDedicatedLocalSyncPrincipal(
+      request,
+      reply,
+      authRepository,
+      loginSessionIdleTimeoutSeconds
+    );
+    if (!principal) {
+      return;
+    }
+    const query = localSyncManifestRequestSchema.safeParse(request.query);
+    if (!query.success) {
+      return sendValidationError(reply, query.error.issues);
+    }
+    const manifestStartedAt = performance.now();
+
+    const allowedSensitivities = localSyncAllowInternal
+      ? ["public-demo", "internal"] as const
+      : ["public-demo"] as const;
+    const snapshot = await localSyncSnapshotRepository.buildSnapshot(
+      {
+        principal,
+        sensitivities: [...allowedSensitivities],
+        maxRecords: localSyncMaxRecords,
+        maxRecordBytes: localSyncMaxRecordBytes,
+        maxSnapshotBytes: localSyncMaxSnapshotBytes
+      },
+      (detail) => {
+        const record = createLocalSyncRecord(detail);
+        return {
+          record,
+          descriptor: {
+            stableId: record.asset.stableId,
+            recordId: record.recordId,
+            payloadHash: record.payloadHash
+          }
+        };
+      }
+    );
+    const authorizedCapacityExceeded = snapshot.capacityExceeded;
+    const payloadTooLarge = snapshot.payloadTooLarge;
+    const records = snapshot.records;
+    const snapshotBytes = snapshot.snapshotBytes;
+    const oversizedRecord = snapshot.oversizedRecord;
+    const state = snapshot.state;
+    if (authorizedCapacityExceeded) {
+      await authRepository.recordAuditEvent({
+        tenantId: principal.tenantId,
+        ...auditActor(principal),
+        action: "local_sync.manifest.generate",
+        targetType: "local_sync_manifest",
+        outcome: "error",
+        reason: "local_sync_capacity_exceeded",
+        metadata: {
+          maximumRecordCount: localSyncMaxRecords,
+          durationMs: Math.round(performance.now() - manifestStartedAt)
+        }
+      });
+      return reply.code(409).send({
+        error: "local_sync_capacity_exceeded",
+        maximumRecordCount: localSyncMaxRecords
+      });
+    }
+
+    if (payloadTooLarge || oversizedRecord || snapshotBytes > localSyncMaxSnapshotBytes) {
+      await authRepository.recordAuditEvent({
+        tenantId: principal.tenantId,
+        ...auditActor(principal),
+        action: "local_sync.manifest.generate",
+        targetType: "local_sync_manifest",
+        outcome: "error",
+        reason: "local_sync_payload_too_large",
+        metadata: {
+          recordCount: records.length,
+          snapshotBytes,
+          oversizedRecord,
+          durationMs: Math.round(performance.now() - manifestStartedAt)
+        }
+      });
+      return reply.code(413).send({ error: "local_sync_payload_too_large" });
+    }
+    if (!state) {
+      throw new Error("Local sync manifest state is unavailable");
+    }
+    let delta: {
+      baseRecordSetHash: string;
+      records: LocalSyncRecord[];
+      removedStableIds: string[];
+    } | undefined;
+    const knownPreviousGeneration = state.previousRecordSetHash !== null
+      && state.previousRecordDescriptors !== null
+      && query.data.knownAuthorizationEpoch !== undefined
+      && query.data.knownAuthorizationEpoch <= state.authorizationEpoch
+      && query.data.knownContentGeneration === state.contentGeneration - 1
+      && query.data.knownRecordSetHash === state.previousRecordSetHash;
+    if (knownPreviousGeneration) {
+      const previousByStableId = new Map(
+        state.previousRecordDescriptors!.map((descriptor) => [descriptor.stableId, descriptor.payloadHash])
+      );
+      const currentStableIds = new Set(records.map((record) => record.asset.stableId));
+      const changedRecords = records.filter(
+        (record) => previousByStableId.get(record.asset.stableId) !== record.payloadHash
+      );
+      const removedStableIds = state.previousRecordDescriptors!
+        .map((descriptor) => descriptor.stableId)
+        .filter((stableId) => !currentStableIds.has(stableId));
+      const deltaBytes = Buffer.byteLength(JSON.stringify({ changedRecords, removedStableIds }), "utf8");
+      if (deltaBytes < snapshotBytes) {
+        delta = {
+          baseRecordSetHash: state.previousRecordSetHash!,
+          records: changedRecords,
+          removedStableIds
+        };
+      }
+    }
+    const finalCredential = readBearerToken(request) ?? readSessionCookieToken(request);
+    const finalPrincipal = finalCredential
+      ? await authRepository.authenticateApiKey(finalCredential)
+      : null;
+    const finalSession = finalPrincipal
+      ? await authRepository.findActiveLoginSessionByApiKeyId({
+        tenantId: finalPrincipal.tenantId,
+        apiKeyId: finalPrincipal.apiKeyId,
+        idleTimeoutSeconds: loginSessionIdleTimeoutSeconds
+      })
+      : null;
+    if (finalPrincipal && (finalPrincipal.tenantId !== principal.tenantId
+      || finalPrincipal.principalType !== principal.principalType
+      || finalPrincipal.principalId !== principal.principalId
+      || finalPrincipal.apiKeyId !== principal.apiKeyId)) {
+      await recordDenied(
+        authRepository,
+        principal,
+        principal.tenantId,
+        "local_sync.device_session_required",
+        "local_sync",
+        undefined,
+        { phase: "manifest-final-validation" }
+      );
+      return reply.code(403).send({ error: "local_device_session_required" });
+    }
+    const activeFinalSession = finalSession && finalPrincipal
+      ? finalSession
+      : null;
+    if (!finalPrincipal
+      || !isDedicatedLocalSyncPrincipal(finalPrincipal)
+      || !activeFinalSession
+      || activeFinalSession.source !== "local-device"
+      || principal.userId === null
+      || activeFinalSession.userId !== principal.userId) {
+      await recordDenied(
+        authRepository,
+        principal,
+        principal.tenantId,
+        "local_sync.device_session_required",
+        "local_sync",
+        undefined,
+        { phase: "manifest-final-validation" }
+      );
+      return reply.code(403).send({ error: "local_device_session_required" });
+    }
+    let manifest: ReturnType<typeof localSyncManifestBundleSchema.parse>;
+    try {
+      if (finalPrincipal.role !== principal.role
+        || JSON.stringify([...finalPrincipal.groupIds].sort()) !== JSON.stringify([...principal.groupIds].sort())) {
+        throw new LocalSyncSnapshotStaleError("Principal authorization changed during snapshot construction");
+      }
+      manifest = await localSyncSnapshotRepository.assertSnapshotCurrent(
+        {
+          principal,
+          serializationRevision: snapshot.serializationRevision,
+          serializationFingerprint: snapshot.serializationFingerprint,
+          state
+        },
+        () => localSyncManifestBundleSchema.parse(createLocalSyncManifestBundle({
+          signer: localSyncSigner,
+          serverId: localSyncServerId,
+          tenantId: principal.tenantId,
+          principalType: principal.principalType,
+          principalId: principal.principalId,
+          authorizationEpoch: state.authorizationEpoch,
+          contentGeneration: state.contentGeneration,
+          records,
+          serializationRevision: snapshot.serializationRevision,
+          leaseDurationSeconds: localSyncLeaseDurationSeconds,
+          minimumClientVersion: localSyncMinimumClientVersion,
+          allowedSensitivities: [...allowedSensitivities],
+          knownAuthorizationEpoch: query.data.knownAuthorizationEpoch,
+          knownContentGeneration: query.data.knownContentGeneration,
+          knownRecordSetHash: query.data.knownRecordSetHash,
+          delta
+        }))
+      );
+    } catch (error) {
+      if (!(error instanceof LocalSyncSnapshotStaleError)) {
+        throw error;
+      }
+      await authRepository.recordAuditEvent({
+        tenantId: principal.tenantId,
+        ...auditActor(principal),
+        action: "local_sync.manifest.generate",
+        targetType: "local_sync_manifest",
+        outcome: "error",
+        reason: "local_sync_snapshot_stale",
+        metadata: { durationMs: Math.round(performance.now() - manifestStartedAt) }
+      });
+      return reply.code(409).send({ error: "local_sync_snapshot_stale" });
+    }
+    const firstPage = manifest.pages[0];
+    if (!firstPage) {
+      throw new Error("Local sync manifest generation returned no pages");
+    }
+    await authRepository.recordAuditEvent({
+      tenantId: principal.tenantId,
+      ...auditActor(principal),
+      action: "local_sync.manifest.generate",
+      targetType: "local_sync_manifest",
+      targetId: firstPage.snapshotId,
+      outcome: "success",
+      metadata: {
+        mode: firstPage.mode,
+        authorizationEpoch: firstPage.authorizationEpoch,
+        contentGeneration: firstPage.contentGeneration,
+        recordCount: firstPage.recordCount,
+        changedRecordCount: firstPage.changedRecordCount,
+        removalCount: firstPage.removalCount,
+        pageCount: firstPage.pageCount,
+        snapshotBytes,
+        durationMs: Math.round(performance.now() - manifestStartedAt)
+      }
+    });
+    reply.header("cache-control", "no-store");
+    return manifest;
+  });
 
   server.post("/validation/assets", async (request, reply) => {
     const principal = authRepository ? await requirePrincipal(request, reply, authRepository, loginSessionIdleTimeoutSeconds) : null;
@@ -866,6 +1794,37 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
     }
 
     return reply.code(201).send(bootstrap);
+  });
+
+  // Only the public display fields are exposed before login. Branding is public
+  // by design; tenant IDs select a display context, never write authority.
+  server.get("/branding", async (request, reply) => {
+    reply.header("cache-control", "no-store");
+    const parsed = brandingTenantQuerySchema.safeParse(request.query);
+    if (!parsed.success) return sendValidationError(reply, parsed.error.issues);
+    return brandingRepository ? brandingRepository.get(parsed.data.tenantId) : { ...defaultBranding };
+  });
+
+  server.get("/admin/branding", async (request, reply) => {
+    reply.header("cache-control", "no-store");
+    if (!authRepository || !brandingRepository) return reply.code(503).send({ error: "branding_unavailable" });
+    const principal = await requireAdminPrincipal(request, reply, authRepository, loginSessionIdleTimeoutSeconds);
+    if (!principal) return;
+    return brandingRepository.get(principal.tenantId);
+  });
+
+  server.put("/admin/branding", { bodyLimit: 360_000 }, async (request, reply) => {
+    reply.header("cache-control", "no-store");
+    if (!authRepository || !brandingRepository) return reply.code(503).send({ error: "branding_unavailable" });
+    const principal = await requireAdminPrincipal(request, reply, authRepository, loginSessionIdleTimeoutSeconds);
+    if (!principal) return;
+    const parsed = brandingSchema.safeParse(request.body);
+    if (!parsed.success) return sendValidationError(reply, parsed.error.issues);
+    if (parsed.data.logoDataUrl) {
+      try { validateBrandingImage(parsed.data.logoDataUrl); }
+      catch { return reply.code(400).send({ error: "invalid_logo", message: "Use a static PNG, JPEG or WebP image up to 256 KB and 2048 pixels per side." }); }
+    }
+    return brandingRepository.save(principal, parsed.data);
   });
 
   server.post("/auth/login", async (request, reply) => {
@@ -1332,7 +2291,8 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
       expiresAt: sessionExpiry.expiresAt,
       refreshTokenExpiresAt,
       idleTimeoutSeconds: loginSessionIdleTimeoutSeconds,
-      apiKeyName: "browser-session refresh"
+      apiKeyName: "browser-session refresh",
+      allowedSources: ["password", "oidc"]
     });
 
     if (!refreshed) {
@@ -2867,6 +3827,38 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
     );
   });
 
+  server.post("/imports/plan", async (request, reply) => {
+    reply.header("cache-control", "no-store");
+    if (!registryRepository || !authRepository) {
+      return reply.code(503).send({ error: "import_planning_unavailable" });
+    }
+    const principal = await requirePrincipal(request, reply, authRepository, loginSessionIdleTimeoutSeconds);
+    if (!principal) return;
+    const surface = readSurface(request, principal);
+    if (!roleCanWriteAssets(principal) || !principalHasScope(principal, "asset:read") ||
+        !principalHasScope(principal, "asset:write") || !principal.allowedSurfaces.includes(surface)) {
+      return reply.code(403).send({ error: "access_denied" });
+    }
+    if (!withinImportJsonBudget(request.body)) return reply.code(400).send({ error: "invalid_import_input" });
+    const parsed = importPlanRequestSchema.safeParse(request.body);
+    if (!parsed.success) return sendValidationError(reply, parsed.error.issues);
+    if (parsed.data.tenantId !== principal.tenantId) return reply.code(403).send({ error: "access_denied" });
+    try {
+      const report = await planGovernedImport(parsed.data, { registry: registryRepository, auth: authRepository, principal, surface });
+      // Revalidate through the normal cookie/CSRF path, bypassing request-local auth.
+      authenticationByRequest.delete(request);
+      const currentPrincipal = await requirePrincipal(request, reply, authRepository, loginSessionIdleTimeoutSeconds);
+      if (!currentPrincipal) return;
+      if (JSON.stringify(currentPrincipal) !== JSON.stringify(principal)) {
+        return reply.code(409).send({ error: "import_target_changed" });
+      }
+      return report;
+    } catch (error) {
+      if (error instanceof ImportPlanningError) return reply.code(error.statusCode).send({ error: error.code });
+      throw error;
+    }
+  });
+
   server.post("/assets", async (request, reply) => {
     if (!registryRepository) {
       return reply.code(503).send({ error: "registry_unavailable" });
@@ -4302,7 +5294,7 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
     if (!isSecretEnvVarAllowed(secretReferencePolicy, parsed.data.apiKeyEnvVar)) {
       return reply.code(400).send({
         error: "secret_reference_rejected",
-        message: "Provider config env-var reference is not allowed by tenant secret-reference policy.",
+        message: "Provider config env-var reference is not allowed by deployment or tenant secret-reference policy.",
         field: "apiKeyEnvVar"
       });
     }
@@ -4385,7 +5377,7 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
     if (!isSecretEnvVarAllowed(secretReferencePolicy, parsed.data.clientSecretEnvVar)) {
       return reply.code(400).send({
         error: "secret_reference_rejected",
-        message: "Auth provider config env-var reference is not allowed by tenant secret-reference policy.",
+        message: "Auth provider config env-var reference is not allowed by deployment or tenant secret-reference policy.",
         field: "clientSecretEnvVar"
       });
     }
@@ -6582,11 +7574,17 @@ type DeploymentSecretResolution =
   }
   | {
     ok: false;
-    reason: "secret_env_var_unset" | "secret_file_path_invalid" | "secret_file_unreadable" | "secret_file_empty";
+    reason: "secret_reference_rejected" | "secret_env_var_unset" | "secret_file_path_invalid" | "secret_file_unreadable" | "secret_file_empty";
     fileEnvVar: string;
   };
 
 async function resolveDeploymentSecret(envVarName: string): Promise<DeploymentSecretResolution> {
+  // Revalidate stored configurations before reading either an environment value
+  // or its file fallback. Tenant policy cannot grant access to host credentials.
+  if (isReservedProviderSecretEnvVar(envVarName)) {
+    return { ok: false, reason: "secret_reference_rejected", fileEnvVar: `${envVarName}_FILE` };
+  }
+
   const directValue = process.env[envVarName];
 
   if (directValue) {
@@ -6649,6 +7647,8 @@ function providerApiKeyResolutionReason(resolution: DeploymentSecretResolution):
   }
 
   switch (resolution.reason) {
+    case "secret_reference_rejected":
+      return "api_key_secret_reference_rejected";
     case "secret_file_path_invalid":
       return "api_key_secret_file_path_invalid";
     case "secret_file_unreadable":
@@ -6666,6 +7666,8 @@ function oidcClientSecretResolutionError(resolution: DeploymentSecretResolution)
   }
 
   switch (resolution.reason) {
+    case "secret_reference_rejected":
+      return new OidcLoginError("oidc_client_secret_reference_rejected", 503, "Configured OIDC client secret reference is reserved for host control.");
     case "secret_file_path_invalid":
       return new OidcLoginError("oidc_client_secret_file_path_invalid", 503, "Configured OIDC client secret file path is invalid.");
     case "secret_file_unreadable":
@@ -8582,6 +9584,101 @@ async function requirePrincipal(
   return authenticatedRequest.principal;
 }
 
+async function requireDedicatedLocalSyncPrincipal(
+  request: FastifyRequest,
+  reply: FastifyReply,
+  authRepository: AuthRepository,
+  loginSessionIdleTimeoutSeconds?: number | null
+): Promise<AuthPrincipal | null> {
+  const principal = await requirePrincipal(request, reply, authRepository, loginSessionIdleTimeoutSeconds);
+  if (!principal) {
+    return null;
+  }
+  if (!isDedicatedLocalSyncPrincipal(principal)) {
+    await recordDenied(
+      authRepository,
+      principal,
+      principal.tenantId,
+      "local_sync.authenticate",
+      "local_sync",
+      undefined,
+      { scopeCount: principal.scopes.length, surfaceCount: principal.allowedSurfaces.length }
+    );
+    reply.code(403).send({ error: "dedicated_local_sync_credential_required" });
+    return null;
+  }
+  const session = await authRepository.findActiveLoginSessionByApiKeyId({
+    tenantId: principal.tenantId,
+    apiKeyId: principal.apiKeyId,
+    idleTimeoutSeconds: loginSessionIdleTimeoutSeconds
+  });
+  if (!session
+    || session.source !== "local-device"
+    || principal.userId === null
+    || session.userId !== principal.userId) {
+    await recordDenied(
+      authRepository,
+      principal,
+      principal.tenantId,
+      "local_sync.device_session_required",
+      "local_sync",
+      undefined,
+      {}
+    );
+    reply.code(403).send({ error: "local_device_session_required" });
+    return null;
+  }
+  const touched = await authRepository.touchLoginSession({
+    tenantId: principal.tenantId,
+    sessionId: session.id,
+    idleTimeoutSeconds: loginSessionIdleTimeoutSeconds
+  });
+  if (!touched) {
+    reply.code(401).send({ error: "local_device_session_invalid" });
+    return null;
+  }
+  return principal;
+}
+
+async function requireBrowserLoginPrincipal(
+  request: FastifyRequest,
+  reply: FastifyReply,
+  authRepository: AuthRepository,
+  loginSessionIdleTimeoutSeconds?: number | null
+): Promise<AuthPrincipal | null> {
+  const authenticatedRequest = await authenticateOptionalRequest(
+    request,
+    reply,
+    authRepository,
+    loginSessionIdleTimeoutSeconds
+  );
+  if (authenticatedRequest === undefined) return null;
+  if (!authenticatedRequest) {
+    reply.code(401).send({ error: "authentication_required" });
+    return null;
+  }
+  const { principal, source, loginSession } = authenticatedRequest;
+  if (!principal.userId) {
+    reply.code(403).send({ error: "user_login_session_required" });
+    return null;
+  }
+  if (source !== "session-cookie"
+    || !loginSession
+    || loginSession.source === "local-device"
+    || !principal.allowedSurfaces.includes("web")) {
+    reply.code(403).send({ error: "browser_login_session_required" });
+    return null;
+  }
+  return principal;
+}
+
+function isDedicatedLocalSyncPrincipal(principal: AuthPrincipal): boolean {
+  return principal.scopes.length === 1
+    && principal.scopes[0] === "local:sync"
+    && principal.allowedSurfaces.length === 1
+    && principal.allowedSurfaces[0] === "local-cache";
+}
+
 async function authenticateOptionalPrincipal(
   request: FastifyRequest,
   reply: FastifyReply,
@@ -8683,6 +9780,51 @@ async function requireAdminPrincipal(
   }
 
   return principal;
+}
+
+async function requireSystemUpdatePrincipal(
+  request: FastifyRequest,
+  reply: FastifyReply,
+  authRepository: AuthRepository | undefined,
+  loginSessionIdleTimeoutSeconds: number | null | undefined,
+  ownerEmails: ReadonlySet<string>
+): Promise<AuthPrincipal | null> {
+  if (!authRepository) {
+    reply.code(503).send({ error: "auth_unavailable" });
+    return null;
+  }
+
+  const principal = await requireAdminPrincipal(request, reply, authRepository, loginSessionIdleTimeoutSeconds);
+  if (!principal) return null;
+
+  const email = principal.email?.toLowerCase() ?? "";
+  if (!email || !ownerEmails.has(email)) {
+    await recordDenied(authRepository, principal, principal.tenantId, "system.update.manage", "system", undefined, {
+      ownerAllowlistConfigured: ownerEmails.size > 0
+    });
+    reply.code(403).send({ error: "system_update_access_denied" });
+    return null;
+  }
+
+  return principal;
+}
+
+async function recordSystemUpdateAudit(
+  authRepository: AuthRepository | undefined,
+  principal: AuthPrincipal,
+  action: string,
+  outcome: "success" | "denied" | "error",
+  metadata: Record<string, unknown>
+): Promise<void> {
+  if (!authRepository) return;
+  await authRepository.recordAuditEvent({
+    tenantId: principal.tenantId,
+    ...auditActor(principal),
+    action,
+    targetType: "system-update",
+    outcome,
+    metadata
+  });
 }
 
 async function requirePermissionAdminPrincipal(
@@ -8950,11 +10092,20 @@ function isPublicAuthenticationPath(requestUrl: string): boolean {
   const pathname = new URL(requestUrl, "http://forgetbase.local").pathname;
 
   return pathname === "/health" ||
+    pathname === "/branding" ||
     pathname === "/ready" ||
     pathname === "/auth/login" ||
     pathname === "/auth/oidc/authorize" ||
     pathname === "/auth/oidc/callback" ||
-    pathname === "/auth/session/refresh";
+    pathname === "/auth/session/refresh" ||
+    pathname === "/local-sync/v1/device-sessions" ||
+    pathname === "/local-sync/v1/device-sessions/token" ||
+    pathname === "/local-sync/v1/device-sessions/refresh";
+}
+
+function isLocalSyncPath(requestUrl: string): boolean {
+  const pathname = new URL(requestUrl, "http://forgetbase.local").pathname;
+  return pathname === "/local-sync/v1" || pathname.startsWith("/local-sync/v1/");
 }
 
 function hasValidCsrfToken(request: FastifyRequest, sessionToken: string): boolean {
@@ -9164,6 +10315,87 @@ function readPositiveIntegerOption(
   return parsed;
 }
 
+function readNonEmptyValue(value: string | undefined, defaultValue: string): string {
+  const normalized = value?.trim();
+  return normalized || defaultValue;
+}
+
+function normalizeOptionalPublicBaseUrl(value: string | undefined, name: string): string | undefined {
+  const normalized = value?.trim();
+  if (!normalized) return undefined;
+  const url = new URL(normalized);
+  const loopback = url.hostname === "127.0.0.1" || url.hostname === "[::1]";
+  if (url.username || url.password || url.search || url.hash
+    || (url.protocol !== "https:" && !(url.protocol === "http:" && loopback))) {
+    throw new Error(`${name} must be an HTTPS URL without credentials, query, or fragment (loopback HTTP is allowed).`);
+  }
+  return url.toString().replace(/\/$/, "");
+}
+
+function requireLoopbackRedirectUri(value: string): URL {
+  const url = new URL(value);
+  if (url.protocol !== "http:"
+    || (url.hostname !== "127.0.0.1" && url.hostname !== "[::1]")
+    || !url.port
+    || url.username
+    || url.password
+    || url.search
+    || url.hash
+    || url.pathname !== "/forgetbase/local/callback") {
+    throw new Error("Local device redirect URI must use a literal loopback address and the ForgetBase callback path");
+  }
+  return url;
+}
+
+function assertCurrentLocalDeviceAuthorizationTarget(
+  payload: { serverId: string; serverOrigin: string; signingKeyId: string; redirectUri: string },
+  serverId: string,
+  signingKeyId: string,
+  serverOrigin: string
+): void {
+  requireLoopbackRedirectUri(payload.redirectUri);
+  if (payload.serverId !== serverId
+    || payload.signingKeyId !== signingKeyId
+    || payload.serverOrigin !== serverOrigin) {
+    throw new Error("Local device authorization target is no longer current");
+  }
+}
+
+function readBoundedUserAgent(request: FastifyRequest): string | null {
+  const value = request.headers["user-agent"];
+  if (!value || Array.isArray(value)) return null;
+  const normalized = value.replace(/[\u0000-\u001f\u007f]/g, " ").trim();
+  return normalized ? normalized.slice(0, MAX_LOGIN_SESSION_CLIENT_USER_AGENT_LENGTH) : null;
+}
+
+function isUniqueConstraintViolation(error: unknown): boolean {
+  return Boolean(error && typeof error === "object" && "code" in error && error.code === "23505");
+}
+
+function readLocalSyncSignerFromEnv(): LocalSyncSigner | undefined {
+  const privateKeyFile = process.env.FORGETBASE_LOCAL_SYNC_SIGNING_PRIVATE_KEY_FILE?.trim();
+  const keyId = process.env.FORGETBASE_LOCAL_SYNC_SIGNING_KEY_ID?.trim();
+  if (!privateKeyFile && !keyId) {
+    return undefined;
+  }
+  if (!privateKeyFile || !keyId) {
+    throw new Error(
+      "FORGETBASE_LOCAL_SYNC_SIGNING_PRIVATE_KEY_FILE and FORGETBASE_LOCAL_SYNC_SIGNING_KEY_ID must be configured together."
+    );
+  }
+  const privateKeyStat = lstatSync(privateKeyFile);
+  if (privateKeyStat.isSymbolicLink() || !privateKeyStat.isFile()) {
+    throw new Error("FORGETBASE_LOCAL_SYNC_SIGNING_PRIVATE_KEY_FILE must identify a regular file.");
+  }
+  if (process.platform !== "win32" && (privateKeyStat.mode & 0o077) !== 0) {
+    throw new Error("FORGETBASE_LOCAL_SYNC_SIGNING_PRIVATE_KEY_FILE must not be accessible by group or other users.");
+  }
+  return createEd25519LocalSyncSigner({
+    keyId,
+    privateKey: readFileSync(privateKeyFile, "utf8")
+  });
+}
+
 interface LoginThrottleOptions {
   maxAttempts: number;
   windowMs: number;
@@ -9369,6 +10601,36 @@ function capExpiresAt(expiresAt: string, absoluteExpiresAt: string | null): stri
 
 function readSecondsUntil(expiresAt: string): number {
   return Math.max(0, Math.floor((Date.parse(expiresAt) - Date.now()) / 1000));
+}
+
+function readProductIdentityFromEnvironment(): ProductIdentity {
+  const installationMode = installationModeSchema.parse(process.env.FORGETBASE_INSTALLATION_MODE ?? "source");
+  return productIdentitySchema.parse({
+    product: "forgetbase",
+    version: process.env.FORGETBASE_VERSION ?? forgetBaseVersion,
+    sourceRevision: process.env.FORGETBASE_SOURCE_REVISION ?? "development",
+    builtAt: process.env.FORGETBASE_BUILT_AT ?? null,
+    channel: releaseChannelSchema.parse(process.env.FORGETBASE_RELEASE_CHANNEL ?? "beta"),
+    installationMode,
+    databaseSchemaVersion: process.env.FORGETBASE_DATABASE_SCHEMA_VERSION ?? null,
+    updaterVersion: process.env.FORGETBASE_UPDATER_VERSION ?? null,
+    updaterProtocolVersion: "1",
+    managed: installationMode === "managed"
+  });
+}
+
+function readUpdateControlServiceFromEnvironment(): UpdateControlService | undefined {
+  const url = process.env.FORGETBASE_UPDATER_URL?.trim();
+  const token = process.env.FORGETBASE_UPDATER_API_TOKEN;
+  if (!url && !token) return undefined;
+  if (!url || !token) throw new Error("FORGETBASE_UPDATER_URL and FORGETBASE_UPDATER_API_TOKEN must be configured together");
+  return new HttpUpdateControlClient(url, token, fetch, {
+    allowInsecureHttp: readOptionalEnvBoolean(process.env.FORGETBASE_UPDATER_ALLOW_INSECURE_HTTP) === true
+  });
+}
+
+function readCsvEnvironment(value: string | undefined): string[] {
+  return value?.split(",").map((entry) => entry.trim()).filter(Boolean) ?? [];
 }
 
 function readOptionalEnvBoolean(value: string | undefined): boolean | undefined {

@@ -98,11 +98,13 @@ Included now:
 
 - reader UI for published pages
 - admin console for content, reviews, access, exports, settings, and system health
+- [admin branding controls](docs/branding.md) for the logo image and text on login, reader, and admin screens
 - local users, groups, service accounts, API keys, password login, and OIDC setup
 - permission-aware search, citations, question answering, and exports
 - permission-aware page attachments with content/signature checks, required malware scanning in Compose, per-tenant/uploader quotas, bounded upload concurrency, download-only reader access, and admin lifecycle controls
 - lean 7/30/90-day admin analytics for search quality, page activity, content health, and daily trends
 - REST/OpenAPI, CLI, MCP server, worker, and Docker Compose setup
+- private-pilot candidate for browser-enrolled, permission-scoped local search and guidance on macOS arm64; internal content stays disabled by default
 - synthetic demo corpus and validation checks
 - restricted-content leakage checks, attachment drift reconciliation, and coordinated database/blob backup-set verification
 - GitHub Actions CI with strict typecheck, measured web bundle budgets, public beta UI checks, browser screenshot UAT, API contract checks, claims lint, Postgres-backed tests, and a separate isolated private-live proof workflow
@@ -120,6 +122,8 @@ Still future work:
 
 ## Docs
 
+Source builds include a draft [managed Compose update and recovery workflow](docs/VERSIONING_AND_UPGRADES.md). Each update or manual restore requires separate host CLI approval. The workflow has been verified in isolated synthetic Linux AMD64 trials. It currently supports newly initialized managed installations and is not activated on released installations.
+
 - [Publication Checklist](docs/PUBLICATION.md)
 - [Public Beta Goal](docs/PUBLIC_BETA_GOAL.md)
 - [Public Beta Compatibility](docs/PUBLIC_BETA_COMPATIBILITY.md)
@@ -135,6 +139,9 @@ Still future work:
 - [Decisions](docs/DECISIONS.md)
 - [MVP Scope](docs/MVP_SCOPE.md)
 - [Security Model](docs/SECURITY_MODEL.md)
+- [Local Agent Runtime](docs/LOCAL_AGENT_RUNTIME.md)
+- [Local Agent Runtime Threat Model](docs/LOCAL_AGENT_RUNTIME_THREAT_MODEL.md)
+- [Local Agent Runtime Private Pilot Runbook](docs/runbooks/LOCAL_AGENT_RUNTIME_PRIVATE_PILOT.md)
 - [Development](docs/DEVELOPMENT.md)
 - [OKF Exports](docs/OKF_EXPORTS.md)
 - [Synthetic Corpus Plan](docs/SYNTHETIC_CORPUS_PLAN.md)
