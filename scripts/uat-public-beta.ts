@@ -373,9 +373,12 @@ async function checkAdminBranding(page: Page): Promise<void> {
   const proxyConfig = readFileSync(resolve(root, "infra/docker/nginx.railway-proxy.conf.template"), "utf8");
   const policy = proxyConfig.match(/add_header Content-Security-Policy "([^"]+)"/)?.[1];
   if (!policy) throw new Error("Railway content security policy was not found");
-  const brandingPage = await page.context().newPage();
+  const brandingContext = await browser!.newContext({
+    storageState: await page.context().storageState(),
+    viewport: { width: 1280, height: 800 }
+  });
+  const brandingPage = await brandingContext.newPage();
   trackConsole(brandingPage);
-  await brandingPage.setViewportSize({ width: 1280, height: 800 });
   await brandingPage.route("**/*", async route => {
     if (route.request().resourceType() !== "document") return route.continue();
     const response = await route.fetch();
@@ -420,7 +423,7 @@ async function checkAdminBranding(page: Page): Promise<void> {
     }
     checks.push({ name: "branding: defaults persist after reload", status: "pass" });
   } finally {
-    await brandingPage.close();
+    await brandingContext.close();
   }
 }
 
