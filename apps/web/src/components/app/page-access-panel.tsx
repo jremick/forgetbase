@@ -19,7 +19,7 @@ export type PageAccessPanelProps = {
 };
 
 const actionLabels: Record<PermissionAction, string> = { read: "Read", write: "Write", admin: "Administer", export: "Export", execute: "Execute" };
-const surfaceLabels: Record<Surface, string> = { web: "Web", api: "API", cli: "CLI", mcp: "MCP", export: "Export" };
+const surfaceLabels: Record<Surface, string> = { web: "Web", api: "API", cli: "CLI", mcp: "MCP", export: "Export", "local-cache": "Local cache" };
 type Directory = Awaited<ReturnType<typeof loadGrantPrincipals>>;
 const emptyDirectory: Directory = { users: [], groups: [], errors: [], mayBeIncomplete: false };
 

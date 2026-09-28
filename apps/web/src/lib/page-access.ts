@@ -11,7 +11,7 @@ import type {
 } from "@forgetbase/schema";
 import type { AppRequest } from "./app-api.js";
 
-export const grantSurfaceOptions: Surface[] = ["web", "api", "cli", "mcp", "export"];
+export const grantSurfaceOptions: Surface[] = ["web", "api", "cli", "mcp", "export", "local-cache"];
 
 export function pageAccessError(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
