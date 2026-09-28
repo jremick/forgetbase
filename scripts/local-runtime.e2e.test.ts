@@ -2,7 +2,7 @@ import { createHmac, generateKeyPairSync, randomUUID } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createPool, PostgresAuthRepository, PostgresRegistryRepository, PostgresLocalSyncSnapshotRepository, runMigrations } from '../packages/db/src/index.js';
 import { createEd25519LocalSyncSigner, createLocalSyncRecord, verifyLocalSyncManifestBundle } from '../packages/local-sync/src/index.js';
 import { ForgetBaseClient } from '../packages/sdk/src/index.js';
@@ -34,7 +34,12 @@ describe.skipIf(!databaseUrl)('local runtime PostgreSQL HTTP end-to-end', () => 
   afterAll(async () => {
     await pool?.end();
     if (adminPool) {
-      await adminPool.query(`DROP DATABASE IF EXISTS ${databaseName} WITH (FORCE)`);
+      // pg pool shutdown can precede backend exit. Do not kill a closing socket.
+      await vi.waitFor(async () => {
+        const remaining = await adminPool.query("SELECT count(*) FROM pg_stat_activity WHERE datname = $1", [databaseName]);
+        expect(Number(remaining.rows[0].count)).toBe(0);
+      }, { timeout: 5_000 });
+      await adminPool.query(`DROP DATABASE IF EXISTS ${databaseName}`);
       await adminPool.end();
     }
   });

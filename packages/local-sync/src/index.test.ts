@@ -349,7 +349,11 @@ describe("local device authorization proofs", () => {
       issuedAt: new Date("2026-09-03T00:00:00.000Z"),
       ttlMs: 60_000
     });
-    const tampered = `${request.token.slice(0, -1)}${request.token.endsWith("a") ? "b" : "a"}`;
+    const [payload, encodedSignature] = request.token.split(".");
+    const signature = Buffer.from(encodedSignature!, "base64url");
+    signature[0] = signature[0]! ^ 1;
+    // Change signed bytes, not unused padding bits in the last base64url character.
+    const tampered = `${payload}.${signature.toString("base64url")}`;
     expect(() => verifyLocalDeviceAuthorizationRequest(tampered, secret, new Date("2026-09-03T00:00:30.000Z")))
       .toThrow(/signature/);
     expect(() => verifyLocalDeviceAuthorizationRequest(
