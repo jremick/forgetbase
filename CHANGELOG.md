@@ -2,6 +2,14 @@
 
 Published tags are immutable. Beta releases support self-hosted trials with synthetic data; they do not promise stable APIs or production support.
 
+## 0.1.0-beta.9 - 2026-09-28
+
+- Use the saved logo as the browser favicon and the saved name in the tab title across login, reader and admin views.
+- Apply tab changes when branding is saved. Draft edits and Cancel preserve the saved branding; image and full-default resets update the tab after Save.
+- Preserve saved tab branding after reload. Other open tabs receive changes when reloaded.
+
+No database migration, API, dependency or permission change is required from beta.8. Static HTML and social-sharing metadata retain the product defaults.
+
 ## 0.1.0-beta.8 - 2026-09-28
 
 - Add admin controls for logo text and PNG, JPEG or WebP images, shared by login, reader and admin screens. Saves are tenant-scoped and audited; admins can restore the defaults.
