@@ -95,10 +95,13 @@ cp -a /opt/forgetbase/releases/0.2.0 /opt/forgetbase/updater-runtime/0.2.0
 cd /opt/forgetbase/updater-runtime/0.2.0
 npx --yes --package node@26.10.0 --package pnpm@11.7.0 -c 'pnpm install --frozen-lockfile'
 npx --yes --package node@26.10.0 --package pnpm@11.7.0 -c 'pnpm --filter @forgetbase/updater-service... build'
-npx --yes --package node@26.10.0 --package pnpm@11.7.0 -c 'pnpm --filter @forgetbase/updater-service start'
+HOST="${FORGETBASE_UPDATER_BIND_ADDRESS:?Set the protected Docker host-gateway address}" \
+  npx --yes --package node@26.10.0 --package pnpm@11.7.0 -c 'pnpm --filter @forgetbase/updater-service start'
 ```
 
 Set `FORGETBASE_UPDATE_BUNDLE_DIR=/opt/forgetbase/releases/0.2.0` to the original verified bundle. Protect the runtime copy and its dependencies with the same host ownership boundary.
+
+Before starting, set `FORGETBASE_UPDATER_BIND_ADDRESS` to the host's protected Docker bridge address that the API container reaches through `host.docker.internal`. Verify it against this host's gateway mapping; do not assume a fixed IP. The command passes it as `HOST` because the updater defaults to `127.0.0.1`, which the container cannot reach through that mapping. If using a reachable proxy instead, bind the updater to the proxy's protected local interface and set `FORGETBASE_UPDATER_URL` to that proxy.
 
 Production installs should supervise this process with the Linux host service manager. Bind only to the Docker bridge address or use a TLS/Unix-socket proxy that the API container can reach. Do not bind port `3010` to an untrusted interface or expose it publicly.
 
