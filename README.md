@@ -107,7 +107,7 @@ Included now:
 - private-pilot candidate for browser-enrolled, permission-scoped local search and guidance on macOS arm64; internal content stays disabled by default
 - synthetic demo corpus and validation checks
 - restricted-content leakage checks, attachment drift reconciliation, and coordinated database/blob backup-set verification
-- GitHub Actions CI with strict typecheck, measured web bundle budgets, public beta UI checks, browser screenshot UAT, API contract checks, claims lint, Postgres-backed tests, and a separate isolated private-live proof workflow
+- [Local CI](docs/LOCAL_CI.md) with strict typecheck, measured web bundle budgets, public beta UI checks, browser screenshot UAT, API contract checks, claims lint, Postgres-backed tests, and an isolated private-live proof
 
 Still future work:
 
