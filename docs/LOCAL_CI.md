@@ -144,3 +144,13 @@ The entrypoint does not provide these. They belong to the runner, the reporter o
 - The managed-update Docker drill in `scripts/verify-managed-updates.ts`, which stays a separately
   authorized manual proof.
 - Tagging, publishing and deployment.
+
+## Updating an existing branch
+
+Merge or rebase an older branch onto current `main` before requesting local checks. The controller
+runs the checked-out commit's entrypoint, so a branch without `scripts/local-ci.sh` fails closed.
+
+Wait for fresh `local-ci/verify`, `local-ci/codeql-javascript-typescript`, `local-ci/codeql-actions`
+and `local-ci/codeql-swift` results on the current pull request head. Updating either the head or its
+base invalidates evidence for the earlier merge source. Fork contributions require maintainer
+review before their code runs on a trusted worker.
