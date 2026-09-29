@@ -746,12 +746,12 @@ async function checkBrowserCredentialLifetime(page: Page, viewportName: string):
   checks.push({ name: `release ${viewportName}: ${splitOrigin ? "reload discards development bearer credential" : "cookie session survives reload"}`, status: "pass" });
 }
 
-async function waitForSettledRequests(page: Page): Promise<void> {
+async function waitForSettledRequests(page: Page, purpose = "the credential reload check"): Promise<void> {
   const traffic = pageTraffic.get(page);
   if (!traffic) throw new Error("Page request tracking was not initialized");
   const deadline = Date.now() + 15000;
   while (traffic.pending.size || Date.now() - traffic.changedAt < 500) {
-    if (Date.now() >= deadline) throw new Error("Background requests did not settle before the credential reload check");
+    if (Date.now() >= deadline) throw new Error(`Background requests did not settle before ${purpose}`);
     await new Promise((resolveWait) => setTimeout(resolveWait, 50));
   }
 }
@@ -777,6 +777,9 @@ async function assertLegacyAdminHashCanonicalizes(page: Page): Promise<void> {
   await page.goto(routeUrl(page, "settings"), { waitUntil: "domcontentloaded" });
   await expectVisibleText(page, "Settings", "release: legacy settings route loaded");
   await expectHash(page, "#admin/system/settings", "release: legacy settings route canonicalized");
+  // Settings loads admin branding on mount and aborts that read when the route unmounts. Leaving
+  // before it settles makes this check create its own ERR_ABORTED in the request-failure gate.
+  await waitForSettledRequests(page, "leaving the legacy settings route");
   await page.goto(routeUrl(page, "exports"), { waitUntil: "domcontentloaded" });
   await expectVisibleText(page, "Package builder", "release: legacy exports route loaded");
   await expectHash(page, "#admin/exports", "release: legacy exports route canonicalized");

@@ -105,9 +105,10 @@ async function main() {
   settings = readSettings();
 
   if (job === "cleanup") {
-    removeRunResources({ project: true });
+    const dockerOwned = existsSync(settings.dockerOwnership);
+    removeRunResources({ project: true, required: dockerOwned });
     removeScratch();
-    verifyCleanup();
+    verifyCleanup({ required: dockerOwned });
     finish(cleanup.ok ? "passed" : "failed", cleanup.ok ? 0 : 1);
     return;
   }
@@ -120,6 +121,16 @@ async function main() {
   if (preflightStatus) {
     finish(preflightStatus, preflightStatus === "refused" ? 2 : 1, preflight.issues.join("; "));
     return;
+  }
+  const dockerClaimed = phases.some((phase) => dockerJobs.has(phase.name));
+  if (dockerClaimed) {
+    try {
+      writeFileSync(settings.dockerOwnership, `${JSON.stringify({ runId, job, claimedAt: new Date().toISOString() })}\n`,
+        { flag: "wx", mode: 0o600 });
+    } catch (error) {
+      finish("failed", 1, `Could not record Docker ownership at ${display(settings.dockerOwnership)}: ${error.code ?? error.message}`);
+      return;
+    }
   }
 
   const started = [];
@@ -138,7 +149,7 @@ async function main() {
       }
     }
   } finally {
-    if (started.some((name) => dockerJobs.has(name))) verifyCleanup();
+    if (dockerClaimed) verifyCleanup({ required: true });
   }
 
   checkFinalSource();
@@ -177,13 +188,29 @@ function readSettings() {
   if (!scratchRoot || isWithin(scratchRoot, root) || isWithin(scratchRoot, evidenceDir)) {
     throw new Refusal("LOCAL_CI_SCRATCH_DIR must be an existing absolute directory outside the checkout and evidence");
   }
+  // A runner may supply a work directory that outlives the run's TMPDIR; Docker ownership lives there.
+  let workRoot = null;
+  if (process.env.LOCAL_CI_WORK_DIR) {
+    try {
+      workRoot = isAbsolute(process.env.LOCAL_CI_WORK_DIR) ? realpathSync(process.env.LOCAL_CI_WORK_DIR) : "";
+    } catch {
+      workRoot = "";
+    }
+    if (!workRoot || isWithin(workRoot, root) || isWithin(workRoot, evidenceDir)) {
+      throw new Refusal("LOCAL_CI_WORK_DIR must be an existing absolute directory outside the checkout and evidence");
+    }
+  }
   return {
     timeoutOverride: timeout ? Number(timeout) : null,
     releaseVersion,
     codeqlBinary,
     scratchRoot,
+    workRoot,
     // Run IDs cannot contain ".", so this name cannot collide with another run's directory.
-    scratch: join(scratchRoot, `forgetbase-lci-${runId}.codeql`)
+    scratch: join(scratchRoot, `forgetbase-lci-${runId}.codeql`),
+    // Written before a Docker job creates anything and removed only after a verified cleanup, so a
+    // recovery cleanup knows Docker must be reachable. Recovery must reuse the original work or scratch root.
+    dockerOwnership: join(workRoot ?? scratchRoot, `forgetbase-lci-${runId}.docker`)
   };
 }
 
@@ -637,6 +664,10 @@ function runPreflight(record, phases) {
       issues.push(`Resources for this run ID already exist (${existing.found.join(", ")}); run the cleanup job with a new evidence directory`);
     }
   }
+  if (issues.length === 0 && usesDocker && existsSync(settings.dockerOwnership)) {
+    refused = true;
+    issues.push(`An earlier run with this run ID still owns Docker resources (${display(settings.dockerOwnership)}); run the cleanup job with a new evidence directory`);
+  }
   if (issues.length === 0 && language && existsSync(settings.scratch)) {
     refused = true;
     issues.push(`${display(settings.scratch)} already exists; run the cleanup job with a new evidence directory`);
@@ -771,20 +802,34 @@ function halted() {
 }
 
 // Removes containers and images labelled with this run ID and, for the proof, its exact Compose project.
-function removeRunResources({ project }) {
+function removeRunResources({ project, required = true }) {
   const fd = cleanupLog();
   cleanup.attempted = true;
   const act = (argv) => {
     const outcome = runSync(argv, fd, { timeoutMs: 10 * 60_000 });
-    cleanup.actions.push({ command: display(argv.join(" ")), exitCode: outcome.code });
+    cleanup.actions.push({ command: display(argv.join(" ")), exitCode: outcome.code ?? null });
+    if (outcome.code !== 0) cleanup.ok = false;
   };
-  if (runSync(["docker", "version", "--format", "{{.Client.Version}}"], fd).error) return;
-  for (const name of lines(runSync(["docker", "ps", "-a", "--filter", `label=${runLabel}=${runId}`, "--format", "{{.Names}}"], fd).stdout)) {
+  const listed = (argv) => {
+    const outcome = runSync(argv, fd);
+    if (outcome.code !== 0) cleanup.ok = false;
+    return outcome.code === 0 ? lines(outcome.stdout) : [];
+  };
+  if (runSync(["docker", "version", "--format", "{{.Client.Version}}"], fd).error) {
+    // A run that never used Docker has nothing to remove. A Docker-backed one cannot be cleaned here.
+    if (required) {
+      cleanup.ok = false;
+      cleanup.verified = false;
+      cleanup.remaining.push("Docker resources for this run ID: the Docker CLI is unavailable, so they were neither removed nor verified");
+    }
+    return;
+  }
+  for (const name of listed(["docker", "ps", "-a", "--filter", `label=${runLabel}=${runId}`, "--format", "{{.Names}}"])) {
     act(["docker", "rm", "--force", "--volumes", name]);
   }
   if (!project) return;
   act(["docker", "compose", "--project-name", composeProject(), ...composeFiles, "down", "--volumes", "--remove-orphans", "--rmi", "local"]);
-  for (const id of lines(runSync(["docker", "image", "ls", "--filter", `label=${runLabel}=${runId}`, "--format", "{{.ID}}"], fd).stdout)) {
+  for (const id of listed(["docker", "image", "ls", "--filter", `label=${runLabel}=${runId}`, "--format", "{{.ID}}"])) {
     act(["docker", "image", "rm", id]);
   }
   for (const image of deploymentServices.map(deploymentImage)) {
@@ -808,19 +853,28 @@ function removeScratch() {
   }
 }
 
-function verifyCleanup() {
-  const readback = readbackResources(cleanupLog());
+function verifyCleanup({ required = true } = {}) {
+  const readback = readbackResources(cleanupLog(), { required });
   cleanup.verified &&= readback.verified;
   cleanup.remaining.push(...readback.found);
   cleanup.ok &&= readback.verified && readback.found.length === 0;
+  if (cleanup.ok && existsSync(settings.dockerOwnership)) {
+    rmSync(settings.dockerOwnership, { force: true });
+    const remains = existsSync(settings.dockerOwnership);
+    cleanup.actions.push({ command: `release ${display(settings.dockerOwnership)}`, exitCode: remains ? 1 : 0 });
+    if (remains) {
+      cleanup.ok = false;
+      cleanup.remaining.push(`ownership record ${display(settings.dockerOwnership)}`);
+    }
+  }
 }
 
-function readbackResources(fd) {
+function readbackResources(fd, { required = true } = {}) {
   const found = new Set();
   let verified = true;
   const version = runSync(["docker", "version", "--format", "{{.Client.Version}}"], fd);
-  // Without a Docker CLI this entrypoint cannot have created Docker resources on this host.
-  if (version.error) return { verified: true, found: [] };
+  // Without a Docker CLI, only a run with no Docker ownership record can be treated as having none.
+  if (version.error) return { verified: !required, found: [] };
   const project = composeProject();
   const list = (kind, args) => {
     const outcome = runSync(["docker", ...args], fd);
@@ -989,6 +1043,7 @@ function display(value) {
   let text = String(value);
   const replacements = [
     [evidenceDir, "$LOCAL_CI_EVIDENCE_DIR"],
+    [settings.workRoot, "$LOCAL_CI_WORK_DIR"],
     [settings.scratchRoot, "$LOCAL_CI_SCRATCH_DIR"],
     [process.execPath, "node"],
     [`${root}${sep}`, ""],

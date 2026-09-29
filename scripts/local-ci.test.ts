@@ -347,6 +347,122 @@ describe("portable CI entrypoint", () => {
     expectOnlyUnrelatedResources(fixture);
   }, 60_000);
 
+  // Review r4130795404: after a hard-killed Docker-backed job, cleanup must not treat an unavailable
+  // Docker CLI as proof that nothing remains. It fails closed and leaves resources for a later run.
+  it("cleanup after a hard-killed Docker run fails closed without Docker, then removes exactly that run's resources", async () => {
+    const fixture = createFixture();
+    writeFileSync(join(fixture.state, "config"), "sleep_on='pnpm build'\n");
+    const child = spawn("bash", [join(fixture.repo, "scripts/local-ci.sh"), "verify"], {
+      cwd: fixture.repo,
+      env: entryEnv(fixture),
+      stdio: "ignore",
+      detached: true
+    });
+    const exited = new Promise<void>((resolveExit) => child.once("exit", () => resolveExit()));
+    const sleeping = await waitForFile(join(fixture.state, "sleeping.pid"), 30_000);
+    process.kill(-child.pid!, "SIGKILL");
+    await exited;
+    try { process.kill(Number(readFileSync(sleeping, "utf8")), "SIGKILL"); } catch { /* already gone */ }
+    const postgres = join(fixture.state, "containers", `forgetbase-lci-${runId}-postgres`);
+    expect(existsSync(postgres)).toBe(true);
+    const dockerCalls = () => calls(fixture).filter((call) => call.command.startsWith("docker ")).length;
+    const before = dockerCalls();
+
+    const withoutDocker = runEntry(fixture, ["cleanup"], {
+      LOCAL_CI_EVIDENCE_DIR: join(fixture.base, "cleanup-no-docker"),
+      PATH: dockerFreePath(fixture)
+    });
+    expect(withoutDocker.status, withoutDocker.stderr).toBe(1);
+    expect(JSON.parse(readFileSync(join(fixture.base, "cleanup-no-docker/result.json"), "utf8")))
+      .toMatchObject({ status: "failed", job: "cleanup", cleanup: { ok: false, verified: false } });
+    expect(existsSync(postgres)).toBe(true);
+    expect(dockerCalls()).toBe(before);
+
+    const withDocker = runEntry(fixture, ["cleanup"], { LOCAL_CI_EVIDENCE_DIR: join(fixture.base, "cleanup-docker") });
+    expect(withDocker.status, withDocker.stderr).toBe(0);
+    expect(JSON.parse(readFileSync(join(fixture.base, "cleanup-docker/result.json"), "utf8")))
+      .toMatchObject({ status: "passed", job: "cleanup", cleanup: { ok: true, verified: true } });
+    expectOnlyUnrelatedResources(fixture);
+  }, 60_000);
+
+  // The private worker gives each run a fresh TMPDIR and deletes it at completion, but keeps
+  // LOCAL_CI_WORK_DIR until an explicit prune. Docker ownership must survive the TMPDIR removal.
+  it("a failed Docker cleanup keeps ownership across a new TMPDIR until recovery with Docker succeeds", () => {
+    const fixture = createFixture();
+    const work = join(fixture.base, "work");
+    const tmp = (name: string) => { const path = join(fixture.base, name); mkdirSync(path); return path; };
+    const worker = (tmpdir: string) => ({ LOCAL_CI_SCRATCH_DIR: undefined, LOCAL_CI_WORK_DIR: work, TMPDIR: tmpdir });
+    mkdirSync(work);
+    const postgres = `forgetbase-lci-${runId}-postgres`;
+    writeFileSync(join(fixture.state, "config"), `fail_on='docker rm --force --volumes ${postgres}'\n`);
+    const firstTmp = tmp("tmp-run");
+    const run = runEntry(fixture, ["verify"], { ...worker(firstTmp), LOCAL_CI_SOURCE_SHA: fixture.head });
+    expect(run.status, run.stderr).toBe(1);
+    expect(readResult(fixture)).toMatchObject({ status: "failed", cleanup: { ok: false } });
+    rmSync(firstTmp, { recursive: true, force: true });
+
+    const noDocker = (dir: string) => runEntry(fixture, ["cleanup"], {
+      ...worker(tmp(`tmp-${dir}`)), LOCAL_CI_EVIDENCE_DIR: join(fixture.base, dir), PATH: dockerFreePath(fixture)
+    });
+    for (const dir of ["recover-1", "recover-2"]) {
+      const recovery = noDocker(dir);
+      expect(recovery.status, recovery.stderr).toBe(1);
+      expect(JSON.parse(readFileSync(join(fixture.base, dir, "result.json"), "utf8")))
+        .toMatchObject({ status: "failed", cleanup: { ok: false, verified: false } });
+    }
+    expect(existsSync(join(fixture.state, "containers", postgres))).toBe(true);
+
+    writeFileSync(join(fixture.state, "config"), "");
+    const recovered = runEntry(fixture, ["cleanup"], {
+      ...worker(tmp("tmp-recover-docker")), LOCAL_CI_EVIDENCE_DIR: join(fixture.base, "recover-docker")
+    });
+    expect(recovered.status, recovered.stderr).toBe(0);
+    expectOnlyUnrelatedResources(fixture);
+    const released = noDocker("recover-after");
+    expect(released.status, released.stderr).toBe(0);
+  }, 90_000);
+
+  it("cleanup reports a failed removal command even when the readback finds nothing", () => {
+    const fixture = createFixture();
+    const down = `docker compose --project-name ${project} -f compose.yaml -f compose.same-origin.yaml down --volumes --remove-orphans --rmi local`;
+    writeFileSync(join(fixture.state, "config"), `fail_on='${down}'\n`);
+    const cleanup = runEntry(fixture, ["cleanup"], { LOCAL_CI_EVIDENCE_DIR: join(fixture.base, "cleanup-evidence") });
+
+    expect(cleanup.status, cleanup.stderr).toBe(1);
+    const result = JSON.parse(readFileSync(join(fixture.base, "cleanup-evidence/result.json"), "utf8"));
+    expect(result).toMatchObject({ status: "failed", cleanup: { ok: false } });
+    expect(result.cleanup.actions).toContainEqual(expect.objectContaining({ exitCode: 1 }));
+    expectOnlyUnrelatedResources(fixture);
+  }, 60_000);
+
+  it("cleanup of a run that never used Docker still passes on a host without Docker", () => {
+    const fixture = createFixture();
+    const scratch = join(fixture.base, "scratch", `forgetbase-lci-${runId}.codeql`);
+    mkdirSync(join(scratch, "database"), { recursive: true });
+    const cleanup = runEntry(fixture, ["cleanup"], {
+      LOCAL_CI_EVIDENCE_DIR: join(fixture.base, "cleanup-evidence"),
+      PATH: dockerFreePath(fixture)
+    });
+
+    expect(cleanup.status, cleanup.stderr).toBe(0);
+    expect(JSON.parse(readFileSync(join(fixture.base, "cleanup-evidence/result.json"), "utf8")))
+      .toMatchObject({ status: "passed", job: "cleanup", cleanup: { ok: true, verified: true } });
+    expect(existsSync(scratch)).toBe(false);
+  }, 60_000);
+
+  it("a completed Docker run releases its ownership, so later cleanup without Docker passes", () => {
+    const fixture = createFixture();
+    const run = runEntry(fixture, ["verify"], { LOCAL_CI_SOURCE_SHA: fixture.head });
+    expect(run.status, run.stderr).toBe(0);
+    const cleanup = runEntry(fixture, ["cleanup"], {
+      LOCAL_CI_EVIDENCE_DIR: join(fixture.base, "cleanup-evidence"),
+      PATH: dockerFreePath(fixture)
+    });
+    expect(cleanup.status, cleanup.stderr).toBe(0);
+    expect(JSON.parse(readFileSync(join(fixture.base, "cleanup-evidence/result.json"), "utf8")))
+      .toMatchObject({ status: "passed", cleanup: { ok: true } });
+  }, 60_000);
+
   it("codeql scans an exact export of HEAD and leaves alert triage to the controller", () => {
     const fixture = createFixture();
     mkdirSync(join(fixture.repo, "node_modules/pkg"), { recursive: true });
@@ -668,6 +784,23 @@ function expectVerifiedManifest(fixture: Fixture, result: Result): void {
     const content = readFileSync(join(fixture.evidence, file));
     expect(listed.get(file), file).toMatchObject({ sha256: sha256(content), size: content.length });
   }
+}
+
+// A PATH with only what scripts/local-ci.sh needs. Unlike dropping the fake bin, this cannot reach a
+// real /usr/bin/docker on a Linux worker, so it truly models a host where Docker is unavailable.
+function dockerFreePath(fixture: Fixture): string {
+  const bin = join(fixture.base, "docker-free-bin");
+  if (!existsSync(bin)) {
+    mkdirSync(bin);
+    for (const [name, target] of [["node", process.execPath], ["bash", which("bash")], ["dirname", which("dirname")]]) {
+      symlinkSync(target, join(bin, name));
+    }
+  }
+  return bin;
+}
+
+function which(tool: string): string {
+  return execFileSync("sh", ["-c", `command -v ${tool}`], { encoding: "utf8" }).trim();
 }
 
 function expectOnlyUnrelatedResources(fixture: Fixture): void {

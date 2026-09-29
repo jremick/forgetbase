@@ -51,6 +51,7 @@ Read `$LOCAL_CI_EVIDENCE_DIR/result.json` for the outcome. For a quick check of 
 | `LOCAL_CI_RELEASE_VERSION` | No | Semantic version for `release-artifacts`; default `0.0.0-local-ci` |
 | `LOCAL_CI_CODEQL` | No | Absolute path to the CodeQL CLI; default `codeql` on `PATH` |
 | `LOCAL_CI_SCRATCH_DIR` | No | Existing directory for CodeQL databases; default is the system temporary directory |
+| `LOCAL_CI_WORK_DIR` | No | Existing absolute directory outside the checkout and evidence for Docker ownership records; use a persistent path if temporary files are removed after a run |
 
 Checks receive only an allowlist of environment variables: path, home, locale, Docker client, proxy,
 package cache and Playwright browser settings. Tokens in the caller's environment do not reach checks.
@@ -101,7 +102,11 @@ already exist. It never prunes and never matches by name prefix.
 On `SIGTERM`, `SIGINT` or `SIGHUP`, the running check's process group receives `SIGTERM`. `SIGKILL`
 follows after 15 seconds, or after 6 minutes for the isolated proof, which removes its own stack first.
 Cleanup then runs. A supervisor should wait at least 7 minutes before `SIGKILL`. After a `SIGKILL`,
-run the `cleanup` job with the same run ID and a new evidence directory.
+run the `cleanup` job with the same run ID, the original `LOCAL_CI_WORK_DIR` (or
+`LOCAL_CI_SCRATCH_DIR` when no work directory was set), and a new evidence directory.
+Docker jobs retain an ownership record until cleanup succeeds. Recovery fails when Docker cannot
+be reached or a removal command fails, and keeps that record for the next recovery attempt.
+Do not remove the original work directory before recovery is complete.
 
 The workload runs with Docker socket access. Run it only for trusted source.
 
