@@ -99,6 +99,8 @@ It uses official GitHub actions pinned to immutable commit SHAs, installs with t
 
 The separate `.github/workflows/private-live-proof.yml` workflow runs on pushes to `main` or manual dispatch. It owns an isolated Compose project and runs `private-live:isolated-proof`, then uploads the non-secret proof bundle for 14 days. It does not run for pull requests and does not publish or deploy the repository.
 
+`scripts/local-ci.sh` runs the same gates without GitHub Actions and writes evidence outside the checkout. See [Portable CI](LOCAL_CI.md) for its jobs, inputs, result contract and the mapping from each workflow step.
+
 The older API, CLI, SDK, and MCP contract is documented in [ForgetBase Private Beta Contract](BETA_PRIVATE_CONTRACT.md). That contract is narrower than the full route surface; broader admin/provider/telemetry/action routes remain preview unless a later contract update moves them into scope.
 
 Default CI intentionally does not run `auth:verify-oidc-login`, real-provider smoke checks, or authenticated UAT against the externally deployed live instance. The isolated private-live workflow covers the disposable local-stack smoke, restricted-leakage, backup/restore, and authenticated reader/admin paths without using customer data or provider secrets; exact deployed-commit proof and human UAT remain release gates.

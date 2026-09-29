@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { dirname, isAbsolute, resolve } from "node:path";
+import { releaseStatusContexts, releaseStatusCreator } from "./github-release-policy.js";
 
 type EvidenceRef = {
   kind: "file" | "text" | "url";
@@ -18,6 +19,9 @@ type ReleaseProofManifest = {
     generatedAt: string;
     liveDemoUrl: string;
     tag?: string;
+    // Absent on historical GitHub Actions manifests.
+    ciProvider?: "github-commit-status";
+    ciRunUrlKind?: "status-target" | "status-api-readback";
   };
   compatibility: Record<string, unknown>;
   checks: Array<{
@@ -111,6 +115,10 @@ const releaseLiveDemoUrl = isRecord(manifest.release) && typeof manifest.release
 const releaseCommitSha = isRecord(manifest.release) && typeof manifest.release.commitSha === "string"
   ? manifest.release.commitSha
   : undefined;
+const commitStatusCi = isRecord(manifest.release) && manifest.release.ciProvider !== undefined;
+const githubRepo = isRecord(manifest.githubReadback) && typeof manifest.githubReadback.repo === "string"
+  ? manifest.githubReadback.repo
+  : undefined;
 
 requireString(manifest.schemaVersion, "schemaVersion");
 requireEqual(manifest.schemaVersion, "1", "schemaVersion");
@@ -151,9 +159,56 @@ function validateRelease(value: unknown): void {
   requireIsoDate(value.generatedAt, "release.generatedAt");
   requireUrl(value.ciRunUrl, "release.ciRunUrl", { requireHttps: true });
   requireEqual(value.ciStatus, "passed", "release.ciStatus");
+  if (commitStatusCi) validateCommitStatusRelease(value);
   requireUrl(value.liveDemoUrl, "release.liveDemoUrl", { requireHttps: true, rejectLocalhost: true });
   if (value.tag !== undefined) {
     requireString(value.tag, "release.tag");
+  }
+}
+
+// Portable CI proof. ciRunUrl keeps its historical name: it cites the verify status target or the
+// public statuses API readback of the exact release commit, never a hosted job log.
+function validateCommitStatusRelease(value: Record<string, unknown>): void {
+  requireEqual(value.ciProvider, "github-commit-status", "release.ciProvider");
+  if (value.ciRunUrlKind !== "status-target" && value.ciRunUrlKind !== "status-api-readback") {
+    issues.push("release.ciRunUrlKind must be status-target or status-api-readback");
+    return;
+  }
+  const readback = `https://api.github.com/repos/${githubRepo ?? ""}/commits/${String(value.commitSha)}/statuses`;
+  if (value.ciRunUrlKind === "status-api-readback" && value.ciRunUrl !== readback) {
+    issues.push("release.ciRunUrl must be the commit statuses readback of release.commitSha in githubReadback.repo");
+  }
+}
+
+function requireCommitStatusEvidence(value: unknown, path: string): void {
+  const text = evidenceRecords(value).find((evidence) => evidence.kind === "text" && typeof evidence.value === "string");
+  let recorded: unknown;
+  try {
+    recorded = text ? JSON.parse(String(text.value)) as unknown : undefined;
+  } catch {
+    recorded = undefined;
+  }
+  if (!isRecord(recorded) || recorded.provider !== "github-commit-status" || recorded.commitSha !== releaseCommitSha || !Array.isArray(recorded.statuses)) {
+    issues.push(`${path} must include the commit status readback for release.commitSha`);
+    return;
+  }
+  // The collector records only the newest status of each required context. Any extra entry could be a
+  // newer failure beside an older success, so the record must hold exactly one status per context.
+  const statuses: unknown[] = recorded.statuses;
+  const required: readonly string[] = releaseStatusContexts;
+  if (statuses.some((status) => !isRecord(status) || !required.includes(String(status.context)))) {
+    issues.push(`${path} records a status outside the required contexts`);
+  }
+  for (const context of releaseStatusContexts) {
+    const matching = statuses.filter((status) => isRecord(status) && status.context === context) as Array<Record<string, unknown>>;
+    const status = matching[0];
+    if (matching.length !== 1 || !status) {
+      issues.push(`${path} must record exactly one ${context} status`);
+    } else if (!Number.isInteger(status.id) || typeof status.createdAt !== "string" || Number.isNaN(Date.parse(status.createdAt))) {
+      issues.push(`${path} must record the ${context} status ID and creation time`);
+    } else if (status.sha !== releaseCommitSha || status.state !== "success" || status.creator !== releaseStatusCreator) {
+      issues.push(`${path} must record a successful ${context} status by ${releaseStatusCreator} for release.commitSha`);
+    }
   }
 }
 
@@ -255,6 +310,10 @@ function validateChecks(value: unknown): void {
           "clipped text"
         ]
       });
+    }
+
+    if (check.name === "ci-default-branch" && commitStatusCi) {
+      requireCommitStatusEvidence(check.evidence, "checks.ci-default-branch.evidence");
     }
 
     if (check.name === "live-demo-root") {

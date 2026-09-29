@@ -1,5 +1,11 @@
 import { spawnSync } from "node:child_process";
-import { findReleaseCiRun, validateReleaseBranchProtection, validateReleaseCodeScanning } from "./github-release-policy.js";
+import {
+  evaluateReleaseCodeScanning,
+  evaluateReleaseStatuses,
+  validateReleaseBranchProtection,
+  type ReleaseCodeScanningEvaluation,
+  type ReleaseStatusEvaluation
+} from "./github-release-policy.js";
 
 type GhResult = {
   ok: boolean;
@@ -96,7 +102,7 @@ const protectionIssues = validateReleaseBranchProtection(branchProtection.ok
 record(
   protectionIssues.length === 0,
   "default branch protection",
-  branchProtection.ok ? protectionIssues.join("; ") || "Verify required; strict PRs, conversation resolution and admin enforcement; force pushes/deletions blocked"
+  branchProtection.ok ? protectionIssues.join("; ") || "local-ci statuses required from any source; strict PRs, conversation resolution and admin enforcement; force pushes/deletions blocked"
     : summarizeGhFailure(branchProtection)
 );
 
@@ -106,37 +112,24 @@ for (const feature of ["secret_scanning", "secret_scanning_push_protection"]) {
   const status = readNestedString(settings, ["security_and_analysis", feature, "status"]);
   record(status === "enabled", feature, `status=${status || "unavailable"}`);
 }
-const codeScanning = gh(["api", `repos/${repo}/code-scanning/default-setup`]);
-const codeScanningSettings = codeScanning.ok ? parseJson<Record<string, unknown>>(codeScanning.stdout, "code scanning setup") : {};
-const codeScanningIssues = validateReleaseCodeScanning(codeScanningSettings);
-record(codeScanningIssues.length === 0, "code scanning configured", codeScanning.ok
-  ? codeScanningIssues.join("; ") || "CodeQL configured for JavaScript/TypeScript and GitHub Actions" : summarizeGhFailure(codeScanning));
+// Portable CI uploads one CodeQL analysis per language; each must succeed for this exact commit on main.
+const branchRef = `refs/heads/${defaultBranch || "main"}`;
+const analysesRead = ghItems(`repos/${repo}/code-scanning/analyses?ref=${encodeURIComponent(branchRef)}&tool_name=CodeQL&per_page=100`);
+const codeScanning: ReleaseCodeScanningEvaluation = evaluateReleaseCodeScanning(analysesRead.items, commitSha, defaultBranch || "main");
+if (!analysesRead.items) record(false, "CodeQL analyses", analysesRead.failure);
+for (const entry of codeScanning.categories) {
+  record(entry.issues.length === 0, `CodeQL analysis ${entry.category}`, entry.issues.join("; ") ||
+    `analysis=${String(entry.analysis?.id)}; tool=${entry.analysis?.tool} ${entry.analysis?.toolVersion ?? ""}; results=${String(entry.analysis?.resultsCount)}`);
+}
 
-const recentRuns = gh([
-  "run",
-  "list",
-  "--repo",
-  repo,
-  "--branch",
-  defaultBranch || "main",
-  "--workflow",
-  "CI",
-  "--commit",
-  commitSha,
-  "--event",
-  "push",
-  "--limit",
-  "10",
-  "--json",
-  "databaseId,status,conclusion,headBranch,headSha,workflowName,url,createdAt"
-]);
-
-if (recentRuns.ok) {
-  const runs = readArray(parseJson<unknown>(recentRuns.stdout, "recent CI runs"));
-  const successfulCi = findReleaseCiRun(runs, commitSha);
-  record(Boolean(successfulCi), "release commit CI", successfulCi ? `success=${String(successfulCi.url)}` : "latest CI for the release commit has not passed");
-} else {
-  record(false, "release commit CI", summarizeGhFailure(recentRuns));
+// The maintainer's controller reports portable CI results as commit statuses on the tested commit.
+const statusesEndpoint = `repos/${repo}/commits/${commitSha}/statuses`;
+const statusesRead = ghItems(`${statusesEndpoint}?per_page=100`);
+const releaseStatuses: ReleaseStatusEvaluation = evaluateReleaseStatuses(statusesRead.items, commitSha);
+if (!statusesRead.items) record(false, "commit statuses", statusesRead.failure);
+for (const entry of releaseStatuses.contexts) {
+  record(entry.issues.length === 0, `commit status ${entry.context}`, entry.issues.join("; ") ||
+    `success by ${String(entry.status?.creator)} at ${String(entry.status?.createdAt)}; target=${entry.status?.targetUrl ?? "none"}`);
 }
 
 const failures = findings.filter((finding) => finding.status === "fail");
@@ -145,7 +138,10 @@ console.log(JSON.stringify({
   repo,
   commitSha,
   checkedAt: new Date().toISOString(),
-  findings
+  findings,
+  // evidenceUrl is the public statuses API resource read above, present only after a successful read.
+  releaseStatuses: { ...releaseStatuses, ...(statusesRead.items ? { evidenceUrl: `https://api.github.com/${statusesEndpoint}` } : {}) },
+  codeScanning
 }, null, 2));
 
 if (failures.length > 0) {
@@ -165,6 +161,18 @@ function gh(args: string[]): GhResult {
     stdout: (result.stdout ?? "").trim(),
     stderr: (result.stderr ?? "").trim()
   };
+}
+
+// Reads every page of a list endpoint. Any unreadable page fails closed.
+function ghItems(endpoint: string): { items: unknown[] | undefined; failure: string } {
+  if (!/^[a-f0-9]{40}$/.test(commitSha)) return { items: undefined, failure: "release commit unavailable" };
+  const result = gh(["api", endpoint, "--paginate", "--jq", ".[]"]);
+  if (!result.ok) return { items: undefined, failure: summarizeGhFailure(result) };
+  try {
+    return { items: result.stdout.split("\n").filter((line) => line.trim()).map((line) => JSON.parse(line) as unknown), failure: "" };
+  } catch (error) {
+    return { items: undefined, failure: `Unable to parse ${endpoint}: ${(error as Error).message}` };
+  }
 }
 
 function record(condition: boolean, name: string, detail: string, failMode: "fail" | "warn" = "fail"): void {
@@ -209,10 +217,6 @@ function readTopics(value: unknown): string[] {
     .map((entry) => isRecord(entry) && typeof entry.name === "string" ? entry.name : "")
     .filter(Boolean)
     .sort();
-}
-
-function readArray(value: unknown): unknown[] {
-  return Array.isArray(value) ? value : [];
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

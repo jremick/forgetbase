@@ -4,9 +4,11 @@
   "release": {
     "commitSha": "<40-character git commit SHA>",
     "tag": "v0.1.0-beta.9",
-    "ciRunUrl": "https://github.com/jremick/forgetbase/actions/runs/<run-id>",
+    "ciRunUrl": "https://api.github.com/repos/jremick/forgetbase/commits/<40-character git commit SHA>/statuses",
     "ciHeadSha": "<40-character CI head SHA>",
     "ciStatus": "passed",
+    "ciProvider": "github-commit-status",
+    "ciRunUrlKind": "status-api-readback",
     "generatedAt": "2026-06-29T00:00:00.000Z",
     "liveDemoUrl": "https://<public-demo-host>"
   },
@@ -36,8 +38,14 @@
       "status": "pass",
       "evidence": [
         {
+          "kind": "text",
+          "value": "<{\"provider\":\"github-commit-status\",\"commitSha\":\"<release commit>\",\"statuses\":[latest status of each required local-ci context]}>",
+          "note": "latest status of each required portable CI context"
+        },
+        {
           "kind": "url",
-          "value": "https://github.com/jremick/forgetbase/actions/runs/<run-id>"
+          "value": "https://api.github.com/repos/jremick/forgetbase/commits/<40-character git commit SHA>/statuses",
+          "note": "GitHub commit statuses API readback of the release commit"
         }
       ]
     },
@@ -136,7 +144,7 @@
       "evidence": [
         {
           "kind": "text",
-          "value": "<github:public-beta:check JSON output showing public visibility, reader-first metadata, license, topics, vulnerability reporting, branch protection or rulesets, and successful CI>"
+          "value": "<github:public-beta:check JSON output showing public visibility, reader-first metadata, license, topics, vulnerability reporting, branch protection, required local-ci commit statuses and CodeQL analyses>"
         }
       ]
     },

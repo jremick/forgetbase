@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, relative, resolve } from "node:path";
-import { findReleaseCiRun } from "./github-release-policy.js";
+import { releaseStatusContexts, releaseStatusCreator, type ReleaseStatusSummary } from "./github-release-policy.js";
 
 type EvidenceRef = {
   kind: "file" | "text" | "url";
@@ -31,10 +31,20 @@ const githubCheck = run("tsx", ["scripts/check-public-beta-github.ts"]);
 const githubCheckPayload = parseJson(githubCheck.stdout);
 const githubMetadata = readGithubMetadata(repo);
 const commitSha = commandOutput("git", ["rev-parse", "HEAD"]) ?? "<40-character git commit SHA>";
-const latestCi = readLatestSuccessfulCi(repo, githubMetadata.defaultBranch || "main", commitSha);
-const ciHeadSha = latestCi.headSha || "<40-character CI head SHA>";
+// CI proof is the latest required commit status of each portable CI context, as read back above.
+// ciRunUrl keeps its historical name. It cites the verify status's own target when one is set,
+// otherwise the public statuses API readback of this exact commit. Neither is a hosted job log.
+const releaseStatuses = readReleaseStatuses(githubCheckPayload, commitSha);
+const verifyStatus = releaseStatuses.statuses.find((status) => status.context === "local-ci/verify");
+const ciHeadSha = verifyStatus?.sha || "<40-character CI head SHA>";
 const releaseTag = process.env.PUBLIC_BETA_TAG;
-const ciRunUrl = latestCi.url || `https://github.com/${repo}/actions/runs/<run-id>`;
+const statusReadbackUrl = `https://api.github.com/repos/${repo}/commits/${commitSha}/statuses`;
+const ciRunUrlKind = verifyStatus?.targetUrl && isHttpsUrl(verifyStatus.targetUrl)
+  ? "status-target"
+  : releaseStatuses.evidenceUrl === statusReadbackUrl ? "status-api-readback" : "unavailable";
+const ciRunUrl = ciRunUrlKind === "status-target" ? verifyStatus!.targetUrl!
+  : ciRunUrlKind === "status-api-readback" ? statusReadbackUrl
+    : "<local-ci/verify status target_url or commit statuses readback>";
 const liveDemoUrl = process.env.PUBLIC_BETA_LIVE_DEMO_URL ?? "https://<public-demo-host>";
 const releaseUatTenantId = process.env.PUBLIC_BETA_RELEASE_UAT_TENANT_ID;
 const releaseAdminEmail = process.env.PUBLIC_BETA_RELEASE_ADMIN_EMAIL ?? "admin-public-beta@example.test";
@@ -77,7 +87,9 @@ const manifest = {
     ...(releaseTag ? { tag: releaseTag } : {}),
     ciRunUrl,
     ciHeadSha,
-    ciStatus: latestCi.status,
+    ciStatus: releaseStatuses.passed ? "passed" : "unknown",
+    ciProvider: "github-commit-status",
+    ciRunUrlKind,
     generatedAt: new Date().toISOString(),
     liveDemoUrl
   },
@@ -103,8 +115,18 @@ const manifest = {
     },
     {
       name: "ci-default-branch",
-      status: latestCi.status === "passed" ? "pass" : "fail",
-      evidence: [urlEvidence(ciRunUrl)]
+      status: releaseStatuses.passed ? "pass" : "fail",
+      evidence: [
+        textEvidence(
+          releaseStatuses.statuses.length
+            ? JSON.stringify({ provider: "github-commit-status", commitSha, statuses: releaseStatuses.statuses })
+            : "<latest required local-ci commit statuses from github:public-beta:check>",
+          "latest status of each required portable CI context"
+        ),
+        ...(ciRunUrlKind === "unavailable" ? [] : [urlEvidence(ciRunUrl, ciRunUrlKind === "status-target"
+          ? "local-ci/verify status target_url"
+          : "GitHub commit statuses API readback of the release commit")])
+      ]
     },
     {
       name: "live-demo-root",
@@ -207,7 +229,7 @@ const manifest = {
         textEvidence(
           githubCheck.stdout ||
             githubCheck.stderr ||
-            "<github:public-beta:check JSON output showing public visibility, reader-first metadata, license, topics, vulnerability reporting, branch protection or rulesets, and successful CI>"
+            "<github:public-beta:check JSON output showing public visibility, reader-first metadata, license, topics, vulnerability reporting, branch protection, required local-ci commit statuses and CodeQL analyses>"
         )
       ]
     },
@@ -495,42 +517,28 @@ function summarizeLiveDemoRoot(
   };
 }
 
-function readLatestSuccessfulCi(targetRepo: string, branch: string, sourceRevision: string): { url: string; headSha: string; status: "passed" | "unknown" } {
-  const result = run("gh", [
-    "run",
-    "list",
-    "--repo",
-    targetRepo,
-    "--branch",
-    branch,
-    "--workflow",
-    "CI",
-    "--commit",
-    sourceRevision,
-    "--event",
-    "push",
-    "--limit",
-    "10",
-    "--json",
-    "status,conclusion,url,headSha"
-  ]);
+function readReleaseStatuses(
+  payload: Record<string, unknown> | undefined,
+  sourceRevision: string
+): { passed: boolean; statuses: ReleaseStatusSummary[]; evidenceUrl: string | undefined } {
+  const evaluation = isRecord(payload?.releaseStatuses) ? payload.releaseStatuses : {};
+  const statuses = (Array.isArray(evaluation.contexts) ? evaluation.contexts : [])
+    .map((entry) => isRecord(entry) && isRecord(entry.status) ? entry.status as ReleaseStatusSummary : undefined)
+    .filter((status): status is ReleaseStatusSummary => Boolean(status));
+  const complete = releaseStatusContexts.every((context) => statuses.some((status) =>
+    status.context === context &&
+    status.sha === sourceRevision &&
+    status.state === "success" &&
+    status.creator === releaseStatusCreator));
+  const evidenceUrl = typeof evaluation.evidenceUrl === "string" ? evaluation.evidenceUrl : undefined;
+  return { passed: evaluation.ok === true && complete, statuses, evidenceUrl };
+}
 
-  if (!result.ok) {
-    return { url: "", headSha: "", status: "unknown" };
-  }
-
+function isHttpsUrl(value: string): boolean {
   try {
-    const runs = JSON.parse(result.stdout) as Array<Record<string, unknown>>;
-    const success = findReleaseCiRun(runs, sourceRevision);
-    return typeof success?.url === "string"
-      ? {
-        url: success.url,
-        headSha: typeof success.headSha === "string" ? success.headSha : "",
-        status: "passed"
-      }
-      : { url: "", headSha: "", status: "unknown" };
+    return new URL(value).protocol === "https:";
   } catch {
-    return { url: "", headSha: "", status: "unknown" };
+    return false;
   }
 }
 
