@@ -20,7 +20,7 @@ Set `PUBLIC_BETA_TAG` to the approved, unused release tag before running the fin
 - release commit SHA
 - intended release tag
 - public HTTPS demo URL
-- GitHub Actions CI run URL for the release commit
+- required portable CI commit statuses and CodeQL analyses for the release commit
 - release tenant ID used by both authenticated UAT accounts
 - admin UAT account for the demo
 - reader UAT account for the demo
@@ -144,11 +144,11 @@ Prepare the settings before publication. On GitHub Free, branch protection and p
 - security policy is present
 - private vulnerability reporting is enabled
 - default branch is `main`
-- `main` requires the real `Verify` CI check with up-to-date branches
+- `main` requires the `local-ci/verify`, `local-ci/codeql-javascript-typescript`, `local-ci/codeql-actions` and `local-ci/codeql-swift` commit statuses from any source (`app_id` unset or `-1`) with up-to-date branches
 - pull requests and conversation resolution are required; zero outside approvals are required for the solo-maintainer workflow
 - branch protection applies to administrators; force pushes and deletion are blocked
 - secret scanning and push protection are enabled
-- CodeQL default setup is configured for JavaScript/TypeScript and GitHub Actions
+- successful CodeQL analyses for `/language:javascript-typescript`, `/language:actions` and `/language:swift` exist for the release commit on `main`
 - repo description and topics match the reader-first product scope
 
 Run:
@@ -159,7 +159,7 @@ npx -y pnpm@11.7.0 github:public-beta:check
 
 Stop if this command fails.
 
-The check verifies that the local release commit is the remote `main` commit and that its latest push-triggered CI run passed. An older successful run or an unrelated ruleset is not sufficient. This runbook uses classic branch protection; changing to rulesets requires an equivalent verified policy and an updated checker.
+The check verifies that the local release commit is the remote `main` commit. For that exact commit, the latest status of each required context must be a success created by the maintainer account, and each CodeQL category must have a successful CodeQL analysis on `main`. A newer failed, pending or foreign status or a newer failed analysis is never hidden by an older success. An unrelated ruleset is not sufficient. This runbook uses classic branch protection; changing to rulesets requires an equivalent verified policy and an updated checker.
 
 ## Release Proof
 
@@ -174,6 +174,8 @@ npx -y pnpm@11.7.0 release-proof:check work/public-beta-proof/public-beta-releas
 ```
 
 The proof check must pass before tagging or announcing public beta. A failing release proof is a release blocker, not a warning.
+
+Manifests with `release.ciProvider: "github-commit-status"` come from portable CI. `release.ciRunUrl` keeps its historical name but is not a hosted job log. `release.ciRunUrlKind` is `status-target` when the `local-ci/verify` status carries a target URL, or `status-api-readback` when it cites the public commit statuses API for the exact release commit. The `ci-default-branch` evidence records the status ID, commit, creator and time of each required context. Manifests without `ciProvider` are historical GitHub Actions proof; their `ciRunUrl` is an Actions run URL and remains valid.
 
 ## Tag And Announce
 

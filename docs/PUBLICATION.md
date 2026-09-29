@@ -33,17 +33,21 @@ security settings only after a private repository becomes public. Prepare the
 settings first, then apply them immediately after changing visibility:
 
 - Protect `main`, including administrators.
-- Require pull requests, resolved conversations and an up-to-date passing
-  `Verify` check. The solo-maintainer policy requires zero outside approvals.
+- Require pull requests, resolved conversations and up-to-date passing
+  `local-ci/verify`, `local-ci/codeql-javascript-typescript`,
+  `local-ci/codeql-actions` and `local-ci/codeql-swift` commit statuses from any
+  source. The solo-maintainer policy requires zero outside approvals.
 - Disable force pushes and deletion of `main`.
 - Enable secret scanning, push protection and private vulnerability reporting.
-- Configure CodeQL for JavaScript/TypeScript and GitHub Actions; inspect its
-  completed analysis and triage findings before declaring publication complete.
+- Upload CodeQL analyses for JavaScript/TypeScript, GitHub Actions and Swift
+  from [portable CI](LOCAL_CI.md); inspect the completed analyses and triage
+  findings before declaring publication complete.
 - Keep Issues enabled and unused Wiki, Projects and Discussions disabled.
 
 Run `pnpm github:public-beta:check` from the clean release commit. The checker
 requires that commit to match remote `main` and rejects missing protection,
-disabled security features and stale CI. The procedure uses classic branch
+disabled security features, and missing, failed, pending or foreign commit
+statuses or CodeQL analyses for that commit. The procedure uses classic branch
 protection; an alternative policy requires equivalent verification.
 
 Follow [Public beta release](runbooks/PUBLIC_BETA_RELEASE.md) for the full proof

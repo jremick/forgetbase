@@ -16,7 +16,12 @@ type StepResult = {
 
 const root = process.cwd();
 const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-const projectName = `forgetbase-proof-${process.pid}-${Date.now()}`.toLowerCase();
+// Portable CI names the project from its run ID so it can remove it after a hard kill. Only that
+// namespace is accepted: cleanup runs `compose down --volumes` against this project.
+const projectName = process.env.PRIVATE_LIVE_PROJECT_NAME || `forgetbase-proof-${process.pid}-${Date.now()}`.toLowerCase();
+if (process.env.PRIVATE_LIVE_PROJECT_NAME && !/^forgetbase-lci-[a-z0-9]+(?:-[a-z0-9]+)*$/.test(projectName)) {
+  throw new Error("PRIVATE_LIVE_PROJECT_NAME must be a forgetbase-lci-<run-id> Compose project name");
+}
 const outputDir = resolve(
   root,
   process.env.PRIVATE_LIVE_PROOF_DIR ?? `work/private-live-proof/${timestamp}`
