@@ -37,6 +37,9 @@ function sliceBetween(source: string, start: string, end: string, label: string)
 
 const app = read("apps/web/src/App.tsx");
 const reader = read("apps/web/src/ReaderSurface.tsx");
+const readerEvidence = read("apps/web/src/components/reader/reader-evidence.tsx");
+const readerOverview = read("apps/web/src/components/reader/reader-overview.tsx");
+const readerPresentation = [reader, readerEvidence, readerOverview].join("\n");
 const admin = read("apps/web/src/AdminSurface.tsx");
 const routing = read("apps/web/src/lib/app-routing.ts");
 const productUi = [app, reader, admin, routing].join("\n");
@@ -67,19 +70,20 @@ assertIncludes(html, "Knowledge Base for People and AI Tools", "HTML metadata");
 assertIncludes(html, "knowledge base for people and AI tools", "HTML metadata");
 assertIncludes(reader, "reader-library", "reader page navigation");
 assertIncludes(reader, "reader-article", "reader article");
-assertIncludes(reader, "On this page", "reader section navigation");
-assertIncludes(reader, "reader-mobile-page-picker", "reader mobile page picker");
-assertIncludes(reader, "reader-page-footer", "reader page footer");
+assertIncludes(readerPresentation, "On this page", "reader section navigation");
+assertIncludes(readerPresentation, "Open pages", "reader mobile navigation");
+assertIncludes(readerPresentation, "Source details", "reader source information");
+assertIncludes(readerPresentation, "reader-overview", "reader no-page overview");
 assertIncludes(reader, "readerIcon", "reader icon metadata");
 assertIncludes(reader, "reader-search-kbd", "reader search shortcut hint");
 assertIncludes(reader, "nav-resizer", "resizable page navigation");
 assertIncludes(reader, "nav-collapsed", "collapsible page navigation");
 assertIncludes(reader, "reader-collapsed-node", "collapsed reader navigation");
-assertIncludes(reader, "reader-leaf-dot", "reader leaf dot navigation");
-assertIncludes(reader, "reader-ask-title", "reader ask panel");
-assertIncludes(reader, "reader-ask-answer", "reader answer state");
-assertIncludes(reader, "reader-no-access-state", "reader no-access state");
-assertIncludes(reader, "reader-citation", "reader citations");
+assertIncludes(reader, "reader-nav-icon", "reader navigation icons");
+assertIncludes(readerPresentation, "reader-ask-title", "reader ask panel");
+assertIncludes(readerPresentation, "reader-ask-answer", "reader answer state");
+assertIncludes(readerPresentation, "reader-no-access-state", "reader no-access state");
+assertIncludes(readerPresentation, "reader-citation", "reader citations");
 assertNotIncludes(productUi, "import * as PhosphorIcons", "direct icon imports");
 assertNotIncludes(reader, "reader-refresh-button", "reader refresh button removed");
 assertNotIncludes(reader, "reader-source-heading", "reader footer heading removed");
@@ -96,14 +100,12 @@ assertIncludes(app, "isAdminRoute(route) && !canAccessAppRoute(principal, route)
 for (const selector of [
   ".admin-side-header",
   ".reader-section-nav",
-  ".reader-mobile-page-picker",
-  ".reader-page-footer",
+  ".reader-overview",
   ".reader-ask-panel",
   ".reader-no-access-state",
   ".reader-citation",
   ".reader-document-body h2",
-  ".reader-page-footer dl",
-  ".reader-leaf-dot",
+  ".reader-nav-icon",
   ".reader-collapsed-node",
   ".nav-chrome",
   ".nav-resizer",
@@ -113,7 +115,8 @@ for (const selector of [
   assertIncludes(css, selector, "reader-first CSS");
 }
 
-assertIncludes(css, ".reader-shell .reader-library {\n    display: none;", "single mobile reader navigation model");
+// The mobile drawer and configured source fields are verified against rendered
+// behavior in authenticated UAT; no exact CSS formatting contract is required.
 
 const publicCopy = sliceBetween(
   app,
@@ -123,7 +126,7 @@ const publicCopy = sliceBetween(
 );
 const readerCopy = sliceBetween(
   reader,
-  '<main className={`reader-main ${accountSettings ? "reader-main--account" : ""}`} id="main"',
+  "<main",
   "</main>",
   "reader shell"
 );
