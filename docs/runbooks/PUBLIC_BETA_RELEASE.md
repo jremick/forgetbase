@@ -6,10 +6,10 @@ The current public beta tag is `v0.1.0-beta.9`. Tags `v0.1.0-beta.1` through `v0
 
 ## Scope
 
-- The release is for the self-hosted core and synthetic demo corpus only.
+- The release is for the self-hosted core, with a synthetic demo corpus for first-run checks and public evidence.
 - The public reader UI is the main product surface.
 - The admin console is for managing content, access, exports, users, and system settings.
-- No private, customer, employee, or regulated data should be imported.
+- Self-hosted internal work trials follow [Public Beta Compatibility](../PUBLIC_BETA_COMPATIBILITY.md#data-and-migration-expectations). Keep the public demo and release proof synthetic; do not include private content in release artifacts.
 - Do not make the repository public, tag a release, or announce public beta until the owner explicitly approves that action.
 - Complete the controlled live-testing phase in [Private Live UAT](../PRIVATE_LIVE_UAT.md) before considering public promotion.
 
@@ -195,7 +195,7 @@ Create the GitHub release from the tag. Keep the release notes plain:
 - where to report bugs
 - where to report suspected vulnerabilities
 
-Do not claim production readiness, hosted-service readiness, stable API compatibility, or support for private/customer corpus imports.
+Describe internal work trials using the data handling expectations and import limitations in [Public Beta Compatibility](../PUBLIC_BETA_COMPATIBILITY.md). Do not claim production readiness, hosted-service readiness, stable API compatibility, compliance certification, or guaranteed data safety.
 
 ## Stop Rules
 

@@ -1,5 +1,7 @@
 # Private Live UAT
 
+Historical scope: this charter records the pre-public beta.2 testing phase. Its repository-privacy and test-content boundaries apply to that phase, not to current self-hosted internal work trials. Current trial scope is in [Public Beta Compatibility](PUBLIC_BETA_COMPATIBILITY.md). The controlled synthetic proof procedure remains useful for release verification and does not authorize importing work content into disposable test stacks.
+
 Use this charter to test a release candidate with local, invited users on a controlled live deployment before any public beta promotion.
 
 ## Boundary

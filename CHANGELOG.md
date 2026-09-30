@@ -1,6 +1,10 @@
 # Changelog
 
-Published tags are immutable. Beta releases support self-hosted trials with synthetic data; they do not promise stable APIs or production support.
+Published tags are immutable. Beta releases support self-hosted trials, including internal work usage; they do not promise stable APIs or production support. Current data handling expectations are in [Public Beta Compatibility](docs/PUBLIC_BETA_COMPATIBILITY.md).
+
+## Unreleased
+
+- Remove the blanket restriction on private/customer content in self-hosted beta trials and align current trial guidance. Public examples and release proof remain synthetic. This is a documentation clarification; runtime permissions, feature-specific pilot limits, and historical release evidence are unchanged.
 
 ## 0.1.0-beta.9 - 2026-09-28
 
