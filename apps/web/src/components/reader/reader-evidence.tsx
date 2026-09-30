@@ -29,11 +29,11 @@ function sourceKindLabel(kind: Citation["sourceKind"]): string {
   return kind === "human-document" ? "Page text" : kind === "agent-instruction" ? "Agent instruction" : "Summary";
 }
 
-function citationVersionLabel(citation: Citation, detail: AssetDetail | null): string {
+function citationVersionLabel(citation: Citation, asset: AssetDetail["asset"] | null | undefined): string {
   if (!citation.versionId) return "Version not supplied";
-  const publishedId = detail?.asset.stableId === citation.stableId ? detail.asset.publishedVersionId : null;
+  const publishedId = asset?.id === citation.assetId && asset.stableId === citation.stableId ? asset.publishedVersionId : null;
   if (!publishedId) return "Version cannot be compared";
-  return publishedId === citation.versionId ? "Current published version" : "Different version from the page now shown";
+  return publishedId === citation.versionId ? "Current published version" : "Different from current published version";
 }
 
 function CitationIdentity({ citation }: { citation: Citation }) {
@@ -74,10 +74,10 @@ type ReaderSearchProps = DialogControls & {
   input: string; submittedQuery: string; response: SearchResponse | null; loading: boolean; error: string;
   selectedId: string; onSelectResult: (stableId: string) => void; onInputChange: (value: string) => void;
   onSearch: (event?: FormEvent) => void; onOpenPage: PageLinkHandler; onAsk: () => void;
-  detail: AssetDetail | null; breadcrumbFor: (stableId: string) => string;
+  breadcrumbFor: (stableId: string) => string;
 };
 
-export function ReaderSearchDialog({ open, onOpenChange, onCloseFocus, input, onInputChange, submittedQuery, response, loading, error, selectedId, onSelectResult, onSearch, onOpenPage, onAsk, detail, breadcrumbFor }: ReaderSearchProps) {
+export function ReaderSearchDialog({ open, onOpenChange, onCloseFocus, input, onInputChange, submittedQuery, response, loading, error, selectedId, onSelectResult, onSearch, onOpenPage, onAsk, breadcrumbFor }: ReaderSearchProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const resultsRef = useRef<HTMLDivElement>(null);
   const savedScroll = useRef(0);
@@ -110,7 +110,7 @@ export function ReaderSearchDialog({ open, onOpenChange, onCloseFocus, input, on
             <h3>{result.asset.title}</h3><p>{formatReaderSnippet(result.citation.snippet || result.content, 220)}</p>
             <div className="reader-result-actions"><a className="reader-result-open" href={readerPageHref(window.location, result.asset.stableId)} onFocus={() => onSelectResult(result.asset.stableId)} onClick={(event) => { onSelectResult(result.asset.stableId); onOpenPage(event, result.asset.stableId); }}>Open page</a><span>{matchCount} returned {matchCount === 1 ? "match" : "matches"}</span></div>
             <details className="reader-matched-passages"><summary>Matched passages ({matchCount})</summary>{passages.map((passage, index) => <section className="reader-matched-passage" key={`${passage.chunkId}:${index}`} data-chunk-id={passage.chunkId} data-source-id={passage.citation.sourceId ?? ""} data-version-id={passage.citation.versionId ?? ""}>
-              <p className="reader-evidence-meta">{sourceKindLabel(passage.citation.sourceKind)} · {citationVersionLabel(passage.citation, detail)}</p>
+              <p className="reader-evidence-meta">{sourceKindLabel(passage.citation.sourceKind)} · {citationVersionLabel(passage.citation, passage.asset)}</p>
               <p className="reader-passage-text">{passage.citation.snippet}</p><CitationIdentity citation={passage.citation} />
             </section>)}</details>
           </article>;
@@ -143,7 +143,7 @@ export function ReaderAskDialog({ open, onOpenChange, onCloseFocus, input, onInp
             {response.checks.deniedCount ? <p className="reader-ask-note">Some matching sources are not available to your account.</p> : null}
           </div>
           <section className="reader-citations" aria-label="Sources"><h3>Sources</h3>{response.citations.length ? response.citations.slice(0, 5).map((citation, index) => <details className="reader-citation" key={`${citation.chunkId}:${index}`} open={index === 0} data-chunk-id={citation.chunkId} data-version-id={citation.versionId ?? ""}>
-            <summary><strong>{citation.title}</strong><span>Source {index + 1}</span></summary><p className="reader-evidence-meta">{sourceKindLabel(citation.sourceKind)} · {citationVersionLabel(citation, detail)}</p><p className="reader-passage-text">{citation.snippet}</p>
+            <summary><strong>{citation.title}</strong><span>Source {index + 1}</span></summary><p className="reader-evidence-meta">{sourceKindLabel(citation.sourceKind)} · {citationVersionLabel(citation, response.results.find(({ asset }) => asset.id === citation.assetId && asset.stableId === citation.stableId)?.asset ?? detail?.asset)}</p><p className="reader-passage-text">{citation.snippet}</p>
             <a href={readerPageHref(window.location, citation.stableId)} onClick={(event) => onOpenPage(event, citation.stableId)}>Open source page</a>
             <p className="reader-ask-note">This link opens the current published page.</p><CitationIdentity citation={citation} />
           </details>) : <p>No accessible sources matched this question.</p>}</section>

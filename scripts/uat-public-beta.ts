@@ -598,6 +598,7 @@ async function checkReaderExperienceFlow(page: Page, viewportName: string): Prom
   readerProof(!new URL(page.url()).searchParams.has("page"), `${label}: absent page shows overview without silently selecting a page`);
   readerProof(!(await page.locator("main").innerText()).includes(readerFixture.draftToken), `${label}: overview does not expose newer draft metadata`);
   await screenshot(page, `reader-overview-${viewportName}.png`, `${label}: overview screenshot`);
+  await checkReaderOverviewVersionEvidence(page, viewportName);
   await openReaderStablePage(page, "guideline.reader-footer-configuration");
   await page.getByRole("heading", { name: "Reader Footer Configuration Guide", exact: true, level: 1 }).waitFor();
   await assertReaderSourceFields(page, `${label}: custom field order and omitted version`);
@@ -654,6 +655,10 @@ async function checkReaderExperienceFlow(page: Page, viewportName: string): Prom
     readerProof((await row.innerText()).includes(`${matches.length} returned match`), `${label}: ${stableId} count refers to returned passages`);
     const rowText = await row.textContent() ?? "";
     readerProof(matches.every(match => rowText.includes(match.citation.chunkId)), `${label}: ${stableId} retains inspectable passage identities`);
+    readerProof(matches.every(match => Boolean(match.asset.publishedVersionId) && match.citation.versionId === match.asset.publishedVersionId), `${label}: ${stableId} real passages reference their own publication`);
+    await row.locator(".reader-matched-passages > summary").click();
+    const versionLabels = await row.locator(".reader-matched-passage .reader-evidence-meta").allTextContents();
+    readerProof(versionLabels.length === matches.length && versionLabels.every(text => text.includes("Current published version")), `${label}: ${stableId} search compares its own publication while checklist is open`, JSON.stringify(versionLabels));
   }
   const checklist = searchDialog.locator(`.reader-search-result[data-stable-id='${readerFixture.checklistId}']`);
   await checklist.getByRole("link", { name: "Open page", exact: true }).focus();
@@ -673,6 +678,10 @@ async function checkReaderExperienceFlow(page: Page, viewportName: string): Prom
   }), `${label}: ArrowDown moves selection from input into results`);
   await screenshot(page, `reader-search-${viewportName}.png`, `${label}: real close-match search screenshot`);
   await closeReaderDialog(page, "Search pages");
+  const crossPageAsk = await submitReaderAsk(page, readerFixture.ask);
+  readerProof(new URL(page.url()).searchParams.get("page") === readerFixture.checklistId, `${label}: cross-page Ask leaves checklist selected`);
+  await assertReaderPolicyCitationVersion(crossPageAsk.dialog, crossPageAsk.data, "Current published version", `${label}: Ask compares the policy publication while checklist is open`);
+  await closeReaderDialog(page, "Ask the knowledge base");
 
   await openReaderStablePage(page, readerFixture.instructionId);
   await page.getByRole("heading", { name: readerFixture.instructionTitle, exact: true, level: 1 }).waitFor();
@@ -868,11 +877,63 @@ async function checkReaderUnavailablePages(page: Page, viewportName: string): Pr
   await screenshot(page, `reader-unavailable-${viewportName}.png`, `reader ${viewportName}: unavailable screenshot`);
 }
 
+async function assertReaderPolicyCitationVersion(dialog: Locator, data: ReturnType<typeof managedQueryResponseSchema.parse>, expected: string, label: string): Promise<void> {
+  const source = data.citations.find(citation => citation.stableId === readerFixture.policyId);
+  readerProof(Boolean(source), `${label}: policy citation is present`);
+  const citation = dialog.locator(".reader-citation").filter({ hasText: readerFixture.title }).first();
+  await citation.waitFor({ state: "visible" });
+  if (await citation.getAttribute("open") === null) await citation.locator("summary").first().click();
+  await citation.getByText(expected, { exact: false }).waitFor({ state: "visible" });
+  readerProof((await citation.locator(".reader-passage-text").textContent()) === source!.snippet, `${label}: ${expected}; supplied excerpt preserved`);
+}
+
+async function checkReaderOverviewVersionEvidence(page: Page, viewportName: string): Promise<void> {
+  const label = `reader E2E ${viewportName}: overview evidence`;
+  const search = await submitReaderSearch(page, readerFixture.query);
+  const policyMatches = search.data.results.filter(result => result.asset.stableId === readerFixture.policyId);
+  readerProof(policyMatches.length > 0 && policyMatches.every(result => result.citation.versionId === expectedReaderPublishedVersionId && result.asset.publishedVersionId === expectedReaderPublishedVersionId), `${label}: Search carries the independently seeded policy publication`);
+  const row = search.dialog.locator(`.reader-search-result[data-stable-id='${readerFixture.policyId}']`);
+  await row.locator(".reader-matched-passages > summary").click();
+  const versions = await row.locator(".reader-matched-passage .reader-evidence-meta").allTextContents();
+  readerProof(versions.length === policyMatches.length && versions.every(text => text.includes("Current published version")), `${label}: Search identifies the current publication without an open page`, JSON.stringify(versions));
+  await closeReaderDialog(page, "Search pages");
+
+  const ask = await submitReaderAsk(page, readerFixture.ask);
+  readerProof(ask.data.citations.some(citation => citation.stableId === readerFixture.policyId && citation.versionId === expectedReaderPublishedVersionId) && ask.data.results.some(result => result.asset.stableId === readerFixture.policyId && result.asset.publishedVersionId === expectedReaderPublishedVersionId), `${label}: Ask carries the independently seeded policy publication`);
+  await assertReaderPolicyCitationVersion(ask.dialog, ask.data, "Current published version", `${label}: Ask compares its source publication`);
+  readerProof(!new URL(page.url()).searchParams.has("page"), `${label}: Search and Ask keep the overview selected`);
+  await screenshot(page, `reader-overview-evidence-${viewportName}.png`, `${label}: Ask version evidence screenshot`);
+  await closeReaderDialog(page, "Ask the knowledge base");
+
+  if (viewportName !== "desktop") return;
+  // The overview has no detail fallback. Keep citation bytes while removing only
+  // the independent publication evidence; a currentVersionId is not sufficient.
+  for (const variant of ["no-matching-result", "no-published-version", "different-asset-identity"] as const) {
+    const fixture = structuredClone(ask.data);
+    fixture.results = variant === "no-matching-result"
+      ? fixture.results.filter(result => result.asset.stableId !== readerFixture.policyId)
+      : fixture.results.map(result => result.asset.stableId !== readerFixture.policyId ? result : {
+        ...result, asset: { ...result.asset, ...(variant === "no-published-version" ? { publishedVersionId: null } : { id: "synthetic-other-asset" }) }
+      });
+    const parsed = managedQueryResponseSchema.parse(fixture);
+    const pattern = "**/agent/query";
+    const handler = (route: Route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(parsed) });
+    await page.route(pattern, handler);
+    try {
+      const response = await submitReaderAsk(page, readerFixture.ask);
+      await assertReaderPolicyCitationVersion(response.dialog, response.data, "Version cannot be compared", `${label}: ${variant} response fixture`);
+      await closeReaderDialog(page, "Ask the knowledge base");
+    } finally {
+      await page.unroute(pattern, handler);
+    }
+  }
+}
+
 async function checkReaderCitationFixtures(page: Page, original: ReturnType<typeof managedQueryResponseSchema.parse>, viewportName: string): Promise<void> {
   const policy = original.citations.find(citation => citation.stableId === readerFixture.policyId);
   readerProof(Boolean(policy?.versionId), "reader citation fixtures: real source identity/version captured before substitution");
   const pattern = "**/agent/query";
-  for (const [versionId, expected] of [["synthetic-different-version", "Different version from the page now shown"], [null, "Version not supplied"]] as const) {
+  for (const [versionId, expected] of [["synthetic-different-version", "Different from current published version"], [null, "Version not supplied"]] as const) {
     const fixture = structuredClone(original);
     fixture.citations = fixture.citations.map(citation => citation.stableId === readerFixture.policyId ? { ...citation, versionId } : citation);
     fixture.results = fixture.results.map(result => result.asset.stableId === readerFixture.policyId ? { ...result, citation: { ...result.citation, versionId } } : result);
