@@ -3,6 +3,8 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { resolve } from "node:path";
+import { assetDetailSchema, assetUpdateInputSchema, managedQueryResponseSchema, searchResponseSchema } from "../packages/schema/src/index.js";
+import { readerExperienceAssets, readerFixture, readerPolicyBody, readerUnpublishedReplacement } from "./fixtures/reader-experience.js";
 
 type StepResult = {
   name: string;
@@ -142,6 +144,7 @@ try {
     5 * 60 * 1_000
   );
   await verifySyntheticAttachment(apiUrl, adminKey);
+  const readerSeed = await seedReaderExperience(apiUrl, adminKey, tenantId);
 
   run(
     "run Compose smoke and restricted-leakage proof",
@@ -192,6 +195,10 @@ try {
       UAT_TEST_AUTHORING: "true",
       UAT_TEST_RICH_EDITOR: "true",
       UAT_TEST_BRANDING: "true",
+      UAT_TEST_READER_EXPERIENCE: "true",
+      UAT_EXPECT_READER_PUBLISHED_VERSION_ID: readerSeed.publishedVersionId,
+      UAT_EXPECT_READER_PUBLISHED_VERSION_NUMBER: String(readerSeed.publishedVersionNumber),
+      UAT_READER_RESTRICTED_CONTROL: JSON.stringify(readerSeed.restrictedControl),
       UAT_TENANT_ID: tenantId,
       UAT_EMAIL: adminEmail,
       UAT_PASSWORD: password,
@@ -209,6 +216,10 @@ try {
       UAT_BASE_URL: webUrl,
       UAT_MODE: "release",
       UAT_EXPECT_ROLE: "reader",
+      UAT_TEST_READER_EXPERIENCE: "true",
+      UAT_EXPECT_READER_PUBLISHED_VERSION_ID: readerSeed.publishedVersionId,
+      UAT_EXPECT_READER_PUBLISHED_VERSION_NUMBER: String(readerSeed.publishedVersionNumber),
+      UAT_READER_RESTRICTED_CONTROL: JSON.stringify(readerSeed.restrictedControl),
       UAT_TENANT_ID: tenantId,
       UAT_EMAIL: readerEmail,
       UAT_PASSWORD: password,
@@ -410,13 +421,14 @@ async function waitForUrl(url: string, timeoutMs: number): Promise<void> {
 
 async function requestJson(
   url: string,
-  input: { method: string; apiKey?: string; body?: Record<string, unknown> }
+  input: { method: string; apiKey?: string; body?: Record<string, unknown>; surface?: string }
 ): Promise<Record<string, unknown>> {
   const response = await fetch(url, {
     method: input.method,
     headers: {
       accept: "application/json",
       ...(input.apiKey ? { authorization: `Bearer ${input.apiKey}` } : {}),
+      ...(input.surface ? { "x-forgetbase-surface": input.surface } : {}),
       ...(input.body ? { "content-type": "application/json" } : {})
     },
     body: input.body ? JSON.stringify(input.body) : undefined
@@ -430,6 +442,53 @@ async function requestJson(
     throw new Error(`${input.method} ${url} did not return a JSON object`);
   }
   return parsed as Record<string, unknown>;
+}
+
+async function seedReaderExperience(apiUrl: string, apiKey: string, tenantId: string) {
+  const startedAt = Date.now();
+  let policy: Record<string, unknown> | undefined;
+  for (const asset of readerExperienceAssets(tenantId)) {
+    const created = await requestJson(`${apiUrl}/assets`, { method: "POST", apiKey, body: { ...asset } });
+    if (asset.stableId === readerFixture.policyId) policy = created;
+  }
+  if (!policy) throw new Error("Synthetic reader policy was not created");
+  const initialAsset = policy.asset as Record<string, unknown>;
+  const initialVersionId = readRequiredString(initialAsset, "currentVersionId", "reader initial version");
+  const edited = await requestJson(`${apiUrl}/assets/${encodeURIComponent(readerFixture.policyId)}/versions`, {
+    method: "POST", apiKey, body: assetUpdateInputSchema.parse({ tenantId, expectedVersionId: initialVersionId, lifecycleState: "draft", status: "draft",
+      metadata: initialAsset.metadata, humanDocument: { format: "markdown", body: readerPolicyBody }, changeNote: "Synthetic reviewed replacement before reader proof" })
+  });
+  const editedVersionId = readRequiredString(edited.asset as Record<string, unknown>, "currentVersionId", "reader reviewed version");
+  const published = await requestJson(`${apiUrl}/assets/${encodeURIComponent(readerFixture.policyId)}/publish`, {
+    method: "POST", apiKey, body: { tenantId, expectedVersionId: editedVersionId, changeNote: "Synthetic reader publication" }
+  });
+  const publishedAsset = published.asset as Record<string, unknown>;
+  const publishedVersionId = readRequiredString(publishedAsset, "publishedVersionId", "reader published version");
+  const publishedDetail = assetDetailSchema.parse(published);
+  const publishedVersion = publishedDetail.versions.find(version => version.id === publishedVersionId);
+  if (!publishedVersion || publishedDetail.humanDocuments[0]?.body !== readerPolicyBody) throw new Error("Reader publication receipt lacks the expected replacement version/body");
+  const draft = await requestJson(`${apiUrl}/assets/${encodeURIComponent(readerFixture.policyId)}/versions`, {
+    method: "POST", apiKey, body: readerUnpublishedReplacement(tenantId, readRequiredString(publishedAsset, "currentVersionId", "reader published head"))
+  });
+  const draftVersionId = readRequiredString(draft.asset as Record<string, unknown>, "currentVersionId", "reader draft version");
+  if (draftVersionId === publishedVersionId) throw new Error("Reader proof requires distinct published and draft versions");
+  const deadline = Date.now() + 30000;
+  let restrictedControl: { stableId: string; searchMatches: number; askMatches: number } | undefined;
+  while (Date.now() < deadline) {
+    const search = searchResponseSchema.parse(await requestJson(`${apiUrl}/search?${new URLSearchParams({ query: readerFixture.restrictedToken, limit: "8" })}`, { method: "GET", apiKey, surface: "web" }));
+    const ask = managedQueryResponseSchema.parse(await requestJson(`${apiUrl}/agent/query`, { method: "POST", apiKey, surface: "web", body: { query: readerFixture.restrictedToken, limit: 5, mode: "deterministic-retrieval", cache: false } }));
+    const searchMatches = search.results.filter(result => result.asset.stableId === readerFixture.restrictedId && result.citation.snippet.includes(readerFixture.restrictedToken)).length;
+    const askMatches = ask.citations.filter(citation => citation.stableId === readerFixture.restrictedId && citation.snippet.includes(readerFixture.restrictedToken)).length;
+    if (searchMatches && askMatches && ask.mode === "deterministic-retrieval" && ask.generation.provider === null) {
+      restrictedControl = { stableId: readerFixture.restrictedId, searchMatches, askMatches };
+      break;
+    }
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 500));
+  }
+  if (!restrictedControl) throw new Error("Restricted reader fixture has no authorized real retrieval positive control");
+  steps.push({ name: "seed synthetic published reader with newer draft, close match and instruction-only source", command: "Existing HTTP asset/create/version/publish routes", ok: true, status: 0,
+    durationMs: Date.now() - startedAt, stdout: JSON.stringify({ policyStableId: readerFixture.policyId, publishedVersionId, publishedVersionNumber: publishedVersion.versionNumber, draftVersionId, restrictedControl, source: "disposable synthetic stack" }), stderr: "" });
+  return { publishedVersionId, publishedVersionNumber: publishedVersion.versionNumber, restrictedControl };
 }
 
 async function verifySyntheticAttachment(apiUrl: string, apiKey: string): Promise<void> {

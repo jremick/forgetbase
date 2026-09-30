@@ -7,11 +7,12 @@ overrides:
   "@modelcontextprotocol/sdk@1.29.0>@hono/node-server": "1.19.15"
   "@modelcontextprotocol/sdk@1.29.0>hono": "4.13.5"
   "express@5.2.1>body-parser": "2.3.0"
-  # Security pins for Fastify and MCP transitive dependencies (fast-uri GHSA-qw65-cvwx-89v3,
-  # GHSA-58mr-gqgx-xq4g; ip-address GHSA-rpw4-54j3-4h4q, GHSA-2vr4-cq9g-pvrc).
-  "ajv@8.20.0>fast-uri": "3.1.7"
-  "@fastify/rate-limit@11.2.0>ip-address": "10.5.1"
-  "express-rate-limit@8.5.2>ip-address": "10.5.1"
+  # Security pins for Fastify and MCP transitive URI and IP address parsing.
+  "ajv@8.20.0>fast-uri": "3.1.8"
+  "@fastify/ajv-compiler@4.0.6>fast-uri": "4.1.5"
+  "fast-json-stringify@7.0.1>fast-uri": "4.1.5"
+  "@fastify/rate-limit@11.2.0>ip-address": "10.7.1"
+  "express-rate-limit@8.5.2>ip-address": "10.7.1"
 
 allowBuilds:
   esbuild: true

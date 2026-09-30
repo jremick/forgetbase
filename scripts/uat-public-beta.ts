@@ -3,7 +3,9 @@ import { createServer, type Server } from "node:http";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { extname, join, normalize, resolve } from "node:path";
-import { chromium, type Browser, type Page, type Request } from "@playwright/test";
+import { chromium, type Browser, type Locator, type Page, type Request, type Route } from "@playwright/test";
+import { assetDetailSchema, managedQueryResponseSchema, searchResponseSchema } from "../packages/schema/src/index.js";
+import { readerFixture, readerPolicyBody } from "./fixtures/reader-experience.js";
 
 type UatMode = "public" | "release";
 type ExpectedRole = "admin" | "reader";
@@ -21,6 +23,9 @@ const expectedBrandName = process.env.UAT_EXPECT_BRAND_NAME ?? "ForgetBase";
 const shouldTestAuthoring = process.env.UAT_TEST_AUTHORING === "true";
 const shouldTestRichEditor = process.env.UAT_TEST_RICH_EDITOR === "true";
 const shouldTestBranding = process.env.UAT_TEST_BRANDING === "true";
+const shouldTestReaderExperience = process.env.UAT_TEST_READER_EXPERIENCE === "true";
+const expectedReaderPublishedVersionId = process.env.UAT_EXPECT_READER_PUBLISHED_VERSION_ID ?? "";
+const expectedReaderPublishedVersionNumber = Number(process.env.UAT_EXPECT_READER_PUBLISHED_VERSION_NUMBER ?? "0");
 if (shouldTestBranding && (mode !== "release" || expectedRole !== "admin")) {
   throw new Error("Branding UAT requires release mode and an admin of a disposable synthetic tenant.");
 }
@@ -38,6 +43,8 @@ const commitSha = commandOutput("git", ["rev-parse", "HEAD"]) ?? "";
 const checks: CheckResult[] = [];
 const consoleProblems: string[] = [];
 const pageTraffic = new WeakMap<Page, { pending: Set<Request>; changedAt: number }>();
+const expectedReaderFailures = new WeakMap<Page, Map<string, Set<number>>>();
+const expectedReaderAborts = new WeakSet<Request>();
 let server: Server | undefined;
 let browser: Browser | undefined;
 
@@ -50,7 +57,7 @@ try {
 
   browser = await chromium.launch({ headless: true });
 
-  const desktop = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+  const desktop = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
   trackConsole(desktop);
   await checkPublicEntry(desktop, "desktop");
 
@@ -77,7 +84,9 @@ try {
   }
 
   const report = {
+    status: "pass",
     mode,
+    expectedRole,
     expectedBrandName,
     baseUrl,
     commitSha,
@@ -90,6 +99,12 @@ try {
 
   writeFileSync(join(outputDir, "public-beta-uat-report.json"), `${JSON.stringify(report, null, 2)}\n`);
   console.log(`Public beta UAT OK (${mode}). Evidence: ${outputDir}`);
+} catch (error) {
+  writeFileSync(join(outputDir, "public-beta-uat-report.json"), `${JSON.stringify({ status: "fail", mode, expectedRole, expectedBrandName, baseUrl, commitSha, outputDir,
+    error: error instanceof Error ? error.message : String(error), checks,
+    screenshots: checks.filter(check => typeof check.detail === "string" && check.detail.endsWith(".png")).map(check => check.detail)
+  }, null, 2)}\n`);
+  throw error;
 } finally {
   await browser?.close();
   await new Promise<void>((resolveClose) => server?.close(() => resolveClose()) ?? resolveClose());
@@ -201,7 +216,12 @@ function trackConsole(page: Page): void {
   page.on("requestfailed", finished);
   page.on("console", (message) => {
     if (message.type() === "error" || message.type() === "warning") {
-      consoleProblems.push(`${message.type()}: ${message.text()}`);
+      const expectedStatuses = expectedReaderFailures.get(page)?.get(message.location().url);
+      const resourceStatus = Number(/\bstatus(?: of)?\s+(\d{3})\b/.exec(message.text())?.[1]);
+      if (message.type() === "error" && expectedStatuses?.has(resourceStatus) && /Failed to load resource/.test(message.text())) return;
+      let resourcePath = "";
+      try { resourcePath = new URL(message.location().url).pathname.slice(0, 240); } catch { /* Console messages can omit their location. */ }
+      consoleProblems.push(`${message.type()}: ${message.text()}${resourcePath ? ` (${resourcePath})` : ""}`);
     }
   });
   page.on("pageerror", (error) => {
@@ -213,6 +233,7 @@ function trackConsole(page: Page): void {
     if (!url.startsWith(baseUrl)) {
       return;
     }
+    if (expectedReaderAborts.has(request) && /ERR_ABORTED/.test(request.failure()?.errorText ?? "")) return;
 
     consoleProblems.push(`requestfailed: ${request.method()} ${url} ${request.failure()?.errorText ?? ""}`.trim());
   });
@@ -252,23 +273,16 @@ async function checkReleaseFlow(page: Page, viewportName: "desktop" | "mobile"):
   await page.locator("#login-password").fill(password);
   await page.locator(".public-login-form button[type='submit']").click();
   await page.waitForSelector(".app-shell.reader-shell", { timeout: 15000 });
-  await page.waitForSelector(
-    viewportName === "desktop" ? ".reader-library" : ".reader-mobile-page-picker",
-    { timeout: 15000 }
-  );
-  await page.waitForSelector(".reader-article", { timeout: 15000 });
-  await page.waitForSelector(".reader-page-footer", { timeout: 15000 });
-
-  const readerPageNavigation = viewportName === "desktop"
-    ? page.locator(".reader-library .nav-chrome-label")
-    : page.locator(".reader-mobile-page-picker");
-  await readerPageNavigation.filter({ hasText: /pages/i }).waitFor({ state: "visible", timeout: 15000 });
+  if (shouldTestReaderExperience) await checkReaderPublicationBoundary(page, viewportName);
+  const readerPageNavigation = viewportName === "desktop" ? page.locator(".reader-library") : page.getByRole("button", { name: "Open pages", exact: true });
+  await readerPageNavigation.waitFor({ state: "visible", timeout: 15000 });
   checks.push({ name: `release ${viewportName}: reader page navigation`, status: "pass" });
   if (viewportName === "desktop") {
-    await expectVisibleText(page, "Cmd K", `release ${viewportName}: reader search shortcut`);
+    await page.locator(".topbar").getByRole("button", { name: "Search pages", exact: true }).waitFor({ state: "visible" });
+    checks.push({ name: `release ${viewportName}: reader search shortcut`, status: "pass" });
   }
   if (viewportName === "mobile") {
-    await assertMobileReaderPagePicker(page, `release ${viewportName}: reader page picker`);
+    await assertMobileReaderNavigation(page, `release ${viewportName}: reader pages drawer`);
   }
   await assertReaderNestedNavigation(page, `release ${viewportName}: reader nested navigation`);
   await selectReaderPageForUat(page, "Reader Access and Export Rules");
@@ -280,11 +294,12 @@ async function checkReleaseFlow(page: Page, viewportName: "desktop" | "mobile"):
   }
   await assertReaderArticleDepth(page, `release ${viewportName}: reader article depth`);
   await assertReaderSectionNavigation(page, `release ${viewportName}: reader section navigation`);
-  await assertReaderPageFooter(page, `release ${viewportName}: reader page footer`);
+  await assertReaderSourceFields(page, `release ${viewportName}: reader source fields`);
   if (viewportName === "desktop") {
     await screenshot(page, "page-browse-tree.png", "release desktop: reader page tree screenshot");
     await screenshot(page, "page-read-view.png", "release desktop: reader page read screenshot");
   }
+  await openReaderAsk(page);
   await page.locator("#reader-ask-input").fill("What should be redacted?");
   await page.locator(".reader-ask-form button[type='submit']").click();
   await page.waitForSelector(".reader-ask-answer", { timeout: 15000 });
@@ -297,6 +312,8 @@ async function checkReleaseFlow(page: Page, viewportName: "desktop" | "mobile"):
     viewportName === "desktop" ? "ask-with-sources.png" : "ask-with-sources-mobile.png",
     `release ${viewportName}: ask with sources screenshot`
   );
+  await closeReaderDialog(page, "Ask the knowledge base");
+  await openReaderSearch(page);
   await page.locator("#reader-search-input").fill("personal data");
   await page.locator("#reader-search-input").press("Enter");
   await page.waitForSelector(".reader-search-results", { timeout: 15000 });
@@ -308,10 +325,18 @@ async function checkReleaseFlow(page: Page, viewportName: "desktop" | "mobile"):
     await screenshot(page, "search-results.png", "release desktop: reader search results screenshot");
   }
   await assertSearchResultOpensPage(page, `release ${viewportName}: reader search result opens page`);
-  await assertNoJargon(page, "main", `release ${viewportName}: reader copy`);
+  // Authored titles, documents, instructions and source values retain their
+  // technical terms. This copy guard checks application-owned labels only.
+  await assertNoJargon(page, [
+    ".reader-topbar-search", ".reader-ask-shortcut", ".reader-mobile-nav-trigger",
+    ".nav-collapse-button", ".nav-chrome-label", ".nav-resizer",
+    ".reader-source-trigger", ".reader-source-choice > label", ".reader-publication-label",
+    ".reader-search-return", ".reader-section-nav > summary", ".reader-contents-ask"
+  ], `release ${viewportName}: reader application labels`);
   await assertNoHorizontalOverflow(page, `release ${viewportName}: reader overflow`);
   await assertNoClippedText(page, `release ${viewportName}: reader clipped text`);
   if (viewportName === "desktop" && expectedRole === "reader") {
+    await openReaderAsk(page);
     await page.locator("#reader-ask-input").fill("credential vault escalation");
     await page.locator(".reader-ask-form button[type='submit']").click();
     await expectVisibleText(page, "No matching sources", "release desktop: no accessible sources badge");
@@ -319,7 +344,9 @@ async function checkReleaseFlow(page: Page, viewportName: "desktop" | "mobile"):
     await assertNoHorizontalOverflow(page, "release desktop: restricted result overflow");
     await assertNoClippedText(page, "release desktop: restricted result clipped text");
     await screenshot(page, "no-access-restricted-state.png", "release desktop: restricted result screenshot");
+    await closeReaderDialog(page, "Ask the knowledge base");
   }
+  if (shouldTestReaderExperience) await checkReaderExperienceFlow(page, viewportName);
   await screenshot(page, `reader-${viewportName}.png`, `release ${viewportName}: reader screenshot`);
 
   if (expectedRole === "reader") {
@@ -328,7 +355,7 @@ async function checkReleaseFlow(page: Page, viewportName: "desktop" | "mobile"):
     await expectVisibleText(page, "This area is unavailable for your account", `release ${viewportName}: reader direct admin route denied`);
     await assertReaderHasNoAdminControls(page, `release ${viewportName}: denied route exposes no admin controls`);
     await page.getByRole("button", { name: "Back to pages", exact: true }).click();
-    await page.waitForSelector(".reader-article", { timeout: 10000 });
+    await page.waitForSelector(".reader-overview, .reader-article", { timeout: 10000 });
     await expectHash(page, "#reader", `release ${viewportName}: denied route returns to reader`);
     return;
   }
@@ -367,6 +394,782 @@ async function checkReleaseFlow(page: Page, viewportName: "desktop" | "mobile"):
   await screenshotAdminRoute(page, "admin/system/access", "Users", "access-management.png", "release: admin access screenshot");
   await screenshotAdminRoute(page, "admin/system/approvals", "Action execution", "approvals.png", "release: admin approvals screenshot");
   await screenshotExportRoute(page);
+}
+
+function readerProof(condition: unknown, name: string, detail?: string | number | boolean): asserts condition {
+  if (!condition) throw new Error(`${name}${detail === undefined ? "" : `: ${detail}`}`);
+  checks.push({ name, status: "pass", ...(detail === undefined ? {} : { detail }) });
+}
+
+async function openReaderSearch(page: Page): Promise<Locator> {
+  const dialog = page.getByRole("dialog", { name: "Search pages", exact: true });
+  if (!await dialog.isVisible()) await page.locator(".topbar").getByRole("button", { name: "Search pages", exact: true }).click();
+  await dialog.waitFor({ state: "visible" });
+  return dialog;
+}
+
+async function openReaderAsk(page: Page): Promise<Locator> {
+  const dialog = page.getByRole("dialog", { name: "Ask the knowledge base", exact: true });
+  if (!await dialog.isVisible()) await page.getByRole("button", { name: "Ask", exact: true }).click();
+  await dialog.waitFor({ state: "visible" });
+  return dialog;
+}
+
+async function closeReaderDialog(page: Page, title: string): Promise<void> {
+  const dialog = page.getByRole("dialog", { name: title, exact: true, includeHidden: true });
+  if (await dialog.isVisible()) {
+    await page.keyboard.press("Escape");
+  }
+  // Hidden can precede Radix's close-auto-focus callback during exit animation.
+  await dialog.waitFor({ state: "detached" });
+  await page.evaluate(() => new Promise<void>(resolvePromise => {
+    const animations = document.getAnimations().filter(animation => animation.playState === "running");
+    void Promise.all(animations.map(animation => animation.finished.catch(() => undefined))).then(() => requestAnimationFrame(() => requestAnimationFrame(() => resolvePromise())));
+  }));
+}
+
+async function readerNavigation(page: Page): Promise<Locator> {
+  const trigger = page.getByRole("button", { name: "Open pages", exact: true });
+  if (await trigger.isVisible()) {
+    const drawer = page.getByRole("dialog", { name: "Pages", exact: true });
+    if (!await drawer.isVisible()) await trigger.click();
+    await drawer.waitFor({ state: "visible" });
+    return drawer;
+  }
+  return page.locator(".reader-library");
+}
+
+async function readerApiUrl(page: Page, path: string): Promise<string> {
+  const apiBase = await page.evaluate(() => window.localStorage.getItem("forgetbase-api-url") ?? "/api");
+  return new URL(path.replace(/^\//, ""), new URL(`${apiBase.replace(/\/$/, "")}/`, baseUrl)).href;
+}
+
+async function readerApiGet(page: Page, path: string) {
+  return page.context().request.get(await readerApiUrl(page, path), { headers: { accept: "application/json", "x-forgetbase-surface": "web" } });
+}
+
+async function readerApiAsk(page: Page, query: string) {
+  const url = await readerApiUrl(page, "/agent/query");
+  const csrf = (await page.context().cookies(url)).find(cookie => cookie.name === "forgetbase_csrf");
+  return page.context().request.post(url, { headers: { "x-forgetbase-surface": "web", ...(csrf ? { "x-forgetbase-csrf": decodeURIComponent(csrf.value) } : {}) },
+    data: { query, limit: 5, mode: "deterministic-retrieval", cache: false } });
+}
+
+async function openReaderStablePage(page: Page, stableId: string): Promise<void> {
+  await waitForSettledRequests(page, "reader page navigation");
+  const url = new URL(page.url());
+  url.searchParams.set("page", stableId);
+  url.hash = "reader";
+  await page.goto(url.href, { waitUntil: "domcontentloaded" });
+}
+
+async function checkReaderPublicationBoundary(page: Page, viewportName: string): Promise<void> {
+  const label = `reader real-stack ${viewportName}`;
+  const response = await readerApiGet(page, `/assets/${encodeURIComponent(readerFixture.policyId)}`);
+  readerProof(response.status() === 200, `${label}: ordinary published detail is readable`);
+  const detail = assetDetailSchema.parse(await response.json());
+  readerProof(Boolean(expectedReaderPublishedVersionId) && Number.isInteger(expectedReaderPublishedVersionNumber) && expectedReaderPublishedVersionNumber > 0, `${label}: independent publication receipt was supplied by fixture seeding`);
+  const serialized = JSON.stringify(detail);
+  readerProof(detail.asset.title === readerFixture.title && detail.humanDocuments[0]?.body === readerPolicyBody, `${label}: published title and body survive newer draft`);
+  readerProof(detail.asset.currentVersionId === expectedReaderPublishedVersionId && detail.asset.publishedVersionId === expectedReaderPublishedVersionId && detail.versions.length === 1 && detail.versions[0]?.id === expectedReaderPublishedVersionId && detail.versions[0]?.versionNumber === expectedReaderPublishedVersionNumber &&
+    detail.humanDocuments.every(source => source.versionId === expectedReaderPublishedVersionId) && detail.instructionObjects.every(source => source.versionId === expectedReaderPublishedVersionId), `${label}: detail/version/source IDs match independent publish receipt exactly`);
+  readerProof(!serialized.includes(readerFixture.draftToken), `${label}: draft title/body/metadata/instruction absent from response`);
+  readerProof(detail.asset.allowedExports.length === 0 && detail.asset.allowedActions.length === 0, `${label}: published metadata lists no export packages or actions; existing enforcement gates remain independent`);
+  await openReaderStablePage(page, readerFixture.policyId);
+  await page.getByRole("heading", { name: readerFixture.title, exact: true, level: 1 }).waitFor();
+  readerProof((await page.locator(".reader-document-body").innerText()).includes(readerFixture.publishedToken), `${label}: rendered body is the publication`);
+  readerProof(!(await page.locator("main").innerText()).includes(readerFixture.draftToken), `${label}: rendered consumer has no draft sentinel`);
+
+  const search = await readerApiGet(page, `/search?${new URLSearchParams({ query: readerFixture.query, limit: "8" })}`);
+  readerProof(search.status() === 200, `${label}: real close-match search succeeds`);
+  const searchData = searchResponseSchema.parse(await search.json());
+  const policyResults = searchData.results.filter(result => result.asset.stableId === readerFixture.policyId);
+  readerProof(policyResults.length >= 2 && searchData.results.some(result => result.asset.stableId === readerFixture.checklistId), `${label}: close-match retrieval returns policy passages and distinct checklist`);
+  readerProof(policyResults.every(result => result.citation.versionId === expectedReaderPublishedVersionId) && !JSON.stringify(searchData).includes(readerFixture.draftToken), `${label}: search cites independent publication receipt without draft leakage`);
+
+  const askResponse = await readerApiAsk(page, readerFixture.ask);
+  readerProof(askResponse.status() === 200, `${label}: real single-query Ask succeeds`);
+  const ask = managedQueryResponseSchema.parse(await askResponse.json());
+  readerProof(ask.mode === "deterministic-retrieval" && ask.generation.provider === null && ask.citations.some(citation => citation.stableId === readerFixture.policyId && citation.versionId === expectedReaderPublishedVersionId), `${label}: returned Ask evidence is deterministic and matches publication receipt`);
+  readerProof(!JSON.stringify(ask).includes(readerFixture.draftToken), `${label}: Ask does not disclose the newer draft`);
+  const control = JSON.parse(process.env.UAT_READER_RESTRICTED_CONTROL ?? "{}") as { stableId?: string; searchMatches?: number; askMatches?: number };
+  readerProof(control.stableId === readerFixture.restrictedId && Number(control.searchMatches) > 0 && Number(control.askMatches) > 0, `${label}: authorized restricted retrieval positive control was captured before reader UAT`);
+  const restrictedSearchResponse = await readerApiGet(page, `/search?${new URLSearchParams({ query: readerFixture.restrictedToken, limit: "8" })}`);
+  const restrictedAskResponse = await readerApiAsk(page, readerFixture.restrictedToken);
+  readerProof(restrictedSearchResponse.status() === 200 && restrictedAskResponse.status() === 200, `${label}: unique restricted query exercises real Search and Ask`);
+  const restrictedSearch = searchResponseSchema.parse(await restrictedSearchResponse.json());
+  const restrictedAsk = managedQueryResponseSchema.parse(await restrictedAskResponse.json());
+
+  if (expectedRole === "reader") {
+    const denied = await readerApiGet(page, `/assets/${encodeURIComponent(readerFixture.restrictedId)}`);
+    const missing = await readerApiGet(page, `/assets/${encodeURIComponent(readerFixture.missingId)}`);
+    readerProof([403, 404].includes(denied.status()) && missing.status() === 404, `${label}: restricted and missing real sources reject reader access`);
+    readerProof(!(await denied.text()).includes(readerFixture.restrictedToken), `${label}: denied response has no restricted body`);
+    readerProof(!JSON.stringify(searchData).includes(readerFixture.restrictedToken) && !JSON.stringify(ask).includes(readerFixture.restrictedToken), `${label}: retrieval has no restricted title/body sentinel`);
+    // The deterministic no-result answer echoes the question once. That user-
+    // supplied echo is not retrieved content and must not count as a leak.
+    const returned = JSON.stringify({ results: restrictedSearch.results, askResults: restrictedAsk.results, citations: restrictedAsk.citations, answer: restrictedAsk.answer.replace(readerFixture.restrictedToken, "") });
+    readerProof(restrictedSearch.results.length === 0 && restrictedAsk.results.length === 0 && restrictedAsk.citations.length === 0 && !returned.includes(readerFixture.restrictedId) && !returned.includes("Private Riverstone Review Notes") && !returned.includes(readerFixture.restrictedToken), `${label}: reader excludes known matching restricted record/body/citations from unique-query retrieval`);
+  } else {
+    readerProof(restrictedSearch.results.some(result => result.asset.stableId === readerFixture.restrictedId && result.citation.snippet.includes(readerFixture.restrictedToken)) && restrictedAsk.citations.some(citation => citation.stableId === readerFixture.restrictedId && citation.snippet.includes(readerFixture.restrictedToken)), `${label}: authenticated authorized positive control retrieves the restricted source`);
+  }
+  await screenshot(page, `reader-publication-${viewportName}.png`, `${label}: published-with-newer-draft screenshot`);
+}
+
+async function submitReaderSearch(page: Page, query: string) {
+  const dialog = await openReaderSearch(page);
+  await dialog.locator("#reader-search-input").fill(query);
+  const result = page.waitForResponse(response => new URL(response.url()).pathname.endsWith("/search") && new URL(response.url()).searchParams.get("query") === query);
+  await dialog.locator("#reader-search-input").press("Enter");
+  const response = await result;
+  readerProof(response.status() === 200 && new URL(response.url()).searchParams.get("limit") === "8", "reader search: submitted remote query uses existing limit");
+  const data = searchResponseSchema.parse(await response.json());
+  await dialog.locator(".reader-search-results").waitFor({ state: "visible" });
+  return { dialog, data };
+}
+
+async function submitReaderAsk(page: Page, query: string) {
+  const dialog = await openReaderAsk(page);
+  await dialog.locator("#reader-ask-input").fill(query);
+  const result = page.waitForResponse(response => new URL(response.url()).pathname.endsWith("/agent/query") && response.request().postDataJSON()?.query === query);
+  await dialog.locator(".reader-ask-form button[type='submit']").click();
+  const response = await result;
+  const input = response.request().postDataJSON() as Record<string, unknown>;
+  readerProof(Object.keys(input).sort().join(",") === "cache,limit,mode,query" && input.limit === 5 && input.mode === "deterministic-retrieval" && input.cache === false,
+    "reader Ask: single-query request preserves limit/mode/cache and has no conversation/provider fields");
+  readerProof(response.status() === 200, "reader Ask: submitted query succeeds");
+  const data = managedQueryResponseSchema.parse(await response.json());
+  await dialog.locator(".reader-ask-answer").waitFor({ state: "visible" });
+  return { dialog, data };
+}
+
+async function assertReaderDialogFocus(page: Page, title: string, trigger: Locator, label: string): Promise<void> {
+  const dialog = page.getByRole("dialog", { name: title, exact: true });
+  await dialog.waitFor({ state: "visible" });
+  readerProof(await dialog.evaluate(element => element.contains(document.activeElement)), `${label}: initial focus enters named dialog`);
+  const focusEdge = async (last: boolean) => dialog.evaluate((element, useLast) => {
+    const items = Array.from(element.querySelectorAll<HTMLElement>("button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex='0']"))
+      .filter(item => item.getBoundingClientRect().width > 0 && item.getBoundingClientRect().height > 0 && !item.closest("[aria-hidden='true']"));
+    const item = useLast ? items.at(-1) : items[0];
+    item?.focus();
+    return Boolean(item);
+  }, last);
+  readerProof(await focusEdge(true), `${label}: dialog has usable controls`);
+  await page.keyboard.press("Tab");
+  readerProof(await dialog.evaluate(element => element.contains(document.activeElement)), `${label}: forward Tab stays inside dialog`);
+  await focusEdge(false);
+  await page.keyboard.press("Shift+Tab");
+  readerProof(await dialog.evaluate(element => element.contains(document.activeElement)), `${label}: reverse Tab stays inside dialog`);
+  await closeReaderDialog(page, title);
+  const restored = await trigger.evaluate(element => ({ focused: element === document.activeElement,
+    activeId: document.activeElement?.id ?? "", activeTag: document.activeElement?.tagName ?? "",
+    activeText: document.activeElement?.textContent?.replace(/\s+/g, " ").trim().slice(0, 120) ?? "" }));
+  if (!restored.focused) throw new Error(`${label}: Escape did not restore trigger focus after settled dismissal: ${JSON.stringify(restored)}`);
+  readerProof(true, `${label}: Escape closes and restores trigger focus`, JSON.stringify(restored));
+}
+
+async function assertSettledReaderArticleFocus(page: Page, label: string): Promise<void> {
+  await waitForSettledRequests(page, "article navigation focus");
+  await page.evaluate(() => new Promise<void>(resolvePromise => {
+    const animations = document.getAnimations().filter(animation => animation.playState === "running");
+    void Promise.all(animations.map(animation => animation.finished.catch(() => undefined))).then(() => requestAnimationFrame(() => requestAnimationFrame(() => resolvePromise())));
+  }));
+  const position = await page.locator("#reader-page-title").evaluate(element => {
+    const title = element.getBoundingClientRect();
+    const header = document.querySelector(".topbar")?.getBoundingClientRect();
+    const visibleHeaderBottom = header && header.bottom > 0 && header.top < window.innerHeight ? header.bottom : 0;
+    return { focused: element === document.activeElement, activeId: document.activeElement?.id ?? "", activeTag: document.activeElement?.tagName ?? "",
+      activeText: document.activeElement?.textContent?.replace(/\s+/g, " ").trim().slice(0, 120) ?? "",
+      titleTop: title.top, titleBottom: title.bottom, visibleHeaderBottom, viewportHeight: window.innerHeight };
+  });
+  readerProof(position.focused && position.titleTop >= position.visibleHeaderBottom - 2 && position.titleBottom > position.visibleHeaderBottom && position.titleTop < position.viewportHeight,
+    `${label}: destination title retains focus and remains visible below the header after sheet close and render settling`, JSON.stringify(position));
+}
+
+async function checkReaderExperienceFlow(page: Page, viewportName: string): Promise<void> {
+  const label = `reader E2E ${viewportName}`;
+  const overview = new URL(page.url());
+  overview.searchParams.delete("page");
+  overview.searchParams.set("reader-proof", "retained");
+  overview.hash = "reader";
+  await waitForSettledRequests(page, "reader overview navigation");
+  await page.goto(overview.href, { waitUntil: "domcontentloaded" });
+  await page.locator(".reader-overview").waitFor({ state: "visible" });
+  readerProof(!new URL(page.url()).searchParams.has("page"), `${label}: absent page shows overview without silently selecting a page`);
+  readerProof(!(await page.locator("main").innerText()).includes(readerFixture.draftToken), `${label}: overview does not expose newer draft metadata`);
+  await screenshot(page, `reader-overview-${viewportName}.png`, `${label}: overview screenshot`);
+  await openReaderStablePage(page, "guideline.reader-footer-configuration");
+  await page.getByRole("heading", { name: "Reader Footer Configuration Guide", exact: true, level: 1 }).waitFor();
+  await assertReaderSourceFields(page, `${label}: custom field order and omitted version`);
+
+  await openReaderStablePage(page, readerFixture.policyId);
+  await page.getByRole("heading", { name: readerFixture.title, exact: true, level: 1 }).waitFor();
+  const detail = assetDetailSchema.parse(await (await readerApiGet(page, `/assets/${readerFixture.policyId}`)).json());
+  const source = page.getByLabel("Readable source", { exact: true });
+  await source.waitFor({ state: "visible" });
+  readerProof((await source.locator("option").evaluateAll(options => options.map(option => (option as HTMLOptionElement).value))).includes(detail.instructionObjects[0]!.id), `${label}: mixed source choices preserve actual instruction identity`);
+  await source.selectOption(detail.instructionObjects[0]!.id);
+  await page.locator(".reader-document-body").getByText(readerFixture.instructionToken, { exact: false }).waitFor();
+  readerProof(!(await page.locator(".reader-document-body").innerText()).includes(readerFixture.publishedToken), `${label}: selected instruction stays separate from human page`);
+  await source.selectOption(detail.humanDocuments[0]!.id);
+  await page.locator(".reader-document-body").getByText(readerFixture.publishedToken, { exact: false }).waitFor();
+  await assertReaderReadingFidelity(page, `${label}: long article`, viewportName);
+
+  const navigation = await readerNavigation(page);
+  const parent = navigation.getByRole("button", { name: "Expand Riverstone sharing policy pages", exact: true });
+  if (await parent.isVisible()) await parent.click();
+  const checklistLink = navigation.getByRole("link", { name: "Riverstone sharing checklist", exact: true });
+  const href = await checklistLink.getAttribute("href");
+  const target = new URL(href ?? "", page.url());
+  readerProof(target.searchParams.get("page") === readerFixture.checklistId && target.searchParams.get("reader-proof") === "retained" && target.hash === "#reader", `${label}: real nested anchor preserves stable ID, unrelated query and route`);
+  await waitForSettledRequests(page, "reader nested-link navigation");
+  await checklistLink.click();
+  await page.getByRole("heading", { name: readerFixture.checklistTitle, exact: true, level: 1 }).waitFor();
+  await page.getByRole("dialog", { name: "Pages", exact: true }).waitFor({ state: "hidden" });
+  await assertSettledReaderArticleFocus(page, `${label}: nested page navigation`);
+  await waitForSettledRequests(page, "reader history Back");
+  await page.goBack();
+  await page.getByRole("heading", { name: readerFixture.title, exact: true, level: 1 }).waitFor();
+  await waitForSettledRequests(page, "reader history Forward");
+  await page.goForward();
+  await page.getByRole("heading", { name: readerFixture.checklistTitle, exact: true, level: 1 }).waitFor();
+  await waitForSettledRequests(page, "reader deep-link reload");
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await page.getByRole("heading", { name: readerFixture.checklistTitle, exact: true, level: 1 }).waitFor();
+  readerProof(new URL(page.url()).searchParams.get("page") === readerFixture.checklistId, `${label}: Back/Forward/reload retain requested stable identity`);
+
+  const searchTrigger = page.locator(".topbar").getByRole("button", { name: "Search pages", exact: true });
+  await searchTrigger.focus();
+  await page.keyboard.press(process.platform === "darwin" ? "Meta+k" : "Control+k");
+  await page.getByRole("dialog", { name: "Search pages", exact: true }).waitFor({ state: "visible" });
+  await assertReaderDialogFocus(page, "Search pages", searchTrigger, `${label}: keyboard search`);
+  const { dialog: searchDialog, data: search } = await submitReaderSearch(page, readerFixture.query);
+  const groupedIds = [...new Set(search.results.map(result => result.asset.stableId))].slice(0, 5);
+  const rows = searchDialog.locator(".reader-search-result");
+  readerProof(await rows.count() === groupedIds.length, `${label}: real passage results are grouped into distinct page cards`);
+  for (const stableId of groupedIds) {
+    const row = searchDialog.locator(`.reader-search-result[data-stable-id='${stableId}']`);
+    const matches = search.results.filter(result => result.asset.stableId === stableId);
+    await row.waitFor({ state: "visible" });
+    readerProof((await row.innerText()).includes(`${matches.length} returned match`), `${label}: ${stableId} count refers to returned passages`);
+    const rowText = await row.textContent() ?? "";
+    readerProof(matches.every(match => rowText.includes(match.citation.chunkId)), `${label}: ${stableId} retains inspectable passage identities`);
+  }
+  const checklist = searchDialog.locator(`.reader-search-result[data-stable-id='${readerFixture.checklistId}']`);
+  await checklist.getByRole("link", { name: "Open page", exact: true }).focus();
+  await page.keyboard.press("Enter");
+  await page.getByRole("heading", { name: readerFixture.checklistTitle, exact: true, level: 1 }).waitFor();
+  await searchDialog.waitFor({ state: "hidden" });
+  await assertSettledReaderArticleFocus(page, `${label}: same-page search selection`);
+  await assertReaderSearchReturnVisible(page, `${label}: same-page search selection`);
+  await openReaderSearch(page);
+  readerProof(await page.locator("#reader-search-input").inputValue() === readerFixture.query && await checklist.isVisible(), `${label}: source→search restores submitted query and results`);
+  await page.locator("#reader-search-input").focus();
+  await page.keyboard.press("ArrowDown");
+  readerProof(await searchDialog.evaluate(element => {
+    const active = document.activeElement;
+    const descendant = active?.getAttribute("aria-activedescendant");
+    return Boolean(active?.closest(".reader-search-result") || (descendant && element.querySelector(`[id='${descendant}']`)?.closest(".reader-search-result")));
+  }), `${label}: ArrowDown moves selection from input into results`);
+  await screenshot(page, `reader-search-${viewportName}.png`, `${label}: real close-match search screenshot`);
+  await closeReaderDialog(page, "Search pages");
+
+  await openReaderStablePage(page, readerFixture.instructionId);
+  await page.getByRole("heading", { name: readerFixture.instructionTitle, exact: true, level: 1 }).waitFor();
+  const instruction = assetDetailSchema.parse(await (await readerApiGet(page, `/assets/${readerFixture.instructionId}`)).json());
+  readerProof(instruction.humanDocuments.length === 0 && instruction.instructionObjects.length > 0, `${label}: fixture proves instruction-only data`);
+  const instructionText = await page.locator(".reader-document-body").textContent() ?? "";
+  readerProof(instructionText.includes(readerFixture.instructionToken) && instructionText.includes("Use only accessible published sources.") && instructionText.includes("Ask the synthetic information owner."), `${label}: instruction body, constraints and escalation are readable`);
+  readerProof(await page.evaluate(() => !(window as Window & { readerFixtureExecuted?: boolean }).readerFixtureExecuted), `${label}: structured instruction HTML remains escaped`);
+  const inputContract = page.locator(".reader-contract").filter({ hasText: "Inspect input contract" });
+  await inputContract.locator("summary").click();
+  readerProof((await inputContract.locator("code").textContent() ?? "").includes("<script>window.readerFixtureExecuted=true</script>"), `${label}: input contract preserves escaped structured data`);
+  readerProof(await page.locator(".reader-instruction").getAttribute("data-source-id") === instruction.instructionObjects[0]!.id, `${label}: instruction view carries actual source identity`);
+  await screenshot(page, `reader-instruction-${viewportName}.png`, `${label}: instruction-only screenshot`);
+  for (const [stableId, title, literal] of [[readerFixture.htmlId, "Synthetic HTML source", "<h2>RIVERSTONE_ESCAPED_HTML</h2>"], [readerFixture.plainId, "Synthetic plain-text source", "**Keep these literal markers.**"]] as const) {
+    await openReaderStablePage(page, stableId);
+    await page.getByRole("heading", { name: title, exact: true, level: 1 }).waitFor();
+    readerProof((await page.locator(".reader-document-body").textContent() ?? "").includes(literal) && await page.locator(".reader-document-body script, .reader-document-body h2").count() === 0,
+      `${label}: ${stableId} renders literal escaped source without executing HTML or Markdown`);
+    readerProof(await page.evaluate(() => !(window as Window & { readerFixtureExecuted?: boolean }).readerFixtureExecuted), `${label}: ${stableId} has no script side effect`);
+  }
+
+  await openReaderStablePage(page, readerFixture.policyId);
+  await page.getByRole("heading", { name: readerFixture.title, exact: true, level: 1 }).waitFor();
+  const sourceTrigger = page.getByRole("button", { name: "Source details", exact: true });
+  await sourceTrigger.click();
+  const sourceDialog = page.getByRole("dialog", { name: "Source details", exact: true });
+  readerProof((await sourceDialog.innerText()).includes(detail.asset.ownerId) && !(await sourceDialog.innerText()).includes(readerFixture.draftToken), `${label}: source metadata uses actual published owner and excludes draft`);
+  await assertReaderDialogFocus(page, "Source details", sourceTrigger, `${label}: source details`);
+
+  const { dialog: askDialog, data: ask } = await submitReaderAsk(page, readerFixture.ask);
+  readerProof(ask.mode === "deterministic-retrieval" && ask.generation.status === "not-requested" && ask.generation.provider === null && ask.citations.length > 0, `${label}: UI Ask response establishes deterministic evidence`);
+  readerProof(!JSON.stringify(ask).includes(readerFixture.draftToken), `${label}: UI Ask stays on approved sources`);
+  const policyCitation = askDialog.locator(".reader-citation").filter({ hasText: readerFixture.title }).first();
+  await policyCitation.waitFor({ state: "visible" });
+  if (await policyCitation.getAttribute("open") === null) await policyCitation.locator("summary").first().click();
+  await policyCitation.getByText("Current published version", { exact: false }).waitFor({ state: "visible" });
+  readerProof((await policyCitation.textContent() ?? "").includes(ask.citations.find(citation => citation.stableId === readerFixture.policyId)!.snippet), `${label}: citation displays supplied excerpt`);
+  await policyCitation.getByRole("link", { name: "Open source page", exact: true }).click();
+  await page.getByRole("heading", { name: readerFixture.title, exact: true, level: 1 }).waitFor();
+  await askDialog.waitFor({ state: "hidden" });
+  await assertSettledReaderArticleFocus(page, `${label}: same-page citation navigation`);
+  await openReaderAsk(page);
+  readerProof(await page.locator("#reader-ask-input").inputValue() === readerFixture.ask && await page.locator(".reader-ask-answer").isVisible(), `${label}: citation→source→Ask restores question and answer`);
+  await screenshot(page, `reader-ask-${viewportName}.png`, `${label}: real deterministic Ask screenshot`);
+  const askTrigger = page.locator(".topbar").getByRole("button", { name: "Ask", exact: true, includeHidden: true });
+  await assertReaderDialogFocus(page, "Ask the knowledge base", askTrigger, `${label}: Ask keyboard`);
+
+  await checkReaderCitationFixtures(page, ask, viewportName);
+  const noAnswer = await submitReaderAsk(page, readerFixture.noAnswer);
+  readerProof(noAnswer.data.citations.length === 0 && noAnswer.data.checks.resultCount === 0, `${label}: real unanswerable question has no supported sources`);
+  readerProof(!(await noAnswer.dialog.textContent() ?? "").includes(readerFixture.publishedToken), `${label}: previous supported answer does not survive unanswerable query`);
+  await closeReaderDialog(page, "Ask the knowledge base");
+  if (expectedRole === "reader") await checkReaderUnavailablePages(page, viewportName);
+  await openReaderStablePage(page, readerFixture.policyId);
+  await page.getByRole("heading", { name: readerFixture.title, exact: true, level: 1 }).waitFor();
+  await page.locator(".reader-breadcrumb").getByRole("link", { name: "Overview", exact: true }).click();
+  await page.locator(".reader-overview").waitFor({ state: "visible" });
+  await assertSettledReaderArticleFocus(page, `${label}: Overview navigation`);
+  await page.locator(".reader-overview-source").filter({ has: page.getByRole("heading", { name: "Riverstone sharing policy", exact: true }) }).click();
+  await page.getByRole("heading", { name: readerFixture.title, exact: true, level: 1 }).waitFor();
+  await assertSettledReaderArticleFocus(page, `${label}: Overview source navigation`);
+  if (viewportName === "desktop") await checkReaderControlledStates(page);
+  await page.emulateMedia({ forcedColors: "active", reducedMotion: "reduce" });
+  await openReaderSearch(page);
+  await assertReaderDialogFocus(page, "Search pages", searchTrigger, `${label}: forced-colors search`);
+  await assertNoHorizontalOverflow(page, `${label}: forced-colors overflow`);
+  await screenshot(page, `reader-forced-colors-${viewportName}.png`, `${label}: forced-colors screenshot for parent visual review`);
+  await page.emulateMedia({ forcedColors: "none", reducedMotion: "no-preference" });
+  if (viewportName === "desktop") {
+    await page.setViewportSize({ width: 820, height: 900 });
+    await assertMobileReaderNavigation(page, `${label}: 820px navigation breakpoint`);
+    const drawer = await readerNavigation(page);
+    await drawer.getByRole("link", { name: "Riverstone sharing policy", exact: true }).click();
+    await page.getByRole("dialog", { name: "Pages", exact: true }).waitFor({ state: "hidden" });
+    await assertSettledReaderArticleFocus(page, `${label}: 820px same-page drawer navigation`);
+    await assertNoHorizontalOverflow(page, `${label}: 820px drawer/article overflow`);
+    await screenshot(page, "reader-820px.png", `${label}: 820px responsive screenshot`);
+    await page.setViewportSize({ width: 1440, height: 1000 });
+  }
+  if (viewportName === "mobile") {
+    const pagesTrigger = page.getByRole("button", { name: "Open pages", exact: true });
+    await pagesTrigger.click();
+    await assertReaderDialogFocus(page, "Pages", pagesTrigger, `${label}: mobile pages drawer`);
+    await page.setViewportSize({ width: 320, height: 844 });
+    await assertNoHorizontalOverflow(page, `${label}: 320px article overflow`);
+    await screenshot(page, "reader-320px.png", `${label}: narrowest article screenshot`);
+    await page.setViewportSize({ width: 390, height: 844 });
+  }
+}
+
+async function assertReaderReadingFidelity(page: Page, label: string, viewportName: string): Promise<void> {
+  const expectedHeadings = [...readerPolicyBody.matchAll(/^## (.+)$/gm)].map(match => match[1]!);
+  const expectedCodeHeading = [...readerPolicyBody.split("```", 1)[0]!.matchAll(/^## (.+)$/gm)].at(-1)?.[1];
+  const expectedCodeLabel = `${expectedCodeHeading} code example`;
+  const expectedParagraphs = readerPolicyBody.split(/\n\n/).map(block => block.trim())
+    .filter(block => block && !/^(?:#|\d+\.|>|\||```)/.test(block))
+    .map(block => block.replace(/\[([^\]]+)\]\([^)]+\)/g, "$1").replace(/\s+/g, " ").trim());
+  const minimumProseWords = expectedParagraphs.join(" ").split(/\s+/).filter(Boolean).length;
+  const result = await page.locator(".reader-document-body").evaluate((body, expected) => {
+    const headings = Array.from(body.querySelectorAll<HTMLElement>("h2[id], h3[id]"));
+    const headingTexts = headings.map(heading => heading.textContent?.replace(/\s+/g, " ").trim() ?? "");
+    const text = (body.textContent ?? "").replace(/\s+/g, " ").trim();
+    const table = body.querySelector<HTMLElement>("table");
+    const code = body.querySelector<HTMLElement>("pre:not(.markdown-source-fallback)");
+    // Keep this browser callback self-contained: tsx keepNames can insert a
+    // Node-side __name helper around a nested function assigned to a variable.
+    const scrollSources = [{ element: table, scrollable: false }, { element: code, scrollable: false }];
+    for (const source of scrollSources) {
+      for (let current = source.element; current && current !== body; current = current.parentElement) {
+        if (["auto", "scroll"].includes(getComputedStyle(current).overflowX)) {
+          source.scrollable = current.clientWidth <= window.innerWidth;
+          break;
+        }
+      }
+    }
+    return { words: text.split(/\s+/).filter(Boolean).length, headings: headings.length, headingTexts, uniqueHeadingIds: new Set(headings.map(heading => heading.id)).size,
+      missingParagraphIndexes: expected.paragraphs.flatMap((paragraph, index) => text.includes(paragraph) ? [] : [index]),
+      sectionsComplete: JSON.stringify(headingTexts) === JSON.stringify(expected.headings),
+      table: Boolean(table), tableScrollable: scrollSources[0]!.scrollable, codeScrollable: scrollSources[1]!.scrollable, nestedList: Boolean(body.querySelector("li ul li ul li")),
+      codeTabIndex: code?.getAttribute("tabindex"), codeRole: code?.getAttribute("role"), codeLabel: code?.getAttribute("aria-label"),
+      warning: body.textContent?.includes("Warning: This is synthetic guidance."), codeText: code?.textContent ?? "" };
+  }, { headings: expectedHeadings, paragraphs: expectedParagraphs });
+  const conditions = {
+    fixtureProseComplete: result.missingParagraphIndexes.length === 0,
+    fixtureProseMinimum: result.words >= minimumProseWords,
+    fixtureSectionsComplete: result.sectionsComplete && result.headings === expectedHeadings.length,
+    uniqueHeadingIds: result.uniqueHeadingIds === result.headings,
+    tablePresent: result.table, tableScrollable: result.tableScrollable, codeScrollable: result.codeScrollable,
+    codeKeyboardAttributes: result.codeTabIndex === "0" && result.codeRole === "region" && result.codeLabel === expectedCodeLabel,
+    nestedList: result.nestedList, warning: Boolean(result.warning), codeSpacesPreserved: result.codeText.includes("keep  two spaces")
+  };
+  const failed = Object.entries(conditions).filter(([, passed]) => !passed).map(([condition]) => condition);
+  const diagnostics = JSON.stringify({ failed, words: result.words, minimumProseWords, headingTexts: result.headingTexts, expectedHeadings,
+    missingParagraphIndexes: result.missingParagraphIndexes, codeTabIndex: result.codeTabIndex, codeRole: result.codeRole, codeLabel: result.codeLabel, expectedCodeLabel, conditions });
+  if (failed.length) throw new Error(`${label}: reading fidelity failed: ${diagnostics}`);
+  readerProof(true, `${label}: fixture prose, headings, table, nested lists, warning and code retain reading fidelity`, diagnostics);
+  const table = page.locator(".reader-document-body table").first();
+  const codeSelector = ".reader-document-body pre:not(.markdown-source-fallback)";
+  const code = page.locator(codeSelector).first();
+  await table.focus();
+  readerProof(await table.evaluate(element => element === document.activeElement), `${label}: native table receives keyboard focus`);
+  await page.keyboard.press("Tab");
+  const focused = await code.evaluate(element => ({ focused: element === document.activeElement, activeTag: document.activeElement?.tagName ?? "", activeId: document.activeElement?.id ?? "" }));
+  readerProof(focused.focused, `${label}: Tab from the table reaches the next rendered code region`, JSON.stringify(focused));
+  const before = await code.evaluate(element => ({ scrollLeft: element.scrollLeft, clientWidth: element.clientWidth, scrollWidth: element.scrollWidth }));
+  readerProof(before.scrollWidth > before.clientWidth, `${label}: fixture code has real horizontal overflow`, JSON.stringify(before));
+  await page.keyboard.press("ArrowRight");
+  try {
+    await page.waitForFunction(input => {
+      const element = document.querySelector<HTMLElement>(input.selector);
+      return Boolean(element && element === document.activeElement && element.scrollLeft > input.before);
+    }, { selector: codeSelector, before: before.scrollLeft }, { timeout: 3000 });
+  } catch (error) {
+    const actual = await code.evaluate(element => ({ scrollLeft: element.scrollLeft, focused: element === document.activeElement, clientWidth: element.clientWidth, scrollWidth: element.scrollWidth }));
+    throw new Error(`${label}: ArrowRight did not scroll the focused code region: ${JSON.stringify({ before, actual, cause: error instanceof Error ? error.message : String(error) })}`);
+  }
+  const after = await code.evaluate(element => element.scrollLeft);
+  readerProof(after > before.scrollLeft, `${label}: ArrowRight scrolls the focused code region`, JSON.stringify({ before: before.scrollLeft, after }));
+  await assertNoHorizontalOverflow(page, `${label}: local table/code scrolling prevents document overflow`);
+  const screenshotPath = join(outputDir, `code-keyboard-${viewportName}.png`);
+  await code.screenshot({ path: screenshotPath });
+  checks.push({ name: `${label}: code keyboard scroll screenshot`, status: "pass", detail: screenshotPath });
+  await assertReaderSectionNavigation(page, `${label}: contents`);
+}
+
+async function checkReaderUnavailablePages(page: Page, viewportName: string): Promise<void> {
+  const messages: string[] = [];
+  for (const stableId of [readerFixture.restrictedId, readerFixture.missingId]) {
+    const detailUrl = await readerApiUrl(page, `/assets/${encodeURIComponent(stableId)}`);
+    const attachmentsUrl = await readerApiUrl(page, `/assets/${encodeURIComponent(stableId)}/attachments`);
+    const expectedStatuses = stableId === readerFixture.missingId ? [404] : [403, 404];
+    expectReaderHttpFixtureFailure(page, detailUrl, expectedStatuses);
+    expectReaderHttpFixtureFailure(page, attachmentsUrl, expectedStatuses);
+    try {
+      const observed = Promise.all([detailUrl, attachmentsUrl].map(url => page.waitForResponse(response => response.request().method() === "GET" && response.url() === url, { timeout: 15000 })));
+      const [, responses] = await Promise.all([openReaderStablePage(page, stableId), observed]);
+      readerProof(responses.every(response => expectedStatuses.includes(response.status())),
+        `reader real-stack ${viewportName}: intentional ${stableId} detail and attachments reject access with approved statuses`,
+        JSON.stringify(responses.map(response => ({ url: response.url(), status: response.status() }))));
+      await page.getByRole("heading", { name: /unavailable|could not load/i }).waitFor({ state: "visible" });
+      const text = normalizeText(await page.locator("main").textContent());
+      readerProof(new URL(page.url()).searchParams.get("page") === stableId && !text.includes(readerFixture.title) && !text.includes("Private Riverstone") && !text.includes(readerFixture.restrictedToken), `reader ${viewportName}: explicit ${stableId} is generic and stays requested`);
+      messages.push(text);
+      await waitForSettledRequests(page, `intentional unavailable ${stableId} responses`);
+    } finally {
+      const expected = expectedReaderFailures.get(page);
+      expected?.delete(detailUrl);
+      expected?.delete(attachmentsUrl);
+      if (expected?.size === 0) expectedReaderFailures.delete(page);
+    }
+  }
+  readerProof(messages[0] === messages[1], `reader ${viewportName}: restricted and missing pages share one generic state`);
+  await screenshot(page, `reader-unavailable-${viewportName}.png`, `reader ${viewportName}: unavailable screenshot`);
+}
+
+async function checkReaderCitationFixtures(page: Page, original: ReturnType<typeof managedQueryResponseSchema.parse>, viewportName: string): Promise<void> {
+  const policy = original.citations.find(citation => citation.stableId === readerFixture.policyId);
+  readerProof(Boolean(policy?.versionId), "reader citation fixtures: real source identity/version captured before substitution");
+  const pattern = "**/agent/query";
+  for (const [versionId, expected] of [["synthetic-different-version", "Different version from the page now shown"], [null, "Version not supplied"]] as const) {
+    const fixture = structuredClone(original);
+    fixture.citations = fixture.citations.map(citation => citation.stableId === readerFixture.policyId ? { ...citation, versionId } : citation);
+    fixture.results = fixture.results.map(result => result.asset.stableId === readerFixture.policyId ? { ...result, citation: { ...result.citation, versionId } } : result);
+    const parsed = managedQueryResponseSchema.parse(fixture);
+    const handler = (route: Route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(parsed) });
+    await page.route(pattern, handler);
+    try {
+      const { dialog } = await submitReaderAsk(page, readerFixture.ask);
+      const citation = dialog.locator(".reader-citation").filter({ hasText: readerFixture.title }).first();
+      if (await citation.getAttribute("open") === null) await citation.locator("summary").first().click();
+      await citation.getByText(expected, { exact: false }).waitFor({ state: "visible" });
+      readerProof((await citation.textContent() ?? "").includes(policy!.snippet) && !(await citation.innerText()).toLowerCase().includes("older"), `reader response-fixture ${viewportName}: ${expected}; supplied excerpt preserved without chronology claim`);
+      const link = citation.getByRole("link", { name: "Open source page", exact: true });
+      const url = new URL(await link.getAttribute("href") ?? "", page.url());
+      readerProof(url.searchParams.get("page") === readerFixture.policyId && !url.href.includes("versions") && !url.searchParams.has("preview"), `reader response-fixture ${viewportName}: stable source link grants no historical preview`);
+      await screenshot(page, `reader-citation-${versionId ? "different" : "missing"}-${viewportName}.png`, `reader response-fixture ${viewportName}: citation version screenshot`);
+      await closeReaderDialog(page, "Ask the knowledge base");
+    } finally {
+      await page.unroute(pattern, handler);
+    }
+  }
+}
+
+function expectReaderHttpFixtureFailure(page: Page, url: string, statuses: readonly number[] = [503]): void {
+  const urls = expectedReaderFailures.get(page) ?? new Map<string, Set<number>>();
+  urls.set(url, new Set(statuses));
+  expectedReaderFailures.set(page, urls);
+}
+
+async function waitForReaderFixture<T>(promise: Promise<T>, label: string): Promise<T> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([promise, new Promise<T>((_resolve, reject) => {
+      timeout = setTimeout(() => reject(new Error(`Reader response fixture did not observe ${label} within 15 seconds`)), 15000);
+    })]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
+async function checkReaderControlledStates(page: Page): Promise<void> {
+  // Each fixture fetches or retries the real endpoint. Only response timing or
+  // one HTTP failure is substituted; these assertions prove UI lifecycle only.
+  await checkReaderSixCardFixture(page);
+  for (const kind of ["search", "ask"] as const) {
+    const pattern = kind === "search" ? "**/search?**" : "**/agent/query";
+    const title = kind === "search" ? "Search pages" : "Ask the knowledge base";
+    const firstQuery = kind === "search" ? readerFixture.query : readerFixture.ask;
+    let release!: () => void;
+    let started!: () => void;
+    let finished!: () => void;
+    let originalRequest: Request | undefined;
+    let settled!: () => void;
+    let outcome = "";
+    const hold = new Promise<void>(resolvePromise => { release = resolvePromise; });
+    const captured = new Promise<void>(resolvePromise => { started = resolvePromise; });
+    const completed = new Promise<void>(resolvePromise => { finished = resolvePromise; });
+    const consumed = new Promise<void>(resolvePromise => { settled = resolvePromise; });
+    const finishRequest = (request: Request) => { if (request === originalRequest) { outcome = "delivered"; settled(); } };
+    const failRequest = (request: Request) => { if (request === originalRequest) { outcome = request.failure()?.errorText ?? "failed"; settled(); } };
+    page.on("requestfinished", finishRequest);
+    page.on("requestfailed", failRequest);
+    const handler = async (route: Route) => {
+      const request = route.request();
+      const query = kind === "search" ? new URL(request.url()).searchParams.get("query") : request.postDataJSON()?.query;
+      if (query !== firstQuery) return route.continue();
+      originalRequest = request;
+      const response = await route.fetch();
+      const payload = kind === "search" ? searchResponseSchema.parse(await response.json()) : managedQueryResponseSchema.parse(await response.json());
+      expectedReaderAborts.add(request);
+      started();
+      await hold;
+      try {
+        await route.fulfill({ response, body: JSON.stringify(payload) });
+      } catch (error) {
+        // Cancelling the obsolete browser request can invalidate interception.
+        if (!(error instanceof Error && /closed|handled|interception|aborted/i.test(error.message))) throw error;
+      } finally {
+        finished();
+      }
+    };
+    await page.route(pattern, handler);
+    try {
+      const dialog = kind === "search" ? await openReaderSearch(page) : await openReaderAsk(page);
+      const input = dialog.locator(kind === "search" ? "#reader-search-input" : "#reader-ask-input");
+      await input.fill(firstQuery);
+      if (kind === "search") await input.press("Enter");
+      else await dialog.locator(".reader-ask-form button[type='submit']").click();
+      await waitForReaderFixture(captured, `${kind} A capture`);
+      await dialog.getByRole("status").filter({ hasText: kind === "search" ? "Searching" : "Finding" }).waitFor({ state: "visible" });
+      readerProof(await dialog.locator(kind === "search" ? ".reader-search-result" : ".reader-ask-answer").count() === 0,
+        `reader response-fixture: ${kind} loading does not display a prior response as current`);
+      if (kind === "search") await submitReaderSearch(page, readerFixture.noAnswer);
+      else await submitReaderAsk(page, readerFixture.noAnswer);
+      release();
+      await waitForReaderFixture(completed, `${kind} A route completion`);
+      await waitForReaderFixture(consumed, `${kind} A browser finish or failure`);
+      await waitForSettledRequests(page, `obsolete ${kind} response completion`);
+      await page.evaluate(() => new Promise<void>(resolvePromise => requestAnimationFrame(() => requestAnimationFrame(() => resolvePromise()))));
+      const displayedQuery = kind === "search" ? await dialog.getByRole("heading", { name: `Results for “${readerFixture.noAnswer}”`, exact: true }).isVisible() : normalizeText(await dialog.locator(".reader-ask-submitted > p").first().textContent()) === readerFixture.noAnswer;
+      const displayedB = kind === "search" || await dialog.getByText("No accessible answer was found.", { exact: true }).isVisible();
+      readerProof((outcome === "delivered" || /ERR_ABORTED/.test(outcome)) && displayedQuery && displayedB && await input.inputValue() === readerFixture.noAnswer && await dialog.locator(kind === "search" ? ".reader-search-result" : ".reader-citation").count() === 0 && !(await dialog.innerText()).includes(readerFixture.publishedToken),
+        `reader response-fixture: delayed ${kind} A cannot replace B after request and render settling`, JSON.stringify({ browserOutcome: outcome, cancellationObserved: /ERR_ABORTED/.test(outcome), displayedQueryB: displayedQuery }));
+      await closeReaderDialog(page, title);
+    } finally {
+      release();
+      await page.unroute(pattern, handler);
+      page.off("requestfinished", finishRequest);
+      page.off("requestfailed", failRequest);
+    }
+
+    let failOnce = true;
+    const failureHandler = async (route: Route) => {
+      if (!failOnce) return route.continue();
+      failOnce = false;
+      expectReaderHttpFixtureFailure(page, route.request().url());
+      await route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "synthetic_failure", privateDebug: "RIVERSTONE_PRIVATE_ERROR_DETAIL" }) });
+    };
+    await page.route(pattern, failureHandler);
+    try {
+      const dialog = kind === "search" ? await openReaderSearch(page) : await openReaderAsk(page);
+      const input = dialog.locator(kind === "search" ? "#reader-search-input" : "#reader-ask-input");
+      await input.fill(firstQuery);
+      if (kind === "search") await input.press("Enter");
+      else await dialog.locator(".reader-ask-form button[type='submit']").click();
+      await dialog.getByText(kind === "search" ? "Search could not finish" : "Could not answer this question", { exact: true }).waitFor();
+      readerProof(!(await dialog.textContent() ?? "").includes("RIVERSTONE_PRIVATE_ERROR_DETAIL"), `reader response-fixture: ${kind} error hides response internals`);
+      const retried = page.waitForResponse(response => new URL(response.url()).pathname.endsWith(kind === "search" ? "/search" : "/agent/query") && response.status() === 200);
+      await dialog.getByRole("button", { name: kind === "search" ? "Retry search" : "Retry question", exact: true }).click();
+      await retried;
+      await dialog.locator(kind === "search" ? ".reader-search-result" : ".reader-citation").first().waitFor({ state: "visible" });
+      readerProof(await input.inputValue() === firstQuery, `reader response-fixture: ${kind} retry recovers through real endpoint with submitted question retained`);
+      await closeReaderDialog(page, title);
+    } finally {
+      await page.unroute(pattern, failureHandler);
+      expectedReaderFailures.delete(page);
+    }
+  }
+  await checkReaderIndependentRecovery(page);
+  await checkReaderColdEvidenceFocus(page);
+  await checkReaderAccountDevices(page);
+  await openReaderStablePage(page, readerFixture.policyId);
+  await page.getByRole("heading", { name: readerFixture.title, exact: true, level: 1 }).waitFor();
+}
+
+async function checkReaderColdEvidenceFocus(page: Page): Promise<void> {
+  // Fresh document keeps the authenticated session. Only real module timing is
+  // controlled; no module contents, API responses or production state change.
+  await waitForSettledRequests(page, "cold reader evidence fixture preparation");
+  const pattern = "**/assets/reader-evidence-*.js";
+  let release!: () => void;
+  let started!: () => void;
+  let finished!: () => void;
+  let settled!: () => void;
+  let moduleRequest: Request | undefined;
+  let moduleStatus = 0;
+  let browserOutcome = "";
+  const hold = new Promise<void>(resolvePromise => { release = resolvePromise; });
+  const captured = new Promise<void>(resolvePromise => { started = resolvePromise; });
+  const completed = new Promise<void>(resolvePromise => { finished = resolvePromise; });
+  const consumed = new Promise<void>(resolvePromise => { settled = resolvePromise; });
+  const finishRequest = (request: Request) => { if (request === moduleRequest) { browserOutcome = "delivered"; settled(); } };
+  const failRequest = (request: Request) => { if (request === moduleRequest) { browserOutcome = request.failure()?.errorText ?? "failed"; settled(); } };
+  const handler = async (route: Route) => {
+    if (moduleRequest) return route.continue();
+    moduleRequest = route.request();
+    const response = await route.fetch({ timeout: 15000 });
+    moduleStatus = response.status();
+    started();
+    await hold;
+    try { await route.fulfill({ response }); } finally { finished(); }
+  };
+  page.on("requestfinished", finishRequest);
+  page.on("requestfailed", failRequest);
+  await page.route(pattern, handler);
+  try {
+    const fresh = new URL(page.url());
+    fresh.searchParams.set("page", readerFixture.checklistId);
+    fresh.hash = "reader";
+    await page.goto(fresh.href, { waitUntil: "domcontentloaded" });
+    await page.getByRole("heading", { name: readerFixture.checklistTitle, exact: true, level: 1 }).waitFor();
+    const sidebar = page.locator(".reader-library");
+    await sidebar.waitFor({ state: "visible" });
+    const expand = sidebar.getByRole("button", { name: "Expand Pages", exact: true });
+    if (await expand.isVisible()) await expand.click();
+    const trigger = page.locator(".topbar").getByRole("button", { name: "Search pages", exact: true });
+    await trigger.click();
+    await waitForReaderFixture(captured, "cold evidence module capture");
+    readerProof(moduleStatus === 200 && await page.getByRole("dialog", { name: "Search pages", exact: true }).count() === 0 && await page.getByText("Loading reader tools…", { exact: true }).isVisible(),
+      "reader response-fixture: first Search intent waits for the real cold evidence module", moduleStatus);
+    await sidebar.getByRole("link", { name: "Riverstone sharing policy", exact: true }).click();
+    await page.getByRole("heading", { name: readerFixture.title, exact: true, level: 1 }).waitFor();
+    readerProof(new URL(page.url()).searchParams.get("page") === readerFixture.policyId && await page.getByRole("dialog", { name: "Search pages", exact: true }).count() === 0,
+      "reader response-fixture: sidebar navigation supersedes the unopened Search intent");
+    release();
+    await waitForReaderFixture(completed, "cold evidence route completion");
+    await waitForReaderFixture(consumed, "cold evidence browser finish or failure");
+    readerProof(browserOutcome === "delivered", "reader response-fixture: real cold evidence module reaches the browser", browserOutcome);
+    await waitForSettledRequests(page, "cold reader evidence module completion");
+    await openReaderSearch(page);
+    await assertReaderDialogFocus(page, "Search pages", trigger, "reader response-fixture: Search after cancelled cold-load intent");
+    await screenshot(page, "reader-cold-evidence-focus-response-fixture.png", "reader response-fixture: cold evidence focus screenshot");
+  } finally {
+    release();
+    await page.unroute(pattern, handler);
+    page.off("requestfinished", finishRequest);
+    page.off("requestfailed", failRequest);
+  }
+}
+
+async function checkReaderAccountDevices(page: Page): Promise<void> {
+  const devicesResponse = page.waitForResponse(response => response.request().method() === "GET" && new URL(response.url()).pathname.endsWith("/local-sync/v1/device-sessions"));
+  await page.getByRole("button", { name: /^Account menu for / }).click();
+  await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
+  await page.getByRole("heading", { name: "Settings", exact: true, level: 1 }).waitFor();
+  const response = await devicesResponse;
+  const panel = page.locator(".local-devices-panel");
+  await panel.locator(".local-device-list").waitFor({ state: "visible" });
+  await panel.getByText("Loading devices…", { exact: true }).waitFor({ state: "hidden" });
+  readerProof(response.status() === 200 && await panel.getByRole("alert").count() === 0,
+    "reader real-stack: Settings renders deferred local-device controls after the authenticated read", response.status());
+  await page.locator(".reader-return-link").click();
+  await page.getByRole("heading", { name: readerFixture.title, exact: true, level: 1 }).waitFor();
+  await waitForSettledRequests(page, "reader return after Settings device read");
+}
+
+async function checkReaderSixCardFixture(page: Page): Promise<void> {
+  const actual = searchResponseSchema.parse(await (await readerApiGet(page, `/search?${new URLSearchParams({ query: readerFixture.query, limit: "8" })}`)).json());
+  const seed = actual.results[0];
+  readerProof(Boolean(seed), "reader six-card response fixture: real schema-valid passage captured first");
+  const query = "synthetic bounded six-source fixture";
+  const fixture = searchResponseSchema.parse({ ...structuredClone(actual), query, results: Array.from({ length: 6 }, (_, index) => {
+    const result = structuredClone(seed!);
+    const stableId = `synthetic-response-source-${index + 1}`;
+    const assetId = `synthetic-response-asset-${index + 1}`;
+    const chunkId = `synthetic-response-passage-${index + 1}`;
+    return { ...result, asset: { ...result.asset, stableId, id: assetId, title: `Synthetic bounded source ${index + 1}` }, chunkId, rank: 6 - index,
+      ranking: { ...result.ranking, finalScore: 6 - index }, citation: { ...result.citation, stableId, assetId, chunkId, title: `Synthetic bounded source ${index + 1}` } };
+  }) });
+  const pattern = "**/search?**";
+  const handler = (route: Route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(fixture) });
+  await page.route(pattern, handler);
+  try {
+    const { dialog } = await submitReaderSearch(page, query);
+    const ids = await dialog.locator(".reader-search-result").evaluateAll(rows => rows.map(row => (row as HTMLElement).dataset.stableId));
+    readerProof(JSON.stringify(ids) === JSON.stringify(fixture.results.slice(0, 5).map(result => result.asset.stableId)), "reader response-fixture: six distinct sources retain the existing strongest-five card limit");
+    await screenshot(page, "reader-bounded-search-response-fixture.png", "reader response-fixture: five-card search screenshot");
+    await closeReaderDialog(page, "Search pages");
+  } finally {
+    await page.unroute(pattern, handler);
+  }
+}
+
+async function checkReaderIndependentRecovery(page: Page): Promise<void> {
+  for (const kind of ["collection", "detail", "attachments"] as const) {
+    await openReaderStablePage(page, readerFixture.policyId);
+    await page.getByRole("heading", { name: readerFixture.title, exact: true, level: 1 }).waitFor();
+    await waitForSettledRequests(page, `${kind} failure fixture preparation`);
+    const matcher = (url: URL) => kind === "collection" ? url.pathname.endsWith("/assets") : url.pathname.endsWith(`/assets/${readerFixture.policyId}${kind === "attachments" ? "/attachments" : ""}`);
+    let failOnce = true;
+    let interceptedUrl = "";
+    const handler = async (route: Route) => {
+      if (!failOnce) return route.continue();
+      failOnce = false;
+      interceptedUrl = route.request().url();
+      expectReaderHttpFixtureFailure(page, interceptedUrl);
+      await route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "synthetic_failure", privateDebug: "RIVERSTONE_PRIVATE_ERROR_DETAIL" }) });
+    };
+    await page.route(matcher, handler);
+    try {
+      const failedResponse = page.waitForResponse(response => matcher(new URL(response.url())) && response.status() === 503, { timeout: 15000 });
+      try {
+        // A same-URL goto can be a hash navigation and skip mount-time reads.
+        // Install the fault only after preparation, then replace the document.
+        const [, observed] = await Promise.all([page.reload({ waitUntil: "domcontentloaded" }), failedResponse]);
+        readerProof(!failOnce && Boolean(interceptedUrl) && observed.url() === interceptedUrl && observed.status() === 503,
+          `reader response-fixture: ${kind} exact request was intercepted and returned 503`, interceptedUrl);
+      } catch (error) {
+        throw new Error(`Reader ${kind} failure fixture did not observe its intended 503: ${JSON.stringify({ intercepted: !failOnce, interceptedUrl, pageUrl: page.url(), cause: error instanceof Error ? error.message : String(error) })}`);
+      }
+      if (kind === "detail") await page.getByRole("heading", { name: "Page could not load", exact: true }).waitFor();
+      else await page.getByRole("heading", { name: readerFixture.title, exact: true, level: 1 }).waitFor();
+      const retry = page.getByRole("button", { name: kind === "collection" ? "Retry pages" : kind === "detail" ? "Retry page" : "Retry attachments", exact: true });
+      await retry.waitFor({ state: "visible" });
+      readerProof(!(await page.locator("main").textContent() ?? "").includes("RIVERSTONE_PRIVATE_ERROR_DETAIL"), `reader response-fixture: ${kind} error hides internals`);
+      if (kind !== "detail") readerProof((await page.locator(".reader-document-body").textContent() ?? "").includes(readerFixture.publishedToken), `reader response-fixture: ${kind} failure leaves independently loaded article readable`);
+      const recovered = page.waitForResponse(response => matcher(new URL(response.url())) && response.status() === 200);
+      await retry.click();
+      const finalResponse = await recovered;
+      await page.getByRole("heading", { name: readerFixture.title, exact: true, level: 1 }).waitFor();
+      await retry.waitFor({ state: "hidden" });
+      readerProof(finalResponse.status() === 200 && (await page.locator(".reader-document-body").textContent() ?? "").includes(readerFixture.publishedToken), `reader response-fixture: ${kind} retries independently through real endpoint`);
+    } finally {
+      await page.unroute(matcher, handler);
+      expectedReaderFailures.delete(page);
+    }
+  }
 }
 
 async function assertBrowserBranding(page: Page, displayName: string, href: string, type: string, name: string): Promise<void> {
@@ -471,10 +1274,10 @@ async function checkAdminBranding(page: Page): Promise<void> {
       await assertBrowserBranding(brandingPage, "Field Notes & Research", `data:${type};base64,${readFileSync(path).toString("base64")}`, type, `browser branding: replacement ${extension} favicon and media type`);
     }
     await waitForSettledRequests(brandingPage);
-    await brandingPage.goto(routeUrl(page, "reader"), { waitUntil: "domcontentloaded" });
+    await brandingPage.goto(readerOverviewUrl(page), { waitUntil: "domcontentloaded" });
     await brandingPage.getByRole("link", { name: "Field Notes & Research pages", exact: true }).waitFor();
     await assertBrowserBranding(brandingPage, "Field Notes & Research", `data:image/webp;base64,${readFileSync(resolve(root, "scripts/fixtures/branding/logo.webp")).toString("base64")}`, "image/webp", "browser branding: reader uses saved title and favicon");
-    await brandingPage.waitForSelector(".reader-article", { timeout: 15000 });
+    await brandingPage.getByRole("heading", { name: "Knowledge and instructions", exact: true, level: 1 }).waitFor({ timeout: 15000 });
     await waitForSettledRequests(brandingPage);
     await brandingPage.goto(routeUrl(page, "admin/system/settings"), { waitUntil: "domcontentloaded" });
     await field.waitFor({ state: "visible" });
@@ -726,8 +1529,11 @@ async function applyTenantOverride(page: Page): Promise<void> {
 }
 
 async function checkBrowserCredentialLifetime(page: Page, viewportName: string): Promise<void> {
-  await page.goto(routeUrl(page, "reader"), { waitUntil: "domcontentloaded" });
-  await page.waitForSelector(".reader-article", { timeout: 15000 });
+  // The denied-admin return can render an article shell before its reads finish.
+  // Settle those reads before this deliberate document replacement, as for reload.
+  await waitForSettledRequests(page, "the credential check's overview navigation");
+  await page.goto(readerOverviewUrl(page), { waitUntil: "domcontentloaded" });
+  await page.getByRole("heading", { name: "Knowledge and instructions", exact: true, level: 1 }).waitFor({ timeout: 15000 });
   const hasStoredKey = await page.evaluate(() =>
     window.localStorage.getItem("forgetbase-api-key") !== null ||
     window.sessionStorage.getItem("forgetbase-api-key") !== null
@@ -741,7 +1547,7 @@ async function checkBrowserCredentialLifetime(page: Page, viewportName: string):
   await page.reload({ waitUntil: "domcontentloaded" });
   const url = new URL(baseUrl);
   const splitOrigin = isLocalUrl(baseUrl) && ["5173", "5175"].includes(url.port);
-  await page.waitForSelector(splitOrigin ? "#login-email" : ".reader-article", { timeout: 15000 });
+  await page.waitForSelector(splitOrigin ? "#login-email" : ".reader-overview, .reader-article", { timeout: 15000 });
   await waitForSettledRequests(page);
   checks.push({ name: `release ${viewportName}: ${splitOrigin ? "reload discards development bearer credential" : "cookie session survives reload"}`, status: "pass" });
 }
@@ -759,6 +1565,13 @@ async function waitForSettledRequests(page: Page, purpose = "the credential relo
 function routeUrl(page: Page, route: string): string {
   const url = new URL(page.url());
   url.hash = route;
+  return url.toString();
+}
+
+function readerOverviewUrl(page: Page): string {
+  const url = new URL(routeUrl(page, "reader"));
+  // Generic reader checks must not inherit an unpublished authoring selection.
+  url.searchParams.delete("page");
   return url.toString();
 }
 
@@ -954,8 +1767,9 @@ async function expectHash(page: Page, expected: string, name: string): Promise<v
   checks.push({ name, status: "pass", detail: hash });
 }
 
-async function assertNoJargon(page: Page, selector: string, name: string): Promise<void> {
-  const text = await page.locator(selector).textContent();
+async function assertNoJargon(page: Page, selector: string | string[], name: string): Promise<void> {
+  const text = typeof selector === "string" ? await page.locator(selector).textContent()
+    : await page.locator(selector.join(", ")).evaluateAll(elements => elements.map(element => `${element.textContent ?? ""} ${element.getAttribute("aria-label") ?? ""}`).join(" "));
   const lowered = normalizeText(text).toLowerCase();
   const banned = [
     /agent-native/,
@@ -1073,42 +1887,22 @@ async function assertReaderArticleDepth(page: Page, name: string): Promise<void>
   checks.push({ name, status: "pass", detail: result.words });
 }
 
-async function assertMobileReaderPagePicker(page: Page, name: string): Promise<void> {
-  const result = await page.evaluate(() => {
-    const picker = document.querySelector<HTMLElement>(".reader-mobile-page-picker");
-    const desktopNavigation = document.querySelector<HTMLElement>(".reader-library");
-    const select = picker?.querySelector<HTMLSelectElement>("select");
-    const rect = picker?.getBoundingClientRect();
-    const desktopRect = desktopNavigation?.getBoundingClientRect();
-
-    return {
-      visible: Boolean(rect && rect.width > 0 && rect.height > 0),
-      desktopNavigationVisible: Boolean(desktopRect && desktopRect.width > 0 && desktopRect.height > 0),
-      label: picker?.textContent?.includes("Pages") ?? false,
-      options: select?.options.length ?? 0,
-      value: select?.value ?? ""
-    };
-  });
-
-  if (!result.visible || result.desktopNavigationVisible || !result.label || result.options < 2 || !result.value) {
-    throw new Error(`${name}: expected one visible mobile page picker and a hidden desktop tree; got ${JSON.stringify(result)}`);
-  }
-
-  checks.push({ name, status: "pass", detail: result.options });
+async function assertMobileReaderNavigation(page: Page, name: string): Promise<void> {
+  const trigger = page.getByRole("button", { name: "Open pages", exact: true });
+  readerProof(await trigger.isVisible() && !await page.locator(".reader-library").isVisible(), `${name}: labelled mobile trigger replaces the desktop tree`);
+  const drawer = await readerNavigation(page);
+  readerProof(await drawer.getByRole("link").count() >= 2, `${name}: drawer contains published page anchors`);
+  await closeReaderDialog(page, "Pages");
 }
 
 async function assertReaderNestedNavigation(page: Page, name: string): Promise<void> {
-  const mobilePicker = page.locator(".reader-mobile-page-picker");
-  if (await mobilePicker.isVisible()) {
-    await mobilePicker.locator("select").selectOption({ label: "Reader Nested Navigation Example" });
-  } else {
-    for (const label of ["Reader experience", "Lifecycle states"]) {
-      const expand = page.getByRole("button", { name: `Expand ${label} pages`, exact: true });
-      if (await expand.isVisible()) await expand.click();
-      await page.getByRole("button", { name: `Collapse ${label} pages`, exact: true }).waitFor({ state: "visible" });
-    }
-    await page.getByRole("link", { name: "Nested page sample", exact: true }).click();
+  const navigation = await readerNavigation(page);
+  for (const label of ["Reader experience", "Lifecycle states"]) {
+    const expand = navigation.getByRole("button", { name: `Expand ${label} pages`, exact: true });
+    if (await expand.isVisible()) await expand.click();
+    await navigation.getByRole("button", { name: `Collapse ${label} pages`, exact: true }).waitFor({ state: "visible" });
   }
+  await navigation.getByRole("link", { name: "Nested page sample", exact: true }).click();
   await page.waitForFunction(
     () => document.querySelector(".reader-article-header h1")?.textContent?.replace(/\s+/g, " ").trim() === "Reader Nested Navigation Example",
     undefined,
@@ -1118,30 +1912,46 @@ async function assertReaderNestedNavigation(page: Page, name: string): Promise<v
   checks.push({ name, status: "pass", detail: "Reader experience > Lifecycle states > Nested page sample" });
 }
 
-async function assertReaderPageFooter(page: Page, name: string): Promise<void> {
-  const result = await page.evaluate(() => {
-    const footer = document.querySelector<HTMLElement>(".reader-page-footer");
-    const terms = Array.from(footer?.querySelectorAll("dt") ?? [])
+async function assertReaderSourceFields(page: Page, name: string): Promise<void> {
+  const stableId = new URL(page.url()).searchParams.get("page");
+  readerProof(Boolean(stableId), `${name}: selected stable identity is explicit`);
+  const detail = assetDetailSchema.parse(await (await readerApiGet(page, `/assets/${encodeURIComponent(stableId!)}`)).json());
+  const configured = detail.asset.metadata.readerPageInfoFields ?? ["version", "updated", "access", "maintainer", "review"];
+  const version = detail.versions.find(item => item.id === detail.asset.publishedVersionId);
+  const dates = await page.evaluate(input => {
+    const formatter = new Intl.DateTimeFormat(undefined, { dateStyle: "medium" });
+    return { updated: formatter.format(new Date(input.updated)), review: formatter.format(new Date(input.review)), overdue: Date.parse(input.review) < Date.now() };
+  }, { updated: detail.asset.updatedAt, review: detail.asset.reviewDueAt });
+  const expected: Record<string, { term: string; value: string }> = {
+    version: { term: "Version", value: version ? `Version ${version.versionNumber}` : "Version unavailable" },
+    updated: { term: "Last updated", value: dates.updated },
+    access: { term: "Access", value: detail.asset.sensitivity === "public-demo" ? "Open to readers" : "Signed-in readers" },
+    maintainer: { term: "Maintainer", value: detail.asset.ownerId },
+    review: { term: "Review", value: `${dates.overdue ? "Review overdue ·" : "Due"} ${dates.review}` }
+  };
+  await page.getByRole("button", { name: "Source details", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Source details", exact: true });
+  await dialog.waitFor({ state: "visible" });
+  const fields = dialog.locator(".reader-source-fields");
+  await fields.waitFor({ state: "visible" });
+  const result = await fields.evaluate((section) => {
+    const terms = Array.from(section.querySelectorAll("dt"))
       .map((term) => term.textContent?.replace(/\s+/g, " ").trim() ?? "")
       .filter(Boolean);
-    const values = Array.from(footer?.querySelectorAll("dd") ?? [])
+    const values = Array.from(section.querySelectorAll("dd"))
       .map((value) => value.textContent?.replace(/\s+/g, " ").trim() ?? "")
       .filter(Boolean);
-    const rect = footer?.getBoundingClientRect();
+    const rect = section.getBoundingClientRect();
 
     return {
       visible: Boolean(rect && rect.width > 0 && rect.height > 0),
-      heading: footer?.querySelector("h3")?.textContent?.replace(/\s+/g, " ").trim() ?? "",
       terms,
       values
     };
   });
 
-  if (!result.visible || result.heading || result.terms.length < 3 || result.values.length < 3) {
-    throw new Error(`${name}: expected a compact page details footer with configured fields and no heading; got ${JSON.stringify(result)}`);
-  }
-
-  checks.push({ name, status: "pass", detail: result.terms.join(", ") });
+  readerProof(result.visible && JSON.stringify(result.terms) === JSON.stringify(configured.map(key => expected[key]!.term)) && JSON.stringify(result.values) === JSON.stringify(configured.map(key => expected[key]!.value)), `${name}: configured source fields preserve exact terms, order and published values`, result.terms.join(", "));
+  await closeReaderDialog(page, "Source details");
 }
 
 async function assertReaderSectionNavigation(page: Page, name: string): Promise<void> {
@@ -1163,12 +1973,13 @@ async function assertReaderSectionNavigation(page: Page, name: string): Promise<
     throw new Error(`${name}: expected section navigation to match document headings; got ${JSON.stringify(result)}`);
   }
 
-  if (await page.locator(".reader-section-nav").getAttribute("open") === null) {
+  if (await page.locator(".reader-section-nav").evaluate(element => element.tagName === "DETAILS" && !element.hasAttribute("open"))) {
     await page.locator(".reader-section-nav > summary").click();
   }
   await page.locator(".reader-section-nav button").first().click();
   await assertElementInViewport(page, ".reader-document-body h2[id], .reader-document-body h3[id]", `${name}: section link scrolls to heading`);
   await page.evaluate(() => window.scrollTo(0, 0));
+  await expectHash(page, "#reader", `${name}: contents preserves reader route`);
   checks.push({ name, status: "pass", detail: result.buttons });
 }
 
@@ -1219,19 +2030,29 @@ async function assertSearchResultOpensPage(page: Page, name: string): Promise<vo
     expectedTitle,
     { timeout: 15000 }
   );
+  await page.getByRole("dialog", { name: "Search pages", exact: true }).waitFor({ state: "hidden" });
+  await assertSettledReaderArticleFocus(page, `${name}: source navigation`);
+  await assertReaderSearchReturnVisible(page, name);
   await assertElementInViewport(page, ".reader-article", `${name}: opened page in view`);
   await assertReaderArticleDepth(page, `${name}: opened page article depth`);
   checks.push({ name, status: "pass", detail: expectedTitle });
 }
 
-async function selectReaderPageForUat(page: Page, title: string): Promise<void> {
-  const mobilePicker = page.locator(".reader-mobile-page-picker");
+async function assertReaderSearchReturnVisible(page: Page, name: string): Promise<void> {
+  // Inspect the settled position before any click can scroll the control into view.
+  const position = await page.locator(".reader-search-return").evaluate(element => {
+    const control = element.getBoundingClientRect();
+    const header = document.querySelector(".topbar")?.getBoundingClientRect();
+    const visibleHeaderBottom = header && header.bottom > 0 && header.top < window.innerHeight ? header.bottom : 0;
+    return { top: control.top, bottom: control.bottom, width: control.width, height: control.height, visibleHeaderBottom, viewportHeight: window.innerHeight };
+  });
+  readerProof(position.width > 0 && position.height > 0 && position.top >= position.visibleHeaderBottom - 2 && position.bottom <= position.viewportHeight + 2,
+    `${name}: Back to search results remains visible below the header after navigation`, JSON.stringify(position));
+}
 
-  if (await mobilePicker.isVisible()) {
-    await mobilePicker.locator("select").selectOption({ label: title });
-  } else {
-    await clickFirstVisible(page, "a", title === "Reader Access and Export Rules" ? "Read vs export" : title);
-  }
+async function selectReaderPageForUat(page: Page, title: string): Promise<void> {
+  const navigation = await readerNavigation(page);
+  await navigation.getByRole("link", { name: title === "Reader Access and Export Rules" ? "Read vs export" : title, exact: true }).click();
 
   await page.waitForFunction(
     (expectedTitle) => document.querySelector(".reader-article-header h1")?.textContent?.replace(/\s+/g, " ").trim() === expectedTitle,
