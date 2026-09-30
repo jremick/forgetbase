@@ -11,7 +11,7 @@ The current public beta tag is `v0.1.0-beta.9`. Tags `v0.1.0-beta.1` through `v0
 - The admin console is for managing content, access, exports, users, and system settings.
 - Self-hosted internal work trials follow [Public Beta Compatibility](../PUBLIC_BETA_COMPATIBILITY.md#data-and-migration-expectations). Keep the public demo and release proof synthetic; do not include private content in release artifacts.
 - Do not make the repository public, tag a release, or announce public beta until the owner explicitly approves that action.
-- Complete the controlled live-testing phase in [Private Live UAT](../PRIVATE_LIVE_UAT.md) before considering public promotion.
+- Complete the current [Private Live UAT](../PRIVATE_LIVE_UAT.md) charter against the exact upcoming release candidate before considering public promotion. Its private boundary covers tester access to the test deployment, not source repository visibility.
 
 ## Release Inputs
 
