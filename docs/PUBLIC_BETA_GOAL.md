@@ -13,7 +13,7 @@ Ship ForgetBase as a public beta that a technical team can try as a small compan
 
 People should be able to browse, read, search, and ask questions from human-friendly pages. AI clients should be able to retrieve the same governed, permission-appropriate knowledge through the documented machine surfaces. Admins should be able to manage content, reviews, access, users, exports, and system settings in a clearly separate admin area.
 
-Public beta means useful, polished, and verifiably safe for trial use. It does not mean production support, long-term API stability, hosted-service readiness, or advanced sign-in controls.
+Public beta targets useful trial workflows with repeatable verification evidence. Internal work trials follow the data handling expectations in [Public Beta Compatibility](PUBLIC_BETA_COMPATIBILITY.md). Verification does not guarantee data safety, production support, long-term API stability, hosted-service readiness, or advanced sign-in controls.
 
 Supported trial paths, volatile surfaces, and support boundaries are defined in [Public Beta Compatibility](PUBLIC_BETA_COMPATIBILITY.md).
 The final promotion sequence is defined in [Public Beta Release Runbook](runbooks/PUBLIC_BETA_RELEASE.md).

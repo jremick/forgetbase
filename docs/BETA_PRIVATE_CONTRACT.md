@@ -4,6 +4,8 @@ Status: private beta compatibility target
 Date: 2026-06-19
 Contract ID: `forgetbase-private-beta-0.1`
 
+Historical scope: this private-beta contract records the synthetic first-run and consumer fixtures used for its compatibility target. References to synthetic assets below describe that target, not a blanket restriction on current self-hosted trial content. See [Public Beta Compatibility](PUBLIC_BETA_COMPATIBILITY.md) for current data handling expectations and trial scope.
+
 This document defines the machine-consumer surface ForgetBase will preserve during the private beta unless a release note explicitly calls out a breaking change. It does not claim production readiness, hosted-service maturity, enterprise identity completion, full managed-agent orchestration, broad enterprise-search parity, or complete API stability.
 
 ## Scope

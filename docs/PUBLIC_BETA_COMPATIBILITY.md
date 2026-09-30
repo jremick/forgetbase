@@ -1,7 +1,7 @@
 # Public Beta Compatibility
 
 Status: public beta target
-Date: 2026-09-28
+Date: 2026-09-30
 
 This document defines what public beta users can reasonably expect from ForgetBase. It is not a stable compatibility promise.
 
@@ -15,9 +15,8 @@ The public beta supports a self-hosted trial using:
 - Docker Compose v2
 - Postgres 17 with `pgvector`
 - Chromium-based browser for the web UI and UAT proof
-- the synthetic demo corpus in `corpus/demo/assets.json`
 
-The intended first-run path is Docker Compose plus the same-origin proxy at `http://127.0.0.1:8080/`.
+The intended first-run path is Docker Compose plus the same-origin proxy at `http://127.0.0.1:8080/`, with the synthetic demo corpus in `corpus/demo/assets.json`. Self-hosted trials may also use an organization's own or authorized customer content through the [governed authoring and import workflow](governed-workflow.md). The demo corpus is a first-run fixture, not a restriction on trial content.
 
 ## Product Surfaces
 
@@ -65,17 +64,21 @@ Not included in public beta:
 - stable API compatibility
 - SCIM, MFA enforcement, or remembered-device trust policy
 - compliance certification
-- support for private/customer corpus imports
 
 ## Data And Migration Expectations
 
-Public beta data should be treated as trial data.
+Self-hosted beta trials can include internal work and private/customer corpora that the operator is authorized to use. Operators remain responsible for deciding whether the deployment and configured services meet their organization's data handling requirements. Beta use does not establish compliance certification, guaranteed data safety, or production support.
 
+- Configure authentication, asset sensitivity, grants, allowed surfaces, and exports for the intended users. Follow the [deployment runbook](runbooks/DEPLOY_DOCKER_COMPOSE.md) and [security model](SECURITY_MODEL.md); replace sample credentials before using work content.
+- Review configured model providers, local caches, telemetry, retention, and backups for the content being used. The local-agent pilot and managed-update limits above still apply.
+- Keep public demos, committed examples, automated test fixtures, and published release evidence synthetic. Keep private content out of the public repository, issues, and proof bundles.
 - Back up Postgres before pulling new code or changing deployment shape.
+- Back up attachment files with the database as a coordinated set; follow the [backup and restore runbook](runbooks/BACKUP_RESTORE.md).
 - Run migrations through the documented Docker Compose or `db:migrate` path.
 - Run `db:verify-backup-restore` before relying on a beta deployment.
 - Do not assume beta database schema compatibility across unreleased commits.
-- Do not import private, customer, employee, or regulated data into beta trials.
+
+The current corpus import creates missing assets and skips existing visible assets; it does not update, merge, delete, or roll back a partial import. Import planning is report-only. See the [governed workflow](governed-workflow.md#import-a-small-corpus) before importing work content.
 
 ## Support Boundaries
 

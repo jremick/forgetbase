@@ -1,16 +1,18 @@
 # Private Live UAT
 
-Use this charter to test a release candidate with local, invited users on a controlled live deployment before any public beta promotion.
+Use this current charter to test each release candidate with local, invited users on a controlled live deployment before public beta promotion. The private boundary applies to the test deployment and tester access; the source repository is public. General self-hosted internal work trials follow [Public Beta Compatibility](PUBLIC_BETA_COMPATIBILITY.md), rather than this disposable release-testing procedure.
 
 ## Boundary
 
-- Keep the GitHub repository private.
+- Keep the test deployment access-controlled for invited testers; no repository visibility change is required.
 - Do not create or push a release tag, create a GitHub release, publish packages, or announce public beta.
 - Use only the synthetic demo corpus or explicitly approved non-sensitive test content.
 - Give testers individual reader or admin accounts; do not share credentials or store them in screenshots, reports, or the repo.
 - Treat the deployment as disposable trial infrastructure, not production.
 
-The current candidate line is `0.1.0-beta.2`. The existing `v0.1.0-beta.1` tag is historical private-beta evidence and must not be moved or reused.
+Select and record the exact candidate commit for the upcoming release. Use an approved, unused release tag when promotion is separately authorized, following the [release runbook](runbooks/PUBLIC_BETA_RELEASE.md). Do not move or reuse existing tags.
+
+Historical note: the original charter targeted `0.1.0-beta.2` while the source repository was private and preserved `v0.1.0-beta.1` as historical evidence. Those phase-specific repository and candidate assumptions no longer apply. Existing tags and release evidence remain historical records.
 
 ## Entry Gates
 
@@ -110,4 +112,4 @@ Passing this charter permits preparation of the public release proof. It does no
 
 ## Stop Rules
 
-Stop testing, preserve non-sensitive evidence, and roll back when restricted content leaks, permissions fail open, data is corrupted, backup/restore fails, authentication cannot be recovered safely, or the deployed commit cannot be identified. Keep the repo private and return to the implementation gates before resuming.
+Stop testing, preserve non-sensitive evidence, and roll back when restricted content leaks, permissions fail open, data is corrupted, backup/restore fails, authentication cannot be recovered safely, or the deployed commit cannot be identified. Keep the test deployment access-controlled and return to the implementation gates before resuming.

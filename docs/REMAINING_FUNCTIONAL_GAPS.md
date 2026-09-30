@@ -1,6 +1,6 @@
 # Remaining Functional Gaps
 
-This document records what is not actually complete after the early functional closeout and beta hardening pass. It should prevent the project from claiming production, hosted-service, stable-API, or full orchestration readiness before the evidence exists.
+This document records gaps from the early functional closeout and beta hardening pass. The phase-specific checklist below is historical; it is not the current release inventory. See [Publication](PUBLICATION.md) for published release status and [Public Beta Compatibility](PUBLIC_BETA_COMPATIBILITY.md) for current trial scope. Those documents permit internal work trials with authorized content; non-synthetic content is not itself a deferred feature.
 
 ## Completed In Current Alpha Core
 
@@ -20,7 +20,7 @@ This document records what is not actually complete after the early functional c
 - Hosted-service tenant provisioning, billing, managed backups, hosted telemetry retention defaults, and support/SLA posture.
 - Public beta release choices: copyright holder/year, private vulnerability reporting confirmation, and tag-only versus GitHub prerelease.
 - Controlled private-live reader/admin UAT with named testers, captured observations, triaged findings, and exact deployed-commit proof.
-- Any non-synthetic corpus import or private/customer data use.
+- Non-synthetic corpus imports and private/customer data use awaited an owner decision at that early closeout. Current [trial guidance](PUBLIC_BETA_COMPATIBILITY.md) supersedes this historical deferral.
 
 ## Deferred: Product Or Architecture Work
 
@@ -42,4 +42,4 @@ This document records what is not actually complete after the early functional c
 
 ## Current Boundary
 
-The current repo is a private candidate undergoing controlled live UAT. It can be described as a public beta candidate for the self-hosted core only after the gates in `docs/PUBLIC_BETA_GOAL.md` pass and the release proof manifest is validated. It should not be described as production-ready, hosted-service-ready, stable-API-compatible, enterprise-identity-complete, or full managed-agent orchestration.
+The self-hosted core is a public beta. Internal work trials remain subject to its documented data handling and operational limits. Release promotion still requires the gates in [Public Beta Goal](PUBLIC_BETA_GOAL.md) and a validated release proof manifest. The beta should not be described as production-ready, hosted-service-ready, stable-API-compatible, enterprise-identity-complete, or full managed-agent orchestration.
