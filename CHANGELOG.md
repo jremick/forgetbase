@@ -4,6 +4,8 @@ Published tags are immutable. Beta releases support self-hosted trials, includin
 
 ## Unreleased
 
+## 0.1.0-beta.10 - 2026-10-02
+
 - Add a reader overview, responsive authored navigation, separate knowledge/instruction views, and keyboard-accessible article contents, tables and code.
 - Preserve search queries, passage results and the return path while reading sources; keep Ask answers, warnings and source evidence together.
 - Compare citation versions with their own published source and show explicit uncertainty when version or publication evidence is missing.
@@ -12,6 +14,8 @@ Published tags are immutable. Beta releases support self-hosted trials, includin
 - Move CI and release checks to portable local runners with exact-commit status and CodeQL verification.
 
 - Remove the blanket restriction on private/customer content in self-hosted beta trials and align current trial guidance. Public examples and release proof remain synthetic. This is a documentation clarification; runtime permissions, feature-specific pilot limits, and historical release evidence are unchanged.
+
+No database migrations change from beta.9. Back up the database and attachment files together before upgrading.
 
 ## 0.1.0-beta.9 - 2026-09-28
 
