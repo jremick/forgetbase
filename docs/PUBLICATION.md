@@ -1,6 +1,6 @@
 # Publication checklist
 
-The published public beta is [v0.1.0-beta.9](https://github.com/jremick/forgetbase/releases/tag/v0.1.0-beta.9). It builds on the verified beta.5 public
+The published public beta is [v0.1.0-beta.10](https://github.com/jremick/forgetbase/releases/tag/v0.1.0-beta.10). It builds on the verified beta.5 public
 release. Current [beta guidance](PUBLIC_BETA_COMPATIBILITY.md) includes self-hosted
 internal work trials; published verification evidence uses synthetic data. The
 release assets record the verified commit, CI, runtime identity and completed gates.

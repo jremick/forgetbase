@@ -6,9 +6,9 @@ Teams can write and organize knowledge once. People get a clean reading UI. AI t
 
 ## Current Status
 
-ForgetBase is experimental software for self-hosted trials, including internal work with an organization's own or authorized customer content. API and data formats may change, and support is best effort. See [Public Beta Compatibility](docs/PUBLIC_BETA_COMPATIBILITY.md) for data handling expectations and supported scope. The latest published release is [v0.1.0-beta.9](https://github.com/jremick/forgetbase/releases/tag/v0.1.0-beta.9); its verification evidence uses synthetic fixtures. See [Releases](https://github.com/jremick/forgetbase/releases) for published builds and evidence.
+ForgetBase is experimental software for self-hosted trials, including internal work with an organization's own or authorized customer content. API and data formats may change, and support is best effort. See [Public Beta Compatibility](docs/PUBLIC_BETA_COMPATIBILITY.md) for data handling expectations and supported scope. The latest published release is [v0.1.0-beta.10](https://github.com/jremick/forgetbase/releases/tag/v0.1.0-beta.10); its verification evidence uses synthetic fixtures. See [Releases](https://github.com/jremick/forgetbase/releases) for published builds and evidence.
 
-For the governed authoring and publication path, see [Instructions and human documents](docs/governed-workflow.md). The beta.9 release includes build, contract, browser, deployment and recovery evidence. The [publication checklist](docs/PUBLICATION.md) records the separate public-release gates.
+For the governed authoring and publication path, see [Instructions and human documents](docs/governed-workflow.md). The beta.10 release includes build, contract, browser, deployment and recovery evidence. The [publication checklist](docs/PUBLICATION.md) records the separate public-release gates.
 
 Expected public beta limits:
 
@@ -23,10 +23,10 @@ Expected public beta limits:
 
 Prerequisites: Node.js 26.10.0, Docker, and Docker Compose v2. See [Development](docs/DEVELOPMENT.md).
 
-Check out a published release from [Releases](https://github.com/jremick/forgetbase/releases), then run the commands below from its root directory. For beta.9:
+Check out a published release from [Releases](https://github.com/jremick/forgetbase/releases), then run the commands below from its root directory. For beta.10:
 
 ```bash
-git clone --branch v0.1.0-beta.9 https://github.com/jremick/forgetbase.git
+git clone --branch v0.1.0-beta.10 https://github.com/jremick/forgetbase.git
 cd forgetbase
 ```
 
