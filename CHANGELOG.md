@@ -4,6 +4,13 @@ Published tags are immutable. Beta releases support self-hosted trials, includin
 
 ## Unreleased
 
+- Add a reader overview, responsive authored navigation, separate knowledge/instruction views, and keyboard-accessible article contents, tables and code.
+- Preserve search queries, passage results and the return path while reading sources; keep Ask answers, warnings and source evidence together.
+- Compare citation versions with their own published source and show explicit uncertainty when version or publication evidence is missing.
+- Repair reader navigation races and stale responses, and extend authenticated desktop/mobile browser verification.
+- Patch Fastify to 5.12.5 and the MCP SDK's Hono dependency to 4.13.7 for the newly reported advisories. Retain the URI and IP-address parsing security pins.
+- Move CI and release checks to portable local runners with exact-commit status and CodeQL verification.
+
 - Remove the blanket restriction on private/customer content in self-hosted beta trials and align current trial guidance. Public examples and release proof remain synthetic. This is a documentation clarification; runtime permissions, feature-specific pilot limits, and historical release evidence are unchanged.
 
 ## 0.1.0-beta.9 - 2026-09-28
