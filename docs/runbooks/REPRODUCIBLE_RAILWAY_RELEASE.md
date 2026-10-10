@@ -158,10 +158,11 @@ Operational references: [Railway Dockerfiles](https://docs.railway.com/builds/do
   drains scheduled jobs and the database pool, logs the exit code, and exits 0
   (1 if draining fails or exceeds `FORGETBASE_WORKER_SHUTDOWN_TIMEOUT_MS`,
   default 25000).
-- Optional on-demand ClamAV: set `FORGETBASE_ATTACHMENT_SCANNER_ON_DEMAND=true` on
-  the api to stop `/ready` probing clamd, so the clamav service can use Railway
+- On-demand ClamAV is the default whenever `FORGETBASE_ATTACHMENT_CLAMD_HOST` is
+  set: `/ready` does not probe clamd, so the clamav service can use Railway
   serverless sleep. An upload that finds clamd asleep waits up to
   `FORGETBASE_ATTACHMENT_SCAN_WAKE_TIMEOUT_MS` (default 120000) for it to wake.
   Scanning stays required: if clamd never answers, the upload is rejected
-  (fail closed), exactly as before. The first upload after a sleep is slow
-  while signatures load.
+  (fail closed). The first upload after a sleep is slow while signatures load.
+  Set `FORGETBASE_ATTACHMENT_SCANNER_ON_DEMAND=false` to restore the previous
+  behaviour, where `/ready` fails while clamd is unreachable.

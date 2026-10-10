@@ -185,6 +185,33 @@ describe("API health route", () => {
     });
   });
 
+  it("does not probe an on-demand clamd from readiness by default", async () => {
+    const previous = { host: process.env.FORGETBASE_ATTACHMENT_CLAMD_HOST, port: process.env.FORGETBASE_ATTACHMENT_CLAMD_PORT, mode: process.env.FORGETBASE_ATTACHMENT_SCANNER_ON_DEMAND };
+    process.env.FORGETBASE_ATTACHMENT_CLAMD_HOST = "127.0.0.1";
+    process.env.FORGETBASE_ATTACHMENT_CLAMD_PORT = "1";
+    delete process.env.FORGETBASE_ATTACHMENT_SCANNER_ON_DEMAND;
+    try {
+      server = buildServer({ logger: false, attachmentScanRequired: true, readinessCheck: async () => undefined });
+      const defaultReadiness = await server.inject({ method: "GET", url: "/ready" });
+      expect(defaultReadiness.statusCode).toBe(200);
+      await server.close();
+
+      process.env.FORGETBASE_ATTACHMENT_SCANNER_ON_DEMAND = "false";
+      server = buildServer({ logger: false, attachmentScanRequired: true, readinessCheck: async () => undefined });
+      const optOutReadiness = await server.inject({ method: "GET", url: "/ready" });
+      expect(optOutReadiness.statusCode).toBe(503);
+    } finally {
+      for (const [name, value] of [
+        ["FORGETBASE_ATTACHMENT_CLAMD_HOST", previous.host],
+        ["FORGETBASE_ATTACHMENT_CLAMD_PORT", previous.port],
+        ["FORGETBASE_ATTACHMENT_SCANNER_ON_DEMAND", previous.mode]
+      ] as const) {
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      }
+    }
+  });
+
   it("allows unauthenticated readiness probes when global authentication is required", async () => {
     server = buildServer({
       logger: false,
