@@ -143,3 +143,25 @@ canonical content or the durable outbox to make health checks green.
 Operational references: [Railway Dockerfiles](https://docs.railway.com/builds/dockerfiles),
 [Railway volumes](https://docs.railway.com/volumes), and
 [NGINX security advisories](https://nginx.org/en/security_advisories.html).
+
+## Config as code, shutdown and low-cost running
+
+- `infra/railway/api.json` and `infra/railway/worker.json` declare the Dockerfile,
+  `/ready` healthcheck (api), `ON_FAILURE` restart policy and a 30-second drain
+  window. They apply only once a service's **Config-as-code path** in Railway
+  points at the file; there is deliberately no root `railway.json`, which would
+  apply to every service.
+- Migrations run only in the api, under the repository migration lock, before it
+  accepts requests. The worker image sets `FORGETBASE_AUTO_MIGRATE=false` and only
+  verifies that the schema exists, so deploy the api first after a migration.
+- The worker runs `node` directly as PID 1. On SIGTERM/SIGINT it logs the signal,
+  drains scheduled jobs and the database pool, logs the exit code, and exits 0
+  (1 if draining fails or exceeds `FORGETBASE_WORKER_SHUTDOWN_TIMEOUT_MS`,
+  default 25000).
+- Optional on-demand ClamAV: set `FORGETBASE_ATTACHMENT_SCANNER_ON_DEMAND=true` on
+  the api to stop `/ready` probing clamd, so the clamav service can use Railway
+  serverless sleep. An upload that finds clamd asleep waits up to
+  `FORGETBASE_ATTACHMENT_SCAN_WAKE_TIMEOUT_MS` (default 120000) for it to wake.
+  Scanning stays required: if clamd never answers, the upload is rejected
+  (fail closed), exactly as before. The first upload after a sleep is slow
+  while signatures load.

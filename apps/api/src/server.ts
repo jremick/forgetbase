@@ -282,6 +282,7 @@ import {
   AttachmentFixedWindowRateLimiter,
   AttachmentScannerUnavailableError,
   ClamDAttachmentMalwareScanner,
+  WakeOnDemandAttachmentMalwareScanner,
   DisabledAttachmentMalwareScanner,
   inspectAttachmentContent,
   type AttachmentMalwareScanner
@@ -628,7 +629,9 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
     false;
   const attachmentScannerHost = process.env.FORGETBASE_ATTACHMENT_CLAMD_HOST?.trim();
   const attachmentScannerConfigured = Boolean(options.attachmentMalwareScanner || attachmentScannerHost);
-  const attachmentMalwareScanner: AttachmentMalwareScanner = options.attachmentMalwareScanner ?? (attachmentScannerHost
+  const attachmentScannerOnDemand = !options.attachmentMalwareScanner && Boolean(attachmentScannerHost) &&
+    (readOptionalEnvBoolean(process.env.FORGETBASE_ATTACHMENT_SCANNER_ON_DEMAND) ?? false);
+  const clamdScanner = !options.attachmentMalwareScanner && attachmentScannerHost
     ? new ClamDAttachmentMalwareScanner(
         attachmentScannerHost,
         readPositiveIntegerOption(
@@ -644,6 +647,19 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
           "FORGETBASE_ATTACHMENT_SCAN_TIMEOUT_MS"
         )
       )
+    : undefined;
+  const attachmentMalwareScanner: AttachmentMalwareScanner = options.attachmentMalwareScanner ?? (clamdScanner
+    ? attachmentScannerOnDemand
+      ? new WakeOnDemandAttachmentMalwareScanner(
+          clamdScanner,
+          readPositiveIntegerOption(
+            undefined,
+            process.env.FORGETBASE_ATTACHMENT_SCAN_WAKE_TIMEOUT_MS,
+            120_000,
+            "FORGETBASE_ATTACHMENT_SCAN_WAKE_TIMEOUT_MS"
+          )
+        )
+      : clamdScanner
     : new DisabledAttachmentMalwareScanner());
   const attachmentTenantMaxBytes = readPositiveIntegerOption(
     options.attachmentTenantMaxBytes,
@@ -942,7 +958,9 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
           throw new Error("Database migrations are not ready");
         }
       }
-      if (attachmentScanRequired) {
+      // On-demand scanners are not probed here so the scanner can sleep;
+      // uploads still require a successful scan and fail closed.
+      if (attachmentScanRequired && !attachmentScannerOnDemand) {
         if (!attachmentScannerConfigured || !attachmentMalwareScanner.checkReady) {
           throw new AttachmentScannerUnavailableError();
         }

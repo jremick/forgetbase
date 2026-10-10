@@ -232,6 +232,45 @@ export class ClamDAttachmentMalwareScanner implements AttachmentMalwareScanner {
   }
 }
 
+/**
+ * Lets the ClamAV service sleep (e.g. Railway serverless) between uploads.
+ * A scan that finds the scanner unavailable waits for it to wake, polling
+ * PING until `wakeTimeoutMs`, then scans once more. Scanning stays mandatory:
+ * if the scanner never answers, the scan still fails closed with
+ * AttachmentScannerUnavailableError. It intentionally exposes no checkReady,
+ * so readiness probes do not keep the scanner awake.
+ */
+export class WakeOnDemandAttachmentMalwareScanner implements AttachmentMalwareScanner {
+  constructor(
+    private readonly inner: AttachmentMalwareScanner & { checkReady(): Promise<void> },
+    private readonly wakeTimeoutMs: number,
+    private readonly pollIntervalMs = 2_000,
+    private readonly sleep: (ms: number) => Promise<void> = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+  ) {
+    if (!Number.isSafeInteger(wakeTimeoutMs) || wakeTimeoutMs < 1) throw new Error("Scanner wake timeout must be positive.");
+  }
+
+  async scan(content: Uint8Array): Promise<AttachmentMalwareScanResult> {
+    try {
+      return await this.inner.scan(content);
+    } catch (error) {
+      if (!(error instanceof AttachmentScannerUnavailableError)) throw error;
+    }
+
+    const deadline = Date.now() + this.wakeTimeoutMs;
+    while (Date.now() < deadline) {
+      try {
+        await this.inner.checkReady();
+        return await this.inner.scan(content);
+      } catch (error) {
+        if (!(error instanceof AttachmentScannerUnavailableError)) throw error;
+      }
+      await this.sleep(this.pollIntervalMs);
+    }
+    throw new AttachmentScannerUnavailableError();
+  }
+}
+
 function filenameExtension(filename: string): string {
   const index = filename.lastIndexOf(".");
   return index > 0 && index < filename.length - 1

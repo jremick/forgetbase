@@ -34,4 +34,9 @@ ARG FORGETBASE_SOURCE_REVISION
 LABEL org.opencontainers.image.revision=$FORGETBASE_SOURCE_REVISION
 USER node
 
-CMD ["sh", "-c", "pnpm db:migrate && pnpm --filter @forgetbase/worker start"]
+# Migrations run only in the api (see apps/api/src/server.ts, under the
+# repository migration lock). The worker verifies the schema exists instead.
+# Run node directly (no sh/pnpm wrapper as PID 1) so SIGTERM reaches the worker
+# and its exit code is the container's exit code.
+ENV FORGETBASE_AUTO_MIGRATE=false
+CMD ["node", "apps/worker/dist/index.js"]

@@ -6,6 +6,7 @@ import {
   AttachmentFixedWindowRateLimiter,
   AttachmentScannerUnavailableError,
   ClamDAttachmentMalwareScanner,
+  WakeOnDemandAttachmentMalwareScanner,
   inspectAttachmentContent
 } from "./attachment-security.js";
 
@@ -98,5 +99,50 @@ describe("ClamDAttachmentMalwareScanner", () => {
   it("fails closed on connection and protocol failures", async () => {
     const scanner = new ClamDAttachmentMalwareScanner("127.0.0.1", 1, 50);
     await expect(scanner.scan(Buffer.from("content"))).rejects.toBeInstanceOf(AttachmentScannerUnavailableError);
+  });
+});
+
+describe("WakeOnDemandAttachmentMalwareScanner", () => {
+  const content = new Uint8Array([1, 2, 3]);
+
+  it("waits for a sleeping scanner to wake, then scans", async () => {
+    let awake = false;
+    let pings = 0;
+    const inner = {
+      async scan() {
+        if (!awake) throw new AttachmentScannerUnavailableError();
+        return { status: "clean" as const, scanner: "clamd" };
+      },
+      async checkReady() {
+        pings += 1;
+        if (pings >= 3) awake = true;
+        if (!awake) throw new AttachmentScannerUnavailableError();
+      }
+    };
+    const scanner = new WakeOnDemandAttachmentMalwareScanner(inner, 10_000, 1, async () => {});
+
+    await expect(scanner.scan(content)).resolves.toEqual({ status: "clean", scanner: "clamd" });
+    expect(pings).toBe(3);
+    expect("checkReady" in scanner).toBe(false);
+  });
+
+  it("still fails closed when the scanner never wakes", async () => {
+    const inner = {
+      async scan(): Promise<never> { throw new AttachmentScannerUnavailableError(); },
+      async checkReady(): Promise<never> { throw new AttachmentScannerUnavailableError(); }
+    };
+    const scanner = new WakeOnDemandAttachmentMalwareScanner(inner, 20, 5);
+
+    await expect(scanner.scan(content)).rejects.toBeInstanceOf(AttachmentScannerUnavailableError);
+  });
+
+  it("reports infected content without retrying", async () => {
+    const inner = {
+      async scan() { return { status: "infected" as const, scanner: "clamd" }; },
+      async checkReady() { throw new Error("should not be called"); }
+    };
+    const scanner = new WakeOnDemandAttachmentMalwareScanner(inner, 1_000);
+
+    await expect(scanner.scan(content)).resolves.toEqual({ status: "infected", scanner: "clamd" });
   });
 });

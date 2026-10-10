@@ -31,6 +31,7 @@ import {
 import { redactText } from "@forgetbase/validation";
 import { logAssetChangeMaintenance, runAssetChangeMaintenance } from "./asset-changes.js";
 import {
+  createGracefulShutdown,
   createWorkerRuntime,
   startScheduledJobs,
   withWorkerRuntime,
@@ -902,27 +903,17 @@ export async function startWorker(): Promise<void> {
   const heartbeat = setInterval(() => {
     // Placeholder until queued ingestion, export, and richer telemetry jobs are implemented.
   }, 60_000);
-  let shuttingDown = false;
-
-  const shutdown = () => {
-    if (shuttingDown) {
-      return;
+  const shutdown = createGracefulShutdown({
+    timeoutMs: readPositiveIntegerEnv("FORGETBASE_WORKER_SHUTDOWN_TIMEOUT_MS", 25_000),
+    async drain() {
+      clearInterval(heartbeat);
+      await scheduler.stop();
+      await runtime.close();
     }
+  });
 
-    shuttingDown = true;
-    clearInterval(heartbeat);
-    console.log("ForgetBase worker shutting down.");
-    process.exitCode = 0;
-    void scheduler.stop()
-      .then(() => runtime.close())
-      .catch((error: unknown) => {
-        console.error("ForgetBase worker shutdown failed.", error);
-        process.exitCode = 1;
-      });
-  };
-
-  process.once("SIGINT", shutdown);
-  process.once("SIGTERM", shutdown);
+  process.once("SIGINT", (signal) => void shutdown(signal));
+  process.once("SIGTERM", (signal) => void shutdown(signal));
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
