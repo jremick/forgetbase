@@ -185,7 +185,7 @@ describe("API health route", () => {
     });
   });
 
-  it("does not probe an on-demand clamd from readiness by default", async () => {
+  it("probes clamd by default and skips it only for explicit on-demand mode", async () => {
     const previous = { host: process.env.FORGETBASE_ATTACHMENT_CLAMD_HOST, port: process.env.FORGETBASE_ATTACHMENT_CLAMD_PORT, mode: process.env.FORGETBASE_ATTACHMENT_SCANNER_ON_DEMAND };
     process.env.FORGETBASE_ATTACHMENT_CLAMD_HOST = "127.0.0.1";
     process.env.FORGETBASE_ATTACHMENT_CLAMD_PORT = "1";
@@ -193,13 +193,13 @@ describe("API health route", () => {
     try {
       server = buildServer({ logger: false, attachmentScanRequired: true, readinessCheck: async () => undefined });
       const defaultReadiness = await server.inject({ method: "GET", url: "/ready" });
-      expect(defaultReadiness.statusCode).toBe(200);
+      expect(defaultReadiness.statusCode).toBe(503);
       await server.close();
 
-      process.env.FORGETBASE_ATTACHMENT_SCANNER_ON_DEMAND = "false";
+      process.env.FORGETBASE_ATTACHMENT_SCANNER_ON_DEMAND = "true";
       server = buildServer({ logger: false, attachmentScanRequired: true, readinessCheck: async () => undefined });
-      const optOutReadiness = await server.inject({ method: "GET", url: "/ready" });
-      expect(optOutReadiness.statusCode).toBe(503);
+      const onDemandReadiness = await server.inject({ method: "GET", url: "/ready" });
+      expect(onDemandReadiness.statusCode).toBe(200);
     } finally {
       for (const [name, value] of [
         ["FORGETBASE_ATTACHMENT_CLAMD_HOST", previous.host],

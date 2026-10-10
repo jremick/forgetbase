@@ -630,7 +630,7 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
   const attachmentScannerHost = process.env.FORGETBASE_ATTACHMENT_CLAMD_HOST?.trim();
   const attachmentScannerConfigured = Boolean(options.attachmentMalwareScanner || attachmentScannerHost);
   const attachmentScannerOnDemand = !options.attachmentMalwareScanner && Boolean(attachmentScannerHost) &&
-    (readOptionalEnvBoolean(process.env.FORGETBASE_ATTACHMENT_SCANNER_ON_DEMAND) ?? true);
+    (readOptionalEnvBoolean(process.env.FORGETBASE_ATTACHMENT_SCANNER_ON_DEMAND) ?? false);
   const clamdScanner = !options.attachmentMalwareScanner && attachmentScannerHost
     ? new ClamDAttachmentMalwareScanner(
         attachmentScannerHost,
