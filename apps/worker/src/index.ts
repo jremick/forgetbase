@@ -29,7 +29,13 @@ import {
   type ManagedQueryCacheTenantPurgeResult
 } from "@forgetbase/db";
 import { redactText } from "@forgetbase/validation";
-import { logAssetChangeMaintenance, runAssetChangeMaintenance } from "./asset-changes.js";
+import { logAssetChangeMaintenance, logScheduledAssetChangeMaintenance, runAssetChangeMaintenance } from "./asset-changes.js";
+
+/**
+ * The api reconciles each asset change inline on write; the worker only sweeps
+ * leftovers (retries, lease loss, inline failures). 60s keeps that sweep cheap.
+ */
+export const DEFAULT_ASSET_CHANGES_INTERVAL_MS = 60_000;
 import {
   createGracefulShutdown,
   createWorkerRuntime,
@@ -780,7 +786,7 @@ export function buildMaintenanceJobDefinitions(runtime: WorkerRuntime): Schedule
   const definitions: ScheduledJobDefinition[] = [];
 
   if (readBooleanEnv("FORGETBASE_ASSET_CHANGES_ENABLED", true)) {
-    const intervalMs = readPositiveIntegerEnv("FORGETBASE_ASSET_CHANGES_INTERVAL_MS", 5_000);
+    const intervalMs = readPositiveIntegerEnv("FORGETBASE_ASSET_CHANGES_INTERVAL_MS", DEFAULT_ASSET_CHANGES_INTERVAL_MS);
     definitions.push({
       name: "asset-change-reconciliation",
       intervalMs,
@@ -789,7 +795,7 @@ export function buildMaintenanceJobDefinitions(runtime: WorkerRuntime): Schedule
       overlapMessage: "Asset change reconciliation already running; skipping overlapping tick.",
       failureMessage: "Asset change reconciliation failed.",
       async run() {
-        logAssetChangeMaintenance(await runAssetChangeMaintenance({
+        logScheduledAssetChangeMaintenance(await runAssetChangeMaintenance({
           limit: readPositiveIntegerEnv("FORGETBASE_ASSET_CHANGES_BATCH_SIZE", 25)
         }, runtime));
       }
