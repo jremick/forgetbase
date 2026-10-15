@@ -3356,7 +3356,9 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("PostgresRegistryRepository", ()
     const retrievalRepository = new PostgresRetrievalRepository(pool);
     const tenantId = `tenant_vector_${Date.now()}`;
     const stableId = `guardrail.vector-${Date.now()}`;
-    const uniqueToken = `vectortoken${Date.now()}`;
+    // Timestamp-derived tokens can cancel another word in the signed hash vector.
+    // The tenant already isolates this fixture; keep the expected similarity deterministic.
+    const uniqueToken = "vectorretrievalanchor";
     const asset = await registryRepository.createAsset({
       ...sampleAsset,
       tenantId,
