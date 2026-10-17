@@ -5,8 +5,8 @@ settings:
   excludeLinksFromLockfile: false
 
 overrides:
-  '@modelcontextprotocol/sdk@1.32.1>@hono/node-server': 1.19.15
-  '@modelcontextprotocol/sdk@1.32.1>hono': 4.13.7
+  '@modelcontextprotocol/sdk>@hono/node-server': ^1.19.15
+  '@modelcontextprotocol/sdk>hono': ^4.13.7
   express@5.2.1>body-parser: 2.3.0
   express@5.2.1>proxy-addr: ^2.0.8
   source-map-js@<1.2.2: ^1.2.2
