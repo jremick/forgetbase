@@ -37,6 +37,8 @@ server {
 
   location /api/ {
     rewrite ^/api/(.*)$ /$1 break;
+    # Covers the 120s total scan/wake budget plus upload persistence overhead.
+    proxy_read_timeout 150s;
     proxy_pass $api_upstream;
   }
 

@@ -1,5 +1,6 @@
 import { expect, it, vi } from "vitest";
-import { buildMaintenanceJobDefinitions } from "./index.js";
+import { buildMaintenanceJobDefinitions, DEFAULT_ASSET_CHANGES_INTERVAL_MS } from "./index.js";
+import { logScheduledAssetChangeMaintenance } from "./asset-changes.js";
 import type { WorkerRuntime } from "./runtime.js";
 
 it("maps maintenance jobs to their configured cadence and startup behavior", () => {
@@ -51,4 +52,41 @@ it("maps maintenance jobs to their configured cadence and startup behavior", () 
       }
     }
   }
+});
+
+it("sweeps asset changes every 60 seconds by default", () => {
+  const previous = {
+    enabled: process.env.FORGETBASE_ASSET_CHANGES_ENABLED,
+    interval: process.env.FORGETBASE_ASSET_CHANGES_INTERVAL_MS
+  };
+  const runtime: WorkerRuntime = {
+    getPool: vi.fn(() => Promise.reject(new Error("not used"))),
+    close: vi.fn(() => Promise.resolve())
+  };
+
+  try {
+    process.env.FORGETBASE_ASSET_CHANGES_ENABLED = "true";
+    delete process.env.FORGETBASE_ASSET_CHANGES_INTERVAL_MS;
+    const assetChanges = buildMaintenanceJobDefinitions(runtime).find(({ name }) => name === "asset-change-reconciliation");
+    expect(assetChanges?.intervalMs).toBe(DEFAULT_ASSET_CHANGES_INTERVAL_MS);
+    expect(DEFAULT_ASSET_CHANGES_INTERVAL_MS).toBeGreaterThanOrEqual(60_000);
+  } finally {
+    if (previous.enabled === undefined) delete process.env.FORGETBASE_ASSET_CHANGES_ENABLED;
+    else process.env.FORGETBASE_ASSET_CHANGES_ENABLED = previous.enabled;
+    if (previous.interval === undefined) delete process.env.FORGETBASE_ASSET_CHANGES_INTERVAL_MS;
+    else process.env.FORGETBASE_ASSET_CHANGES_INTERVAL_MS = previous.interval;
+  }
+});
+
+it("logs scheduled asset-change ticks only when work happened", () => {
+  const idle = {
+    claimed: 0, completed: 0, retryScheduled: 0, leaseLost: 0, errors: {},
+    health: { pending: 0, processing: 0, failed: 0, oldestPendingAt: null, oldestPendingAgeMs: null }
+  };
+  const log = vi.fn();
+
+  expect(logScheduledAssetChangeMaintenance(idle, log)).toBe(false);
+  expect(logScheduledAssetChangeMaintenance({ ...idle, claimed: 1, completed: 1 }, log)).toBe(true);
+  expect(logScheduledAssetChangeMaintenance({ ...idle, health: { ...idle.health, failed: 2 } }, log)).toBe(true);
+  expect(log).toHaveBeenCalledTimes(2);
 });

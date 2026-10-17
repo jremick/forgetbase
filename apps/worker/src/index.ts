@@ -29,8 +29,15 @@ import {
   type ManagedQueryCacheTenantPurgeResult
 } from "@forgetbase/db";
 import { redactText } from "@forgetbase/validation";
-import { logAssetChangeMaintenance, runAssetChangeMaintenance } from "./asset-changes.js";
+import { logAssetChangeMaintenance, logScheduledAssetChangeMaintenance, runAssetChangeMaintenance } from "./asset-changes.js";
+
+/**
+ * The api reconciles each asset change inline on write; the worker only sweeps
+ * leftovers (retries, lease loss, inline failures). 60s keeps that sweep cheap.
+ */
+export const DEFAULT_ASSET_CHANGES_INTERVAL_MS = 60_000;
 import {
+  createGracefulShutdown,
   createWorkerRuntime,
   startScheduledJobs,
   withWorkerRuntime,
@@ -779,7 +786,7 @@ export function buildMaintenanceJobDefinitions(runtime: WorkerRuntime): Schedule
   const definitions: ScheduledJobDefinition[] = [];
 
   if (readBooleanEnv("FORGETBASE_ASSET_CHANGES_ENABLED", true)) {
-    const intervalMs = readPositiveIntegerEnv("FORGETBASE_ASSET_CHANGES_INTERVAL_MS", 5_000);
+    const intervalMs = readPositiveIntegerEnv("FORGETBASE_ASSET_CHANGES_INTERVAL_MS", DEFAULT_ASSET_CHANGES_INTERVAL_MS);
     definitions.push({
       name: "asset-change-reconciliation",
       intervalMs,
@@ -788,7 +795,7 @@ export function buildMaintenanceJobDefinitions(runtime: WorkerRuntime): Schedule
       overlapMessage: "Asset change reconciliation already running; skipping overlapping tick.",
       failureMessage: "Asset change reconciliation failed.",
       async run() {
-        logAssetChangeMaintenance(await runAssetChangeMaintenance({
+        logScheduledAssetChangeMaintenance(await runAssetChangeMaintenance({
           limit: readPositiveIntegerEnv("FORGETBASE_ASSET_CHANGES_BATCH_SIZE", 25)
         }, runtime));
       }
@@ -902,27 +909,17 @@ export async function startWorker(): Promise<void> {
   const heartbeat = setInterval(() => {
     // Placeholder until queued ingestion, export, and richer telemetry jobs are implemented.
   }, 60_000);
-  let shuttingDown = false;
-
-  const shutdown = () => {
-    if (shuttingDown) {
-      return;
+  const shutdown = createGracefulShutdown({
+    timeoutMs: readPositiveIntegerEnv("FORGETBASE_WORKER_SHUTDOWN_TIMEOUT_MS", 25_000),
+    async drain() {
+      clearInterval(heartbeat);
+      await scheduler.stop();
+      await runtime.close();
     }
+  });
 
-    shuttingDown = true;
-    clearInterval(heartbeat);
-    console.log("ForgetBase worker shutting down.");
-    process.exitCode = 0;
-    void scheduler.stop()
-      .then(() => runtime.close())
-      .catch((error: unknown) => {
-        console.error("ForgetBase worker shutdown failed.", error);
-        process.exitCode = 1;
-      });
-  };
-
-  process.once("SIGINT", shutdown);
-  process.once("SIGTERM", shutdown);
+  process.once("SIGINT", (signal) => void shutdown(signal));
+  process.once("SIGTERM", (signal) => void shutdown(signal));
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

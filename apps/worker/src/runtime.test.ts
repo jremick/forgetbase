@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createWorkerRuntime, startScheduledJobs, type WorkerPool } from "./runtime.js";
+import { createGracefulShutdown, createWorkerRuntime, startScheduledJobs, type WorkerPool } from "./runtime.js";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -109,5 +109,51 @@ describe("scheduled worker jobs", () => {
     await vi.advanceTimersByTimeAsync(500);
     expect(run).toHaveBeenCalledTimes(2);
     await controller.stop();
+  });
+});
+
+describe("graceful worker shutdown", () => {
+  it("drains once, logs the signal and exits 0 after a clean SIGTERM", async () => {
+    const drain = vi.fn(async () => {});
+    const exit = vi.fn();
+    const log = vi.fn();
+    const shutdown = createGracefulShutdown({ drain, exit, log, logError: vi.fn() });
+
+    const [first, second] = await Promise.all([shutdown("SIGTERM"), shutdown("SIGTERM")]);
+
+    expect(first).toBe(0);
+    expect(second).toBe(0);
+    expect(drain).toHaveBeenCalledTimes(1);
+    expect(exit).toHaveBeenCalledTimes(1);
+    expect(exit).toHaveBeenCalledWith(0);
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("received SIGTERM"));
+    expect(log).toHaveBeenCalledWith("ForgetBase worker shutdown complete (signal=SIGTERM, exitCode=0).");
+  });
+
+  it("exits 1 when draining fails", async () => {
+    const exit = vi.fn();
+    const shutdown = createGracefulShutdown({
+      drain: async () => { throw new Error("pool end failed"); },
+      exit,
+      log: vi.fn(),
+      logError: vi.fn()
+    });
+
+    await expect(shutdown("SIGINT")).resolves.toBe(1);
+    expect(exit).toHaveBeenCalledWith(1);
+  });
+
+  it("exits 1 when draining exceeds the deadline", async () => {
+    const exit = vi.fn();
+    const shutdown = createGracefulShutdown({
+      drain: () => new Promise<void>(() => {}),
+      timeoutMs: 10,
+      exit,
+      log: vi.fn(),
+      logError: vi.fn()
+    });
+
+    await expect(shutdown("SIGTERM")).resolves.toBe(1);
+    expect(exit).toHaveBeenCalledWith(1);
   });
 });

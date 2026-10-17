@@ -1,4 +1,5 @@
 import { createConnection } from "node:net";
+import { setTimeout as sleep } from "node:timers/promises";
 import { isOpenXmlPackage } from "./openxml-inspection.js";
 
 export type AttachmentInspection = {
@@ -12,8 +13,8 @@ export type AttachmentMalwareScanResult = {
 };
 
 export interface AttachmentMalwareScanner {
-  scan(content: Uint8Array): Promise<AttachmentMalwareScanResult>;
-  checkReady?(): Promise<void>;
+  scan(content: Uint8Array, signal?: AbortSignal): Promise<AttachmentMalwareScanResult>;
+  checkReady?(signal?: AbortSignal): Promise<void>;
 }
 
 export class AttachmentContentRejectedError extends Error {
@@ -162,12 +163,12 @@ export class ClamDAttachmentMalwareScanner implements AttachmentMalwareScanner {
     if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1) throw new Error("ClamD timeout must be positive.");
   }
 
-  async checkReady(): Promise<void> {
-    const reply = await this.exchange([Buffer.from("zPING\0")]);
+  async checkReady(signal?: AbortSignal): Promise<void> {
+    const reply = await this.exchange([Buffer.from("zPING\0")], signal);
     if (reply !== "PONG") throw new AttachmentScannerUnavailableError();
   }
 
-  async scan(content: Uint8Array): Promise<AttachmentMalwareScanResult> {
+  async scan(content: Uint8Array, signal?: AbortSignal): Promise<AttachmentMalwareScanResult> {
     const chunks: Buffer[] = [Buffer.from("zINSTREAM\0")];
 
     for (let offset = 0; offset < content.byteLength; offset += 64 * 1024) {
@@ -182,7 +183,7 @@ export class ClamDAttachmentMalwareScanner implements AttachmentMalwareScanner {
     }
     chunks.push(Buffer.alloc(4));
 
-    const reply = await this.exchange(chunks);
+    const reply = await this.exchange(chunks, signal);
     if (/^stream: OK$/i.test(reply)) {
       return { status: "clean", scanner: "clamd" };
     }
@@ -192,7 +193,8 @@ export class ClamDAttachmentMalwareScanner implements AttachmentMalwareScanner {
     throw new AttachmentScannerUnavailableError();
   }
 
-  private async exchange(chunks: Buffer[]): Promise<string> {
+  private async exchange(chunks: Buffer[], signal?: AbortSignal): Promise<string> {
+    if (signal?.aborted) throw new AttachmentScannerUnavailableError();
     return await new Promise<string>((resolve, reject) => {
       const socket = createConnection({ host: this.host, port: this.port });
       const responseChunks: Buffer[] = [];
@@ -202,10 +204,14 @@ export class ClamDAttachmentMalwareScanner implements AttachmentMalwareScanner {
       const finish = (error?: Error, response?: string) => {
         if (settled) return;
         settled = true;
+        signal?.removeEventListener("abort", abort);
         socket.destroy();
         if (error) reject(error);
         else resolve(response ?? "");
       };
+
+      const abort = () => finish(new AttachmentScannerUnavailableError());
+      signal?.addEventListener("abort", abort, { once: true });
 
       socket.setTimeout(this.timeoutMs, () => finish(new AttachmentScannerUnavailableError()));
       socket.once("error", () => finish(new AttachmentScannerUnavailableError()));
@@ -229,6 +235,71 @@ export class ClamDAttachmentMalwareScanner implements AttachmentMalwareScanner {
         if (!settled) finish(new AttachmentScannerUnavailableError());
       });
     });
+  }
+}
+
+/**
+ * Lets the ClamAV service sleep (e.g. Railway serverless) between uploads.
+ * A scan that finds the scanner unavailable waits for it to wake, polling
+ * PING and rescanning within one `wakeTimeoutMs` budget, including the initial
+ * scan and retry delays. Expiry cancels open sockets and timers. Scanning stays mandatory:
+ * if the scanner never answers, the scan still fails closed with
+ * AttachmentScannerUnavailableError. It intentionally exposes no checkReady,
+ * so readiness probes do not keep the scanner awake.
+ */
+export class WakeOnDemandAttachmentMalwareScanner implements AttachmentMalwareScanner {
+  constructor(
+    private readonly inner: AttachmentMalwareScanner & { checkReady(signal?: AbortSignal): Promise<void> },
+    private readonly wakeTimeoutMs: number,
+    private readonly pollIntervalMs = 2_000
+  ) {
+    // The Railway proxy allows 150 seconds, leaving 30 seconds for other
+    // upload work after the maximum scan budget.
+    if (!Number.isSafeInteger(wakeTimeoutMs) || wakeTimeoutMs < 1 || wakeTimeoutMs > 120_000) {
+      throw new Error("Scanner wake timeout must be between 1 and 120000 milliseconds.");
+    }
+    if (!Number.isSafeInteger(pollIntervalMs) || pollIntervalMs < 1) throw new Error("Scanner poll interval must be positive.");
+  }
+
+  async scan(content: Uint8Array): Promise<AttachmentMalwareScanResult> {
+    const controller = new AbortController();
+    const deadline = performance.now() + this.wakeTimeoutMs;
+    let timer: ReturnType<typeof setTimeout>;
+    const expired = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => {
+        controller.abort();
+        reject(new AttachmentScannerUnavailableError());
+      }, this.wakeTimeoutMs);
+    });
+    const requireTimeRemaining = () => {
+      if (controller.signal.aborted || performance.now() >= deadline) throw new AttachmentScannerUnavailableError();
+    };
+    const scan = async () => {
+      let initial = true;
+      while (true) {
+        requireTimeRemaining();
+        try {
+          if (!initial) await this.inner.checkReady(controller.signal);
+          requireTimeRemaining();
+          const result = await this.inner.scan(content, controller.signal);
+          requireTimeRemaining();
+          return result;
+        } catch (error) {
+          requireTimeRemaining();
+          if (!(error instanceof AttachmentScannerUnavailableError)) throw error;
+        }
+        // The first failed scan itself wakes the service; probe immediately,
+        // then space subsequent retries without extending the total budget.
+        if (!initial) await sleep(this.pollIntervalMs, undefined, { signal: controller.signal });
+        initial = false;
+      }
+    };
+    try {
+      return await Promise.race([scan(), expired]);
+    } finally {
+      clearTimeout(timer!);
+      controller.abort();
+    }
   }
 }
 

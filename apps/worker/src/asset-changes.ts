@@ -106,3 +106,23 @@ export async function runAssetChangeMaintenance(
 export function logAssetChangeMaintenance(result: AssetChangeReconciliationResult): void {
   console.log(JSON.stringify({ job: "asset-change-reconciliation", ...result }));
 }
+
+/** True when a scheduled tick did or found something worth logging. */
+export function assetChangeMaintenanceHadActivity(result: AssetChangeReconciliationResult): boolean {
+  return result.claimed > 0 ||
+    result.completed > 0 ||
+    result.retryScheduled > 0 ||
+    result.leaseLost > 0 ||
+    Object.values(result.errors).some((count) => (count ?? 0) > 0) ||
+    result.health.failed > 0;
+}
+
+/** Scheduled ticks stay quiet when idle so polling does not flood platform logs. */
+export function logScheduledAssetChangeMaintenance(
+  result: AssetChangeReconciliationResult,
+  log: (result: AssetChangeReconciliationResult) => void = logAssetChangeMaintenance
+): boolean {
+  if (!assetChangeMaintenanceHadActivity(result)) return false;
+  log(result);
+  return true;
+}
