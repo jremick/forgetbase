@@ -4,11 +4,13 @@ packages:
 
 # Security pins for transitive @modelcontextprotocol/sdk runtime dependencies.
 overrides:
-  "@modelcontextprotocol/sdk@1.29.0>@hono/node-server": "1.19.15"
-  "@modelcontextprotocol/sdk@1.29.0>hono": "4.13.7"
+  "@modelcontextprotocol/sdk@1.32.1>@hono/node-server": "1.19.15"
+  "@modelcontextprotocol/sdk@1.32.1>hono": "4.13.7"
   "express@5.2.1>body-parser": "2.3.0"
   # GHSA-jqcg-44mw-7w3h: express@5.2.1 resolves proxy-addr 2.0.7 unless pinned.
-  "express@5.2.1>proxy-addr": ">=2.0.8"
+  "express@5.2.1>proxy-addr": "^2.0.8"
+  # GHSA-68fv-2mgg-jv7q: postcss still resolves source-map-js 1.2.1.
+  "source-map-js@<1.2.2": "^1.2.2"
   # Security pins for Fastify and MCP transitive URI and IP address parsing.
   "ajv@8.20.0>fast-uri": "3.1.8"
   "@fastify/ajv-compiler@4.0.6>fast-uri": "4.1.5"
