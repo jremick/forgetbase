@@ -153,3 +153,56 @@ export async function withWorkerRuntime<T>(
     }
   }
 }
+
+export interface GracefulShutdownOptions {
+  /** Work to drain before exit (stop schedulers, close pools). */
+  drain(): Promise<void>;
+  /** Hard deadline before forcing exit. Railway sends SIGKILL after its drain window. */
+  timeoutMs?: number;
+  log?: (message: string) => void;
+  logError?: (message: string, error?: unknown) => void;
+  exit?: (code: number) => void;
+}
+
+/**
+ * Returns a signal handler that drains once, logs the received signal and the
+ * exit code, and then exits explicitly: 0 after a clean drain, 1 when the drain
+ * fails or exceeds its deadline. Exiting explicitly prevents lingering handles
+ * from keeping the process alive until the platform SIGKILLs it (exit 137),
+ * which Railway reports as a crashed deployment.
+ */
+export function createGracefulShutdown(options: GracefulShutdownOptions): (signal: NodeJS.Signals) => Promise<number> {
+  const log = options.log ?? ((message: string) => console.log(message));
+  const logError = options.logError ?? ((message: string, error?: unknown) => console.error(message, error));
+  const exit = options.exit ?? ((code: number) => process.exit(code));
+  const timeoutMs = options.timeoutMs ?? 25_000;
+  let pending: Promise<number> | undefined;
+
+  return (signal) => {
+    pending ??= (async () => {
+      log(`ForgetBase worker received ${signal}; shutting down.`);
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const deadline = new Promise<"timeout">((resolve) => {
+        timer = setTimeout(() => resolve("timeout"), timeoutMs);
+        timer.unref?.();
+      });
+      let code = 0;
+      try {
+        const outcome = await Promise.race([options.drain().then(() => "drained" as const), deadline]);
+        if (outcome === "timeout") {
+          logError(`ForgetBase worker shutdown exceeded ${timeoutMs}ms.`);
+          code = 1;
+        }
+      } catch (error) {
+        logError("ForgetBase worker shutdown failed.", error);
+        code = 1;
+      } finally {
+        if (timer) clearTimeout(timer);
+      }
+      log(`ForgetBase worker shutdown complete (signal=${signal}, exitCode=${code}).`);
+      exit(code);
+      return code;
+    })();
+    return pending;
+  };
+}
