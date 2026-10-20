@@ -6,7 +6,7 @@ exec "${COMMAND[@]}" "${COMMON[@]}" \
   --dns 1.1.1.1 --dns 1.0.0.1 \
   --restart unless-stopped \
   --user 1000:1000 \
-  --memory 256m \
+  --memory 3g --memory-swap 3g \
   --network name=forgetbase-fc,ip=172.30.52.2 \
   --env-file /mnt/cache/appdata/forgetbase/secrets/freshclam.env \
   --mount type=bind,src=/mnt/cache/appdata/forgetbase/signatures,dst=/var/lib/clamav \

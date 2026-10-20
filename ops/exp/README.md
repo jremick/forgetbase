@@ -40,9 +40,17 @@ R2 and age recipients remain blank. Backup/restore scripts are unscheduled.
 See `BACKUPS.md` for the separate later verification requirements.
 GHCR/CI publishing is deferred until the account has the required workflow scope.
 
-Run 9 is stopped: freshclam's database load test exhausted its 256 MiB memory
-limit. Freshclam is stopped; clamd still awaits signatures. The installed
-seven-bridge firewall remains active. Both database backup roles exist, but
-adoption of the revised backup uploader and host monitor wrapper is pending.
+Freshclam uses a 3 GiB memory limit with `--memory-swap 3g` and keeps
+`TestDatabases yes`. Run 9's 256 MiB limit exhausted memory during database
+validation. A7 permits one 4 GiB retry if 3 GiB still OOMs. Keep the configured
+Phase 0 memory sum at or below 14 GiB and host available memory at or above 6 GiB.
+The installed seven-bridge firewall remains active. Both database backup roles
+exist. The backup contract is pending design (capacity), not a STOP 0 blocker.
+The monitor is not configured; default push-from-host. Uploader candidates and
+the host monitor wrapper remain local and are not adopted during run 10.
 Keep backups, application containers, migrations and real tunnels stopped.
-The complete watchdog and containment rerun has not passed this run.
+Run 10 installed and validated main, daily and bytecode signatures; freshclam
+is healthy at 3 GiB. Clamd then failed to open `/dev/stdout` for its configured
+file logger (`Too many levels of symbolic links`). The retained hard-stop rule
+stopped the test sequence. Clamd logging was not changed. Complete STOP 0 after
+that startup failure is resolved; this run does not establish scanner readiness.
