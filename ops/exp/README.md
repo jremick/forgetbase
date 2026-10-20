@@ -47,10 +47,11 @@ Phase 0 memory sum at or below 14 GiB and host available memory at or above 6 Gi
 The installed seven-bridge firewall remains active. Both database backup roles
 exist. The backup contract is pending design (capacity), not a STOP 0 blocker.
 The monitor is not configured; default push-from-host. Uploader candidates and
-the host monitor wrapper remain local and are not adopted during run 10.
+the host monitor wrapper remain local and are not adopted during Phase 0.
 Keep backups, application containers, migrations and real tunnels stopped.
 Run 10 installed and validated main, daily and bytecode signatures; freshclam
-is healthy at 3 GiB. Clamd then failed to open `/dev/stdout` for its configured
-file logger (`Too many levels of symbolic links`). The retained hard-stop rule
-stopped the test sequence. Clamd logging was not changed. Complete STOP 0 after
-that startup failure is resolved; this run does not establish scanner readiness.
+is healthy at 3 GiB. Run 11 removed clamd's `LogFile /dev/stdout` setting under A8:
+the file logger rejects that symlink. `Foreground yes` sends logs to the container
+output, where Docker's existing log caps apply. All scan limits and hardening stay
+unchanged. The same pinned image is healthy and passes PING, EICAR INSTREAM and
+clean INSTREAM checks. Freshclam remains unchanged on its four-checks-per-day schedule.
