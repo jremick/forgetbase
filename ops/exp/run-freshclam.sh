@@ -3,6 +3,7 @@ set -euo pipefail
 source "$(dirname -- "$0")/run-common.sh"
 exec "${COMMAND[@]}" "${COMMON[@]}" \
   --name forgetbase-freshclam \
+  --dns 1.1.1.1 --dns 1.0.0.1 \
   --restart unless-stopped \
   --user 1000:1000 \
   --memory 256m \
