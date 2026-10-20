@@ -1,0 +1,67 @@
+name: EXP images
+
+on:
+  push:
+    branches: [exp-migration]
+    paths:
+      - ops/exp/Dockerfile.*
+      - ops/exp/nginx*
+      - ops/exp/start-proxy.sh
+      - ops/exp/build/**
+      - .github/workflows/exp-images.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: exp-images-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  images:
+    if: github.repository == 'jremick/forgetbase' && github.ref == 'refs/heads/exp-migration'
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        component: [api, worker, proxy, backup]
+    env:
+      FORGETBASE_SOURCE_REVISION: 845eb49483dd45f0639414b971cb30cdfb88a074
+      FORGETBASE_RELEASE_VERSION: 0.1.0
+    steps:
+      - name: Checkout exact build revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Build and check hardened image
+        env:
+          COMPONENT: ${{ matrix.component }}
+        run: bash ops/exp/build/build-image.sh "$COMPONENT"
+
+      - name: Authenticate workflow token to GHCR
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+
+      - name: Push and record image identity
+        env:
+          COMPONENT: ${{ matrix.component }}
+        run: bash ops/exp/build/publish-image.sh "$COMPONENT"
+
+      - name: Upload image tar and identity
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: forgetbase-exp-${{ matrix.component }}-${{ github.sha }}
+          path: image-artifact/
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+      - name: Remove runner registry credentials
+        if: always()
+        run: docker logout ghcr.io
