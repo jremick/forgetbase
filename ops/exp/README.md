@@ -29,8 +29,10 @@ Install `cf-ips.sh` and `watchdog.sh` as `/boot/config/cf-ips.sh` and
 `/boot/config/railway-exit-watchdog.sh`. Append `go-hook.sh` after the existing
 management startup line. The hook validates the live Cloudflare IPv4 list at
 boot and retains the last valid copy if fetching or validation fails. Both
-backups have HTTPS access only to those ranges. A scoped OUTPUT drop prevents
-host-originated new connections to the ForgetBase backup address.
+backups have HTTPS access only to those ranges. Scoped OUTPUT drops prevent
+host-originated new connections to both backup addresses: 172.30.40.5 on
+br-myskills and 172.30.54.2 on br-fb-bk. Both canonical policies, fail-closed
+startup checks and the shared watchdog require the MySkills backup drop.
 
 The tunnel starts only through `bash /boot/config/forgetbase-fw.sh start`, after
 firewall verification. Missing `tunnel.env` skips startup. It never auto-restarts.
@@ -40,18 +42,22 @@ R2 and age recipients remain blank. Backup/restore scripts are unscheduled.
 See `BACKUPS.md` for the separate later verification requirements.
 GHCR/CI publishing is deferred until the account has the required workflow scope.
 
-Freshclam uses a 3 GiB memory limit with `--memory-swap 3g` and keeps
-`TestDatabases yes`. Run 9's 256 MiB limit exhausted memory during database
-validation. A7 permits one 4 GiB retry if 3 GiB still OOMs. Keep the configured
-Phase 0 memory sum at or below 14 GiB and host available memory at or above 6 GiB.
+Freshclam uses a 1.5 GiB memory limit with `--memory 1536m --memory-swap 1536m`
+and keeps `TestDatabases yes` and `Checks 4`. Run 12 passed the normal update
+check and one full download with database load tests into disposable tmpfs,
+sharing freshclam's network namespace. The full test peaked at about 697 MiB
+with no OOM. If this limit OOMs, restore 3 GiB; do not lower it further.
+Keep the configured Phase 0 memory sum at or below 14 GiB and host available
+memory at or above 6 GiB.
 The installed seven-bridge firewall remains active. Both database backup roles
 exist. The backup contract is pending design (capacity), not a STOP 0 blocker.
 The monitor is not configured; default push-from-host. Uploader candidates and
 the host monitor wrapper remain local and are not adopted during Phase 0.
 Keep backups, application containers, migrations and real tunnels stopped.
-Run 10 installed and validated main, daily and bytecode signatures; freshclam
-is healthy at 3 GiB. Run 11 removed clamd's `LogFile /dev/stdout` setting under A8:
-the file logger rejects that symlink. `Foreground yes` sends logs to the container
-output, where Docker's existing log caps apply. All scan limits and hardening stay
-unchanged. The same pinned image is healthy and passes PING, EICAR INSTREAM and
-clean INSTREAM checks. Freshclam remains unchanged on its four-checks-per-day schedule.
+Main, daily and bytecode signatures are installed. Clamd keeps `Foreground yes`
+and records EICAR detections in Docker logs; run 12 verified a FOUND line plus
+healthy state. The direct INSTREAM path was used because the EXP API database
+lacks the schema needed for startup and authenticated uploads. No API startup,
+migration, clamd recreation or file/syslog fallback was needed. Clamd's scan
+limits and hardening remain unchanged. Freshclam keeps its four-checks-per-day
+schedule.
