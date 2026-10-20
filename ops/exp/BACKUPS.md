@@ -13,8 +13,9 @@ only in this app's `backup.env`. Keep the separate age private key in Jarel's
 password manager. EXP receives only this app's public recipient. Do not reuse the
 other app's recipient or token, and do not include `AUTH_SECRET` in backups.
 
-The container runs as `999:999` with PostgreSQL 17 client tools, Bash, age,
-rclone, tar, sha256sum, curl, and standard shell tools. Inject environment values
+The image defaults to `999:999`; the EXP run script uses `1000:1000` to read the
+attachment directory owned by UID 1000. It includes PostgreSQL 17 client tools,
+Bash, age, rclone, tar, sha256sum, curl, and standard shell tools. Inject environment values
 with the root:600 Docker env file; never pass credentials as command arguments.
 The backup environment contract is:
 
