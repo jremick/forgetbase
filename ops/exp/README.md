@@ -65,10 +65,18 @@ schedule.
 EXP Node runtimes require CA packages >= 20261020-r0 and use `--use-openssl-ca`
 with `SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt`. Keep the flag if adding
 `NODE_OPTIONS` to an env file or run script. Runtime-stage builds check eMudhra
-rejection and Resend TLS. Remove this workaround after the Node release with
+rejection with exactly `UNABLE_TO_GET_ISSUER_CERT_LOCALLY`, plus Resend and GitHub TLS.
+App and migrate commands also pass `--use-openssl-ca` directly so replacing
+`NODE_OPTIONS` with a memory setting does not drop the trust-store choice. Remove this workaround after the Node release with
 nodejs/node#66871 ships and the pinned base is bumped. Railway production is
 unchanged and needs separate approval.
 
 The API/migrate and worker images were rebuilt for eMudhra fix 1 from
 `5690cf2a256abbd0a617b707891cebe11f6d9203`. Their immutable IDs are in
 `images.conf`; non-Node images retain the original pins.
+
+Backup images now require both CA packages >= 20261020-r0, with a fail-closed
+version guard and runtime-user build TLS checks: eMudhra must fail with curl
+exit 60 and rclone x509 verification errors; GitHub and the public Docker Hub
+R2 hostname must pass TLS. The checks require build-time egress (L3 accepted).
+No private bucket or credentials are used.
