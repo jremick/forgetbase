@@ -16,7 +16,7 @@ Phase 0 starts Postgres, clamd and freshclam (four checks per day).
 The backup joins only forgetbase-db and forgetbase-bk (172.30.54.2).
 API, proxy, worker, migrate and backup remain stopped. Only the owner-role one-shot may run migrations.
 
-The pinned images were built from `d9b81da722b78aa2546679a1628128ea78415b42`,
+The original pinned images were built from `d9b81da722b78aa2546679a1628128ea78415b42`,
 whose application source is `845eb49483dd45f0639414b971cb30cdfb88a074`.
 Later commits containing runtime scripts do not change that image provenance.
 
@@ -68,3 +68,7 @@ with `SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt`. Keep the flag if adding
 rejection and Resend TLS. Remove this workaround after the Node release with
 nodejs/node#66871 ships and the pinned base is bumped. Railway production is
 unchanged and needs separate approval.
+
+The API/migrate and worker images were rebuilt for eMudhra fix 1 from
+`5690cf2a256abbd0a617b707891cebe11f6d9203`. Their immutable IDs are in
+`images.conf`; non-Node images retain the original pins.
