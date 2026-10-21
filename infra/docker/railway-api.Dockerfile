@@ -23,6 +23,18 @@ RUN pnpm build
 
 FROM node:26.10.0-alpine@sha256:0b36e8c136b94cd4fcf02188228e76c31ad5872eef3fec8cbd2eee500cfd9e80 AS runtime
 
+RUN apk add --no-cache ca-certificates \
+  && apk upgrade --no-cache ca-certificates ca-certificates-bundle \
+  && for package in ca-certificates ca-certificates-bundle; do \
+       installed="$(apk info -v --installed "$package" | grep -E "^${package}-[0-9]+-r[0-9]+$")" \
+       && version="${installed#${package}-}" \
+       && test "$(apk version -t "$version" 20261020-r0)" != '<' \
+       && printf '%s\n' "$installed" || exit 1; \
+     done
+# TODO(emudhra-2026-10): drop --use-openssl-ca / SSL_CERT_FILE once the Node release containing nodejs/node#66871 ships and the base image is bumped
+ENV NODE_OPTIONS="--use-openssl-ca" \
+    SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
+
 RUN apk add --upgrade --no-cache 'libcrypto3>=3.5.8-r0' 'libssl3>=3.5.8-r0'
 
 WORKDIR /app
@@ -35,4 +47,9 @@ ARG FORGETBASE_SOURCE_REVISION
 LABEL org.opencontainers.image.revision=$FORGETBASE_SOURCE_REVISION
 USER node
 
-CMD ["node", "scripts/start-railway-api.mjs"]
+# Requires build-time egress (L3); all controls run as the runtime user.
+RUN timeout 30s node --use-openssl-ca -e "require('https').get('https://dv-g3b-emudhra.we-have-a-problem.com/',()=>{console.error('EMUDHRA_UNEXPECTED_SUCCESS');process.exit(1)}).on('error',e=>{console.log('EMUDHRA_NEGATIVE '+e.code);process.exit(e.code==='UNABLE_TO_GET_ISSUER_CERT_LOCALLY'?0:1)})" \
+  && timeout 30s node --use-openssl-ca -e "require('https').get('https://api.resend.com',r=>{console.log('RESEND_TLS_OK HTTP '+r.statusCode);process.exit(0)}).on('error',e=>{console.error(e.code);process.exit(1)})" \
+  && timeout 30s node --use-openssl-ca -e "require('https').get('https://api.github.com/',r=>{console.log('GITHUB_TLS_OK HTTP '+r.statusCode);process.exit(0)}).on('error',e=>{console.error(e.code);process.exit(1)})"
+
+CMD ["node", "--use-openssl-ca", "scripts/start-railway-api.mjs"]

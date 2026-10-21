@@ -23,6 +23,15 @@ RUN pnpm --filter @forgetbase/web... build
 
 FROM nginx:1.31.0-alpine-slim@sha256:241b0d0fe06250e026e7a35a008d022c9a1d3bec19442d65cc33b84d0b5dd64d
 
+RUN apk add --no-cache ca-certificates \
+  && apk upgrade --no-cache ca-certificates ca-certificates-bundle \
+  && for package in ca-certificates ca-certificates-bundle; do \
+       installed="$(apk info -v --installed "$package" | grep -E "^${package}-[0-9]+-r[0-9]+$")" \
+       && version="${installed#${package}-}" \
+       && test "$(apk version -t "$version" 20261020-r0)" != '<' \
+       && printf '%s\n' "$installed" || exit 1; \
+     done
+
 ENV PORT=8080
 ENV FORGETBASE_API_UPSTREAM_PORT=8080
 
