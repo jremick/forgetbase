@@ -61,3 +61,10 @@ lacks the schema needed for startup and authenticated uploads. No API startup,
 migration, clamd recreation or file/syslog fallback was needed. Clamd's scan
 limits and hardening remain unchanged. Freshclam keeps its four-checks-per-day
 schedule.
+
+EXP Node runtimes require CA packages >= 20261020-r0 and use `--use-openssl-ca`
+with `SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt`. Keep the flag if adding
+`NODE_OPTIONS` to an env file or run script. Runtime-stage builds check eMudhra
+rejection and Resend TLS. Remove this workaround after the Node release with
+nodejs/node#66871 ships and the pinned base is bumped. Railway production is
+unchanged and needs separate approval.
