@@ -4,6 +4,22 @@ Published tags are immutable. Beta releases support self-hosted trials, includin
 
 ## Unreleased
 
+## 0.1.0-beta.12 - 2026-10-27
+
+- Update the pinned Node.js container and CI runtime to 26.12.1, retaining strict TLS checks and refreshed CA trust.
+- Patch Vite to 8.1.6, Vitest to 4.1.12, Hono to 4.13.14, Fastify to 5.12.7 and Zod to 4.6.7; refresh the body-parser, IP-address and URI-parsing security overrides.
+- Update the pinned setup-node Action to 7.1.0 and upload-artifact to 7.0.2.
+- Include the Railway CA-trust and strict-TLS fix merged after beta.11.
+
+No database migrations change from beta.11. Back up the database and attachment files together before upgrading. This is a source and security maintenance release. Its release assets record exact-source automated checks and their limits. Hosted deployment remains paused; no public HTTPS demo or moderated reader/admin UAT is claimed. No npm package, signed managed-update feed or managed image bundle is published.
+
+## 0.1.0-beta.11 - 2026-10-21
+
+- Update the MCP SDK to 1.31.0, source-map-js to 1.2.2 and proxy-addr to 2.0.8 for their security advisories.
+- Keep Hono security floors effective across MCP SDK versions and make the PostgreSQL vector-retrieval fixture deterministic.
+
+No database migrations changed from beta.10. The published maintenance release used an owner-approved exception for missing public-demo and moderated-UAT evidence. It did not upgrade a hosted deployment or publish managed-update artifacts.
+
 ## 0.1.0-beta.10 - 2026-10-02
 
 - Add a reader overview, responsive authored navigation, separate knowledge/instruction views, and keyboard-accessible article contents, tables and code.

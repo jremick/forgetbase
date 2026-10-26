@@ -547,7 +547,7 @@ function createFixture(options: { git?: boolean } = {}): Fixture {
     copyFileSync(join(scriptsDir, name), join(repo, "scripts", name));
   }
   chmodSync(join(repo, "scripts/local-ci.sh"), 0o755);
-  writeTool(bin, "node", `if [ "$#" = 1 ] && [ "$1" = --version ]; then echo v26.10.0; exit 0; fi\nexec '${process.execPath}' "$@"\n`);
+  writeTool(bin, "node", `if [ "$#" = 1 ] && [ "$1" = --version ]; then echo v26.12.1; exit 0; fi\nexec '${process.execPath}' "$@"\n`);
   writeTool(bin, "pnpm", fakePnpm(state));
   writeTool(bin, "docker", fakeDocker(state));
   writeTool(bin, "codeql", fakeCodeql(state));
@@ -634,7 +634,7 @@ case "$1" in
       shift
     done
     if [ "$detach" = 1 ]; then printf '%s' "$labels" > "$state/containers/$name"; echo 0123456789ab; exit 0; fi
-    if [ "$entrypoint" = nginx ]; then echo "nginx version: nginx/1.31.0" >&2; else echo v26.10.0; fi ;;
+    if [ "$entrypoint" = nginx ]; then echo "nginx version: nginx/1.31.0" >&2; else echo v26.12.1; fi ;;
   build)
     tag=""; labels=""
     while [ $# -gt 0 ]; do

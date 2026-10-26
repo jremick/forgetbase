@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- Node.js 26.10.0
+- Node.js 26.12.1
 - npm
 - Docker Desktop or a compatible Docker daemon for Compose checks
 
@@ -205,7 +205,7 @@ See [API Key Rotation Runbook](runbooks/API_KEY_ROTATION.md) for staged and emer
 
 ## Local Agent Runtime Development Smoke Check
 
-This path verifies the browser-enrolled public-demo flow. It does not enable `FORGETBASE_LOCAL_SYNC_ALLOW_INTERNAL`, publish a package, deploy the feature, or authorize a live pilot. Use the repository's Node 26.10.0 runtime. The local runtime uses built-in `node:sqlite` with FTS5. See [current verification and repeatable native proof](LOCAL_AGENT_RUNTIME_VERIFICATION.md).
+This path verifies the browser-enrolled public-demo flow. It does not enable `FORGETBASE_LOCAL_SYNC_ALLOW_INTERNAL`, publish a package, deploy the feature, or authorize a live pilot. Use the repository's Node 26.12.1 runtime. The local runtime uses built-in `node:sqlite` with FTS5. See [current verification and repeatable native proof](LOCAL_AGENT_RUNTIME_VERIFICATION.md).
 
 Generate a dedicated development signer in ignored `work/`, set a random development-only enrollment secret of at least 32 bytes through your local process environment, and start the API with the browser-facing origins:
 

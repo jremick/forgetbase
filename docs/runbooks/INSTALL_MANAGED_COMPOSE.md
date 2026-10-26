@@ -16,7 +16,7 @@ Draft status: the host-approval implementation has passed isolated synthetic Lin
 
 ## Supported Host
 
-The updater is a Linux host process. It requires Node 26.10.0, pnpm 11.7.0, Docker with Compose, Bash, and util-linux `flock`. Keep its state on a local filesystem; shared NFS/SMB state is unsupported. A Linux runner on Docker Desktop can exercise the synthetic proof. Native macOS and Windows updater services are not supported by the current evidence.
+The updater is a Linux host process. It requires Node 26.12.1, pnpm 11.7.0, Docker with Compose, Bash, and util-linux `flock`. Keep its state on a local filesystem; shared NFS/SMB state is unsupported. A Linux runner on Docker Desktop can exercise the synthetic proof. Native macOS and Windows updater services are not supported by the current evidence.
 
 The service takes an OS lock before reading or changing managed state. Child commands retain the lock across controller death until they exit. On restart, an interrupted operation whose approval was consumed becomes **needs attention** and is not replayed automatically. Pending requests and unconsumed approved schedules remain subject to their original expiry and binding checks. Review the recovery point and current services before choosing recovery. A manual restore requires the recovery timestamp, explicit data-loss confirmation and a new host approval. Automatic recovery can run only under the original update's approved policy before writes reopen.
 
@@ -55,8 +55,8 @@ From the independently trusted installer checkout, initialize a new state direct
 
 ```bash
 cd /srv/forgetbase-trusted-installer
-npx --yes --package node@26.10.0 --package pnpm@11.7.0 -c 'pnpm install --frozen-lockfile'
-npx --yes --package node@26.10.0 --package pnpm@11.7.0 -c 'pnpm release:managed-install -- \
+npx --yes --package node@26.12.1 --package pnpm@11.7.0 -c 'pnpm install --frozen-lockfile'
+npx --yes --package node@26.12.1 --package pnpm@11.7.0 -c 'pnpm release:managed-install -- \
   --bundle /opt/forgetbase/releases/0.2.0 \
   --manifest forgetbase-0.2.0.json \
   --public-key-file /etc/forgetbase/release-signing-key.pub \
@@ -93,10 +93,10 @@ Build the updater in a separate runtime copy of the verified bundle. Dependency 
 mkdir -p /opt/forgetbase/updater-runtime
 cp -a /opt/forgetbase/releases/0.2.0 /opt/forgetbase/updater-runtime/0.2.0
 cd /opt/forgetbase/updater-runtime/0.2.0
-npx --yes --package node@26.10.0 --package pnpm@11.7.0 -c 'pnpm install --frozen-lockfile'
-npx --yes --package node@26.10.0 --package pnpm@11.7.0 -c 'pnpm --filter @forgetbase/updater-service... build'
+npx --yes --package node@26.12.1 --package pnpm@11.7.0 -c 'pnpm install --frozen-lockfile'
+npx --yes --package node@26.12.1 --package pnpm@11.7.0 -c 'pnpm --filter @forgetbase/updater-service... build'
 HOST="${FORGETBASE_UPDATER_BIND_ADDRESS:?Set the protected Docker host-gateway address}" \
-  npx --yes --package node@26.10.0 --package pnpm@11.7.0 -c 'pnpm --filter @forgetbase/updater-service start'
+  npx --yes --package node@26.12.1 --package pnpm@11.7.0 -c 'pnpm --filter @forgetbase/updater-service start'
 ```
 
 Set `FORGETBASE_UPDATE_BUNDLE_DIR=/opt/forgetbase/releases/0.2.0` to the original verified bundle. Protect the runtime copy and its dependencies with the same host ownership boundary.
@@ -112,12 +112,12 @@ The service environment must include the verified values from `current-release.e
 Release maintainers run this workflow in trusted source with a reviewed unsigned manifest and digest-pinned image references. Keep the Ed25519 private key outside the repository, bundle, and installation host. The commands require the key path and key identity explicitly; they do not discover credentials or use a signing service.
 
 ```bash
-npx --yes --package node@26.10.0 --package pnpm@11.7.0 -c 'pnpm exec tsx scripts/generate-release-manifest.ts \
+npx --yes --package node@26.12.1 --package pnpm@11.7.0 -c 'pnpm exec tsx scripts/generate-release-manifest.ts \
   --input /secure/release/manifest-input.json \
   --output /secure/release/forgetbase-0.2.0.json \
   --private-key-file /secure/signing/release-key.pem \
   --key-id forgetbase-release-2026'
-npx --yes --package node@26.10.0 --package pnpm@11.7.0 -c 'pnpm release:managed-bundle -- \
+npx --yes --package node@26.12.1 --package pnpm@11.7.0 -c 'pnpm release:managed-bundle -- \
   --manifest /secure/release/forgetbase-0.2.0.json \
   --output /secure/release/bundle-0.2.0 \
   --private-key-file /secure/signing/release-key.pem \

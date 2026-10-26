@@ -6,7 +6,7 @@ The application can discover releases and submit or cancel requests. An update o
 
 ## Repeatable checks
 
-Run `scripts/verify-managed-updates.ts` with Node 26.10.0, pnpm 11.7.0, Docker Compose and Linux `flock` on an isolated host after building the workspace. Review its arguments first. It creates a disposable private registry, signed manifests, ten baseline/candidate images, database and attachment volumes. Its evidence directory records runtime versions, image digests, phase history, assertion results and cleanup. No production data is required.
+Run `scripts/verify-managed-updates.ts` with Node 26.12.1, pnpm 11.7.0, Docker Compose and Linux `flock` on an isolated host after building the workspace. Review its arguments first. It creates a disposable private registry, signed manifests, ten baseline/candidate images, database and attachment volumes. Its evidence directory records runtime versions, image digests, phase history, assertion results and cleanup. No production data is required.
 
 The drill exercises real API requests, host CLI decisions, updater processes and Docker commands. Private test preloads pause actual filesystem commit boundaries and shift the updater clock; the product has no fault-control or approval HTTP endpoint. A separate physical-host restore checks the database and attachment recovery set outside the source Docker engine.
 

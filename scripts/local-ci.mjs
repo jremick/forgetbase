@@ -14,7 +14,7 @@ import { fileURLToPath } from "node:url";
 
 const root = realpathSync(resolve(dirname(fileURLToPath(import.meta.url)), ".."));
 // Mirrors setup-node in .github/workflows and the Dockerfile base images; change them together.
-const nodeVersion = "26.10.0";
+const nodeVersion = "26.12.1";
 const pnpmVersion = String(JSON.parse(readFileSync(join(root, "package.json"), "utf8")).packageManager ?? "")
   .replace(/^pnpm@/, "").split("+")[0];
 // The CI service pin. It intentionally differs from the compose.yaml digest.

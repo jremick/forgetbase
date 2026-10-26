@@ -2,7 +2,7 @@
 
 Use this runbook for the final promotion from public beta candidate to public beta release.
 
-The current public beta tag is `v0.1.0-beta.10`. Tags `v0.1.0-beta.1` through `v0.1.0-beta.3` are historical private-beta snapshots. Preserve their tags, source identity and release assets.
+Select the approved, unused release tag from the maintenance or feature-release plan. See [Releases](https://github.com/jremick/forgetbase/releases) for published tags. Tags `v0.1.0-beta.1` through `v0.1.0-beta.3` are historical private-beta snapshots. Preserve their tags, source identity and release assets.
 
 ## Scope
 
@@ -12,6 +12,10 @@ The current public beta tag is `v0.1.0-beta.10`. Tags `v0.1.0-beta.1` through `v
 - Self-hosted internal work trials follow [Public Beta Compatibility](../PUBLIC_BETA_COMPATIBILITY.md#data-and-migration-expectations). Keep the public demo and release proof synthetic; do not include private content in release artifacts.
 - Do not make the repository public, tag a release, or announce public beta until the owner explicitly approves that action.
 - Complete the current [Private Live UAT](../PRIVATE_LIVE_UAT.md) charter against the exact upcoming release candidate before considering public promotion. Its private boundary covers tester access to the test deployment, not source repository visibility.
+
+## Beta.12 Maintenance Disposition
+
+The owner approved publishing the beta.12 source and security maintenance release while keeping deployment paused. For this release only, follow the [publication checklist](../PUBLICATION.md) maintenance gates and attach an exact-source `release-verification.json` with the missing public HTTPS demo, moderated admin/reader UAT and full public-demo proof manifest explicitly recorded. Do not run a production deployment or represent isolated automated evidence as those missing observations. The normal demo and moderated-UAT gates below still apply to later feature releases.
 
 ## Release Inputs
 
