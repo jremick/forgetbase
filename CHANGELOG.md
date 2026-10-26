@@ -9,7 +9,7 @@ Published tags are immutable. Beta releases support self-hosted trials, includin
 - Update the pinned Node.js container and CI runtime to 26.12.1, retaining strict TLS checks and refreshed CA trust.
 - Patch Vite to 8.1.6, Vitest to 4.1.12, Hono to 4.13.14, Fastify to 5.12.7 and Zod to 4.6.7; refresh the body-parser, IP-address and URI-parsing security overrides.
 - Update the pinned setup-node Action to 7.1.0 and upload-artifact to 7.0.2.
-- Include the Railway CA-trust and strict-TLS fix merged after beta.11.
+- Include the Railway CA-trust and strict-TLS fix merged after beta.11, and accept Node's certificate-revocation response in the image build probes.
 
 No database migrations change from beta.11. Back up the database and attachment files together before upgrading. This is a source and security maintenance release. Its release assets record exact-source automated checks and their limits. Hosted deployment remains paused; no public HTTPS demo or moderated reader/admin UAT is claimed. No npm package, signed managed-update feed or managed image bundle is published.
 

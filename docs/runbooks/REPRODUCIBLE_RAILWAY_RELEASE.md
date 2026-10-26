@@ -67,14 +67,16 @@ private networking. Preserve the current API port and set the proxy's
 The API, worker and web images use Node with the Alpine CA store, guarded at
 `ca-certificates` and `ca-certificates-bundle` version `20261020-r0` or newer.
 Their final build step runs as the runtime user and requires build-time egress:
-eMudhra must fail with `UNABLE_TO_GET_ISSUER_CERT_LOCALLY`, while Resend and GitHub
-must complete TLS. Explicit Node flags also protect startup when Railway service
-variables replace `NODE_OPTIONS`. The worker keeps its pnpm startup sequence;
+eMudhra must fail with `CERT_REVOKED` (Node certificate blocklist) or
+`UNABLE_TO_GET_ISSUER_CERT_LOCALLY` (issuer excluded from the CA store), while
+Resend and GitHub must complete TLS. Other failures do not pass the probe.
+Explicit Node flags also protect startup when Railway service variables replace
+`NODE_OPTIONS`. The worker keeps its pnpm startup sequence;
 its image adds the flag to the worker and tsx migration commands. Web is a Node
 Vite preview service and invokes the same Vite CLI with the flag. The nginx proxy
 has the same CA package guard and uses an HTTP upstream, so it has no outbound
-TLS check. Base image pins remain unchanged. These source changes alone do not
-deploy or alter Railway service variables.
+TLS check. These source changes alone do not deploy or alter Railway service
+variables.
 
 The API requires these additional settings, alongside its existing database,
 authentication, session and origin configuration:

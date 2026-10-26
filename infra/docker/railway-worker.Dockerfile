@@ -30,7 +30,7 @@ RUN apk add --no-cache ca-certificates \
        && test "$(apk version -t "$version" 20261020-r0)" != '<' \
        && printf '%s\n' "$installed" || exit 1; \
      done
-# TODO(emudhra-2026-10): drop --use-openssl-ca / SSL_CERT_FILE once the Node release containing nodejs/node#66871 ships and the base image is bumped
+# Use refreshed OS CA trust together with Node's certificate blocklist.
 ENV NODE_OPTIONS="--use-openssl-ca" \
     SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 
@@ -50,7 +50,7 @@ LABEL org.opencontainers.image.revision=$FORGETBASE_SOURCE_REVISION
 USER node
 
 # Requires build-time egress (L3); all controls run as the runtime user.
-RUN timeout 30s node --use-openssl-ca -e "require('https').get('https://dv-g3b-emudhra.we-have-a-problem.com/',()=>{console.error('EMUDHRA_UNEXPECTED_SUCCESS');process.exit(1)}).on('error',e=>{console.log('EMUDHRA_NEGATIVE '+e.code);process.exit(e.code==='UNABLE_TO_GET_ISSUER_CERT_LOCALLY'?0:1)})" \
+RUN timeout 30s node --use-openssl-ca -e "require('https').get('https://dv-g3b-emudhra.we-have-a-problem.com/',()=>{console.error('EMUDHRA_UNEXPECTED_SUCCESS');process.exit(1)}).on('error',e=>{console.log('EMUDHRA_NEGATIVE '+e.code);process.exit(['CERT_REVOKED','UNABLE_TO_GET_ISSUER_CERT_LOCALLY'].includes(e.code)?0:1)})" \
   && timeout 30s node --use-openssl-ca -e "require('https').get('https://api.resend.com',r=>{console.log('RESEND_TLS_OK HTTP '+r.statusCode);process.exit(0)}).on('error',e=>{console.error(e.code);process.exit(1)})" \
   && timeout 30s node --use-openssl-ca -e "require('https').get('https://api.github.com/',r=>{console.log('GITHUB_TLS_OK HTTP '+r.statusCode);process.exit(0)}).on('error',e=>{console.error(e.code);process.exit(1)})"
 
