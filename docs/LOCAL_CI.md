@@ -7,7 +7,7 @@ the resources it created. The Actions workflows stay in place until a replacemen
 ## Prerequisites
 
 - Linux with Bash, Git and `tar`. `codeql-swift` needs macOS instead.
-- Node.js 26.10.0 and pnpm 11.7.0 first on `PATH`. The entrypoint refuses other versions. CodeQL jobs
+- Node.js 26.12.1 and pnpm 11.7.0 first on `PATH`. The entrypoint refuses other versions. CodeQL jobs
   record the Node.js version but do not require pnpm.
 - Playwright Chromium system packages. Install them once with root access:
   `pnpm exec playwright install --with-deps chromium`.
@@ -117,7 +117,7 @@ The workload runs with Docker socket access. Run it only for trusted source.
 | `CI / Verify` Postgres service (digest-pinned pgvector, `pg_isready` health check) | `verify/postgres-service` with the same image digest and health options |
 | Job environment `VITE_ENABLE_RICH_EDITOR`, `TEST_DATABASE_URL` | Set for every `verify` check |
 | Checkout with `persist-credentials: false` | Refusal of credentials stored in Git config |
-| Set up pnpm 11.7.0 and Node.js 26.10.0 | Version checks in `preflight/environment` |
+| Set up pnpm 11.7.0 and Node.js 26.12.1 | Version checks in `preflight/environment` |
 | Install, typecheck, build, bundle budget, UI source gate, deployment defaults | `verify/install` … `verify/deployment-security-defaults` |
 | Install Playwright Chromium | `verify/playwright-chromium` (browser only; system packages are a prerequisite) |
 | Public beta UAT and its artifact upload | `verify/public-beta-uat`, `artifacts/public-beta-uat/` |

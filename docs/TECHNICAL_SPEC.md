@@ -17,7 +17,7 @@ Migrations record immutable checksums and release identity. The candidate plan m
 ### Language And Runtime
 
 - TypeScript
-- Node.js 26.10.0 for the current candidate ([Current release](https://nodejs.org/en/blog/release/v26.10.0)); LTS remains the long-term runtime target
+- Node.js 26.12.1 for the current candidate ([Current release](https://nodejs.org/en/blog/release/v26.12.1)); LTS remains the long-term runtime target
 - pnpm workspaces
 
 Reasoning: TypeScript is the best fit for a shared API, CLI, MCP server, web UI, and SDK surface. It reduces cross-language schema drift and keeps contributor onboarding practical.

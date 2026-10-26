@@ -94,7 +94,7 @@ const manifest = {
     liveDemoUrl
   },
   compatibility: {
-    node: "26.10.0",
+    node: "26.12.1",
     pnpm: "11.7.0",
     docker: "Docker Compose v2 with Docker Engine running",
     database: "Postgres 17 with pgvector",

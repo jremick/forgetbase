@@ -1,9 +1,8 @@
 # Publication checklist
 
-The published public beta is [v0.1.0-beta.10](https://github.com/jremick/forgetbase/releases/tag/v0.1.0-beta.10). It builds on the verified beta.5 public
-release. Current [beta guidance](PUBLIC_BETA_COMPATIBILITY.md) includes self-hosted
-internal work trials; published verification evidence uses synthetic data. The
-release assets record the verified commit, CI, runtime identity and completed gates.
+Published builds and verification assets are listed in [Releases](https://github.com/jremick/forgetbase/releases). Current [beta guidance](PUBLIC_BETA_COMPATIBILITY.md) includes self-hosted internal work trials; published verification evidence uses synthetic data.
+
+The owner authorized beta.12 as a source and security maintenance release while keeping deployment paused. Require exact-source repository verification, isolated full-stack proof, production and development dependency audits, all required commit statuses and CodeQL analyses, reproducible source artifacts, and anonymous checksum readback. Its release verification asset must state that public HTTPS demo proof and moderated reader/admin UAT were not completed. This beta.12-only disposition does not waive those gates for later feature releases or claim hosted-service readiness.
 
 ## Before changing visibility
 
@@ -58,8 +57,9 @@ for the existing deployment. Preserve previous tags and releases.
 ## Public readback
 
 Verify anonymous repository and release access, source-archive checksums, the
-security-reporting link and final GitHub settings. Confirm that the hosted API,
-web and worker identify the released source and retain authenticated access.
+security-reporting link and final GitHub settings. When deployment is authorized, confirm that the hosted API,
+web and worker identify the released source and retain authenticated access. For beta.12,
+verify that the existing deployment pause is retained.
 Publishing source does not grant public access to the maintainer's installation.
 
 Use [Support](../SUPPORT.md) for bug reports and [Security](../SECURITY.md) for
