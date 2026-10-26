@@ -1,5 +1,5 @@
 import * as React from "react";
-import { chakraRuntime } from "../../theme/chakra-runtime.js";
+import * as chakraRuntime from "@chakra-ui/react/skeleton";
 
 const ChakraSkeleton = chakraRuntime.Skeleton as React.ElementType;
 

@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { chakraRuntime } from "../../theme/chakra-runtime.js";
+import * as chakraRuntime from "@chakra-ui/react/progress";
 
 const ChakraProgress = chakraRuntime.Progress as {
   Range: React.ElementType;
