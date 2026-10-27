@@ -1,0 +1,30 @@
+FROM node:26.10.0-alpine@sha256:0b36e8c136b94cd4fcf02188228e76c31ad5872eef3fec8cbd2eee500cfd9e80 AS build
+
+RUN apk add --upgrade --no-cache 'libcrypto3>=3.5.8-r0' 'libssl3>=3.5.8-r0'
+WORKDIR /app
+RUN npm install --global pnpm@11.7.0
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json vitest.config.ts ./
+COPY apps ./apps
+COPY packages ./packages
+COPY scripts/write-build-manifest.mjs ./scripts/write-build-manifest.mjs
+ARG FORGETBASE_SOURCE_REVISION
+ARG FORGETBASE_SOURCE_DATE_EPOCH
+ARG FORGETBASE_RELEASE_VERSION
+ARG VITE_ENABLE_RICH_EDITOR=false
+RUN node scripts/write-build-manifest.mjs
+RUN pnpm install --frozen-lockfile
+RUN pnpm --filter @forgetbase/web... build
+
+FROM nginx:1.31.0-alpine-slim@sha256:241b0d0fe06250e026e7a35a008d022c9a1d3bec19442d65cc33b84d0b5dd64d
+COPY --from=build /app/apps/web/dist /usr/share/nginx/html
+COPY ops/exp/nginx.conf /etc/nginx/nginx.conf
+# Keep the source outside conf.d, which is a writable tmpfs at runtime.
+COPY ops/exp/nginx.default.conf /opt/exp/default.conf
+COPY --chmod=755 ops/exp/start-proxy.sh /usr/local/bin/start-proxy.sh
+ARG FORGETBASE_SOURCE_REVISION
+LABEL org.opencontainers.image.source="https://github.com/jremick/forgetbase" \
+      org.opencontainers.image.revision=$FORGETBASE_SOURCE_REVISION
+USER 101:101
+EXPOSE 8080
+ENTRYPOINT ["/usr/local/bin/start-proxy.sh"]
+CMD ["nginx", "-g", "daemon off;"]
