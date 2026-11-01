@@ -41,14 +41,14 @@ CMD ["pnpm", "--filter", "@forgetbase/worker", "start"]
 FROM node-runtime AS migrate
 CMD ["pnpm", "db:migrate"]
 
-FROM nginx:1.31.0-alpine-slim@sha256:241b0d0fe06250e026e7a35a008d022c9a1d3bec19442d65cc33b84d0b5dd64d AS web
+FROM nginx:1.31.8-alpine-slim@sha256:f45171d36c76a8b2f5ef97108a3a8a2294248a6578a0a180edc2d78f7d2edc26 AS web
 COPY --from=build /app/apps/web/dist /usr/share/nginx/html
 COPY infra/docker/nginx.web.conf /etc/nginx/conf.d/default.conf
 RUN sed -i 's|^pid .*;|pid /tmp/nginx.pid;|' /etc/nginx/nginx.conf \
   && chown -R nginx:nginx /etc/nginx/conf.d /var/cache/nginx /var/run
 USER nginx
 
-FROM nginx:1.31.0-alpine-slim@sha256:241b0d0fe06250e026e7a35a008d022c9a1d3bec19442d65cc33b84d0b5dd64d AS proxy
+FROM nginx:1.31.8-alpine-slim@sha256:f45171d36c76a8b2f5ef97108a3a8a2294248a6578a0a180edc2d78f7d2edc26 AS proxy
 COPY infra/docker/nginx.same-origin.conf /etc/nginx/conf.d/default.conf
 RUN sed -i 's|^pid .*;|pid /tmp/nginx.pid;|' /etc/nginx/nginx.conf \
   && chown -R nginx:nginx /etc/nginx/conf.d /var/cache/nginx /var/run
