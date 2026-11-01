@@ -21,7 +21,7 @@ RUN node scripts/write-build-manifest.mjs
 RUN pnpm install --frozen-lockfile
 RUN pnpm --filter @forgetbase/web... build
 
-FROM nginx:1.31.0-alpine-slim@sha256:241b0d0fe06250e026e7a35a008d022c9a1d3bec19442d65cc33b84d0b5dd64d
+FROM nginx:1.31.8-alpine-slim@sha256:f45171d36c76a8b2f5ef97108a3a8a2294248a6578a0a180edc2d78f7d2edc26
 
 RUN apk add --no-cache ca-certificates \
   && apk upgrade --no-cache ca-certificates ca-certificates-bundle \
