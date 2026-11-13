@@ -4,7 +4,8 @@ packages:
 
 # Security pins for transitive @modelcontextprotocol/sdk runtime dependencies.
 overrides:
-  "@modelcontextprotocol/sdk>@hono/node-server": "^1.19.15"
+  # GHSA-jpvv-r467-5p4w: the SDK range still allows 1.19.9. 1.19.18 rejects a raw backslash in the path.
+  "@modelcontextprotocol/sdk>@hono/node-server": "^1.19.18"
   "@modelcontextprotocol/sdk>hono": "^4.13.11"
   "express@5.2.1>body-parser": "2.4.0"
   # GHSA-jqcg-44mw-7w3h: express@5.2.1 resolves proxy-addr 2.0.7 unless pinned.
