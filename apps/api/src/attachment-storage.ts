@@ -15,7 +15,9 @@ import { dirname, parse, relative, resolve, sep } from "node:path";
 export const ATTACHMENT_STORAGE_KEY_PATTERN = /^[0-9a-f]{2}\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 export interface AttachmentStorageAdapter {
+  /** Publish exclusively. EEXIST means the final key was already occupied. */
   put(storageKey: string, content: Uint8Array): Promise<void>;
+  /** An absent object raises ENOENT. Other read errors leave its state uncertain. */
   get(storageKey: string): Promise<Buffer>;
   delete(storageKey: string): Promise<boolean>;
   inventory?(): Promise<AttachmentStorageInventory>;
@@ -156,23 +158,19 @@ export class LocalFilesystemAttachmentStorage implements AttachmentStorageAdapte
   async delete(storageKey: string): Promise<boolean> {
     const root = await this.ensureSafeRoot();
     const target = this.resolveStoragePath(root, storageKey);
-    await this.assertSafeDirectory(dirname(target), root);
-    const stats = await lstat(target).catch((error: unknown) => {
-      if (errorCode(error) === "ENOENT") {
-        return null;
+    try {
+      await this.assertSafeDirectory(dirname(target), root);
+      const stats = await lstat(target);
+      if (!stats.isFile() || stats.isSymbolicLink()) {
+        throw new UnsafeAttachmentStoragePathError();
       }
+      await unlink(target);
+      return true;
+    } catch (error) {
+      // An unpublished reservation may never have created its shard directory.
+      if (errorCode(error) === "ENOENT") return false;
       throw error;
-    });
-
-    if (!stats) {
-      return false;
     }
-    if (!stats.isFile() || stats.isSymbolicLink()) {
-      throw new UnsafeAttachmentStoragePathError();
-    }
-
-    await unlink(target);
-    return true;
   }
 
   async inventory(): Promise<AttachmentStorageInventory> {

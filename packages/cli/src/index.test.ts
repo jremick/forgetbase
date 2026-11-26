@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -7,6 +7,7 @@ import { MemoryLocalCredentialStore } from "@forgetbase/local-runtime";
 import { main } from "./index.js";
 
 const tempDirs: string[] = [];
+const TEST_BOOTSTRAP_TOKEN = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcdef";
 
 afterEach(async () => {
   vi.restoreAllMocks();
@@ -41,16 +42,24 @@ describe("ForgetBase CLI contract", () => {
     expect(calls.map((call) => call.url.pathname.split("/").at(-1))).toEqual(["versions", "versions", "review", "publish", "restore"]);
   });
 
-  it("maps local bootstrap flags to the private-beta setup API contract", async () => {
+  it("reads the operator token file for installation bootstrap", async () => {
     const { fetchMock, calls } = mockFetch(() => authBootstrapFixture());
     const logs = captureStdout();
+    const directory = await mkdtemp(join(tmpdir(), "forgetbase-cli-bootstrap-"));
+    const bootstrapTokenFile = join(directory, "bootstrap-token");
+    tempDirs.push(directory);
+    await writeFile(bootstrapTokenFile, `${TEST_BOOTSTRAP_TOKEN}\n`);
     vi.stubGlobal("fetch", fetchMock);
+
+    await expect(main(["auth", "bootstrap", "--tenant-id", "tenant_alternate"]))
+      .rejects.toThrow("deployment selects the bootstrap tenant");
+    expect(calls).toHaveLength(0);
 
     const code = await main([
       "auth",
       "bootstrap",
-      "--tenant-id",
-      "tenant_beta",
+      "--bootstrap-token-file",
+      bootstrapTokenFile,
       "--email",
       "admin@example.test",
       "--display-name",
@@ -68,7 +77,7 @@ describe("ForgetBase CLI contract", () => {
     expect(calls[0]?.method).toBe("POST");
     expect(calls[0]?.url.pathname).toBe("/auth/bootstrap");
     expect(calls[0]?.body).toMatchObject({
-      tenantId: "tenant_beta",
+      bootstrapToken: TEST_BOOTSTRAP_TOKEN,
       email: "admin@example.test",
       displayName: "Beta Admin",
       password: "local-dev-password",
@@ -578,6 +587,83 @@ describe("ForgetBase CLI contract", () => {
     expect(conceptFile?.path).toMatch(/^policies\/policy-beta-public-export-[a-f0-9]+\.md$/);
     expect(conceptFile?.content).toContain("stable_id: \"policy.beta-public-export\"");
     expect(JSON.stringify(payload)).not.toContain("Restricted beta export instruction");
+  });
+
+  it("writes an OKF bundle to a new nested output directory", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "forgetbase-cli-okf-output-"));
+    tempDirs.push(dir);
+    const outputDir = join(dir, "nested", "bundle");
+    const bundle = buildOkfExportPackage(betaJsonExportPackage(), { okfVersion: "0.1" });
+    const { fetchMock } = mockFetch(() => bundle);
+    captureStdout();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(main([
+      "exports",
+      "ai-package",
+      "--format",
+      "okf",
+      "--output-dir",
+      outputDir,
+      "--api-url",
+      "http://forgetbase.test"
+    ])).resolves.toBe(0);
+
+    expect(await readFile(join(outputDir, "index.md"), "utf8"))
+      .toBe(bundle.files.find((file) => file.path === "index.md")?.content);
+    const concept = bundle.files.find((file) => file.path.startsWith("policies/"));
+    expect(await readFile(join(outputDir, concept?.path ?? "missing"), "utf8")).toBe(concept?.content);
+  });
+
+  it("refuses an OKF output tree containing a symlinked fixed file", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "forgetbase-cli-okf-file-link-"));
+    tempDirs.push(dir);
+    const outputDir = join(dir, "bundle");
+    const outsideFile = join(dir, "outside.md");
+    await mkdir(outputDir);
+    await writeFile(outsideFile, "outside content");
+    await symlink(outsideFile, join(outputDir, "index.md"));
+    const { fetchMock } = mockFetch(() => buildOkfExportPackage(betaJsonExportPackage(), { okfVersion: "0.1" }));
+    captureStdout();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(main([
+      "exports",
+      "ai-package",
+      "--format",
+      "okf",
+      "--output-dir",
+      outputDir,
+      "--api-url",
+      "http://forgetbase.test"
+    ])).rejects.toThrow("Refusing to replace existing OKF output path");
+    expect(await readFile(outsideFile, "utf8")).toBe("outside content");
+  });
+
+  it("refuses an OKF output tree containing a symlinked concept directory", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "forgetbase-cli-okf-directory-link-"));
+    tempDirs.push(dir);
+    const outputDir = join(dir, "bundle");
+    const outsideDir = join(dir, "outside");
+    await mkdir(outputDir);
+    await mkdir(outsideDir);
+    await writeFile(join(outsideDir, "sentinel.txt"), "outside content");
+    await symlink(outsideDir, join(outputDir, "policies"), "dir");
+    const { fetchMock } = mockFetch(() => buildOkfExportPackage(betaJsonExportPackage(), { okfVersion: "0.1" }));
+    captureStdout();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(main([
+      "exports",
+      "ai-package",
+      "--format",
+      "okf",
+      "--output-dir",
+      outputDir,
+      "--api-url",
+      "http://forgetbase.test"
+    ])).rejects.toThrow("Refusing to replace existing OKF output path");
+    expect(await readdir(outsideDir)).toEqual(["sentinel.txt"]);
   });
 
   it("maps JSON export flags to the export API contract", async () => {

@@ -83,17 +83,22 @@ bash scripts/restore-postgres.sh "${database_path}" "${target_db}" > /dev/null
 
 records_path="${work_dir}/attachment-records.tsv"
 docker compose exec -T "${db_service}" psql -U "${db_user}" -d "${target_db}" -t -A -F $'\t' -c \
-  "SELECT storage_key, content_sha256, size_bytes FROM attachments WHERE lifecycle_state <> 'deleted' ORDER BY storage_key;" \
+  "SELECT storage_key, content_sha256, size_bytes, lifecycle_state FROM attachments WHERE lifecycle_state <> 'deleted' ORDER BY storage_key;" \
   > "${records_path}"
 
 verified_count=0
-while IFS=$'\t' read -r storage_key expected_sha256 expected_bytes; do
+while IFS=$'\t' read -r storage_key expected_sha256 expected_bytes lifecycle_state; do
   [[ -z "${storage_key}" ]] && continue
   if [[ ! "${storage_key}" =~ ^[0-9a-f]{2}/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]; then
     echo "Restored database contains an unsafe attachment storage key" >&2
     exit 1
   fi
   restored_path="${restored_dir}/${storage_key}"
+  # A stopped writer may have reserved the key before publication or removed
+  # deletion-requested bytes before committing the tombstone.
+  if [[ ! -e "${restored_path}" && ( "${lifecycle_state}" == pending || "${lifecycle_state}" == deleting ) ]]; then
+    continue
+  fi
   if [[ ! -f "${restored_path}" ]]; then
     echo "Backup set is missing a referenced attachment blob" >&2
     exit 1

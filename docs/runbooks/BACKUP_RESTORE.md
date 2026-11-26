@@ -8,14 +8,14 @@ This runbook covers the Docker Compose self-hosting path. Run commands from the 
 - The `attachment-data` Compose volume stores local attachment bytes separately from Postgres.
 - Backups use `pg_dump --format=custom`.
 - The preferred backup set contains the Postgres dump, attachment archive, and checksum manifest from one stopped-write window.
-- Restore verification uses a temporary database and directory, then matches each non-deleted metadata record to exactly one blob by storage key, size, and SHA-256.
+- Restore verification requires one matching blob for every active record. A pending upload may precede blob publication and a deleting record may outlive its bytes. The verifier checks every present blob against its storage key, size, and SHA-256.
 - Future object-store adapters must provide an equivalent versioned bucket backup and content-hash verification path.
 
 For the existing Railway deployment, use the deployment-specific procedure and record its service/volume readbacks in the release evidence. Local Compose helper success does not verify Railway backups or stopped writers. The same requirements apply: one database/blob recovery point, source and schema identity, isolated restore, and access checks. See the [Railway deployment template](DEPLOY_RAILWAY_PRIVATE_TEMPLATE.md) and [operational release plan](../OPERATIONAL_RELEASE_PLAN.md).
 
 ## Preflight
 
-Run the tenant-admin attachment reconciliation route in dry-run mode with `verifyContent: true`. Resolve missing blobs, integrity mismatches, and stale deletes before backup. Tenant-admin reports do not expose global storage totals or orphan counts. Review the scheduled global operator reconciliation report before enabling its execute mode. Reconciliation responses contain counts, not storage keys.
+Run the tenant-admin attachment reconciliation route in dry-run mode with `verifyContent: true`. Investigate missing active blobs, integrity mismatches, stale pending uploads, and stale deletes. Execute-mode reconciliation tombstones an expired pending reservation after a direct read confirms absence or after it verifies and removes matching bytes. Unreadable or mismatched bytes and their reservations are preserved for investigation. Tenant-admin reports do not expose global storage totals or orphan counts. Review the scheduled global operator reconciliation report before enabling its execute mode. Reconciliation responses contain counts, not storage keys.
 
 Record the source revision and image digests for API, worker, web, and proxy; the applied migration IDs; the selected database and attachment volume; and the recovery-point time. Record the expected published/draft versions and allowed/denied test principals for the synthetic runtime checks below. Store this evidence with the protected backup record. The helper manifest does not contain source or schema identity. Keep backups, credentials, and raw content outside Git.
 
@@ -39,7 +39,7 @@ npx -y pnpm@11.7.0 backup:set:verify -- backups/manual-set
 docker compose up --no-build -d migrate clamav api worker web
 ```
 
-The verifier rejects checksum changes, unsafe archive paths, links and special entries, missing or changed referenced blobs, and extra orphan blobs. It restores only to temporary state and removes it afterward. Its `verified: true` result proves these restore and integrity checks; it does not test application startup, publication behavior, permissions, or queue recovery. Complete the isolated runtime drill below before claiming recovery readiness.
+The verifier rejects checksum changes, unsafe archive paths, links and special entries, missing active blobs, changed bytes at any referenced key, and extra orphan blobs. It restores only to temporary state and removes it afterward. Its `verified: true` result proves these restore and integrity checks; it does not test application startup, publication behavior, permissions, or queue recovery. Complete the isolated runtime drill below before claiming recovery readiness.
 
 Encrypt backup sets at rest, copy them off the application host, restrict access, define retention, and test recovery on an operator-approved schedule. These are deployment responsibilities; the repository helper does not provide encryption, remote retention, or key management.
 

@@ -33,7 +33,17 @@ import {
 } from "@forgetbase/db";
 import { LocalFilesystemAttachmentStorage, type AttachmentStorageAdapter } from "./attachment-storage.js";
 import type { AttachmentMalwareScanner } from "./attachment-security.js";
-import { buildServer, type ModelRuntimeRequest } from "./server.js";
+import { buildServer as buildApiServer, type BuildServerOptions, type ModelRuntimeRequest } from "./server.js";
+
+const TEST_BOOTSTRAP_TOKEN = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcdef";
+
+function buildServer(options: BuildServerOptions = {}) {
+  return buildApiServer({
+    bootstrapTenantId: "tenant_demo",
+    bootstrapToken: TEST_BOOTSTRAP_TOKEN,
+    ...options
+  });
+}
 
 let server = buildServer({ logger: false });
 
@@ -218,7 +228,7 @@ describe("API health route", () => {
     }
   });
 
-  it("blocks unauthenticated bootstrap when global authentication is required", async () => {
+  it("allows deployment-token bootstrap when global authentication is required", async () => {
     server = buildServer({
       logger: false,
       authRepository: new InMemoryAuthRepository(),
@@ -229,13 +239,114 @@ describe("API health route", () => {
       method: "POST",
       url: "/auth/bootstrap",
       payload: {
+        bootstrapToken: TEST_BOOTSTRAP_TOKEN,
         email: "admin@example.test",
         displayName: "Admin"
       }
     });
 
-    expect(response.statusCode).toBe(401);
-    expect(response.json().error).toBe("authentication_required");
+    expect(response.statusCode).toBe(201);
+    expect(response.json().user.tenantId).toBe("tenant_demo");
+  });
+
+  it("disables bootstrap when no deployment token is configured", async () => {
+    server = buildApiServer({
+      logger: false,
+      authRepository: new InMemoryAuthRepository()
+    });
+
+    const response = await server.inject({
+      method: "POST",
+      url: "/auth/bootstrap",
+      payload: {
+        bootstrapToken: TEST_BOOTSTRAP_TOKEN,
+        email: "admin@example.test",
+        displayName: "Admin"
+      }
+    });
+
+    expect(response.statusCode).toBe(503);
+    expect(response.json().error).toBe("bootstrap_unavailable");
+  });
+
+  it("binds bootstrap to one deployment tenant and rejects low-privilege reuse", async () => {
+    const authRepository = new InMemoryAuthRepository();
+    server = buildServer({
+      logger: false,
+      authRepository,
+      bootstrapTenantId: "tenant_installation"
+    });
+
+    const callerChosenTenant = await server.inject({
+      method: "POST",
+      url: "/auth/bootstrap",
+      payload: {
+        bootstrapToken: TEST_BOOTSTRAP_TOKEN,
+        tenantId: "tenant_attacker",
+        email: "admin@example.test",
+        displayName: "Admin"
+      }
+    });
+    expect(callerChosenTenant.statusCode).toBe(400);
+
+    const bootstrap = await server.inject({
+      method: "POST",
+      url: "/auth/bootstrap",
+      payload: {
+        bootstrapToken: TEST_BOOTSTRAP_TOKEN,
+        email: "admin@example.test",
+        displayName: "Admin"
+      }
+    });
+    expect(bootstrap.statusCode).toBe(201);
+    expect(bootstrap.json().user.tenantId).toBe("tenant_installation");
+
+    const reader = await authRepository.createUser({
+      tenantId: "tenant_installation",
+      email: "reader@example.test",
+      displayName: "Reader",
+      role: "reader"
+    });
+    const readerKey = await authRepository.createApiKey({
+      tenantId: "tenant_installation",
+      userId: reader.id,
+      name: "reader",
+      scopes: ["asset:read"],
+      allowedSurfaces: ["api"]
+    });
+
+    await server.close();
+    server = buildServer({
+      logger: false,
+      authRepository,
+      bootstrapTenantId: "tenant_attacker",
+      requireAuthentication: true
+    });
+    const rejected = await server.inject({
+      method: "POST",
+      url: "/auth/bootstrap",
+      headers: { authorization: `Bearer ${readerKey?.secret}` },
+      payload: {
+        bootstrapToken: "abcdef_0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+        email: "attacker@example.test",
+        displayName: "Attacker"
+      }
+    });
+    expect(rejected.statusCode).toBe(403);
+    expect(await authRepository.countUsers("tenant_attacker")).toBe(0);
+
+    const consumed = await server.inject({
+      method: "POST",
+      url: "/auth/bootstrap",
+      headers: { authorization: `Bearer ${readerKey?.secret}` },
+      payload: {
+        bootstrapToken: TEST_BOOTSTRAP_TOKEN,
+        email: "attacker@example.test",
+        displayName: "Attacker"
+      }
+    });
+    expect(consumed.statusCode).toBe(409);
+    expect(await authRepository.countUsers("tenant_attacker")).toBe(0);
   });
 
   it("reuses bearer authentication between the global guard and protected handler", async () => {
@@ -244,7 +355,7 @@ describe("API health route", () => {
     const bootstrap = await server.inject({
       method: "POST",
       url: "/auth/bootstrap",
-      payload: { email: "cached-admin@example.test", displayName: "Cached Admin" }
+      payload: { bootstrapToken: TEST_BOOTSTRAP_TOKEN, email: "cached-admin@example.test", displayName: "Cached Admin" }
     });
     const authenticateApiKey = vi.spyOn(authRepository, "authenticateApiKey");
 
@@ -268,6 +379,7 @@ describe("API health route", () => {
       method: "POST",
       url: "/auth/bootstrap",
       payload: {
+        bootstrapToken: TEST_BOOTSTRAP_TOKEN,
         email: "cached-session@example.test",
         displayName: "Cached Session",
         password: "cached-session-password"
@@ -305,6 +417,7 @@ describe("API health route", () => {
       method: "POST",
       url: "/auth/bootstrap",
       payload: {
+        bootstrapToken: TEST_BOOTSTRAP_TOKEN,
         email: "csrf-session@example.test",
         displayName: "CSRF Session",
         password: "csrf-session-password"
@@ -343,7 +456,7 @@ describe("API health route", () => {
     const bootstrap = await server.inject({
       method: "POST",
       url: "/auth/bootstrap",
-      payload: { email: "role-admin@example.test", displayName: "Role Admin" }
+      payload: { bootstrapToken: TEST_BOOTSTRAP_TOKEN, email: "role-admin@example.test", displayName: "Role Admin" }
     });
     const adminKey = bootstrap.json().secret;
     const readerResponse = await server.inject({
@@ -380,9 +493,10 @@ describe("API health route", () => {
 
   it("serializes concurrent first-admin bootstrap attempts", async () => {
     const authRepository = new InMemoryAuthRepository();
-    server = buildServer({ logger: false, authRepository });
+    const tenantId = "tenant_concurrent_bootstrap";
+    server = buildServer({ logger: false, authRepository, bootstrapTenantId: tenantId });
     const payload = {
-      tenantId: "tenant_concurrent_bootstrap",
+      bootstrapToken: TEST_BOOTSTRAP_TOKEN,
       email: "admin@example.test",
       displayName: "Admin",
       password: "bootstrap-password-123"
@@ -393,9 +507,9 @@ describe("API health route", () => {
     ]);
 
     expect(responses.map((response) => response.statusCode).sort()).toEqual([201, 409]);
-    expect(await authRepository.countUsers(payload.tenantId)).toBe(1);
-    expect((await authRepository.listApiKeys({ tenantId: payload.tenantId }))).toHaveLength(1);
-    expect((await authRepository.listAuditEvents({ tenantId: payload.tenantId })))
+    expect(await authRepository.countUsers(tenantId)).toBe(1);
+    expect((await authRepository.listApiKeys({ tenantId }))).toHaveLength(1);
+    expect((await authRepository.listAuditEvents({ tenantId })))
       .toHaveLength(1);
   });
 
@@ -407,13 +521,14 @@ describe("API health route", () => {
       loginThrottleMaxAttempts: 2,
       loginThrottleWindowMs: 60_000,
       loginThrottleBlockMs: 60_000,
-      loginThrottleMaxEntries: 10
+      loginThrottleMaxEntries: 10,
+      bootstrapTenantId: "tenant_login_throttle"
     });
     await server.inject({
       method: "POST",
       url: "/auth/bootstrap",
       payload: {
-        tenantId: "tenant_login_throttle",
+        bootstrapToken: TEST_BOOTSTRAP_TOKEN,
         email: "admin@example.test",
         displayName: "Admin",
         password: "correct-password-123"
@@ -456,7 +571,7 @@ describe("system update control", () => {
     const bootstrap = await bootstrapServer.inject({
       method: "POST",
       url: "/auth/bootstrap",
-      payload: { email: "owner@example.test", displayName: "Install Owner" }
+      payload: { bootstrapToken: TEST_BOOTSTRAP_TOKEN, email: "owner@example.test", displayName: "Install Owner" }
     });
     await bootstrapServer.close();
     const updateControlService = buildUpdateControlService();
@@ -555,7 +670,7 @@ describe("API asset registry routes", () => {
       const bootstrap = await server.inject({
         method: "POST",
         url: "/auth/bootstrap",
-        payload: { email: "attachment-admin@example.test", displayName: "Attachment Admin" }
+        payload: { bootstrapToken: TEST_BOOTSTRAP_TOKEN, email: "attachment-admin@example.test", displayName: "Attachment Admin" }
       });
       const admin = bootstrap.json();
       const authorization = { authorization: `Bearer ${admin.secret}` };
@@ -701,7 +816,7 @@ describe("API asset registry routes", () => {
       const bootstrap = await server.inject({
         method: "POST",
         url: "/auth/bootstrap",
-        payload: { email: "attachment-limit@example.test", displayName: "Attachment Limit" }
+        payload: { bootstrapToken: TEST_BOOTSTRAP_TOKEN, email: "attachment-limit@example.test", displayName: "Attachment Limit" }
       });
       const admin = bootstrap.json();
       const authorization = { authorization: `Bearer ${admin.secret}` };
@@ -760,7 +875,7 @@ describe("API asset registry routes", () => {
       const bootstrap = await server.inject({
         method: "POST",
         url: "/auth/bootstrap",
-        payload: { email: "attachment-quota@example.test", displayName: "Attachment Quota" }
+        payload: { bootstrapToken: TEST_BOOTSTRAP_TOKEN, email: "attachment-quota@example.test", displayName: "Attachment Quota" }
       });
       const admin = bootstrap.json();
       const authorization = { authorization: `Bearer ${admin.secret}` };
@@ -807,24 +922,30 @@ describe("API asset registry routes", () => {
 
   it("fails closed and audits attachment storage write failures", async () => {
     const authRepository = new InMemoryAuthRepository();
+    const attachmentRepository = new InMemoryAttachmentRepository();
+    const existing = Buffer.from("pre-existing bytes");
+    const files = new Map<string, Buffer>();
     const failingStorage: AttachmentStorageAdapter = {
-      async put() { throw new Error("synthetic storage failure"); },
-      async get() { return Buffer.alloc(0); },
-      async delete() { return false; }
+      async put(key) {
+        files.set(key, existing);
+        throw Object.assign(new Error("synthetic exclusive create collision"), { code: "EEXIST" });
+      },
+      async get(key) { return files.get(key)!; },
+      async delete(key) { return files.delete(key); }
     };
     server = buildServer({
       logger: false,
       registryRepository: new InMemoryRegistryRepository(),
       authRepository,
       retrievalRepository: new InMemoryRetrievalRepository(),
-      attachmentRepository: new InMemoryAttachmentRepository(),
+      attachmentRepository,
       attachmentStorage: failingStorage,
       attachmentMaxBytes: 1_024
     });
     const bootstrap = await server.inject({
       method: "POST",
       url: "/auth/bootstrap",
-      payload: { email: "attachment-failure@example.test", displayName: "Attachment Failure" }
+      payload: { bootstrapToken: TEST_BOOTSTRAP_TOKEN, email: "attachment-failure@example.test", displayName: "Attachment Failure" }
     });
     const admin = bootstrap.json();
     const authorization = { authorization: `Bearer ${admin.secret}` };
@@ -861,6 +982,9 @@ describe("API asset registry routes", () => {
 
     expect(response.statusCode, response.body).toBe(503);
     expect(response.json().error).toBe("attachment_storage_unavailable");
+    expect([...files.values()]).toEqual([existing]);
+    await expect(attachmentRepository.getAttachmentUsage({ tenantId: admin.user.tenantId }))
+      .resolves.toEqual({ fileCount: 0, totalBytes: 0 });
     expect(await authRepository.listAuditEvents({ limit: 10 })).toEqual(expect.arrayContaining([
       expect.objectContaining({
         action: "attachment.upload",
@@ -870,13 +994,14 @@ describe("API asset registry routes", () => {
     ]));
   });
 
-  it("removes an orphaned blob and audits attachment metadata persistence failures", async () => {
+  it("does not write a blob when attachment reservation persistence fails", async () => {
     const authRepository = new InMemoryAuthRepository();
     const attachmentRepository = new InMemoryAttachmentRepository();
-    vi.spyOn(attachmentRepository, "createAttachment").mockRejectedValue(new Error("synthetic metadata failure"));
+    vi.spyOn(attachmentRepository, "reserveAttachment").mockRejectedValue(new Error("synthetic metadata failure"));
+    let wroteBlob = false;
     let deletedStorageKey = "";
     const storage: AttachmentStorageAdapter = {
-      async put() { return undefined; },
+      async put() { wroteBlob = true; },
       async get() { return Buffer.alloc(0); },
       async delete(storageKey) {
         deletedStorageKey = storageKey;
@@ -895,7 +1020,7 @@ describe("API asset registry routes", () => {
     const bootstrap = await server.inject({
       method: "POST",
       url: "/auth/bootstrap",
-      payload: { email: "attachment-metadata@example.test", displayName: "Attachment Metadata" }
+      payload: { bootstrapToken: TEST_BOOTSTRAP_TOKEN, email: "attachment-metadata@example.test", displayName: "Attachment Metadata" }
     });
     const admin = bootstrap.json();
     const authorization = { authorization: `Bearer ${admin.secret}` };
@@ -932,13 +1057,14 @@ describe("API asset registry routes", () => {
 
     expect(response.statusCode, response.body).toBe(503);
     expect(response.json().error).toBe("attachment_metadata_unavailable");
-    expect(deletedStorageKey).toMatch(/^[0-9a-f]{2}\/[0-9a-f-]{36}$/);
+    expect(wroteBlob).toBe(false);
+    expect(deletedStorageKey).toBe("");
     expect(await authRepository.listAuditEvents({ limit: 10 })).toEqual(expect.arrayContaining([
       expect.objectContaining({
         action: "attachment.upload",
         outcome: "error",
         reason: "metadata_write_failed",
-        metadata: expect.objectContaining({ orphanCleanupSucceeded: true })
+        metadata: expect.objectContaining({ pendingReservationRetained: false })
       })
     ]));
   });
@@ -967,7 +1093,7 @@ describe("API asset registry routes", () => {
       const bootstrap = await server.inject({
         method: "POST",
         url: "/auth/bootstrap",
-        payload: { email: "attachment-audit@example.test", displayName: "Attachment Audit" }
+        payload: { bootstrapToken: TEST_BOOTSTRAP_TOKEN, email: "attachment-audit@example.test", displayName: "Attachment Audit" }
       });
       const admin = bootstrap.json();
       const authorization = { authorization: `Bearer ${admin.secret}` };
@@ -1040,7 +1166,7 @@ describe("API asset registry routes", () => {
     const bootstrap = await server.inject({
       method: "POST",
       url: "/auth/bootstrap",
-      payload: { email: "attachment-reconcile@example.test", displayName: "Attachment Reconcile" }
+      payload: { bootstrapToken: TEST_BOOTSTRAP_TOKEN, email: "attachment-reconcile@example.test", displayName: "Attachment Reconcile" }
     });
     const authorization = { authorization: `Bearer ${bootstrap.json().secret}` };
 
@@ -1078,6 +1204,7 @@ describe("API asset registry routes", () => {
       method: "POST",
       url: "/auth/bootstrap",
       payload: {
+        bootstrapToken: TEST_BOOTSTRAP_TOKEN,
         email: "admin@example.test",
         displayName: "Admin"
       }
@@ -1159,7 +1286,7 @@ describe("API asset registry routes", () => {
     const bootstrap = await server.inject({
       method: "POST",
       url: "/auth/bootstrap",
-      payload: { email: "surface-admin@example.test", displayName: "Surface Admin" }
+      payload: { bootstrapToken: TEST_BOOTSTRAP_TOKEN, email: "surface-admin@example.test", displayName: "Surface Admin" }
     });
     const bootstrapBody = bootstrap.json();
     const apiKey = bootstrapBody.secret;
@@ -1254,6 +1381,7 @@ describe("API asset registry routes", () => {
       method: "POST",
       url: "/auth/bootstrap",
       payload: {
+        bootstrapToken: TEST_BOOTSTRAP_TOKEN,
         email: "admin-review@example.test",
         displayName: "Review Admin"
       }
@@ -1359,6 +1487,7 @@ describe("API asset registry routes", () => {
       method: "POST",
       url: "/auth/bootstrap",
       payload: {
+        bootstrapToken: TEST_BOOTSTRAP_TOKEN,
         email: "admin@example.test",
         displayName: "Admin"
       }
@@ -1479,6 +1608,7 @@ describe("API asset registry routes", () => {
       method: "POST",
       url: "/auth/bootstrap",
       payload: {
+        bootstrapToken: TEST_BOOTSTRAP_TOKEN,
         email: "admin@example.test",
         displayName: "Admin",
         password: "correct-horse-battery"
@@ -1658,6 +1788,7 @@ describe("API asset registry routes", () => {
       method: "POST",
       url: "/auth/bootstrap",
       payload: {
+        bootstrapToken: TEST_BOOTSTRAP_TOKEN,
         email: "admin@example.test",
         displayName: "Admin",
         password: "correct-horse-battery"
@@ -1704,6 +1835,7 @@ describe("API asset registry routes", () => {
       method: "POST",
       url: "/auth/bootstrap",
       payload: {
+        bootstrapToken: TEST_BOOTSTRAP_TOKEN,
         email: "admin@example.test",
         displayName: "Admin",
         password: "correct-horse-battery"
@@ -1792,6 +1924,7 @@ describe("API asset registry routes", () => {
       method: "POST",
       url: "/auth/bootstrap",
       payload: {
+        bootstrapToken: TEST_BOOTSTRAP_TOKEN,
         email: "admin@example.test",
         displayName: "Admin",
         password: "correct-horse-battery"
@@ -1869,6 +2002,7 @@ describe("API asset registry routes", () => {
       method: "POST",
       url: "/auth/bootstrap",
       payload: {
+        bootstrapToken: TEST_BOOTSTRAP_TOKEN,
         email: "admin@example.test",
         displayName: "Admin",
         password: "correct-horse-battery"
@@ -1941,6 +2075,7 @@ describe("API asset registry routes", () => {
       method: "POST",
       url: "/auth/bootstrap",
       payload: {
+        bootstrapToken: TEST_BOOTSTRAP_TOKEN,
         email: "admin@example.test",
         displayName: "Admin",
         password: "correct-horse-battery"
@@ -2013,6 +2148,7 @@ describe("API asset registry routes", () => {
       method: "POST",
       url: "/auth/bootstrap",
       payload: {
+        bootstrapToken: TEST_BOOTSTRAP_TOKEN,
         email: "admin@example.test",
         displayName: "Admin"
       }
@@ -2057,6 +2193,7 @@ describe("API asset registry routes", () => {
       method: "POST",
       url: "/auth/bootstrap",
       payload: {
+        bootstrapToken: TEST_BOOTSTRAP_TOKEN,
         email: "admin@example.test",
         displayName: "Admin"
       }
@@ -2162,6 +2299,7 @@ describe("API asset registry routes", () => {
       method: "POST",
       url: "/auth/bootstrap",
       payload: {
+        bootstrapToken: TEST_BOOTSTRAP_TOKEN,
         email: "admin@example.test",
         displayName: "Admin"
       }
@@ -2382,6 +2520,7 @@ describe("API asset registry routes", () => {
       method: "POST",
       url: "/auth/bootstrap",
       payload: {
+        bootstrapToken: TEST_BOOTSTRAP_TOKEN,
         email: "admin@example.test",
         displayName: "Admin"
       }
@@ -2576,6 +2715,7 @@ describe("API asset registry routes", () => {
       method: "POST",
       url: "/auth/bootstrap",
       payload: {
+        bootstrapToken: TEST_BOOTSTRAP_TOKEN,
         email: "admin@example.test",
         displayName: "Admin"
       }
@@ -2735,6 +2875,7 @@ describe("API asset registry routes", () => {
       method: "POST",
       url: "/auth/bootstrap",
       payload: {
+        bootstrapToken: TEST_BOOTSTRAP_TOKEN,
         email: "admin@example.test",
         displayName: "Admin"
       }
@@ -2917,6 +3058,7 @@ describe("API asset registry routes", () => {
       method: "POST",
       url: "/auth/bootstrap",
       payload: {
+        bootstrapToken: TEST_BOOTSTRAP_TOKEN,
         email: "admin@example.test",
         displayName: "Admin"
       }
@@ -2994,14 +3136,15 @@ describe("API asset registry routes", () => {
       authRepository,
       retrievalRepository,
       feedbackRepository,
-      telemetryRetentionPolicyRepository
+      telemetryRetentionPolicyRepository,
+      bootstrapTenantId: "tenant_rollback_test"
     });
 
     const adminBootstrap = await server.inject({
       method: "POST",
       url: "/auth/bootstrap",
       payload: {
-        tenantId: "tenant_rollback_test",
+        bootstrapToken: TEST_BOOTSTRAP_TOKEN,
         email: "admin@example.test",
         displayName: "Admin"
       }
@@ -3155,6 +3298,7 @@ describe("API asset registry routes", () => {
       method: "POST",
       url: "/auth/bootstrap",
       payload: {
+        bootstrapToken: TEST_BOOTSTRAP_TOKEN,
         email: "admin@example.test",
         displayName: "Admin"
       }
@@ -3257,6 +3401,7 @@ describe("API asset registry routes", () => {
       method: "POST",
       url: "/auth/bootstrap",
       payload: {
+        bootstrapToken: TEST_BOOTSTRAP_TOKEN,
         email: "admin@example.test",
         displayName: "Admin"
       }
@@ -3372,6 +3517,7 @@ describe("API asset registry routes", () => {
       method: "POST",
       url: "/auth/bootstrap",
       payload: {
+        bootstrapToken: TEST_BOOTSTRAP_TOKEN,
         email: "admin@example.test",
         displayName: "Admin"
       }
@@ -3522,6 +3668,7 @@ describe("API asset registry routes", () => {
       method: "POST",
       url: "/auth/bootstrap",
       payload: {
+        bootstrapToken: TEST_BOOTSTRAP_TOKEN,
         email: "admin@example.test",
         displayName: "Admin"
       }
@@ -4082,6 +4229,7 @@ describe("API asset registry routes", () => {
       method: "POST",
       url: "/auth/bootstrap",
       payload: {
+        bootstrapToken: TEST_BOOTSTRAP_TOKEN,
         email: "admin@example.test",
         displayName: "Admin"
       }
@@ -4196,6 +4344,7 @@ describe("API asset registry routes", () => {
       method: "POST",
       url: "/auth/bootstrap",
       payload: {
+        bootstrapToken: TEST_BOOTSTRAP_TOKEN,
         email: "admin@example.test",
         displayName: "Admin"
       }
@@ -4323,6 +4472,7 @@ describe("API asset registry routes", () => {
       method: "POST",
       url: "/auth/bootstrap",
       payload: {
+        bootstrapToken: TEST_BOOTSTRAP_TOKEN,
         email: "admin-ranking@example.test",
         displayName: "Admin Ranking"
       }
@@ -4477,6 +4627,7 @@ describe("API asset registry routes", () => {
       method: "POST",
       url: "/auth/bootstrap",
       payload: {
+        bootstrapToken: TEST_BOOTSTRAP_TOKEN,
         email: "admin@example.test",
         displayName: "Admin"
       }
@@ -4793,6 +4944,7 @@ describe("API asset registry routes", () => {
       method: "POST",
       url: "/auth/bootstrap",
       payload: {
+        bootstrapToken: TEST_BOOTSTRAP_TOKEN,
         email: "admin-expiry@example.test",
         displayName: "Admin Expiry"
       }
@@ -4912,6 +5064,7 @@ describe("API asset registry routes", () => {
       method: "POST",
       url: "/auth/bootstrap",
       payload: {
+        bootstrapToken: TEST_BOOTSTRAP_TOKEN,
         email: "admin-rate@example.test",
         displayName: "Admin Rate"
       }
@@ -5033,10 +5186,10 @@ describe("API asset registry routes", () => {
     const feedbackRepository = new InMemoryManagedQueryFeedbackRepository();
     const providerConfigRepository = new InMemoryModelProviderConfigRepository();
     const capturedRequests: ModelRuntimeRequest[] = [];
-    const previousProviderKey = process.env.FORGETBASE_TEST_PROVIDER_KEY;
-    const previousProviderKeyFile = process.env.FORGETBASE_TEST_PROVIDER_KEY_FILE;
+    const previousProviderKey = process.env.OPENAI_API_KEY;
+    const previousProviderKeyFile = process.env.OPENAI_API_KEY_FILE;
     let tempSecretDirectory: string | null = null;
-    process.env.FORGETBASE_TEST_PROVIDER_KEY = "placeholder-provider-value";
+    process.env.OPENAI_API_KEY = "placeholder-provider-value";
 
     server = buildServer({
       logger: false,
@@ -5065,6 +5218,7 @@ describe("API asset registry routes", () => {
         method: "POST",
         url: "/auth/bootstrap",
         payload: {
+          bootstrapToken: TEST_BOOTSTRAP_TOKEN,
           email: "admin@example.test",
           displayName: "Admin"
         }
@@ -5074,7 +5228,7 @@ describe("API asset registry routes", () => {
       await providerConfigRepository.upsertProviderConfig({
         provider: "openai",
         enabled: true,
-        apiKeyEnvVar: "FORGETBASE_TEST_PROVIDER_KEY",
+        apiKeyEnvVar: "OPENAI_API_KEY",
         defaultModel: "gpt-test",
         availableModels: ["gpt-test"],
         priority: 1,
@@ -5100,7 +5254,7 @@ describe("API asset registry routes", () => {
         expect.objectContaining({
           provider: "openai",
           status: "ready",
-          apiKeyEnvVar: "FORGETBASE_TEST_PROVIDER_KEY",
+          apiKeyEnvVar: "OPENAI_API_KEY",
           apiKeyConfigured: true,
           reasons: []
         }),
@@ -5254,8 +5408,8 @@ describe("API asset registry routes", () => {
       tempSecretDirectory = await mkdtemp(join(tmpdir(), "forgetbase-provider-secret-"));
       const providerSecretFile = join(tempSecretDirectory, "api-key");
       await writeFile(providerSecretFile, "provider-file-secret\n", "utf8");
-      delete process.env.FORGETBASE_TEST_PROVIDER_KEY;
-      process.env.FORGETBASE_TEST_PROVIDER_KEY_FILE = providerSecretFile;
+      delete process.env.OPENAI_API_KEY;
+      process.env.OPENAI_API_KEY_FILE = providerSecretFile;
       capturedRequests.length = 0;
 
       const fileHealth = await server.inject({
@@ -5271,7 +5425,7 @@ describe("API asset registry routes", () => {
         expect.objectContaining({
           provider: "openai",
           status: "ready",
-          apiKeyEnvVar: "FORGETBASE_TEST_PROVIDER_KEY",
+          apiKeyEnvVar: "OPENAI_API_KEY",
           apiKeyConfigured: true,
           reasons: []
         })
@@ -5295,8 +5449,8 @@ describe("API asset registry routes", () => {
       expect(fileSecretResponse.json().generation.status).toBe("completed");
       expect(capturedRequests[0]?.apiKey).toBe("provider-file-secret");
 
-      process.env.FORGETBASE_TEST_PROVIDER_KEY = "placeholder-provider-value";
-      delete process.env.FORGETBASE_TEST_PROVIDER_KEY_FILE;
+      process.env.OPENAI_API_KEY = "placeholder-provider-value";
+      delete process.env.OPENAI_API_KEY_FILE;
       capturedRequests.length = 0;
 
       const generateAudit = (await authRepository.listAuditEvents())
@@ -5325,7 +5479,7 @@ describe("API asset registry routes", () => {
       await providerConfigRepository.upsertProviderConfig({
         provider: "openai",
         enabled: true,
-        apiKeyEnvVar: "FORGETBASE_TEST_PROVIDER_KEY",
+        apiKeyEnvVar: "OPENAI_API_KEY",
         defaultModel: "gpt-test",
         availableModels: ["gpt-test"],
         priority: 1,
@@ -5390,7 +5544,7 @@ describe("API asset registry routes", () => {
         }
       });
 
-      delete process.env.FORGETBASE_TEST_PROVIDER_KEY;
+      delete process.env.OPENAI_API_KEY;
 
       const fallbackResponse = await server.inject({
         method: "POST",
@@ -5469,15 +5623,15 @@ describe("API asset registry routes", () => {
       }
 
       if (previousProviderKey === undefined) {
-        delete process.env.FORGETBASE_TEST_PROVIDER_KEY;
+        delete process.env.OPENAI_API_KEY;
       } else {
-        process.env.FORGETBASE_TEST_PROVIDER_KEY = previousProviderKey;
+        process.env.OPENAI_API_KEY = previousProviderKey;
       }
 
       if (previousProviderKeyFile === undefined) {
-        delete process.env.FORGETBASE_TEST_PROVIDER_KEY_FILE;
+        delete process.env.OPENAI_API_KEY_FILE;
       } else {
-        process.env.FORGETBASE_TEST_PROVIDER_KEY_FILE = previousProviderKeyFile;
+        process.env.OPENAI_API_KEY_FILE = previousProviderKeyFile;
       }
     }
   });
@@ -5489,8 +5643,8 @@ describe("API asset registry routes", () => {
     const feedbackRepository = new InMemoryManagedQueryFeedbackRepository();
     const providerConfigRepository = new InMemoryModelProviderConfigRepository();
     const capturedRequests: ModelRuntimeRequest[] = [];
-    const previousProviderKey = process.env.FORGETBASE_TEST_RETRY_PROVIDER_KEY;
-    process.env.FORGETBASE_TEST_RETRY_PROVIDER_KEY = "placeholder-retry-provider-value";
+    const previousProviderKey = process.env.OPENAI_API_KEY;
+    process.env.OPENAI_API_KEY = "placeholder-retry-provider-value";
 
     server = buildServer({
       logger: false,
@@ -5524,6 +5678,7 @@ describe("API asset registry routes", () => {
         method: "POST",
         url: "/auth/bootstrap",
         payload: {
+          bootstrapToken: TEST_BOOTSTRAP_TOKEN,
           email: "admin@example.test",
           displayName: "Admin"
         }
@@ -5533,7 +5688,7 @@ describe("API asset registry routes", () => {
       await providerConfigRepository.upsertProviderConfig({
         provider: "openai",
         enabled: true,
-        apiKeyEnvVar: "FORGETBASE_TEST_RETRY_PROVIDER_KEY",
+        apiKeyEnvVar: "OPENAI_API_KEY",
         defaultModel: "retry-model",
         availableModels: ["retry-model"],
         priority: 1,
@@ -5644,9 +5799,9 @@ describe("API asset registry routes", () => {
       expect(generationAudit?.metadata.attempts).toEqual(response.json().generation.attempts);
     } finally {
       if (previousProviderKey === undefined) {
-        delete process.env.FORGETBASE_TEST_RETRY_PROVIDER_KEY;
+        delete process.env.OPENAI_API_KEY;
       } else {
-        process.env.FORGETBASE_TEST_RETRY_PROVIDER_KEY = previousProviderKey;
+        process.env.OPENAI_API_KEY = previousProviderKey;
       }
     }
   });
@@ -5658,10 +5813,10 @@ describe("API asset registry routes", () => {
     const feedbackRepository = new InMemoryManagedQueryFeedbackRepository();
     const providerConfigRepository = new InMemoryModelProviderConfigRepository();
     const capturedRequests: ModelRuntimeRequest[] = [];
-    const previousPrimaryKey = process.env.FORGETBASE_TEST_PRIMARY_PROVIDER_KEY;
-    const previousFallbackKey = process.env.FORGETBASE_TEST_FALLBACK_PROVIDER_KEY;
-    delete process.env.FORGETBASE_TEST_PRIMARY_PROVIDER_KEY;
-    process.env.FORGETBASE_TEST_FALLBACK_PROVIDER_KEY = "placeholder-fallback-provider-value";
+    const previousPrimaryKey = process.env.OPENAI_API_KEY;
+    const previousFallbackKey = process.env.ANTHROPIC_API_KEY;
+    delete process.env.OPENAI_API_KEY;
+    process.env.ANTHROPIC_API_KEY = "placeholder-fallback-provider-value";
 
     server = buildServer({
       logger: false,
@@ -5691,6 +5846,7 @@ describe("API asset registry routes", () => {
         method: "POST",
         url: "/auth/bootstrap",
         payload: {
+          bootstrapToken: TEST_BOOTSTRAP_TOKEN,
           email: "admin@example.test",
           displayName: "Admin"
         }
@@ -5700,7 +5856,7 @@ describe("API asset registry routes", () => {
       await providerConfigRepository.upsertProviderConfig({
         provider: "openai",
         enabled: true,
-        apiKeyEnvVar: "FORGETBASE_TEST_PRIMARY_PROVIDER_KEY",
+        apiKeyEnvVar: "OPENAI_API_KEY",
         defaultModel: "primary-model",
         availableModels: ["primary-model"],
         priority: 1,
@@ -5711,7 +5867,7 @@ describe("API asset registry routes", () => {
       await providerConfigRepository.upsertProviderConfig({
         provider: "anthropic",
         enabled: true,
-        apiKeyEnvVar: "FORGETBASE_TEST_FALLBACK_PROVIDER_KEY",
+        apiKeyEnvVar: "ANTHROPIC_API_KEY",
         defaultModel: "fallback-model",
         availableModels: ["fallback-model"],
         priority: 2,
@@ -5850,15 +6006,15 @@ describe("API asset registry routes", () => {
       });
     } finally {
       if (previousPrimaryKey === undefined) {
-        delete process.env.FORGETBASE_TEST_PRIMARY_PROVIDER_KEY;
+        delete process.env.OPENAI_API_KEY;
       } else {
-        process.env.FORGETBASE_TEST_PRIMARY_PROVIDER_KEY = previousPrimaryKey;
+        process.env.OPENAI_API_KEY = previousPrimaryKey;
       }
 
       if (previousFallbackKey === undefined) {
-        delete process.env.FORGETBASE_TEST_FALLBACK_PROVIDER_KEY;
+        delete process.env.ANTHROPIC_API_KEY;
       } else {
-        process.env.FORGETBASE_TEST_FALLBACK_PROVIDER_KEY = previousFallbackKey;
+        process.env.ANTHROPIC_API_KEY = previousFallbackKey;
       }
     }
   });
@@ -5873,8 +6029,8 @@ describe("API asset registry routes", () => {
     const managedQueryRetentionPolicyRepository = new InMemoryManagedQueryRetentionPolicyRepository();
     const providerConfigRepository = new InMemoryModelProviderConfigRepository();
     const capturedRequests: ModelRuntimeRequest[] = [];
-    const previousProviderKey = process.env.FORGETBASE_TEST_CACHE_PROVIDER_KEY;
-    process.env.FORGETBASE_TEST_CACHE_PROVIDER_KEY = "placeholder-cache-provider-value";
+    const previousProviderKey = process.env.OPENAI_API_KEY;
+    process.env.OPENAI_API_KEY = "placeholder-cache-provider-value";
 
     server = buildServer({
       logger: false,
@@ -5906,6 +6062,7 @@ describe("API asset registry routes", () => {
         method: "POST",
         url: "/auth/bootstrap",
         payload: {
+          bootstrapToken: TEST_BOOTSTRAP_TOKEN,
           email: "admin@example.test",
           displayName: "Admin"
         }
@@ -5983,7 +6140,7 @@ describe("API asset registry routes", () => {
       await providerConfigRepository.upsertProviderConfig({
         provider: "openai",
         enabled: true,
-        apiKeyEnvVar: "FORGETBASE_TEST_CACHE_PROVIDER_KEY",
+        apiKeyEnvVar: "OPENAI_API_KEY",
         defaultModel: "gpt-cache-test",
         availableModels: ["gpt-cache-test"],
         priority: 1,
@@ -6318,9 +6475,9 @@ describe("API asset registry routes", () => {
       });
     } finally {
       if (previousProviderKey === undefined) {
-        delete process.env.FORGETBASE_TEST_CACHE_PROVIDER_KEY;
+        delete process.env.OPENAI_API_KEY;
       } else {
-        process.env.FORGETBASE_TEST_CACHE_PROVIDER_KEY = previousProviderKey;
+        process.env.OPENAI_API_KEY = previousProviderKey;
       }
     }
   });
@@ -6334,8 +6491,8 @@ describe("API asset registry routes", () => {
     const cachePolicyRepository = new InMemoryManagedQueryCachePolicyRepository();
     const providerConfigRepository = new InMemoryModelProviderConfigRepository();
     const piiRedactionPolicyRepository = new InMemoryPiiRedactionPolicyRepository();
-    const previousProviderKey = process.env.FORGETBASE_TEST_PII_CACHE_PROVIDER_KEY;
-    process.env.FORGETBASE_TEST_PII_CACHE_PROVIDER_KEY = "placeholder-pii-cache-provider-value";
+    const previousProviderKey = process.env.OPENAI_API_KEY;
+    process.env.OPENAI_API_KEY = "placeholder-pii-cache-provider-value";
 
     server = buildServer({
       logger: false,
@@ -6366,6 +6523,7 @@ describe("API asset registry routes", () => {
         method: "POST",
         url: "/auth/bootstrap",
         payload: {
+          bootstrapToken: TEST_BOOTSTRAP_TOKEN,
           email: "admin@example.test",
           displayName: "Admin"
         }
@@ -6375,7 +6533,7 @@ describe("API asset registry routes", () => {
       await providerConfigRepository.upsertProviderConfig({
         provider: "openai",
         enabled: true,
-        apiKeyEnvVar: "FORGETBASE_TEST_PII_CACHE_PROVIDER_KEY",
+        apiKeyEnvVar: "OPENAI_API_KEY",
         defaultModel: "gpt-cache-test",
         availableModels: ["gpt-cache-test"],
         priority: 1
@@ -6483,9 +6641,9 @@ describe("API asset registry routes", () => {
       expect(await cacheRepository.listEntries()).toHaveLength(1);
     } finally {
       if (previousProviderKey === undefined) {
-        delete process.env.FORGETBASE_TEST_PII_CACHE_PROVIDER_KEY;
+        delete process.env.OPENAI_API_KEY;
       } else {
-        process.env.FORGETBASE_TEST_PII_CACHE_PROVIDER_KEY = previousProviderKey;
+        process.env.OPENAI_API_KEY = previousProviderKey;
       }
     }
   });
@@ -6511,6 +6669,7 @@ describe("API asset registry routes", () => {
       method: "POST",
       url: "/auth/bootstrap",
       payload: {
+        bootstrapToken: TEST_BOOTSTRAP_TOKEN,
         email: "admin@example.test",
         displayName: "Admin"
       }
@@ -6700,6 +6859,7 @@ describe("API asset registry routes", () => {
       method: "POST",
       url: "/auth/bootstrap",
       payload: {
+        bootstrapToken: TEST_BOOTSTRAP_TOKEN,
         email: "admin@example.test",
         displayName: "Admin"
       }
@@ -7291,6 +7451,7 @@ describe("API asset registry routes", () => {
       method: "POST",
       url: "/auth/bootstrap",
       payload: {
+        bootstrapToken: TEST_BOOTSTRAP_TOKEN,
         email: "admin@example.test",
         displayName: "Admin"
       }

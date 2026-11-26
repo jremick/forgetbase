@@ -1,7 +1,8 @@
 import { randomBytes } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
+import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { assetDetailSchema, assetUpdateInputSchema, managedQueryResponseSchema, searchResponseSchema } from "../packages/schema/src/index.js";
 import { readerExperienceAssets, readerFixture, readerPolicyBody, readerUnpublishedReplacement } from "./fixtures/reader-experience.js";
@@ -35,6 +36,7 @@ const steps: StepResult[] = [];
 const redactions: string[] = [];
 const baseEnv = buildProofEnvironment();
 let composeEnv: NodeJS.ProcessEnv = { ...baseEnv, COMPOSE_PROJECT_NAME: projectName };
+const secretDirectory = mkdtempSync(resolve(tmpdir(), "forgetbase-proof-secrets-"));
 let cleanedUp = false;
 let failed = false;
 let cleanupAttempted = false;
@@ -65,12 +67,18 @@ try {
   composeFiles.push("-f", browserBuildOverride);
   const ports = await reserveDistinctPorts(4);
   const [postgresPort, apiPort, webPort, proxyPort] = ports;
+  const bootstrapToken = randomBytes(32).toString("base64url");
+  const bootstrapTokenPath = resolve(secretDirectory, "bootstrap-token");
+  writeFileSync(bootstrapTokenPath, bootstrapToken, { mode: 0o600 });
+  chmodSync(bootstrapTokenPath, 0o444);
+  redactions.push(bootstrapToken);
   composeEnv = {
     ...composeEnv,
     FORGETBASE_POSTGRES_PORT: `127.0.0.1:${postgresPort}`,
     FORGETBASE_API_PORT: `127.0.0.1:${apiPort}`,
     FORGETBASE_WEB_PORT: `127.0.0.1:${webPort}`,
     FORGETBASE_PROXY_PORT: `127.0.0.1:${proxyPort}`,
+    FORGETBASE_BOOTSTRAP_TOKEN_PATH: bootstrapTokenPath,
     FORGETBASE_CORS_ALLOWED_ORIGINS: `http://127.0.0.1:${proxyPort},http://127.0.0.1:${webPort}`
   };
   const apiUrl = `http://127.0.0.1:${apiPort}`;
@@ -115,7 +123,7 @@ try {
   const bootstrap = await requestJson(`${apiUrl}/auth/bootstrap`, {
     method: "POST",
     body: {
-      tenantId,
+      bootstrapToken,
       email: adminEmail,
       displayName: "Private Live Admin",
       password,
@@ -150,7 +158,7 @@ try {
     "run Compose smoke and restricted-leakage proof",
     "npx",
     ["-y", "pnpm@11.7.0", "smoke:compose"],
-    { ...composeEnv, FORGETBASE_API_URL: apiUrl },
+    { ...composeEnv, FORGETBASE_API_URL: apiUrl, FORGETBASE_API_KEY: adminKey, FORGETBASE_PROOF_TENANT_ID: tenantId },
     10 * 60 * 1_000
   );
   const backupSetPath = resolve(outputDir, "backup-set");
@@ -265,6 +273,7 @@ try {
   if (!keepStack) {
     const cleanupResult = cleanupStack();
     cleanedUp = cleanupResult.ok;
+    rmSync(secretDirectory, { recursive: true, force: true });
     if (!cleanupResult.ok) {
       failed = true;
     }
@@ -380,6 +389,7 @@ function handleSignal(signal: NodeJS.Signals, exitCode: number): never {
   failed = true;
   const cleanupResult = keepStack ? null : cleanupStack();
   cleanedUp = cleanupResult?.ok ?? false;
+  if (!keepStack) rmSync(secretDirectory, { recursive: true, force: true });
   const interruptedSummary = {
     ok: false,
     projectName,

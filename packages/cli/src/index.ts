@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-import { mkdir, readFile } from "node:fs/promises";
-import { writeFile } from "node:fs/promises";
-import { dirname, resolve, sep } from "node:path";
+import { constants } from "node:fs";
+import { lstat, mkdir, open, readFile, realpath, writeFile, type FileHandle } from "node:fs/promises";
+import { basename, dirname, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
   accountLinkingModeSchema,
@@ -469,10 +469,16 @@ async function handleAdmin(args: string[]): Promise<number> {
     }
 
     case "secret-reference-policy-set": {
+      const allowUnlistedEnvVars = readBooleanOption(rest, "--allow-unlisted");
+
+      if (allowUnlistedEnvVars === true) {
+        throw new Error("--allow-unlisted cannot be enabled; deployment provider-secret bindings are authoritative");
+      }
+
       console.log(JSON.stringify(await client.updateSecretReferencePolicy({
         allowedEnvVarPrefixes: readCsvOption(rest, "--allowed-prefixes"),
         allowedEnvVars: readCsvOption(rest, "--allowed-env-vars"),
-        allowUnlistedEnvVars: readBooleanOption(rest, "--allow-unlisted")
+        allowUnlistedEnvVars
       }), null, 2));
       return 0;
     }
@@ -643,18 +649,138 @@ async function handleExports(args: string[]): Promise<number> {
 }
 
 async function writeOkfBundle(outputDir: string, bundle: OkfExportPackage): Promise<void> {
-  const root = resolveInputPath(outputDir);
-
-  for (const file of bundle.files) {
+  const requestedRoot = resolveInputPath(outputDir);
+  const parent = await prepareOkfParent(dirname(requestedRoot));
+  const root = resolve(parent, basename(requestedRoot));
+  const writes = bundle.files.map((file) => {
     const outputPath = resolve(root, file.path);
 
-    if (outputPath !== root && !outputPath.startsWith(`${root}${sep}`)) {
+    if (!outputPath.startsWith(`${root}${sep}`)) {
       throw new Error(`Refusing to write OKF file outside output directory: ${file.path}`);
     }
 
-    await mkdir(dirname(outputPath), { recursive: true });
-    await writeFile(outputPath, file.content, "utf8");
+    return { file, outputPath };
+  });
+  const uniqueOutputPaths = new Set(writes.map(({ outputPath }) => outputPath));
+  if (uniqueOutputPaths.size !== writes.length) {
+    throw new Error("Refusing to write an OKF bundle with duplicate output paths");
   }
+
+  try {
+    await mkdir(root, { mode: 0o700 });
+  } catch (error) {
+    if (isFileSystemError(error, "EEXIST")) {
+      throw new Error(`Refusing to replace existing OKF output path: ${outputDir}`);
+    }
+    throw error;
+  }
+
+  const rootEntry = await lstat(root);
+  if (rootEntry.isSymbolicLink() || !rootEntry.isDirectory()) {
+    throw new Error(`Refusing to use non-directory OKF output path: ${outputDir}`);
+  }
+  const rootIdentity = { device: rootEntry.dev, inode: rootEntry.ino };
+
+  for (const { file, outputPath } of writes) {
+    await assertOkfRootIdentity(root, rootIdentity);
+    await ensureOkfDirectory(root, dirname(outputPath));
+    await assertOkfRootIdentity(root, rootIdentity);
+
+    let handle: FileHandle;
+    try {
+      handle = await open(
+        outputPath,
+        constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | noFollowFlag(),
+        0o600
+      );
+    } catch (error) {
+      if (isFileSystemError(error, "EEXIST") || isFileSystemError(error, "ELOOP")) {
+        throw new Error(`Refusing to replace existing OKF output file: ${file.path}`);
+      }
+      throw error;
+    }
+
+    try {
+      const outputEntry = await handle.stat();
+      if (!outputEntry.isFile()) {
+        throw new Error(`Refusing to write non-regular OKF output file: ${file.path}`);
+      }
+      await handle.writeFile(file.content, "utf8");
+    } finally {
+      await handle.close();
+    }
+  }
+}
+
+// A private bundle root protects descendants only if another user cannot move
+// it via its parent. Resolve ancestors first, then use the trusted physical path.
+async function prepareOkfParent(directory: string): Promise<string> {
+  const parent = dirname(directory);
+  if (parent === directory) return directory;
+
+  const physicalParent = await prepareOkfParent(parent);
+  const candidate = resolve(physicalParent, basename(directory));
+  try {
+    await mkdir(candidate, { mode: 0o700 });
+  } catch (error) {
+    if (!isFileSystemError(error, "EEXIST")) throw error;
+  }
+
+  const entry = await lstat(candidate);
+  const uid = process.geteuid?.();
+  if (uid !== undefined && entry.uid !== 0 && entry.uid !== uid) {
+    throw new Error(`Choose an OKF output parent owned by the operator or system: ${candidate}`);
+  }
+  if (entry.isSymbolicLink()) {
+    return prepareOkfParent(await realpath(candidate));
+  }
+  if (!entry.isDirectory() || (uid !== undefined && (entry.mode & 0o022) !== 0 && (entry.mode & 0o1000) === 0)) {
+    throw new Error(`Choose an OKF output parent protected from replacement by other users: ${candidate}`);
+  }
+  return candidate;
+}
+
+async function ensureOkfDirectory(root: string, directory: string): Promise<void> {
+  const relativeDirectory = relative(root, directory);
+  if (!relativeDirectory) return;
+
+  let current = root;
+  for (const component of relativeDirectory.split(sep)) {
+    current = resolve(current, component);
+    try {
+      await mkdir(current, { mode: 0o700 });
+    } catch (error) {
+      if (!isFileSystemError(error, "EEXIST")) throw error;
+    }
+
+    const entry = await lstat(current);
+    if (entry.isSymbolicLink() || !entry.isDirectory()) {
+      throw new Error(`Refusing to use linked or non-directory OKF output path: ${current}`);
+    }
+  }
+}
+
+async function assertOkfRootIdentity(
+  root: string,
+  expected: { device: number; inode: number }
+): Promise<void> {
+  const entry = await lstat(root);
+  if (
+    entry.isSymbolicLink() ||
+    !entry.isDirectory() ||
+    entry.dev !== expected.device ||
+    entry.ino !== expected.inode
+  ) {
+    throw new Error("Refusing to write an OKF bundle after its output directory changed");
+  }
+}
+
+function isFileSystemError(error: unknown, code: string): boolean {
+  return error instanceof Error && "code" in error && error.code === code;
+}
+
+function noFollowFlag(): number {
+  return "O_NOFOLLOW" in constants ? constants.O_NOFOLLOW : 0;
 }
 
 async function handleValidate(args: string[]): Promise<number> {
@@ -984,8 +1110,11 @@ async function handleAuth(args: string[]): Promise<number> {
 
   switch (subcommand) {
     case "bootstrap": {
+      if (readOption(args, "--tenant-id") !== undefined) {
+        throw new Error("The deployment selects the bootstrap tenant. Remove --tenant-id.");
+      }
       const result = await client.bootstrapAuth({
-        tenantId: readOption(args, "--tenant-id") ?? "tenant_demo",
+        bootstrapToken: await readBootstrapTokenFile(requireOption(args, "--bootstrap-token-file")),
         email: requireOption(args, "--email"),
         displayName: requireOption(args, "--display-name"),
         keyName: readOption(args, "--key-name") ?? "bootstrap-admin",
@@ -1269,6 +1398,16 @@ async function readAssetCollectionFile(path: string): Promise<AssetCreateInput[]
 
 async function readJsonFile(path: string): Promise<unknown> {
   return JSON.parse(await readFile(resolveInputPath(path), "utf8")) as unknown;
+}
+
+async function readBootstrapTokenFile(path: string): Promise<string> {
+  const token = (await readFile(resolveInputPath(path), "utf8")).replace(/[\r\n]+$/g, "");
+
+  if (!token) {
+    throw new Error("Bootstrap token file is empty");
+  }
+
+  return token;
 }
 
 function resolveInputPath(path: string): string {
@@ -1635,7 +1774,7 @@ Usage:
   forgetbase local status [--profile work]
   forgetbase local doctor [--profile work]
   forgetbase local mcp [--profile work]
-  forgetbase auth bootstrap --email admin@example.test --display-name "Admin" [--tenant-id tenant_demo] [--password ...]
+  forgetbase auth bootstrap --bootstrap-token-file work/bootstrap/token --email admin@example.test --display-name "Admin" [--password ...]
   forgetbase auth login --email user@example.test [--tenant-id tenant_demo] [--password ...] [--device-label "Work laptop"]
   forgetbase auth oidc-start --provider oidc|microsoft-entra [--tenant-id tenant_demo] [--redirect-uri ...]
   forgetbase auth oidc-callback --provider oidc|microsoft-entra --code ... --state ... --nonce ... --code-verifier ... [--tenant-id tenant_demo] [--device-label "Work laptop"]
@@ -1679,7 +1818,7 @@ Usage:
   forgetbase admin managed-query-retention-policy [--api-key ...]
   forgetbase admin managed-query-retention-policy-set [--prompt-capture-mode disabled|metadata-only] [--response-capture-mode disabled|metadata-only] [--metadata-retention-days 30|none] [--api-key ...]
   forgetbase admin secret-reference-policy [--api-key ...]
-  forgetbase admin secret-reference-policy-set [--allowed-prefixes OPENAI_,ENTRA_] [--allowed-env-vars CUSTOM_PROVIDER_KEY] [--allow-unlisted true|false] [--api-key ...]
+  forgetbase admin secret-reference-policy-set [--allowed-prefixes OPENAI_,ENTRA_] [--allowed-env-vars CUSTOM_PROVIDER_KEY] [--allow-unlisted false] [--api-key ...]
   forgetbase admin pii-redaction-policy [--api-key ...]
   forgetbase admin pii-redaction-policy-set [--redaction-enabled true|false] [--enabled-rule-kinds email,ip-address,url-secret] [--api-key ...]
   forgetbase admin service-account-policy [--api-key ...]

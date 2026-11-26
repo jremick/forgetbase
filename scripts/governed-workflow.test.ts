@@ -11,12 +11,14 @@ import { createMcpServer } from "../packages/mcp-server/src/server.js";
 import { ForgetBaseClient, ForgetBaseHttpError } from "../packages/sdk/src/index.js";
 import { assetDetailSchema, managedQueryResponseSchema, searchResponseSchema, type AssetCreateInput } from "../packages/schema/src/index.js";
 
+const TEST_BOOTSTRAP_TOKEN = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcdef";
+
 describe("governed instruction and human-document workflow", () => {
   it("authors through CLI, consumes published versions through SDK and MCP, and enforces revocation on the existing clients", async () => {
     const registryRepository = new InMemoryRegistryRepository();
     const authRepository = new InMemoryAuthRepository();
     const retrievalRepository = new InMemoryRetrievalRepository();
-    const api = buildServer({ logger: false, registryRepository, authRepository, retrievalRepository });
+    const api = buildServer({ logger: false, registryRepository, authRepository, retrievalRepository, bootstrapToken: TEST_BOOTSTRAP_TOKEN });
     const directory = await mkdtemp(join(tmpdir(), "forgetbase-governed-workflow-"));
     const output: string[] = [];
     const stdout = vi.spyOn(console, "log").mockImplementation((value) => { output.push(String(value)); });
@@ -25,7 +27,7 @@ describe("governed instruction and human-document workflow", () => {
     try {
       const baseUrl = await api.listen({ host: "127.0.0.1", port: 0 });
       const bootstrap = await new ForgetBaseClient({ baseUrl }).bootstrapAuth({
-        email: "workflow-admin@example.test", displayName: "Workflow Admin"
+        bootstrapToken: TEST_BOOTSTRAP_TOKEN, email: "workflow-admin@example.test", displayName: "Workflow Admin"
       });
       const author = new ForgetBaseClient({ baseUrl, apiKey: bootstrap.secret });
       const readerUser = await author.createUser({ email: "workflow-reader@example.test", displayName: "Workflow Reader", role: "reader" });

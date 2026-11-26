@@ -63,6 +63,63 @@ describe("InMemoryAttachmentRepository", () => {
       .rejects.toBeInstanceOf(DuplicateAttachmentStorageKeyError);
   });
 
+  it("keeps upload reservations unavailable until activation and can discard failed reservations", async () => {
+    const repository = new InMemoryAttachmentRepository({
+      now: () => new Date("2026-09-01T00:00:00.000Z"),
+      generateId: (() => {
+        let id = 0;
+        return () => `attachment_${++id}`;
+      })()
+    });
+    const pending = await repository.reserveAttachment(attachmentInput());
+
+    expect(pending.lifecycleState).toBe("pending");
+    await expect(repository.getAttachment(pending.id, { tenantId: "tenant_one" })).resolves.toBeNull();
+    await expect(repository.listAttachments({ tenantId: "tenant_one", assetId: "asset_one" }))
+      .resolves.toEqual([]);
+
+    const active = await repository.activateAttachment({
+      tenantId: "tenant_one",
+      attachmentId: pending.id
+    });
+    expect(active?.lifecycleState).toBe("active");
+    await expect(repository.getAttachment(pending.id, { tenantId: "tenant_one" }))
+      .resolves.toMatchObject({ lifecycleState: "active" });
+
+    const failed = await repository.reserveAttachment(attachmentInput({
+      storageKey: "cd/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+    }));
+    const discarded = await repository.discardPendingAttachment({
+      tenantId: "tenant_one",
+      attachmentId: failed.id
+    });
+    expect(discarded).toMatchObject({ lifecycleState: "deleted" });
+  });
+
+  it("serializes attachment lifecycle operations", async () => {
+    const repository = new InMemoryAttachmentRepository();
+    const order: string[] = [];
+    let releaseFirst: () => void = () => undefined;
+    const firstGate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const first = repository.withAttachmentLifecycleLock(async () => {
+      order.push("first-start");
+      await firstGate;
+      order.push("first-end");
+    });
+    await Promise.resolve();
+    const second = repository.withAttachmentLifecycleLock(async () => {
+      order.push("second");
+    });
+    await Promise.resolve();
+
+    expect(order).toEqual(["first-start"]);
+    releaseFirst();
+    await Promise.all([first, second]);
+    expect(order).toEqual(["first-start", "first-end", "second"]);
+  });
+
   it("reports tenant and uploader usage without counting deleted attachments", async () => {
     const repository = new InMemoryAttachmentRepository({
       generateId: (() => {

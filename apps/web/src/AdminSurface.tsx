@@ -647,9 +647,8 @@ export function AdminSurface({ branding, brandingRequest, onBrandingSaved, onSes
   const [queryRetentionMetadataDays, setQueryRetentionMetadataDays] = useState("30");
   const [secretReferencePolicy, setSecretReferencePolicy] = useState<SecretReferencePolicy | null>(null);
   const [secretReferencePrefixes, setSecretReferencePrefixes] =
-    useState("FORGETBASE_,OPENAI_,ANTHROPIC_,OPENROUTER_,ENTRA_,OIDC_");
+    useState("OPENAI_,ANTHROPIC_,OPENROUTER_,ENTRA_,OIDC_");
   const [secretReferenceEnvVars, setSecretReferenceEnvVars] = useState("");
-  const [secretReferenceAllowUnlisted, setSecretReferenceAllowUnlisted] = useState<"true" | "false">("false");
   const [piiRedactionPolicy, setPiiRedactionPolicy] = useState<PiiRedactionPolicy | null>(null);
   const [piiRedactionEnabled, setPiiRedactionEnabled] = useState<"true" | "false">("true");
   const [piiRedactionRuleKinds, setPiiRedactionRuleKinds] =
@@ -2428,7 +2427,6 @@ export function AdminSurface({ branding, brandingRequest, onBrandingSaved, onSes
       setSecretReferencePolicy(policy);
       setSecretReferencePrefixes(policy.allowedEnvVarPrefixes.join(","));
       setSecretReferenceEnvVars(policy.allowedEnvVars.join(","));
-      setSecretReferenceAllowUnlisted(String(policy.allowUnlistedEnvVars) as "true" | "false");
       setMessage("Loaded secret reference policy");
     } catch (secretError) {
       setError(secretError instanceof Error ? secretError.message : String(secretError));
@@ -2445,13 +2443,12 @@ export function AdminSurface({ branding, brandingRequest, onBrandingSaved, onSes
         body: JSON.stringify({
           allowedEnvVarPrefixes: parseCsvInput(secretReferencePrefixes),
           allowedEnvVars: parseCsvInput(secretReferenceEnvVars),
-          allowUnlistedEnvVars: secretReferenceAllowUnlisted === "true"
+          allowUnlistedEnvVars: false
         })
       });
       setSecretReferencePolicy(policy);
       setSecretReferencePrefixes(policy.allowedEnvVarPrefixes.join(","));
       setSecretReferenceEnvVars(policy.allowedEnvVars.join(","));
-      setSecretReferenceAllowUnlisted(String(policy.allowUnlistedEnvVars) as "true" | "false");
       setMessage("Saved secret reference policy");
     } catch (secretError) {
       setError(secretError instanceof Error ? secretError.message : String(secretError));
@@ -4891,6 +4888,7 @@ export function AdminSurface({ branding, brandingRequest, onBrandingSaved, onSes
                     description: attachmentReconciliation
                       ? attachmentReconciliation.activeMissingOrUnreadableCount +
                         attachmentReconciliation.activeIntegrityFailureCount +
+                        attachmentReconciliation.stalePendingCount +
                         attachmentReconciliation.staleDeletingCount +
                         attachmentReconciliation.orphanedObjectCount +
                         attachmentReconciliation.unexpectedStorageEntryCount
@@ -5568,16 +5566,7 @@ export function AdminSurface({ branding, brandingRequest, onBrandingSaved, onSes
                   onChange={(event) => setSecretReferenceEnvVars(event.target.value)}
                 />
               </label>
-              <label>
-                Allow unlisted
-                <NativeSelect
-                  value={secretReferenceAllowUnlisted}
-                  onChange={(event) => setSecretReferenceAllowUnlisted(event.target.value as "true" | "false")}
-                >
-                  <option value="false">false</option>
-                  <option value="true">true</option>
-                </NativeSelect>
-              </label>
+              <p>Secret references must match a deployment binding and this tenant policy.</p>
               <Button type="submit">Save secret policy</Button>
               <Button type="button" onClick={() => void loadSecretReferencePolicy()}>Load policy</Button>
             </form>

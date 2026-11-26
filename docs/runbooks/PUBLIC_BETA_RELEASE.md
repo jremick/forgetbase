@@ -111,7 +111,7 @@ Stop if the reader can trigger admin actions, if restricted content appears for 
 
 ## Stack Safety Gates
 
-Run these against the seeded release stack:
+Run these against a disposable, seeded stack at the release commit. Set `FORGETBASE_API_URL`, its user admin key in `FORGETBASE_API_KEY`, and the matching `FORGETBASE_PROOF_TENANT_ID`. The leakage gate writes synthetic fixtures.
 
 ```bash
 npx -y pnpm@11.7.0 smoke:compose

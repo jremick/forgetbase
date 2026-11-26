@@ -27,11 +27,16 @@ async function expectStatus(response: Response, status: number) {
   assert.equal(response.status, status, `HTTP status for ${new URL(response.url).pathname}`);
   return response.json();
 }
+async function createProofAdmin(tenantId: string) {
+  const user = await auth.createUser({ tenantId, email: "admin@example.test", displayName: "Admin", role: "admin", password: "synthetic-password-123" });
+  const key = await auth.createApiKey({ tenantId, userId: user.id, name: "branding-proof", scopes: ["admin"], allowedSurfaces: ["api", "web"] });
+  assert(key);
+  return { user, secret: key.secret };
+}
 try {
   await runMigrations(pool);
-  const admin = await auth.bootstrapAdmin({ tenantId: tenant, email: "admin@example.test", displayName: "Admin", password: "synthetic-password-123", keyName: "branding-proof" });
-  const other = await auth.bootstrapAdmin({ tenantId: otherTenant, email: "admin@example.test", displayName: "Admin", password: "synthetic-password-123", keyName: "branding-proof" });
-  assert(admin && other);
+  const admin = await createProofAdmin(tenant);
+  const other = await createProofAdmin(otherTenant);
   base = await server.listen({ port: 0, host: "127.0.0.1" });
   const publicPath = `/branding?tenantId=${encodeURIComponent(tenant)}`;
   assert.deepEqual(await expectStatus(await call(publicPath), 200), defaults);

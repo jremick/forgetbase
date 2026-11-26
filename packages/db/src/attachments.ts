@@ -50,7 +50,12 @@ export interface AttachmentDeletionCompleteInput {
 }
 
 export interface AttachmentRepository {
+  /** Serializes blob publication and destructive reconciliation across API replicas. */
+  withAttachmentLifecycleLock<T>(operation: (repository: AttachmentRepository) => Promise<T>): Promise<T>;
   createAttachment(input: AttachmentCreateInput): Promise<AttachmentRecord>;
+  reserveAttachment(input: AttachmentCreateInput): Promise<AttachmentRecord>;
+  activateAttachment(input: AttachmentDeletionCompleteInput): Promise<AttachmentRecord | null>;
+  discardPendingAttachment(input: AttachmentDeletionCompleteInput): Promise<AttachmentRecord | null>;
   getAttachment(attachmentId: string, options?: AttachmentGetOptions): Promise<AttachmentRecord | null>;
   listAttachments(options: AttachmentListOptions): Promise<AttachmentRecord[]>;
   getAttachmentUsage(options?: AttachmentUsageOptions): Promise<AttachmentUsage>;
@@ -74,11 +79,43 @@ export class DuplicateAttachmentStorageKeyError extends Error {
 }
 
 export class PostgresAttachmentRepository implements AttachmentRepository {
-  constructor(private readonly pool: Pool) {}
+  constructor(private readonly pool: Pool, private readonly queries: Pick<Pool, "query"> = pool) {}
+
+  async withAttachmentLifecycleLock<T>(operation: (repository: AttachmentRepository) => Promise<T>): Promise<T> {
+    const client = await this.pool.connect();
+    let locked = false;
+
+    try {
+      await client.query("SELECT pg_advisory_lock($1, $2)", ATTACHMENT_LIFECYCLE_LOCK);
+      locked = true;
+      return await operation(new PostgresAttachmentRepository(this.pool, client));
+    } finally {
+      if (locked) {
+        try {
+          await client.query("SELECT pg_advisory_unlock($1, $2)", ATTACHMENT_LIFECYCLE_LOCK);
+        } catch (error) {
+          client.release(error instanceof Error ? error : true);
+          throw error;
+        }
+      }
+      client.release();
+    }
+  }
 
   async createAttachment(input: AttachmentCreateInput): Promise<AttachmentRecord> {
+    return this.insertAttachment(input, "active");
+  }
+
+  async reserveAttachment(input: AttachmentCreateInput): Promise<AttachmentRecord> {
+    return this.insertAttachment(input, "pending");
+  }
+
+  private async insertAttachment(
+    input: AttachmentCreateInput,
+    lifecycleState: "pending" | "active"
+  ): Promise<AttachmentRecord> {
     const parsed = attachmentCreateInputSchema.parse(input);
-    const result = await this.pool.query<AttachmentRow>(
+    const result = await this.queries.query<AttachmentRow>(
       `
         INSERT INTO attachments (
           tenant_id,
@@ -88,12 +125,13 @@ export class PostgresAttachmentRepository implements AttachmentRepository {
           size_bytes,
           content_sha256,
           storage_key,
+          lifecycle_state,
           metadata,
           uploaded_by_user_id,
           uploaded_by_service_account_id,
           uploaded_by_api_key_id
         )
-        SELECT $1, assets.id, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11
+        SELECT $1, assets.id, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12
         FROM assets
         WHERE assets.tenant_id = $1
           AND assets.id = $2
@@ -107,6 +145,7 @@ export class PostgresAttachmentRepository implements AttachmentRepository {
         parsed.sizeBytes,
         parsed.contentSha256,
         parsed.storageKey,
+        lifecycleState,
         JSON.stringify(parsed.metadata),
         parsed.uploadedByUserId ?? null,
         parsed.uploadedByServiceAccountId ?? null,
@@ -128,12 +167,52 @@ export class PostgresAttachmentRepository implements AttachmentRepository {
     return mapAttachmentRow(row);
   }
 
+  async activateAttachment(input: AttachmentDeletionCompleteInput): Promise<AttachmentRecord | null> {
+    const tenantId = input.tenantId ?? "tenant_demo";
+    const result = await this.queries.query<AttachmentRow>(
+      `
+        UPDATE attachments
+        SET
+          lifecycle_state = 'active',
+          updated_at = now()
+        WHERE tenant_id = $1
+          AND id = $2
+          AND lifecycle_state = 'pending'
+        RETURNING *
+      `,
+      [tenantId, requireIdentifier(input.attachmentId, "attachmentId")]
+    );
+    const row = result.rows[0];
+    return row ? mapAttachmentRow(row) : null;
+  }
+
+  async discardPendingAttachment(input: AttachmentDeletionCompleteInput): Promise<AttachmentRecord | null> {
+    const tenantId = input.tenantId ?? "tenant_demo";
+    const result = await this.queries.query<AttachmentRow>(
+      `
+        UPDATE attachments
+        SET
+          lifecycle_state = 'deleted',
+          deletion_requested_at = now(),
+          deleted_at = now(),
+          updated_at = now()
+        WHERE tenant_id = $1
+          AND id = $2
+          AND lifecycle_state = 'pending'
+        RETURNING *
+      `,
+      [tenantId, requireIdentifier(input.attachmentId, "attachmentId")]
+    );
+    const row = result.rows[0];
+    return row ? mapAttachmentRow(row) : null;
+  }
+
   async getAttachment(
     attachmentId: string,
     options: AttachmentGetOptions = {}
   ): Promise<AttachmentRecord | null> {
     const tenantId = options.tenantId ?? "tenant_demo";
-    const result = await this.pool.query<AttachmentRow>(
+    const result = await this.queries.query<AttachmentRow>(
       `
         SELECT *
         FROM attachments
@@ -151,7 +230,7 @@ export class PostgresAttachmentRepository implements AttachmentRepository {
   async listAttachments(options: AttachmentListOptions): Promise<AttachmentRecord[]> {
     const tenantId = options.tenantId ?? "tenant_demo";
     const limit = boundedLimit(options.limit);
-    const result = await this.pool.query<AttachmentRow>(
+    const result = await this.queries.query<AttachmentRow>(
       `
         SELECT *
         FROM attachments
@@ -177,7 +256,7 @@ export class PostgresAttachmentRepository implements AttachmentRepository {
     const hasPrincipalFilter = Boolean(
       options.uploadedByUserId || options.uploadedByServiceAccountId || options.uploadedByApiKeyId
     );
-    const result = await this.pool.query<{ file_count: string | number; total_bytes: string | number }>(
+    const result = await this.queries.query<{ file_count: string | number; total_bytes: string | number }>(
       `
         SELECT count(*) AS file_count, COALESCE(sum(size_bytes), 0) AS total_bytes
         FROM attachments
@@ -208,7 +287,7 @@ export class PostgresAttachmentRepository implements AttachmentRepository {
     options: AttachmentReconciliationListOptions = {}
   ): Promise<AttachmentRecord[]> {
     const limit = boundedReconciliationLimit(options.limit);
-    const result = await this.pool.query<AttachmentRow>(
+    const result = await this.queries.query<AttachmentRow>(
       `
         SELECT *
         FROM attachments
@@ -223,7 +302,7 @@ export class PostgresAttachmentRepository implements AttachmentRepository {
 
   async markAttachmentDeleting(input: AttachmentDeletionRequestInput): Promise<AttachmentRecord | null> {
     const tenantId = input.tenantId ?? "tenant_demo";
-    const result = await this.pool.query<AttachmentRow>(
+    const result = await this.queries.query<AttachmentRow>(
       `
         UPDATE attachments
         SET
@@ -264,7 +343,7 @@ export class PostgresAttachmentRepository implements AttachmentRepository {
 
   async markAttachmentDeleted(input: AttachmentDeletionCompleteInput): Promise<AttachmentRecord | null> {
     const tenantId = input.tenantId ?? "tenant_demo";
-    const result = await this.pool.query<AttachmentRow>(
+    const result = await this.queries.query<AttachmentRow>(
       `
         UPDATE attachments
         SET
@@ -293,13 +372,40 @@ export class InMemoryAttachmentRepository implements AttachmentRepository {
   private readonly storageKeys = new Set<string>();
   private readonly now: () => Date;
   private readonly generateId: () => string;
+  private attachmentLifecycleLock = Promise.resolve();
 
   constructor(options: InMemoryAttachmentRepositoryOptions = {}) {
     this.now = options.now ?? (() => new Date());
     this.generateId = options.generateId ?? randomUUID;
   }
 
+  async withAttachmentLifecycleLock<T>(operation: (repository: AttachmentRepository) => Promise<T>): Promise<T> {
+    const previous = this.attachmentLifecycleLock;
+    let releaseLock: () => void = () => undefined;
+    this.attachmentLifecycleLock = new Promise<void>((resolve) => {
+      releaseLock = resolve;
+    });
+    await previous;
+
+    try {
+      return await operation(this);
+    } finally {
+      releaseLock();
+    }
+  }
+
   async createAttachment(input: AttachmentCreateInput): Promise<AttachmentRecord> {
+    return this.insertAttachment(input, "active");
+  }
+
+  async reserveAttachment(input: AttachmentCreateInput): Promise<AttachmentRecord> {
+    return this.insertAttachment(input, "pending");
+  }
+
+  private async insertAttachment(
+    input: AttachmentCreateInput,
+    lifecycleState: "pending" | "active"
+  ): Promise<AttachmentRecord> {
     const parsed = attachmentCreateInputSchema.parse(input);
 
     if (this.storageKeys.has(parsed.storageKey)) {
@@ -316,7 +422,7 @@ export class InMemoryAttachmentRepository implements AttachmentRepository {
       sizeBytes: parsed.sizeBytes,
       contentSha256: parsed.contentSha256,
       storageKey: parsed.storageKey,
-      lifecycleState: "active",
+      lifecycleState,
       metadata: parsed.metadata,
       uploadedByUserId: parsed.uploadedByUserId ?? null,
       uploadedByServiceAccountId: parsed.uploadedByServiceAccountId ?? null,
@@ -333,6 +439,43 @@ export class InMemoryAttachmentRepository implements AttachmentRepository {
     this.storageKeys.add(parsed.storageKey);
     this.attachments.set(attachment.id, attachment);
     return attachment;
+  }
+
+  async activateAttachment(input: AttachmentDeletionCompleteInput): Promise<AttachmentRecord | null> {
+    const tenantId = input.tenantId ?? "tenant_demo";
+    const attachment = this.attachments.get(requireIdentifier(input.attachmentId, "attachmentId"));
+
+    if (!attachment || attachment.tenantId !== tenantId || attachment.lifecycleState !== "pending") {
+      return null;
+    }
+
+    const updated = attachmentRecordSchema.parse({
+      ...attachment,
+      lifecycleState: "active",
+      updatedAt: this.now().toISOString()
+    });
+    this.attachments.set(updated.id, updated);
+    return updated;
+  }
+
+  async discardPendingAttachment(input: AttachmentDeletionCompleteInput): Promise<AttachmentRecord | null> {
+    const tenantId = input.tenantId ?? "tenant_demo";
+    const attachment = this.attachments.get(requireIdentifier(input.attachmentId, "attachmentId"));
+
+    if (!attachment || attachment.tenantId !== tenantId || attachment.lifecycleState !== "pending") {
+      return null;
+    }
+
+    const now = this.now().toISOString();
+    const updated = attachmentRecordSchema.parse({
+      ...attachment,
+      lifecycleState: "deleted",
+      deletionRequestedAt: now,
+      deletedAt: now,
+      updatedAt: now
+    });
+    this.attachments.set(updated.id, updated);
+    return updated;
   }
 
   async getAttachment(
@@ -485,6 +628,9 @@ function boundedReconciliationLimit(limit = 5_000): number {
 function isUniqueViolation(error: unknown): boolean {
   return Boolean(error && typeof error === "object" && "code" in error && error.code === "23505");
 }
+
+// Stable process-independent namespace shared by every Postgres-backed API replica.
+const ATTACHMENT_LIFECYCLE_LOCK: [number, number] = [1_179_873_620, 1_414_286_155];
 
 interface AttachmentRow extends QueryResultRow {
   id: string;

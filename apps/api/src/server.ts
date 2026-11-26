@@ -7,6 +7,10 @@ import { validateBrandingImage } from "./branding-image.js";
 import { readReleaseIdentity } from "./release-identity.js";
 import { safeErrorCode, safeRequestLogger } from "./request-security.js";
 import { InvalidAssetCursorError, readAccessibleAssetPage, readAllAccessibleAssets } from "./asset-collections.js";
+import {
+  createOutboundHttpClientFromEnvironment,
+  type OutboundHttpClient
+} from "./outbound-http.js";
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { lstatSync, readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
@@ -18,7 +22,13 @@ import fastify, {
   type FastifyServerOptions
 } from "fastify";
 import rateLimit from "@fastify/rate-limit";
-import { createRemoteJWKSet, errors as joseErrors, jwtVerify, type JWTPayload } from "jose";
+import {
+  createLocalJWKSet,
+  errors as joseErrors,
+  jwtVerify,
+  type JSONWebKeySet,
+  type JWTPayload
+} from "jose";
 import {
 	  aiExportPackageSchema,
   aiExportFormatSchema,
@@ -163,6 +173,7 @@ import {
   type AuthPrincipal,
   type LocalUser,
   type AssetDetail,
+  type AttachmentRecord,
   type ExternalAuthProvider,
   type LoginSessionRecord,
   type LoginSessionSource,
@@ -229,7 +240,6 @@ import { HttpUpdateControlClient, type UpdateControlService } from "@forgetbase/
   defaultPiiRedactionPolicy,
   defaultSecretReferencePolicy,
   isSecretEnvVarAllowed,
-  isReservedProviderSecretEnvVar,
   principalHasScope,
   purgeTelemetryForRetentionPolicy,
   roleCanManagePermissions,
@@ -288,6 +298,12 @@ import {
 } from "./attachment-security.js";
 import { buildOpenApiDocument } from "./openapi.js";
 import { reconcileAttachments } from "./attachment-reconciliation.js";
+import {
+  isDeploymentProviderSecretAllowed,
+  readDeploymentProviderSecretBindings,
+  validateDeploymentProviderSecretBindings,
+  type DeploymentProviderSecretBinding
+} from "./provider-secret-bindings.js";
 
 const OIDC_STATE_TTL_MS = 10 * 60 * 1000;
 const OIDC_JWT_ALGORITHMS = ["RS256", "RS384", "RS512", "PS256", "PS384", "PS512", "ES256", "ES384", "ES512"];
@@ -350,6 +366,8 @@ export interface BuildServerOptions extends FastifyServerOptions {
   attachmentReconciliationDryRun?: boolean;
   attachmentReconciliationIntervalMs?: number;
   authRepository?: AuthRepository;
+  bootstrapTenantId?: string;
+  bootstrapToken?: string;
   retrievalRepository?: RetrievalRepository;
   retrievalRankingPolicyRepository?: RetrievalRankingPolicyRepository;
   evalRunRepository?: ManagedQueryEvalRunRepository;
@@ -364,6 +382,7 @@ export interface BuildServerOptions extends FastifyServerOptions {
   providerConfigRepository?: ModelProviderConfigRepository;
   authProviderConfigRepository?: AuthProviderConfigRepository;
   secretReferencePolicyRepository?: SecretReferencePolicyRepository;
+  providerSecretBindings?: readonly DeploymentProviderSecretBinding[];
   telemetryRetentionPolicyRepository?: TelemetryRetentionPolicyRepository;
   localSyncStateRepository?: LocalSyncStateRepository;
   localSyncSnapshotRepository?: LocalSyncSnapshotRepository;
@@ -383,6 +402,7 @@ export interface BuildServerOptions extends FastifyServerOptions {
   oidcRuntime?: OidcRuntime;
   oidcStateSecret?: string;
   modelRuntime?: ModelRuntime;
+  outboundHttpClient?: OutboundHttpClient;
   allowedOrigins?: string[];
   loginSessionMaxAgeSeconds?: number;
   loginSessionIdleTimeoutSeconds?: number | null;
@@ -421,6 +441,7 @@ export interface OidcRuntime {
     code: string;
     redirectUri: string;
     codeVerifier: string;
+    clientSecret: string | null;
   }): Promise<OidcTokenResponse>;
   verifyIdToken(input: {
     config: AuthProviderConfig;
@@ -697,9 +718,13 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
     "FORGETBASE_ATTACHMENT_RECONCILIATION_INTERVAL_MS"
   );
   let attachmentReconciliationTimer: NodeJS.Timeout | undefined;
-  const oidcRuntime = options.oidcRuntime ?? defaultOidcRuntime;
+  const outboundHttpClient = options.outboundHttpClient ?? createOutboundHttpClientFromEnvironment();
+  const oidcRuntime = options.oidcRuntime ?? createDefaultOidcRuntime(outboundHttpClient);
   const oidcStateSecret = options.oidcStateSecret ?? process.env.FORGETBASE_OIDC_STATE_SECRET;
-  const modelRuntime = options.modelRuntime ?? defaultModelRuntime;
+  const modelRuntime = options.modelRuntime ?? createDefaultModelRuntime(outboundHttpClient);
+  const providerSecretBindings = options.providerSecretBindings
+    ? validateDeploymentProviderSecretBindings(options.providerSecretBindings)
+    : readDeploymentProviderSecretBindings();
   const allowedOrigins = readAllowedOrigins(options.allowedOrigins ?? readCorsAllowedOriginsEnv());
   const loginSessionMaxAgeSeconds = readLoginSessionMaxAgeSeconds(options.loginSessionMaxAgeSeconds);
   const loginSessionIdleTimeoutSeconds = readLoginSessionIdleTimeoutSeconds(options.loginSessionIdleTimeoutSeconds);
@@ -734,6 +759,11 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
   const requireAuthentication = options.requireAuthentication ??
     readOptionalEnvBoolean(process.env.FORGETBASE_REQUIRE_AUTHENTICATION) ??
     false;
+  const bootstrapTenantId = readNonEmptyValue(
+    options.bootstrapTenantId ?? process.env.FORGETBASE_BOOTSTRAP_TENANT_ID,
+    "tenant_demo"
+  );
+  const bootstrapToken = readBootstrapToken(options.bootstrapToken);
   const productIdentity = productIdentitySchema.parse(options.productIdentity ?? readProductIdentityFromEnvironment());
   // Managed candidates fail closed, including GET authentication and telemetry writes.
   const managedWritesEnabled = productIdentity.installationMode !== "managed" ||
@@ -872,6 +902,8 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
               AND to_regclass('public.assets') IS NOT NULL
               AND to_regclass('public.users') IS NOT NULL
               AND to_regclass('public.api_keys') IS NOT NULL
+              AND to_regclass('public.installation_bootstrap_state') IS NOT NULL
+              AND EXISTS (SELECT 1 FROM schema_migrations WHERE id = '046_attachment_upload_reservations')
               AND to_regclass('public.local_sync_principal_state') IS NOT NULL
               AND to_regclass('public.local_sync_serialization_state') IS NOT NULL AS ready
           `
@@ -932,9 +964,11 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
               AND to_regclass('public.assets') IS NOT NULL
               AND to_regclass('public.users') IS NOT NULL
               AND to_regclass('public.api_keys') IS NOT NULL
+              AND to_regclass('public.installation_bootstrap_state') IS NOT NULL
+              AND EXISTS (SELECT 1 FROM schema_migrations WHERE id = '046_attachment_upload_reservations')
               AND to_regclass('public.local_sync_principal_state') IS NOT NULL
               AND to_regclass('public.local_sync_serialization_state') IS NOT NULL
-              AND EXISTS (SELECT 1 FROM schema_migrations) AS ready
+              AS ready
           `
         );
 
@@ -1113,7 +1147,7 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
       status: "ready",
       docs: "/health",
       assets: "/assets",
-      auth: "/auth/bootstrap",
+      auth: "/auth/login",
       search: "/search"
     };
   });
@@ -1781,8 +1815,16 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
       return sendValidationError(reply, parsed.error.issues);
     }
 
+    if (!bootstrapToken) {
+      return reply.code(503).send({ error: "bootstrap_unavailable" });
+    }
+
+    if (!timingSafeStringEqual(parsed.data.bootstrapToken, bootstrapToken)) {
+      return reply.code(403).send({ error: "access_denied" });
+    }
+
     const bootstrap = await authRepository.bootstrapAdmin({
-      tenantId: parsed.data.tenantId,
+      tenantId: bootstrapTenantId,
       email: parsed.data.email,
       displayName: parsed.data.displayName,
       password: parsed.data.password,
@@ -2012,12 +2054,35 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
       });
 
       const discovery = await oidcRuntime.discover(config);
+      let clientSecret: string | null = null;
+
+      if (config.clientSecretEnvVar) {
+        const secretReferencePolicy = await readSecretReferencePolicy(
+          secretReferencePolicyRepository,
+          config.tenantId
+        );
+        const clientSecretResolution = await resolveDeploymentSecret(config.clientSecretEnvVar, {
+          policy: secretReferencePolicy,
+          bindings: providerSecretBindings,
+          provider: config.provider,
+          issuerUrl: config.issuerUrl,
+          destinationUrl: discovery.tokenEndpoint
+        });
+
+        if (!clientSecretResolution.ok) {
+          throw oidcClientSecretResolutionError(clientSecretResolution);
+        }
+
+        clientSecret = clientSecretResolution.value;
+      }
+
       const tokenResponse = await oidcRuntime.exchangeCode({
         config,
         discovery,
         code: parsed.data.code,
         redirectUri,
-        codeVerifier: parsed.data.codeVerifier
+        codeVerifier: parsed.data.codeVerifier,
+        clientSecret
       });
       const claims = await oidcRuntime.verifyIdToken({
         config,
@@ -3472,9 +3537,63 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
 
     const storageKey = generateAttachmentStorageKey();
     const contentSha256 = createHash("sha256").update(content).digest("hex");
-    try {
-      await attachmentStorage.put(storageKey, content);
-    } catch {
+    const attachmentInput = {
+      tenantId: detail.asset.tenantId,
+      assetId: detail.asset.id,
+      filename: metadata.data.filename,
+      mediaType: metadata.data.mediaType,
+      sizeBytes: content.byteLength,
+      contentSha256,
+      storageKey,
+      uploadedByUserId: principal.userId ?? undefined,
+      uploadedByServiceAccountId: principal.serviceAccountId ?? undefined,
+      uploadedByApiKeyId: principal.apiKeyId,
+      metadata: {
+        contentInspection: {
+          status: "passed",
+          detectedMediaType: inspection.detectedMediaType,
+          extension: inspection.extension
+        },
+        malwareScan: {
+          status: malwareScan.scanner === "disabled" ? "not-required" : "clean",
+          scanner: malwareScan.scanner
+        }
+      }
+    };
+    const uploadResult = await attachmentRepository.withAttachmentLifecycleLock(async (lockedRepository) => {
+      let reservation: AttachmentRecord;
+      try {
+        reservation = await lockedRepository.reserveAttachment(attachmentInput);
+      } catch {
+        return { status: "metadata-write-failed", pendingReservationRetained: false } as const;
+      }
+
+      try {
+        await attachmentStorage.put(storageKey, content);
+      } catch (error) {
+        // A collision proves this upload did not publish. Other errors may arrive
+        // after publication, so keep their reservations for integrity-checked reconciliation.
+        const collision = error instanceof Error && "code" in error && error.code === "EEXIST";
+        const discarded = collision && await lockedRepository.discardPendingAttachment({
+          tenantId: detail.asset.tenantId,
+          attachmentId: reservation.id
+        }).catch(() => null);
+        return { status: "storage-write-failed", pendingReservationRetained: !discarded } as const;
+      }
+
+      try {
+        const attachment = await lockedRepository.activateAttachment({
+          tenantId: detail.asset.tenantId,
+          attachmentId: reservation.id
+        });
+        if (!attachment) throw new Error("Attachment reservation could not be activated.");
+        return { status: "active", attachment } as const;
+      } catch {
+        return { status: "metadata-write-failed", pendingReservationRetained: true } as const;
+      }
+    }).catch(() => ({ status: "metadata-write-failed", pendingReservationRetained: false } as const));
+
+    if (uploadResult.status === "storage-write-failed") {
       await authRepository.recordAuditEvent({
         tenantId: detail.asset.tenantId,
         ...auditActor(principal),
@@ -3487,46 +3606,14 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
           stableId: detail.asset.stableId,
           mediaType: metadata.data.mediaType,
           sizeBytes: content.byteLength,
-          contentSha256
+          contentSha256,
+          pendingReservationRetained: uploadResult.pendingReservationRetained
         }
       });
       return reply.code(503).send({ error: "attachment_storage_unavailable" });
     }
 
-    let attachment;
-    try {
-      attachment = await attachmentRepository.createAttachment({
-        tenantId: detail.asset.tenantId,
-        assetId: detail.asset.id,
-        filename: metadata.data.filename,
-        mediaType: metadata.data.mediaType,
-        sizeBytes: content.byteLength,
-        contentSha256,
-        storageKey,
-        uploadedByUserId: principal.userId ?? undefined,
-        uploadedByServiceAccountId: principal.serviceAccountId ?? undefined,
-        uploadedByApiKeyId: principal.apiKeyId,
-        metadata: {
-          contentInspection: {
-            status: "passed",
-            detectedMediaType: inspection.detectedMediaType,
-            extension: inspection.extension
-          },
-          malwareScan: {
-            status: malwareScan.scanner === "disabled" ? "not-required" : "clean",
-            scanner: malwareScan.scanner
-          }
-        }
-      });
-    } catch {
-      let orphanCleanupSucceeded = false;
-
-      try {
-        orphanCleanupSucceeded = await attachmentStorage.delete(storageKey);
-      } catch {
-        orphanCleanupSucceeded = false;
-      }
-
+    if (uploadResult.status === "metadata-write-failed") {
       await authRepository.recordAuditEvent({
         tenantId: detail.asset.tenantId,
         ...auditActor(principal),
@@ -3540,12 +3627,13 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
           mediaType: metadata.data.mediaType,
           sizeBytes: content.byteLength,
           contentSha256,
-          orphanCleanupSucceeded
+          pendingReservationRetained: uploadResult.pendingReservationRetained
         }
       }).catch(() => undefined);
       return reply.code(503).send({ error: "attachment_metadata_unavailable" });
     }
 
+    const attachment = uploadResult.attachment;
     try {
       await authRepository.recordAuditEvent({
         tenantId: detail.asset.tenantId,
@@ -4300,6 +4388,8 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
         cacheRepository,
         cachePolicyRepository,
         piiRedactionPolicyRepository,
+        secretReferencePolicyRepository,
+        providerSecretBindings,
         modelRuntime,
         tenantId: queryInput.tenantId,
         principal,
@@ -5251,6 +5341,8 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
       providers: await buildModelProviderHealth({
         tenantId: principal.tenantId,
         providers,
+        secretReferencePolicyRepository,
+        providerSecretBindings,
         checkedAt: new Date().toISOString()
       })
     });
@@ -5295,6 +5387,21 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
       return reply.code(400).send({
         error: "secret_reference_rejected",
         message: "Provider config env-var reference is not allowed by deployment or tenant secret-reference policy.",
+        field: "apiKeyEnvVar"
+      });
+    }
+
+    if (
+      parsed.data.apiKeyEnvVar &&
+      !isDeploymentProviderSecretAllowed(providerSecretBindings, {
+        envVar: parsed.data.apiKeyEnvVar,
+        provider: parsed.data.provider,
+        destinationUrl: parsed.data.baseUrl ?? defaultModelBaseUrl(parsed.data.provider)
+      })
+    ) {
+      return reply.code(400).send({
+        error: "secret_reference_rejected",
+        message: "Provider config env-var reference is not bound by the deployment to this provider origin.",
         field: "apiKeyEnvVar"
       });
     }
@@ -5378,6 +5485,21 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
       return reply.code(400).send({
         error: "secret_reference_rejected",
         message: "Auth provider config env-var reference is not allowed by deployment or tenant secret-reference policy.",
+        field: "clientSecretEnvVar"
+      });
+    }
+
+    if (
+      parsed.data.clientSecretEnvVar &&
+      !isDeploymentProviderSecretAllowed(providerSecretBindings, {
+        envVar: parsed.data.clientSecretEnvVar,
+        provider: parsed.data.provider,
+        destinationUrl: parsed.data.issuerUrl
+      }, "issuer")
+    ) {
+      return reply.code(400).send({
+        error: "secret_reference_rejected",
+        message: "Auth provider env-var reference is not bound by the deployment to this provider origin.",
         field: "clientSecretEnvVar"
       });
     }
@@ -6543,10 +6665,16 @@ interface ProviderPreflightEstimate {
 async function buildModelProviderHealth(input: {
   tenantId: string;
   providers: ModelProviderConfig[];
+  secretReferencePolicyRepository: SecretReferencePolicyRepository | undefined;
+  providerSecretBindings: readonly DeploymentProviderSecretBinding[];
   checkedAt: string;
 }): Promise<ModelProviderHealth[]> {
   const byProvider = new Map(input.providers.map((provider) => [provider.provider, provider]));
   const health: ModelProviderHealth[] = [];
+  const secretReferencePolicy = await readSecretReferencePolicy(
+    input.secretReferencePolicyRepository,
+    input.tenantId
+  );
 
   for (const provider of modelProviderSchema.options) {
     const config = byProvider.get(provider);
@@ -6581,7 +6709,12 @@ async function buildModelProviderHealth(input: {
     if (!config.apiKeyEnvVar) {
       reasons.push("api_key_env_var_not_configured");
     } else {
-      const apiKeyResolution = await resolveDeploymentSecret(config.apiKeyEnvVar);
+      const apiKeyResolution = await resolveDeploymentSecret(config.apiKeyEnvVar, {
+        policy: secretReferencePolicy,
+        bindings: input.providerSecretBindings,
+        provider: config.provider,
+        destinationUrl: config.baseUrl ?? defaultModelBaseUrl(config.provider)
+      });
       apiKeyConfigured = apiKeyResolution.ok;
 
       if (!apiKeyResolution.ok) {
@@ -6611,6 +6744,8 @@ async function runProviderManagedQuery(input: {
   cacheRepository: ManagedQueryCacheRepository | undefined;
   cachePolicyRepository: ManagedQueryCachePolicyRepository | undefined;
   piiRedactionPolicyRepository: PiiRedactionPolicyRepository | undefined;
+  secretReferencePolicyRepository: SecretReferencePolicyRepository | undefined;
+  providerSecretBindings: readonly DeploymentProviderSecretBinding[];
   modelRuntime: ModelRuntime;
   tenantId: string;
   principal: AuthPrincipal | null;
@@ -6650,6 +6785,10 @@ async function runProviderManagedQuery(input: {
 
   const prompt = buildManagedQueryPrompt(input.query, input.allowedResults);
   const piiRedactionPolicy = await readPiiRedactionPolicy(input.piiRedactionPolicyRepository, input.tenantId);
+  const secretReferencePolicy = await readSecretReferencePolicy(
+    input.secretReferencePolicyRepository,
+    input.tenantId
+  );
   const failedResults: ProviderManagedQueryResult[] = [];
 
   for (const selected of candidates) {
@@ -6659,6 +6798,8 @@ async function runProviderManagedQuery(input: {
       cachePolicyRepository: input.cachePolicyRepository,
       selected,
       piiRedactionPolicy,
+      secretReferencePolicy,
+      providerSecretBindings: input.providerSecretBindings,
       tenantId: input.tenantId,
       principal: input.principal,
       surface: input.surface,
@@ -6700,6 +6841,8 @@ async function runProviderManagedQueryCandidate(input: {
   cachePolicyRepository: ManagedQueryCachePolicyRepository | undefined;
   selected: ModelProviderConfig;
   piiRedactionPolicy: PiiRedactionPolicy;
+  secretReferencePolicy: SecretReferencePolicy;
+  providerSecretBindings: readonly DeploymentProviderSecretBinding[];
   tenantId: string;
   principal: AuthPrincipal | null;
   surface: Surface;
@@ -6720,7 +6863,13 @@ async function runProviderManagedQueryCandidate(input: {
     return skippedProviderManagedQuery(input.selected.provider, model, "api_key_env_var_not_configured");
   }
 
-  const apiKeyResolution = await resolveDeploymentSecret(input.selected.apiKeyEnvVar);
+  const baseUrl = input.selected.baseUrl ?? defaultModelBaseUrl(input.selected.provider);
+  const apiKeyResolution = await resolveDeploymentSecret(input.selected.apiKeyEnvVar, {
+    policy: input.secretReferencePolicy,
+    bindings: input.providerSecretBindings,
+    provider: input.selected.provider,
+    destinationUrl: baseUrl
+  });
 
   if (!apiKeyResolution.ok) {
     return skippedProviderManagedQuery(
@@ -6815,7 +6964,7 @@ async function runProviderManagedQueryCandidate(input: {
         provider: input.selected.provider,
         model,
         apiKey,
-        baseUrl: input.selected.baseUrl ?? defaultModelBaseUrl(input.selected.provider),
+        baseUrl,
         instructions: buildManagedQueryInstructions(),
         prompt: input.prompt,
         metadata: runtimeMetadata
@@ -7578,10 +7727,31 @@ type DeploymentSecretResolution =
     fileEnvVar: string;
   };
 
-async function resolveDeploymentSecret(envVarName: string): Promise<DeploymentSecretResolution> {
-  // Revalidate stored configurations before reading either an environment value
-  // or its file fallback. Tenant policy cannot grant access to host credentials.
-  if (isReservedProviderSecretEnvVar(envVarName)) {
+async function resolveDeploymentSecret(
+  envVarName: string,
+  access: {
+    policy: SecretReferencePolicy;
+    bindings: readonly DeploymentProviderSecretBinding[];
+    provider: ModelProvider | ExternalAuthProvider;
+    issuerUrl?: string;
+    destinationUrl: string;
+  }
+): Promise<DeploymentSecretResolution> {
+  // Revalidate stored configurations against current tenant narrowing and
+  // deployment-owned provider/origin authority before reading env or file data.
+  if (
+    !isSecretEnvVarAllowed(access.policy, envVarName) ||
+    (access.issuerUrl !== undefined && !isDeploymentProviderSecretAllowed(access.bindings, {
+      envVar: envVarName,
+      provider: access.provider,
+      destinationUrl: access.issuerUrl
+    }, "issuer")) ||
+    !isDeploymentProviderSecretAllowed(access.bindings, {
+      envVar: envVarName,
+      provider: access.provider,
+      destinationUrl: access.destinationUrl
+    })
+  ) {
     return { ok: false, reason: "secret_reference_rejected", fileEnvVar: `${envVarName}_FILE` };
   }
 
@@ -7667,7 +7837,7 @@ function oidcClientSecretResolutionError(resolution: DeploymentSecretResolution)
 
   switch (resolution.reason) {
     case "secret_reference_rejected":
-      return new OidcLoginError("oidc_client_secret_reference_rejected", 503, "Configured OIDC client secret reference is reserved for host control.");
+      return new OidcLoginError("oidc_client_secret_reference_rejected", 503, "Tenant policy or the deployment binding does not permit this OIDC client secret for the configured issuer and token endpoint.");
     case "secret_file_path_invalid":
       return new OidcLoginError("oidc_client_secret_file_path_invalid", 503, "Configured OIDC client secret file path is invalid.");
     case "secret_file_unreadable":
@@ -8911,99 +9081,104 @@ function wait(ms: number): Promise<void> {
   return ms > 0 ? new Promise((resolve) => setTimeout(resolve, ms)) : Promise.resolve();
 }
 
-const defaultModelRuntime: ModelRuntime = {
-  async generate(input) {
-    const maxOutputTokens = readRuntimeNumber(input.metadata, "maxOutputTokens", 700);
-    const temperature = readRuntimeNumber(input.metadata, "temperature", 0.2);
-    const timeoutMs = readRuntimeNumber(input.metadata, "timeoutMs", 20_000);
+function createDefaultModelRuntime(outboundHttpClient: OutboundHttpClient): ModelRuntime {
+  return {
+    async generate(input) {
+      const maxOutputTokens = readRuntimeNumber(input.metadata, "maxOutputTokens", 700);
+      const temperature = readRuntimeNumber(input.metadata, "temperature", 0.2);
+      const timeoutMs = readRuntimeNumber(input.metadata, "timeoutMs", 20_000);
 
-    switch (input.provider) {
-      case "openai": {
-        const response = await postModelJson(
-          joinProviderUrl(input.baseUrl, "/responses"),
-          {
-            authorization: `Bearer ${input.apiKey}`,
-            "content-type": "application/json"
-          },
-          {
-            model: input.model,
-            instructions: input.instructions,
-            input: input.prompt,
-            max_output_tokens: maxOutputTokens,
-            temperature,
-            store: false
-          },
-          timeoutMs
-        );
+      switch (input.provider) {
+        case "openai": {
+          const response = await postModelJson(
+            outboundHttpClient,
+            joinProviderUrl(input.baseUrl, "/responses"),
+            {
+              authorization: `Bearer ${input.apiKey}`,
+              "content-type": "application/json"
+            },
+            {
+              model: input.model,
+              instructions: input.instructions,
+              input: input.prompt,
+              max_output_tokens: maxOutputTokens,
+              temperature,
+              store: false
+            },
+            timeoutMs
+          );
 
-        return {
-          text: extractOpenAiResponseText(response),
-          usage: extractOpenAiUsage(response)
-        };
-      }
+          return {
+            text: extractOpenAiResponseText(response),
+            usage: extractOpenAiUsage(response)
+          };
+        }
 
-      case "anthropic": {
-        const response = await postModelJson(
-          joinProviderUrl(input.baseUrl, "/v1/messages"),
-          {
-            "x-api-key": input.apiKey,
-            "anthropic-version": "2023-06-01",
-            "content-type": "application/json"
-          },
-          {
-            model: input.model,
-            max_tokens: maxOutputTokens,
-            temperature,
-            system: input.instructions,
-            messages: [
-              {
-                role: "user",
-                content: input.prompt
-              }
-            ]
-          },
-          timeoutMs
-        );
+        case "anthropic": {
+          const response = await postModelJson(
+            outboundHttpClient,
+            joinProviderUrl(input.baseUrl, "/v1/messages"),
+            {
+              "x-api-key": input.apiKey,
+              "anthropic-version": "2023-06-01",
+              "content-type": "application/json"
+            },
+            {
+              model: input.model,
+              max_tokens: maxOutputTokens,
+              temperature,
+              system: input.instructions,
+              messages: [
+                {
+                  role: "user",
+                  content: input.prompt
+                }
+              ]
+            },
+            timeoutMs
+          );
 
-        return {
-          text: extractAnthropicResponseText(response),
-          usage: extractAnthropicUsage(response)
-        };
-      }
+          return {
+            text: extractAnthropicResponseText(response),
+            usage: extractAnthropicUsage(response)
+          };
+        }
 
-      case "openrouter": {
-        const response = await postModelJson(
-          joinProviderUrl(input.baseUrl, "/chat/completions"),
-          {
-            authorization: `Bearer ${input.apiKey}`,
-            "content-type": "application/json"
-          },
-          {
-            model: input.model,
-            temperature,
-            max_tokens: maxOutputTokens,
-            messages: [
-              {
-                role: "system",
-                content: input.instructions
-              },
-              {
-                role: "user",
-                content: input.prompt
-              }
-            ]
-          },
-          timeoutMs
-        );
+        case "openrouter": {
+          const response = await postModelJson(
+            outboundHttpClient,
+            joinProviderUrl(input.baseUrl, "/chat/completions"),
+            {
+              authorization: `Bearer ${input.apiKey}`,
+              "content-type": "application/json"
+            },
+            {
+              model: input.model,
+              temperature,
+              max_tokens: maxOutputTokens,
+              messages: [
+                {
+                  role: "system",
+                  content: input.instructions
+                },
+                {
+                  role: "user",
+                  content: input.prompt
+                }
+              ]
+            },
+            timeoutMs
+          );
 
-        return {
-          text: extractOpenRouterResponseText(response),
-          usage: extractOpenRouterUsage(response)
-        };
+          return {
+            text: extractOpenRouterResponseText(response),
+            usage: extractOpenRouterUsage(response)
+          };
+        }
       }
     }
-  }
-};
+  };
+}
 
 function defaultModelBaseUrl(provider: ModelProvider): string {
   switch (provider) {
@@ -9017,17 +9192,18 @@ function defaultModelBaseUrl(provider: ModelProvider): string {
 }
 
 async function postModelJson(
+  outboundHttpClient: OutboundHttpClient,
   url: string,
   headers: Record<string, string>,
   body: unknown,
   timeoutMs: number
 ): Promise<unknown> {
-  const response = await fetch(url, {
+  const response = await outboundHttpClient.request(url, {
     method: "POST",
     headers,
     body: JSON.stringify(body),
-    redirect: "error",
-    signal: AbortSignal.timeout(timeoutMs)
+    timeoutMs,
+    maxResponseBytes: 4 * 1024 * 1024
   });
 
   if (!response.ok) {
@@ -9151,120 +9327,176 @@ function isObjectRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
 
-const defaultOidcRuntime: OidcRuntime = {
-  async discover(config) {
-    const issuer = assertOidcEndpoint(config.issuerUrl, true);
-    if (issuer.search) {
-      throw new OidcLoginError("oidc_discovery_invalid", 502, "OIDC issuer must not contain a query.");
-    }
-    const discoveryUrl = `${config.issuerUrl.replace(/\/$/, "")}/.well-known/openid-configuration`;
-    const response = await fetch(discoveryUrl, {
-      headers: {
-        accept: "application/json"
-      },
-      redirect: "error",
-      signal: AbortSignal.timeout(10_000)
-    });
+function createDefaultOidcRuntime(outboundHttpClient: OutboundHttpClient): OidcRuntime {
+  return {
+    async discover(config) {
+      const timeoutMs = 10_000;
+      const deadline = performance.now() + timeoutMs;
+      const issuer = assertOidcEndpoint(config.issuerUrl);
+      if (issuer.search) {
+        throw new OidcLoginError("oidc_discovery_invalid", 502, "OIDC issuer must not contain a query.");
+      }
+      const discoveryUrl = `${config.issuerUrl.replace(/\/$/, "")}/.well-known/openid-configuration`;
+      const response = await requestOidcEndpoint(
+        outboundHttpClient,
+        discoveryUrl,
+        {
+          headers: {
+            accept: "application/json"
+          },
+          timeoutMs,
+          maxResponseBytes: 1024 * 1024
+        },
+        "oidc_discovery_failed",
+        "OIDC discovery request failed."
+      );
 
-    if (!response.ok) {
-      throw new OidcLoginError("oidc_discovery_failed", 502, `OIDC discovery failed with HTTP ${response.status}.`);
-    }
-
-    const document = await readOidcJson(response);
-    const discovery = {
-      issuer: readRequiredDiscoveryField(document, "issuer"),
-      authorizationEndpoint: readRequiredDiscoveryField(document, "authorization_endpoint"),
-      tokenEndpoint: readRequiredDiscoveryField(document, "token_endpoint"),
-      jwksUri: readRequiredDiscoveryField(document, "jwks_uri")
-    };
-    if (discovery.issuer !== config.issuerUrl) {
-      throw new OidcLoginError("oidc_issuer_mismatch", 502, "OIDC discovery issuer does not match the configured issuer.");
-    }
-    for (const endpoint of [discovery.authorizationEndpoint, discovery.tokenEndpoint, discovery.jwksUri]) {
-      assertOidcEndpoint(endpoint, issuer.protocol === "http:");
-    }
-    return discovery;
-  },
-
-  async exchangeCode({ config, discovery, code, redirectUri, codeVerifier }) {
-    const body = new URLSearchParams({
-      grant_type: "authorization_code",
-      code,
-      redirect_uri: redirectUri,
-      client_id: config.clientId
-    });
-
-    if (config.pkceRequired) {
-      body.set("code_verifier", codeVerifier);
-    }
-
-    if (config.clientSecretEnvVar) {
-      const clientSecretResolution = await resolveDeploymentSecret(config.clientSecretEnvVar);
-
-      if (!clientSecretResolution.ok) {
-        throw oidcClientSecretResolutionError(clientSecretResolution);
+      if (!response.ok) {
+        throw new OidcLoginError("oidc_discovery_failed", 502, `OIDC discovery failed with HTTP ${response.status}.`);
       }
 
-      body.set("client_secret", clientSecretResolution.value);
-    }
+      const document = await readOidcJson(response);
+      const discovery = {
+        issuer: readRequiredDiscoveryField(document, "issuer"),
+        authorizationEndpoint: readRequiredDiscoveryField(document, "authorization_endpoint"),
+        tokenEndpoint: readRequiredDiscoveryField(document, "token_endpoint"),
+        jwksUri: readRequiredDiscoveryField(document, "jwks_uri")
+      };
+      if (discovery.issuer !== config.issuerUrl) {
+        throw new OidcLoginError("oidc_issuer_mismatch", 502, "OIDC discovery issuer does not match the configured issuer.");
+      }
+      const origins = [discovery.authorizationEndpoint, discovery.tokenEndpoint, discovery.jwksUri]
+        .map((endpoint) => assertOidcEndpoint(endpoint).origin);
+      const remainingMs = Math.ceil(deadline - performance.now());
+      if (remainingMs <= 0) {
+        throw new OidcLoginError("oidc_discovery_failed", 502, "OIDC discovery timed out.");
+      }
+      await Promise.all([...new Set(origins)].map((origin) => assertOidcDestination(outboundHttpClient, origin, remainingMs)));
+      return discovery;
+    },
 
-    const response = await fetch(discovery.tokenEndpoint, {
-      method: "POST",
-      headers: {
-        accept: "application/json",
-        "content-type": "application/x-www-form-urlencoded"
-      },
-      body,
-      redirect: "error",
-      signal: AbortSignal.timeout(10_000)
-    });
-
-    if (!response.ok) {
-      await response.body?.cancel();
-      throw new OidcLoginError("oidc_token_exchange_failed", 401, "OIDC token exchange failed.");
-    }
-    const tokenBody = await readOidcJson(response);
-
-    const idToken = tokenBody.id_token;
-
-    if (typeof idToken !== "string" || !idToken) {
-      throw new OidcLoginError("oidc_id_token_missing", 401, "OIDC token response did not include an ID token.");
-    }
-
-    return { idToken };
-  },
-
-  async verifyIdToken({ config, discovery, idToken }) {
-    const jwks = createRemoteJWKSet(new URL(discovery.jwksUri));
-    try {
-      const { payload } = await jwtVerify(idToken, jwks, {
-        issuer: config.issuerUrl,
-        audience: config.clientId,
-        algorithms: OIDC_JWT_ALGORITHMS,
-        requiredClaims: ["sub", "iat", "exp", "nonce"]
+    async exchangeCode({ config, discovery, code, redirectUri, codeVerifier, clientSecret }) {
+      const body = new URLSearchParams({
+        grant_type: "authorization_code",
+        code,
+        redirect_uri: redirectUri,
+        client_id: config.clientId
       });
-      return payload;
-    } catch (error) {
-      if (error instanceof joseErrors.JOSEError) {
+
+      if (config.pkceRequired) {
+        body.set("code_verifier", codeVerifier);
+      }
+
+      if (clientSecret) {
+        body.set("client_secret", clientSecret);
+      }
+
+      const response = await requestOidcEndpoint(
+        outboundHttpClient,
+        discovery.tokenEndpoint,
+        {
+          method: "POST",
+          headers: {
+            accept: "application/json",
+            "content-type": "application/x-www-form-urlencoded"
+          },
+          body: body.toString(),
+          timeoutMs: 10_000,
+          maxResponseBytes: 1024 * 1024
+        },
+        "oidc_token_exchange_failed",
+        "OIDC token exchange failed."
+      );
+
+      if (!response.ok) {
+        await response.body?.cancel();
+        throw new OidcLoginError("oidc_token_exchange_failed", 401, "OIDC token exchange failed.");
+      }
+      const tokenBody = await readOidcJson(response);
+
+      const idToken = tokenBody.id_token;
+
+      if (typeof idToken !== "string" || !idToken) {
+        throw new OidcLoginError("oidc_id_token_missing", 401, "OIDC token response did not include an ID token.");
+      }
+
+      return { idToken };
+    },
+
+    async verifyIdToken({ config, discovery, idToken }) {
+      try {
+        const response = await requestOidcEndpoint(
+          outboundHttpClient,
+          discovery.jwksUri,
+          {
+            headers: {
+              accept: "application/json"
+            },
+            timeoutMs: 10_000,
+            maxResponseBytes: 1024 * 1024
+          },
+          "oidc_jwks_failed",
+          "OIDC JWKS request failed."
+        );
+        if (!response.ok) {
+          throw new OidcLoginError("oidc_jwks_failed", 502, "OIDC JWKS request failed.");
+        }
+        const document = await readOidcJson(response);
+        if (!Array.isArray(document.keys)) {
+          throw new OidcLoginError("oidc_jwks_invalid", 502, "OIDC JWKS response is invalid.");
+        }
+        const jwks = createLocalJWKSet(document as unknown as JSONWebKeySet);
+        const { payload } = await jwtVerify(idToken, jwks, {
+          issuer: config.issuerUrl,
+          audience: config.clientId,
+          algorithms: OIDC_JWT_ALGORITHMS,
+          requiredClaims: ["sub", "iat", "exp", "nonce"]
+        });
+        return payload;
+      } catch (error) {
+        if (error instanceof OidcLoginError) throw error;
+        if (error instanceof joseErrors.JOSEError) {
+          throw new OidcLoginError("oidc_id_token_invalid", 401, "OIDC ID token validation failed.");
+        }
         throw new OidcLoginError("oidc_id_token_invalid", 401, "OIDC ID token validation failed.");
       }
-      throw error;
     }
-  }
-};
+  };
+}
 
-function assertOidcEndpoint(value: string, allowLocalHttp: boolean): URL {
+function assertOidcEndpoint(value: string): URL {
   let url: URL;
   try {
     url = new URL(value);
   } catch {
     throw new OidcLoginError("oidc_discovery_invalid", 502, "OIDC endpoint must be an absolute URL.");
   }
-  const localHttp = allowLocalHttp && url.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
-  if ((url.protocol !== "https:" && !localHttp) || url.username || url.password || url.hash) {
-    throw new OidcLoginError("oidc_discovery_invalid", 502, "OIDC endpoints require HTTPS without credentials or fragments; local HTTP is limited to loopback development issuers.");
+  if ((url.protocol !== "http:" && url.protocol !== "https:") || url.username || url.password || url.hash) {
+    throw new OidcLoginError("oidc_discovery_invalid", 502, "OIDC endpoints require HTTP(S) without credentials or fragments.");
   }
   return url;
+}
+
+async function assertOidcDestination(outboundHttpClient: OutboundHttpClient, value: string, timeoutMs: number): Promise<void> {
+  try {
+    await outboundHttpClient.assertDestination(value, timeoutMs);
+  } catch {
+    throw new OidcLoginError("oidc_destination_rejected", 502, "OIDC endpoint is not an approved public destination.");
+  }
+}
+
+async function requestOidcEndpoint(
+  outboundHttpClient: OutboundHttpClient,
+  value: string,
+  init: Parameters<OutboundHttpClient["request"]>[1],
+  errorCode: string,
+  message: string
+): Promise<Response> {
+  try {
+    return await outboundHttpClient.request(value, init);
+  } catch {
+    throw new OidcLoginError(errorCode, 502, message);
+  }
 }
 
 async function readOidcJson(response: Response): Promise<Record<string, unknown>> {
@@ -10094,6 +10326,7 @@ function isPublicAuthenticationPath(requestUrl: string): boolean {
   return pathname === "/health" ||
     pathname === "/branding" ||
     pathname === "/ready" ||
+    pathname === "/auth/bootstrap" ||
     pathname === "/auth/login" ||
     pathname === "/auth/oidc/authorize" ||
     pathname === "/auth/oidc/callback" ||
@@ -10318,6 +10551,41 @@ function readPositiveIntegerOption(
 function readNonEmptyValue(value: string | undefined, defaultValue: string): string {
   const normalized = value?.trim();
   return normalized || defaultValue;
+}
+
+function readBootstrapToken(configuredValue?: string): string | undefined {
+  const tokenFile = process.env.FORGETBASE_BOOTSTRAP_TOKEN_FILE?.trim();
+
+  if (configuredValue !== undefined && tokenFile) {
+    throw new Error("Configure bootstrap authorization with either bootstrapToken or FORGETBASE_BOOTSTRAP_TOKEN_FILE, not both.");
+  }
+
+  if (configuredValue !== undefined) {
+    return validateBootstrapToken(configuredValue);
+  }
+
+  if (!tokenFile) {
+    return undefined;
+  }
+
+  if (!isAbsolute(tokenFile)) {
+    throw new Error("FORGETBASE_BOOTSTRAP_TOKEN_FILE must be an absolute path.");
+  }
+
+  const tokenFileStat = lstatSync(tokenFile);
+  if (tokenFileStat.isSymbolicLink() || !tokenFileStat.isFile()) {
+    throw new Error("FORGETBASE_BOOTSTRAP_TOKEN_FILE must identify a regular file.");
+  }
+
+  return validateBootstrapToken(readFileSync(tokenFile, "utf8").replace(/[\r\n]+$/g, ""));
+}
+
+function validateBootstrapToken(value: string): string {
+  if (!/^[A-Za-z0-9_-]{43,512}$/.test(value)) {
+    throw new Error("The bootstrap token must be a base64url value containing at least 32 bytes of entropy.");
+  }
+
+  return value;
 }
 
 function normalizeOptionalPublicBaseUrl(value: string | undefined, name: string): string | undefined {

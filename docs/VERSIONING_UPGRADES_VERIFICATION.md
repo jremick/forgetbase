@@ -2,7 +2,7 @@
 
 Managed updates remain a draft for newly initialized, isolated Linux Docker Compose installations using synthetic data. Public release/feed publication, conversion of older prototype state and production activation are separate work.
 
-The application can discover releases and submit or cancel requests. An update or manual restore stays pending until a host operator approves its exact immutable request through the protected CLI. The API token and an impersonated allowlisted admin cannot grant that approval. Configurable model and OIDC providers reject the reserved updater secret at both admission and runtime resolution.
+The application can discover releases and submit or cancel requests. An update or manual restore stays pending until a host operator approves its exact immutable request through the protected CLI. The API token and an impersonated allowlisted admin cannot grant that approval. Configurable model and OIDC providers reject all `FORGETBASE_*` host credentials at admission and runtime resolution and require exact deployment provider/origin bindings for permitted secrets.
 
 ## Repeatable checks
 

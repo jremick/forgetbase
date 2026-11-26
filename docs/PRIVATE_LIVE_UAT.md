@@ -27,7 +27,7 @@ npx -y pnpm@11.7.0 security:check-deployment-defaults
 docker compose -f compose.yaml -f compose.same-origin.yaml config --quiet
 ```
 
-Against a seeded same-origin stack, also require:
+On the seeded disposable same-origin stack, export its admin key as `FORGETBASE_API_KEY` and the matching tenant ID as `FORGETBASE_PROOF_TENANT_ID`. Then run:
 
 ```bash
 npx -y pnpm@11.7.0 smoke:compose

@@ -2,6 +2,8 @@
 set -euo pipefail
 
 API_URL="${FORGETBASE_API_URL:-http://127.0.0.1:3000}"
+: "${FORGETBASE_PROOF_TENANT_ID:?Set the tenant ID of the disposable synthetic proof installation}"
+: "${FORGETBASE_API_KEY:?Set FORGETBASE_API_KEY to a user admin key for the isolated proof installation}"
 
 API_URL="$API_URL" npx -y pnpm@11.7.0 --filter @forgetbase/api exec node --input-type=module <<'NODE'
 import { createServer } from "node:http";
@@ -10,8 +12,8 @@ import { exportJWK, generateKeyPair, SignJWT } from "jose";
 
 const apiUrl = process.env.API_URL?.replace(/\/$/, "") ?? "http://127.0.0.1:3000";
 const unique = `${Date.now()}-${randomUUID().slice(0, 8)}`;
-const tenantId = `tenant_oidc_verify_${unique}`;
-const adminEmail = `admin-${unique}@example.test`;
+const tenantId = process.env.FORGETBASE_PROOF_TENANT_ID;
+const adminKey = process.env.FORGETBASE_API_KEY;
 const oidcEmail = `oidc-${unique}@example.test`;
 const clientId = "forgetbase-oidc-verify";
 const redirectUri = "http://127.0.0.1:5175/";
@@ -90,13 +92,13 @@ const server = createServer(async (request, response) => {
 
     const idToken = await new SignJWT({
       sub: `subject-${unique}`,
-	      email: oidcEmail,
-	      name: "OIDC Verify User",
-	      role: "reader",
-	      email_verified: true,
-	      groups: [`engineering-readers-${unique}`, `ops-reviewers-${unique}`],
-	      nonce: currentNonce
-	    })
+      email: oidcEmail,
+      name: "OIDC Verify User",
+      role: "reader",
+      email_verified: true,
+      groups: [`engineering-readers-${unique}`, `ops-reviewers-${unique}`],
+      nonce: currentNonce
+    })
       .setProtectedHeader({ alg: "RS256", kid: keyId })
       .setIssuer(issuer)
       .setAudience(clientId)
@@ -121,40 +123,38 @@ await new Promise((resolve) => server.listen(0, "0.0.0.0", resolve));
 const issuerHost = process.env.FORGETBASE_FAKE_OIDC_ISSUER_HOST ?? "host.docker.internal";
 issuer = `http://${issuerHost}:${server.address().port}`;
 
+const fixture = {
+  enabled: true,
+  displayName: "OIDC Verify Provider",
+  issuerUrl: issuer,
+  clientId,
+  redirectUri,
+  groupClaim: "groups",
+  roleClaim: "role",
+  autoProvisionUsers: true,
+  accountLinkingMode: "verified-email",
+  groupSyncEnabled: true,
+  allowedDomains: ["example.test"],
+  metadata: { verification: "oidc-login", runId: unique }
+};
+async function readProvider() {
+  const list = await request("/admin/auth-providers", { apiKey: adminKey });
+  return list.authProviders.find((config) => config.provider === "oidc");
+}
+async function writeProvider(body) {
+  return request("/admin/auth-providers/oidc", { method: "PUT", apiKey: adminKey, body });
+}
+let fixtureAttempted = false;
+let loginKeyId;
+let report;
 try {
-  await request("/health");
-  const bootstrap = await request("/auth/bootstrap", {
-    method: "POST",
-    body: {
-      tenantId,
-      email: adminEmail,
-      displayName: "OIDC Verify Admin",
-      keyName: "oidc-verify-admin"
-    }
-  });
-  const adminKey = bootstrap.secret;
-  assert(adminKey, "Bootstrap did not return an admin API key");
-
-  await request("/admin/auth-providers/oidc", {
-    method: "PUT",
-    apiKey: adminKey,
-    body: {
-      enabled: true,
-      displayName: "OIDC Verify Provider",
-      issuerUrl: issuer,
-      clientId,
-      redirectUri,
-	      emailClaim: "email",
-	      displayNameClaim: "name",
-	      groupClaim: "groups",
-	      roleClaim: "role",
-	      autoProvisionUsers: true,
-	      accountLinkingMode: "verified-email",
-	      groupSyncEnabled: true,
-	      allowedDomains: ["example.test"],
-	      pkceRequired: true
-    }
-  });
+  const admin = await request("/auth/me", { apiKey: adminKey });
+  assert(admin.userId && admin.tenantId === tenantId && admin.role === "admin", "Admin key must belong to the disposable proof tenant");
+  const existing = await readProvider();
+  assert(!existing || (!existing.enabled && existing.clientId === clientId && existing.metadata.verification === "oidc-login"),
+    "Use a disposable tenant without a configured OIDC provider");
+  fixtureAttempted = true;
+  await writeProvider(fixture);
 
   const authorize = await request("/auth/oidc/authorize", {
     method: "POST",
@@ -180,55 +180,58 @@ try {
       keyName: "oidc-verify-login"
     }
   });
-	  assert(login.user.email === oidcEmail, "OIDC login returned unexpected user email");
-	  assert(login.user.authProvider === "oidc", "OIDC user authProvider was not oidc");
-	  assert(login.user.externalProvider === "oidc", "OIDC user externalProvider was not oidc");
-	  assert(login.user.externalIssuer === issuer, "OIDC user externalIssuer was not captured");
-	  assert(login.user.externalSubject === `subject-${unique}`, "OIDC user externalSubject was not captured");
-	  assert(login.secret, "OIDC callback did not return a one-time API key");
+  loginKeyId = login.apiKey.id;
+  assert(login.user.email === oidcEmail, "OIDC login returned unexpected user email");
+  assert(login.user.authProvider === "oidc", "OIDC user authProvider was not oidc");
+  assert(login.user.externalProvider === "oidc", "OIDC user externalProvider was not oidc");
+  assert(login.user.externalIssuer === issuer, "OIDC user externalIssuer was not captured");
+  assert(login.user.externalSubject === `subject-${unique}`, "OIDC user externalSubject was not captured");
+  assert(login.secret, "OIDC callback did not return a one-time API key");
 
-	  const principal = await request("/auth/me", {
-	    apiKey: login.secret
-	  });
-	  assert(principal.email === oidcEmail, "OIDC login key did not authenticate as expected user");
-	  assert(Array.isArray(principal.groupIds) && principal.groupIds.length === 2, "OIDC login principal did not include synced groups");
+  const principal = await request("/auth/me", {
+    apiKey: login.secret
+  });
+  assert(principal.email === oidcEmail, "OIDC login key did not authenticate as expected user");
+  assert(Array.isArray(principal.groupIds) && principal.groupIds.length === 2, "OIDC login principal did not include synced groups");
 
-	  const groups = await request("/auth/groups", {
-	    apiKey: adminKey
-	  });
-	  const syncedExternalIds = groups.groups
-	    .filter((group) => group.externalProvider === "oidc")
-	    .map((group) => group.externalId)
-	    .sort();
-	  assert(
-	    JSON.stringify(syncedExternalIds) === JSON.stringify([`engineering-readers-${unique}`, `ops-reviewers-${unique}`].sort()),
-	    "OIDC group sync did not create expected external groups"
-	  );
-	  assert(
-	    principal.groupIds.every((groupId) => groups.groups.some((group) => group.id === groupId)),
-	    "OIDC login principal referenced an unknown synced group"
-	  );
-
-  await request(`/auth/api-keys/${encodeURIComponent(login.apiKey.id)}/revoke`, {
-    method: "POST",
+  const groups = await request("/auth/groups", {
     apiKey: adminKey
   });
-  await request(`/auth/api-keys/${encodeURIComponent(bootstrap.apiKey.id)}/revoke`, {
-    method: "POST",
-    apiKey: adminKey
-  });
+  const syncedExternalIds = groups.groups
+    .filter((group) => group.externalProvider === "oidc" && principal.groupIds.includes(group.id))
+    .map((group) => group.externalId)
+    .sort();
+  assert(
+    JSON.stringify(syncedExternalIds) === JSON.stringify([`engineering-readers-${unique}`, `ops-reviewers-${unique}`].sort()),
+    "OIDC group sync did not create expected external groups"
+  );
+  assert(
+    principal.groupIds.every((groupId) => groups.groups.some((group) => group.id === groupId)),
+    "OIDC login principal referenced an unknown synced group"
+  );
 
-  console.log(JSON.stringify({
+  report = {
     ok: true,
     apiUrl,
     tenantId,
     provider: "oidc",
-	    issuer,
-	    userEmail: oidcEmail,
-	    principalRole: principal.role,
-	    syncedGroupCount: principal.groupIds.length
-	  }, null, 2));
+    issuer,
+    userEmail: oidcEmail,
+    principalRole: principal.role,
+    syncedGroupCount: principal.groupIds.length
+  };
 } finally {
-  await new Promise((resolve) => server.close(resolve));
+  try {
+    if (fixtureAttempted && (await readProvider())?.metadata.runId === unique) {
+      await writeProvider({ ...fixture, enabled: false, autoProvisionUsers: false, groupSyncEnabled: false });
+    }
+  } finally {
+    try {
+      if (loginKeyId) await request(`/auth/api-keys/${encodeURIComponent(loginKeyId)}/revoke`, { method: "POST", apiKey: adminKey });
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
+  }
 }
+console.log(JSON.stringify(report, null, 2));
 NODE

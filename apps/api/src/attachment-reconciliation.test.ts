@@ -1,7 +1,10 @@
 import { createHash } from "node:crypto";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { InMemoryAttachmentRepository } from "@forgetbase/db";
 import { describe, expect, it } from "vitest";
-import type { AttachmentStorageAdapter } from "./attachment-storage.js";
+import { LocalFilesystemAttachmentStorage, type AttachmentStorageAdapter } from "./attachment-storage.js";
 import { reconcileAttachments } from "./attachment-reconciliation.js";
 
 function storageKey(index: number): string {
@@ -74,6 +77,98 @@ describe("attachment reconciliation", () => {
     expect(files.size).toBe(0);
     await expect(repository.getAttachment(record.id, { tenantId: "tenant_one", includeUnavailable: true }))
       .resolves.toMatchObject({ lifecycleState: "deleted" });
+  });
+
+  it("removes stale pending uploads without making them available", async () => {
+    const repository = new InMemoryAttachmentRepository({
+      now: () => new Date("2026-09-01T00:00:00.000Z"),
+      generateId: () => "attachment_pending"
+    });
+    const pending = await repository.reserveAttachment(attachmentInput(1, Buffer.from("pending")));
+    const files = new Map([[pending.storageKey, Buffer.from("pending")]]);
+
+    const report = await reconcileAttachments({
+      repository,
+      storage: memoryStorage(files),
+      dryRun: false,
+      now: new Date("2026-09-01T01:00:00.000Z")
+    });
+
+    expect(report).toMatchObject({ stalePendingCount: 1, resolvedPendingCount: 1 });
+    expect(files.size).toBe(0);
+    await expect(repository.getAttachment(pending.id, { tenantId: "tenant_one", includeUnavailable: true }))
+      .resolves.toMatchObject({ lifecycleState: "deleted" });
+  });
+
+  it("recovers unpublished reservations and preserves mismatched bytes on the real filesystem", async () => {
+    const root = await mkdtemp(join(tmpdir(), "forgetbase-pending-recovery-"));
+    const repository = new InMemoryAttachmentRepository({ now: () => new Date("2026-09-01T00:00:00Z") });
+    const storage = new LocalFilesystemAttachmentStorage(root, 1024);
+    try {
+      const missing = await repository.reserveAttachment(attachmentInput(1, Buffer.from("never published")));
+      const mismatch = await repository.reserveAttachment(attachmentInput(2, Buffer.from("new bytes")));
+      await storage.put(mismatch.storageKey, Buffer.from("existing bytes"));
+      // A bounded or stale storage listing cannot establish that a key is absent.
+      const partialInventory: AttachmentStorageAdapter = {
+        inventory: async () => ({ storageKeys: [], unexpectedEntryCount: 0 }),
+        get: (key) => storage.get(key),
+        put: (key, content) => storage.put(key, content),
+        delete: (key) => storage.delete(key)
+      };
+      const result = await reconcileAttachments({
+        repository, storage: partialInventory, dryRun: false, now: new Date("2026-09-01T01:00:00Z")
+      });
+      expect(result).toMatchObject({ stalePendingCount: 2, resolvedPendingCount: 1, deletedOrphanCount: 0 });
+      await expect(repository.getAttachment(missing.id, { tenantId: missing.tenantId, includeUnavailable: true }))
+        .resolves.toMatchObject({ lifecycleState: "deleted" });
+      await expect(storage.get(mismatch.storageKey)).resolves.toEqual(Buffer.from("existing bytes"));
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("serializes execute reconciliation behind an upload reservation and activation", async () => {
+    const repository = new InMemoryAttachmentRepository({
+      now: () => new Date("2026-09-01T00:00:00.000Z"),
+      generateId: () => "attachment_upload"
+    });
+    const files = new Map<string, Buffer>();
+    let releaseUpload: () => void = () => undefined;
+    const uploadGate = new Promise<void>((resolve) => {
+      releaseUpload = resolve;
+    });
+    let markBlobWritten: () => void = () => undefined;
+    const blobWritten = new Promise<void>((resolve) => {
+      markBlobWritten = resolve;
+    });
+    const input = attachmentInput(1, Buffer.from("upload"));
+    const upload = repository.withAttachmentLifecycleLock(async () => {
+      const pending = await repository.reserveAttachment(input);
+      files.set(pending.storageKey, Buffer.from("upload"));
+      markBlobWritten();
+      await uploadGate;
+      await repository.activateAttachment({ tenantId: pending.tenantId, attachmentId: pending.id });
+    });
+    await blobWritten;
+
+    let inventoryCount = 0;
+    const storage = memoryStorage(files);
+    const inventory = storage.inventory!;
+    storage.inventory = async () => {
+      inventoryCount += 1;
+      return inventory();
+    };
+    const reconciliation = reconcileAttachments({ repository, storage, dryRun: false });
+    await Promise.resolve();
+    expect(inventoryCount).toBe(0);
+
+    releaseUpload();
+    await upload;
+    const report = await reconciliation;
+    expect(report.deletedOrphanCount).toBe(0);
+    expect(files.has(input.storageKey)).toBe(true);
+    await expect(repository.getAttachment("attachment_upload", { tenantId: "tenant_one" }))
+      .resolves.toMatchObject({ lifecycleState: "active" });
   });
 
   it("keeps tenant-admin reconciliation inside its tenant and never classifies shared blobs as orphans", async () => {

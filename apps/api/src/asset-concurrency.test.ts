@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import { InMemoryAuthRepository, InMemoryRegistryRepository } from "@forgetbase/db";
 import { buildServer } from "./server.js";
 
+const TEST_BOOTSTRAP_TOKEN = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcdef";
+
 describe("asset mutation preconditions", () => {
   it.each([
     { path: "versions", body: { humanDocument: { format: "markdown", body: "Second editor" } } },
@@ -11,9 +13,9 @@ describe("asset mutation preconditions", () => {
   ])("returns a structured 409 before a stale $path command changes content", async ({ path, body }) => {
     const registry = new InMemoryRegistryRepository();
     const auth = new InMemoryAuthRepository();
-    const api = buildServer({ logger: false, registryRepository: registry, authRepository: auth });
+    const api = buildServer({ logger: false, registryRepository: registry, authRepository: auth, bootstrapToken: TEST_BOOTSTRAP_TOKEN });
     try {
-      const bootstrap = await api.inject({ method: "POST", url: "/auth/bootstrap", payload: { email: "editor@example.test", displayName: "Editor" } });
+      const bootstrap = await api.inject({ method: "POST", url: "/auth/bootstrap", payload: { bootstrapToken: TEST_BOOTSTRAP_TOKEN, email: "editor@example.test", displayName: "Editor" } });
       const headers = { authorization: `Bearer ${bootstrap.json().secret}` };
       const created = await api.inject({ method: "POST", url: "/assets", headers, payload: {
         stableId: "page.concurrent", type: "human-document", ownerId: bootstrap.json().user.id, title: "Concurrent page",

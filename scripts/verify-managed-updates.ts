@@ -17,6 +17,7 @@ import { copyFile, cp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/p
 import { dirname, join, resolve } from "node:path";
 import { canonicalJson, computeComposeBundleDigest, initializeManagedInstallation } from "../packages/updater/src/index.js";
 import { releaseManifestSchema, type ReleaseManifest } from "../packages/schema/src/index.js";
+import { hashPassword } from "../packages/db/src/index.js";
 
 type Json = Record<string, any>;
 const root = process.cwd();
@@ -44,12 +45,14 @@ const { privateKey, publicKey } = generateKeyPairSync("ed25519");
 const publicPem = publicKey.export({ type: "spki", format: "pem" }).toString();
 const token = randomBytes(36).toString("hex");
 const password = randomBytes(24).toString("hex");
-const secrets = [token, password];
+const bootstrapToken = randomBytes(32).toString("base64url");
+const secrets = [token, password, bootstrapToken];
 const entries: Json[] = [];
 const phaseHistory: Json[] = [];
 const baseEnv: NodeJS.ProcessEnv = {
   ...process.env,
   FORGETBASE_POSTGRES_PASSWORD: password,
+  FORGETBASE_PROOF_BOOTSTRAP_TOKEN: bootstrapToken,
   FORGETBASE_UPDATER_API_TOKEN: token,
   FORGETBASE_SYSTEM_UPDATE_OWNER_EMAILS: "owner@example.test",
   FORGETBASE_UPDATER_URL: `http://host.docker.internal:${updaterPort}`,
@@ -107,10 +110,12 @@ try {
   for (const filename of ["backup-postgres.sh", "backup-attachments.sh", "backup-set.sh", "verify-backup-set.sh", "restore-postgres.sh", "restore-attachments.sh"]) {
     await copyFile(join(root, "scripts", filename), join(directory, "scripts", filename));
   }
-  // The disposable runner has no host bind path. Initialize extensions explicitly
-  // below, preserving the shipped managed Compose services and security settings.
+  // A runner using the host Docker socket cannot bind its own files. Compose
+  // still mounts the synthetic credential at the same path in the API container.
   const compose = (await readFile(join(root, "compose.managed.yaml"), "utf8"))
-    .replace(/^\s+- \.\/infra\/docker\/postgres-init:.*\n/m, "");
+    .replace(/^\s+- \.\/infra\/docker\/postgres-init:.*\n/m, "")
+    .replace(/^    file: \$\{FORGETBASE_BOOTSTRAP_TOKEN_PATH:.*$/m, "    environment: FORGETBASE_PROOF_BOOTSTRAP_TOKEN");
+  assert.ok(compose.includes("environment: FORGETBASE_PROOF_BOOTSTRAP_TOKEN"));
   await writeFile(composePath, compose);
   await mkdir(join(directory, "bin"), { recursive: true });
   const realDocker = (await collectCommand("Docker executable path", "which docker", () => execute((options) => spawn("which", ["docker"], { ...options, shell: false }), baseEnv, 30_000))).trim();
@@ -139,7 +144,7 @@ fi
 `, { mode: 0o700 });
   baseEnv.MANAGED_PROOF_REAL_DOCKER = realDocker;
   baseEnv.MANAGED_PROOF_CONTROL_DIR = directory;
-  record("compose fixture", { sha256: sha256(compose), change: "remove host-only postgres init bind; initialize identical extensions with psql" });
+  record("compose fixture", { sha256: sha256(compose), change: "initialize postgres extensions with psql and mount the runner-supplied bootstrap secret" });
   await dockerCommand("start disposable private registry", ["run", "-d", "--name", registryName, "--label", `forgetbase.proof=${runId}`, "-p", `127.0.0.1:${registryPort}:5000`, "registry:3"]);
   await waitUrl(`http://${host}:${registryPort}/v2/`, 60_000);
   const sourceRevision = process.env.MANAGED_PROOF_SOURCE_REVISION ?? "0000000000000000000000000000000000000000";
@@ -164,7 +169,7 @@ fi
   await composeCommand("start baseline services", ["up", "-d", "api", "worker", "web"]);
   await waitUrl(`${api}/ready`, 300_000);
   await sql("CREATE TABLE managed_e2e_canary (id text PRIMARY KEY, value text NOT NULL); INSERT INTO managed_e2e_canary VALUES ('before', 'original');");
-  const bootstrap = await http(api, "/auth/bootstrap", { method: "POST", body: { tenantId: "tenant_demo", email: "owner@example.test", displayName: "Synthetic Update Owner", password, keyName: "managed-proof" } });
+  const bootstrap = await http(api, "/auth/bootstrap", { method: "POST", body: { bootstrapToken, email: "owner@example.test", displayName: "Synthetic Update Owner", password, keyName: "managed-proof" } });
   ownerKey = bootstrap.body.secret;
   assert.ok(ownerKey); secrets.push(ownerKey);
   baseEnv.FORGETBASE_REQUIRE_AUTHENTICATION = "true";
@@ -457,6 +462,7 @@ async function composeCommand(name: string, args: string[], required = true): Pr
 async function sql(statement: string, targetProject = project): Promise<string> {
   return dockerCommand("synthetic database assertion", ["compose", "--project-name", targetProject, "--env-file", releaseEnv, "-f", composePath, "exec", "-T", "postgres", "psql", "-U", "forgetbase", "-d", "forgetbase", "-v", "ON_ERROR_STOP=1", "-t", "-A", "-c", statement]);
 }
+function sqlLiteral(value: string): string { return `'${value.replaceAll("'", "''")}'`; }
 async function until(check: () => Promise<boolean>, timeoutMs: number): Promise<void> { const started = Date.now(); while (Date.now() - started < timeoutMs) { if (await check()) return; await delay(1000); } throw new Error(`Condition timed out after ${timeoutMs}ms`); }
 async function waitUrl(url: string, timeoutMs: number): Promise<void> { await until(async () => { try { return (await fetch(url, { signal: AbortSignal.timeout(2000) })).ok; } catch { return false; } }, timeoutMs); }
 async function http(base: string, path: string, input: { method?: string; body?: Json; token?: string; cookie?: string; expected?: number[] } = {}): Promise<{ status: number; body: Json }> {
@@ -494,9 +500,13 @@ async function verifyImpersonationCannotApprove(nonOwnerCookie: string): Promise
   const resetCookie = await loginCookie("owner@example.test", resetPassword);
   await http(api, `/auth/users/${owner.id}`, { method: "PUT", cookie: nonOwnerCookie, body: { password } });
   const otherTenant = "tenant_host_approval_other";
-  const bootstrap = await http(api, "/auth/bootstrap", { method: "POST", token: ownerKey, body: { tenantId: otherTenant, email: "tenant-admin@example.test", displayName: "Synthetic Other Tenant", password, keyName: "synthetic other tenant" } });
-  const otherKey = bootstrap.body.secret; assert.ok(otherKey); secrets.push(otherKey);
-  await http(api, "/auth/users", { method: "POST", token: otherKey, body: { email: "owner@example.test", displayName: "Duplicate Allowlisted Email", role: "admin", password } });
+  const passwordHash = await hashPassword(password);
+  await sql(`
+    INSERT INTO tenants (id, slug, name)
+    VALUES (${sqlLiteral(otherTenant)}, ${sqlLiteral("host-approval-other")}, ${sqlLiteral("Synthetic Other Tenant")});
+    INSERT INTO users (tenant_id, email, display_name, role, status, password_hash)
+    VALUES (${sqlLiteral(otherTenant)}, ${sqlLiteral("owner@example.test")}, ${sqlLiteral("Duplicate Allowlisted Email")}, 'admin', 'active', ${sqlLiteral(passwordHash)});
+  `);
   const duplicateCookie = await loginCookie("owner@example.test", password, otherTenant);
   for (const [name, authentication] of [
     ["ordinary admin minted owner key", { token: impersonatedKey }],

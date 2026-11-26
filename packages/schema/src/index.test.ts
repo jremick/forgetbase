@@ -245,6 +245,23 @@ describe("schema package", () => {
   });
 
   it.each([
+    "ftp://model.example.test/v1",
+    "https://user:password@model.example.test/v1",
+    "https://model.example.test/v1?destination=internal",
+    "https://model.example.test/v1#fragment"
+  ])("rejects unsafe outbound integration URL syntax: %s", (baseUrl) => {
+    expect(modelProviderConfigInputSchema.safeParse({ provider: "openai", baseUrl }).success).toBe(false);
+  });
+
+  it("keeps HTTP issuer syntax available for the operator-only development override", () => {
+    expect(authProviderConfigInputSchema.safeParse({
+      provider: "oidc",
+      issuerUrl: "http://local-oidc.example.test:8080",
+      clientId: "forgetbase-client"
+    }).success).toBe(true);
+  });
+
+  it.each([
     ["OKF Export Policy", "OKF Export Policy"],
     [String.raw`Policy \](https://untrusted.example.test) [label]`, String.raw`Policy \\\](https://untrusted.example.test) \[label\]`],
     [String.raw`Policy \\[nested]`, String.raw`Policy \\\\\[nested\]`]

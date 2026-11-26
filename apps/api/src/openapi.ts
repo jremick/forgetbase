@@ -261,11 +261,13 @@ export function buildOpenApiDocument() {
       },
       "/auth/bootstrap": {
         post: {
-          summary: "Create the first local admin and one-time API key",
+          summary: "Create the installation's first local admin with the deployment bootstrap token",
           security: [],
           responses: {
             "201": jsonResponse("Created bootstrap admin and API key"),
-            "409": jsonResponse("Bootstrap already completed")
+            "403": jsonResponse("Deployment bootstrap token rejected"),
+            "409": jsonResponse("Installation bootstrap already completed"),
+            "503": jsonResponse("Deployment bootstrap token is not configured")
           }
         }
       },
