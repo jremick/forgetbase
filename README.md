@@ -6,7 +6,7 @@ Teams can write and organize knowledge once. People get a clean reading UI. AI t
 
 ## Current Status
 
-ForgetBase is experimental software for self-hosted trials, including internal work with an organization's own or authorized customer content. API and data formats may change, and support is best effort. See [Public Beta Compatibility](docs/PUBLIC_BETA_COMPATIBILITY.md) for data handling expectations and supported scope. See [Releases](https://github.com/jremick/forgetbase/releases) for published builds and their exact-source verification evidence. The beta.12 maintenance line updates security dependencies and runtime pins; its automated proof uses synthetic fixtures.
+ForgetBase is experimental software for self-hosted trials, including internal work with an organization's own or authorized customer content. API and data formats may change, and support is best effort. See [Public Beta Compatibility](docs/PUBLIC_BETA_COMPATIBILITY.md) for data handling expectations and supported scope. See [Releases](https://github.com/jremick/forgetbase/releases) for published builds and their exact-source verification evidence. The beta.13 security release hardens first-admin setup, provider access, attachment uploads and CLI exports.
 
 For the governed authoring and publication path, see [Instructions and human documents](docs/governed-workflow.md). Maintenance release assets record build, contract, isolated browser and recovery checks. Beta.12 keeps hosted deployment paused and does not claim a public HTTPS demo or moderated reader/admin UAT. The [publication checklist](docs/PUBLICATION.md) records these limits and the separate public-release gates.
 

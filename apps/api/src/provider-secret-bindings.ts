@@ -74,7 +74,7 @@ export function isDeploymentProviderSecretAllowed(
   },
   endpoint: "destination" | "issuer" = "destination"
 ): boolean {
-  if (isReservedProviderSecretEnvVar(input.envVar) || /(?:_FILE)+$/.test(input.envVar)) {
+  if (isReservedProviderSecretEnvVar(input.envVar) || input.envVar.endsWith("_FILE")) {
     return false;
   }
 
@@ -107,7 +107,7 @@ function parseBinding(value: unknown, index: number): DeploymentProviderSecretBi
     throw new Error(`${PROVIDER_SECRET_BINDINGS_ENV_VAR}[${index}].envVar is invalid`);
   }
 
-  if (isReservedProviderSecretEnvVar(envVar) || /(?:_FILE)+$/.test(envVar)) {
+  if (isReservedProviderSecretEnvVar(envVar) || envVar.endsWith("_FILE")) {
     throw new Error(`${PROVIDER_SECRET_BINDINGS_ENV_VAR}[${index}].envVar is reserved`);
   }
 

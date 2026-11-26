@@ -141,7 +141,12 @@ export function isReservedProviderSecretEnvVar(envVar: string | null | undefined
   }
 
   // Normalize the direct value, file-reference name, and chained file aliases.
-  const baseName = envVar.replace(/(?:_FILE)+$/, "");
+  const suffix = "_FILE";
+  let end = envVar.length;
+  while (envVar.endsWith(suffix, end)) {
+    end -= suffix.length;
+  }
+  const baseName = envVar.slice(0, end);
 
   return (
     baseName.startsWith("FORGETBASE_") ||

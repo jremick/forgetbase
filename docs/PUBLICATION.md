@@ -2,7 +2,7 @@
 
 Published builds and verification assets are listed in [Releases](https://github.com/jremick/forgetbase/releases). Current [beta guidance](PUBLIC_BETA_COMPATIBILITY.md) includes self-hosted internal work trials; published verification evidence uses synthetic data.
 
-The owner authorized beta.12 as a source and security maintenance release while keeping deployment paused. Require exact-source repository verification, isolated full-stack proof, production and development dependency audits, all required commit statuses and CodeQL analyses, reproducible source artifacts, and anonymous checksum readback. Its release verification asset must state that public HTTPS demo proof and moderated reader/admin UAT were not completed. This beta.12-only disposition does not waive those gates for later feature releases or claim hosted-service readiness.
+The owner authorized beta.12 and beta.13 as source and security maintenance releases with hosting paused. Require exact-source repository verification, isolated full-stack proof, production and development dependency audits, all required commit statuses and CodeQL analyses, reproducible source artifacts, and anonymous checksum readback. Each release verification asset must state that public HTTPS demo proof and moderated reader/admin UAT were not completed. For beta.13, also verify the upgrade from beta.12. Later feature releases require the full public-demo and moderated-UAT evidence.
 
 ## Before changing visibility
 
@@ -58,7 +58,7 @@ for the existing deployment. Preserve previous tags and releases.
 
 Verify anonymous repository and release access, source-archive checksums, the
 security-reporting link and final GitHub settings. When deployment is authorized, confirm that the hosted API,
-web and worker identify the released source and retain authenticated access. For beta.12,
+web and worker identify the released source and retain authenticated access. For beta.12 and beta.13,
 verify that the existing deployment pause is retained.
 Publishing source does not grant public access to the maintainer's installation.
 

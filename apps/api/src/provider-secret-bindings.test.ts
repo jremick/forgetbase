@@ -52,6 +52,7 @@ describe("deployment provider secret bindings", () => {
   it.each([
     "FORGETBASE_OIDC_STATE_SECRET",
     "FORGETBASE_LOCAL_SYNC_SIGNING_PRIVATE_KEY_FILE",
+    "CUSTOM_PROVIDER_KEY_FILE_FILE",
     "DATABASE_URL",
     "PGPASSWORD",
     "KUBECONFIG",

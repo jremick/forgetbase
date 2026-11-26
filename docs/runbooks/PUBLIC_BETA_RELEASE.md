@@ -13,9 +13,9 @@ Select the approved, unused release tag from the maintenance or feature-release 
 - Do not make the repository public, tag a release, or announce public beta until the owner explicitly approves that action.
 - Complete the current [Private Live UAT](../PRIVATE_LIVE_UAT.md) charter against the exact upcoming release candidate before considering public promotion. Its private boundary covers tester access to the test deployment, not source repository visibility.
 
-## Beta.12 Maintenance Disposition
+## Beta.12 and Beta.13 Maintenance Releases
 
-The owner approved publishing the beta.12 source and security maintenance release while keeping deployment paused. For this release only, follow the [publication checklist](../PUBLICATION.md) maintenance gates and attach an exact-source `release-verification.json` with the missing public HTTPS demo, moderated admin/reader UAT and full public-demo proof manifest explicitly recorded. Do not run a production deployment or represent isolated automated evidence as those missing observations. The normal demo and moderated-UAT gates below still apply to later feature releases.
+The owner approved publishing beta.12 and beta.13 as source and security maintenance releases with hosting paused. For these two releases, follow the [publication checklist](../PUBLICATION.md) maintenance gates and attach an exact-source `release-verification.json` with the missing public HTTPS demo, moderated admin/reader UAT and full public-demo proof manifest explicitly recorded. Do not run a production deployment or represent isolated automated evidence as those missing observations. The normal demo and moderated-UAT gates below still apply to later feature releases.
 
 ## Release Inputs
 
