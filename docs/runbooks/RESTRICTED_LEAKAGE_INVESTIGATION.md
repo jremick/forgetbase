@@ -42,19 +42,14 @@ Generate the affected export package with the suspected caller role or key, then
 FORGETBASE_API_KEY="$SUSPECTED_CALLER_KEY" npx -y pnpm@11.7.0 --filter @forgetbase/cli start -- exports ai-package --package <package-name>
 ```
 
-Run the restricted leakage verifier against the current API:
+Recheck the affected user's permissions on the deployment. For the synthetic regression, use a disposable installation of the same revision. Set `FORGETBASE_API_URL` and `FORGETBASE_API_KEY` to that installation and its admin key, then name the matching tenant.
 
 ```bash
+export FORGETBASE_PROOF_TENANT_ID=tenant_demo
 npx -y pnpm@11.7.0 security:verify-restricted-leakage
 ```
 
-Use a non-default API URL when investigating another deployment:
-
-```bash
-FORGETBASE_API_URL=https://cms.example.com npx -y pnpm@11.7.0 security:verify-restricted-leakage
-```
-
-The verifier creates a throwaway tenant, creates a restricted fixture asset, proves admin search can find it, and proves anonymous search, ungranted reader search, and broad reader export do not receive it. It prints fixture IDs and counts only; it does not print generated secrets.
+The verifier creates a synthetic reader and a restricted asset. It checks admin, anonymous and reader search, checks both export formats, and revokes the temporary reader key. Discard the proof installation to remove fixture records.
 
 ## Root Cause Checks
 
@@ -90,7 +85,7 @@ DATABASE_URL=postgres://forgetbase:forgetbase_dev@127.0.0.1:5432/forgetbase npx 
 ## Closure Criteria
 
 - The suspected unauthorized caller can no longer retrieve the asset through API, CLI, MCP, web, managed-query, or export.
-- `security:verify-restricted-leakage` passes against the deployment.
+- `security:verify-restricted-leakage` passes on a disposable installation of the deployed revision.
 - Audit evidence shows containment actions such as key revocation, permission changes, asset update/publish/restore, or export regeneration.
 - Any downstream cached export package or agent context has been invalidated.
 - A follow-up issue exists for any missing product control discovered during the investigation.

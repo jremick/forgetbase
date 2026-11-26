@@ -6,7 +6,7 @@ Teams can write and organize knowledge once. People get a clean reading UI. AI t
 
 ## Current Status
 
-ForgetBase is experimental software for self-hosted trials, including internal work with an organization's own or authorized customer content. API and data formats may change, and support is best effort. See [Public Beta Compatibility](docs/PUBLIC_BETA_COMPATIBILITY.md) for data handling expectations and supported scope. See [Releases](https://github.com/jremick/forgetbase/releases) for published builds and their exact-source verification evidence. The beta.12 maintenance line updates security dependencies and runtime pins; its automated proof uses synthetic fixtures.
+ForgetBase is experimental software for self-hosted trials, including internal work with an organization's own or authorized customer content. API and data formats may change, and support is best effort. See [Public Beta Compatibility](docs/PUBLIC_BETA_COMPATIBILITY.md) for data handling expectations and supported scope. See [Releases](https://github.com/jremick/forgetbase/releases) for published builds and their exact-source verification evidence. The beta.13 security release hardens first-admin setup, provider access, attachment uploads and CLI exports.
 
 For the governed authoring and publication path, see [Instructions and human documents](docs/governed-workflow.md). Maintenance release assets record build, contract, isolated browser and recovery checks. Beta.12 keeps hosted deployment paused and does not claim a public HTTPS demo or moderated reader/admin UAT. The [publication checklist](docs/PUBLICATION.md) records these limits and the separate public-release gates.
 
@@ -23,12 +23,7 @@ Expected public beta limits:
 
 Prerequisites: Node.js 26.12.1, Docker, and Docker Compose v2. See [Development](docs/DEVELOPMENT.md).
 
-Check out a published release from [Releases](https://github.com/jremick/forgetbase/releases), then run the commands below from its root directory. For beta.12:
-
-```bash
-git clone --branch v0.1.0-beta.12 https://github.com/jremick/forgetbase.git
-cd forgetbase
-```
+Run these commands from the root of this source checkout. For a published build, use the instructions bundled with its release tag. [Releases](https://github.com/jremick/forgetbase/releases)
 
 This starts a local trial with loopback-only ports and sample credentials. Use the [deployment runbook](docs/runbooks/DEPLOY_DOCKER_COMPOSE.md) before exposing an installation beyond your computer.
 
@@ -37,6 +32,7 @@ npx -y pnpm@11.7.0 install --frozen-lockfile
 npx -y pnpm@11.7.0 typecheck
 npx -y pnpm@11.7.0 build
 npx -y pnpm@11.7.0 --filter @forgetbase/cli start -- validate --file corpus/demo/assets.json --as-of 2026-06-16 --fail-on-warnings
+node scripts/create-bootstrap-token.mjs
 docker compose -f compose.yaml -f compose.same-origin.yaml up --build -d postgres api worker web proxy
 for attempt in $(seq 1 30); do
   curl --silent --show-error --fail http://127.0.0.1:3000/health && break
@@ -49,10 +45,12 @@ Create a local admin key, import the demo corpus, and try a public search:
 
 ```bash
 bootstrap_json="$(mktemp)"
-curl --silent --show-error --fail \
-  -H "content-type: application/json" \
-  --data '{"tenantId":"tenant_demo","email":"admin@example.test","displayName":"Admin","password":"local-dev-password","keyName":"local-beta-admin"}' \
-  http://127.0.0.1:3000/auth/bootstrap > "$bootstrap_json"
+npx -y pnpm@11.7.0 --filter @forgetbase/cli start -- auth bootstrap \
+  --bootstrap-token-file work/bootstrap/token \
+  --email admin@example.test \
+  --display-name Admin \
+  --password local-dev-password \
+  --key-name local-beta-admin > "$bootstrap_json"
 export FORGETBASE_API_KEY="$(node -e 'const fs=require("fs"); process.stdout.write(JSON.parse(fs.readFileSync(process.argv[1], "utf8")).secret)' "$bootstrap_json")"
 rm "$bootstrap_json"
 
@@ -61,6 +59,8 @@ curl --silent --show-error --fail "http://127.0.0.1:3000/search?query=personal%2
 ```
 
 Open the same-origin UI at `http://127.0.0.1:8080/`. Sign in with tenant `tenant_demo`, email `admin@example.test`, and password `local-dev-password`. The alternative split-origin UI is at `http://127.0.0.1:5175/`.
+
+Bootstrap is installation-wide and can succeed only once. The API reads the operator token from the Compose secret file, accepts no caller-selected tenant, and creates the admin in `FORGETBASE_BOOTSTRAP_TENANT_ID` (default `tenant_demo`). Bundled public proxies do not expose the bootstrap route.
 
 ## Product Thesis
 

@@ -25,6 +25,8 @@ The service takes an OS lock before reading or changing managed state. Child com
 Store deployment values outside the repository. The managed release environment requires:
 
 - `FORGETBASE_POSTGRES_PASSWORD`
+- `FORGETBASE_BOOTSTRAP_TOKEN_PATH`, naming a protected file containing a base64url token generated from at least 32 random bytes
+- `FORGETBASE_BOOTSTRAP_TENANT_ID`, naming the installation tenant and defaulting to `tenant_demo`
 - `FORGETBASE_UPDATER_API_TOKEN`, with at least 32 random bytes
 - `FORGETBASE_SYSTEM_UPDATE_OWNER_EMAILS`, as an exact comma-separated allowlist
 - digest-pinned image variables from the verified release manifest
@@ -71,7 +73,9 @@ Only after these checks does the installer provision the protected approval auth
 
 This draft supports newly initialized managed installations. It does not provide an in-place conversion command for prototype state created before host approval existed. The managed service refuses to start without its provisioned authority; it never regenerates a missing installation ID. Do not delete existing state or rerun the new-installation command over it to bypass that check. A supported conversion procedure remains required before using this feature with such an installation.
 
-Generate and store the updater request token with the other deployment secrets. Use at least 32 random bytes. Give the API and host updater the same value without printing it into logs. The token cannot approve host changes. Configurable model and OIDC providers reject this reserved secret reference and its file-backed variants at admission and runtime; tenant policy cannot override that rejection.
+Generate and store the updater request token with the other deployment secrets. Use at least 32 random bytes. Give the API and host updater the same value without printing it into logs. The token cannot approve host changes. Configurable model and OIDC providers reject every `FORGETBASE_*` host credential and file-backed variant at admission and runtime; tenant policy cannot override that rejection, and all permitted provider secrets require exact deployment provider/origin bindings.
+
+Before first boot or an upgrade from beta.12, run `node scripts/create-bootstrap-token.mjs /absolute/private/bootstrap` from the source checkout. Set `FORGETBASE_BOOTSTRAP_TOKEN_PATH` to the resulting token file. Its owner-only parent directory protects it on the host while the non-root API can read its individual file mount. The API receives it as a Compose secret, bootstrap cannot select a different tenant, and the global database completion record permanently closes the operation after the first admin is created.
 
 Start the initial Compose release with the verified environment file and deployment secrets available to the process:
 

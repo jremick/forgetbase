@@ -190,7 +190,7 @@ export const attachmentAllowedMediaTypes = [
   "text/plain"
 ] as const;
 
-export const attachmentLifecycleStateSchema = z.enum(["active", "deleting", "deleted"]);
+export const attachmentLifecycleStateSchema = z.enum(["pending", "active", "deleting", "deleted"]);
 
 export const attachmentUploadMetadataSchema = z.object({
   filename: attachmentFilenameSchema,
@@ -256,9 +256,11 @@ export const attachmentReconciliationReportSchema = z.object({
   truncated: z.boolean(),
   activeMissingOrUnreadableCount: z.number().int().nonnegative(),
   activeIntegrityFailureCount: z.number().int().nonnegative(),
+  stalePendingCount: z.number().int().nonnegative(),
   staleDeletingCount: z.number().int().nonnegative(),
   orphanedObjectCount: z.number().int().nonnegative(),
   unexpectedStorageEntryCount: z.number().int().nonnegative(),
+  resolvedPendingCount: z.number().int().nonnegative(),
   resolvedDeletingCount: z.number().int().nonnegative(),
   deletedOrphanCount: z.number().int().nonnegative()
 });
@@ -714,12 +716,12 @@ export const apiKeyRotateResponseSchema = z.object({
 });
 
 export const authBootstrapInputSchema = z.object({
-  tenantId: z.string().min(1).default("tenant_demo"),
+  bootstrapToken: z.string().regex(/^[A-Za-z0-9_-]{43,512}$/),
   email: z.string().email(),
   displayName: z.string().min(1),
   keyName: z.string().min(1).default("bootstrap-admin"),
   password: z.string().min(12).optional()
-});
+}).strict();
 
 export const authLoginInputSchema = z.object({
   tenantId: z.string().min(1).default("tenant_demo"),
@@ -1390,12 +1392,36 @@ export const agentActionRequestListResponseSchema = z.object({
   actions: z.array(agentActionRequestSchema)
 });
 
+const outboundIntegrationUrlSchema = z.string().url().superRefine((value, context) => {
+  let url: URL;
+
+  try {
+    url = new URL(value);
+  } catch {
+    return;
+  }
+
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    context.addIssue({
+      code: "custom",
+      message: "Outbound integration URLs must use HTTP or HTTPS."
+    });
+  }
+
+  if (url.username || url.password || url.search || url.hash) {
+    context.addIssue({
+      code: "custom",
+      message: "Outbound integration URLs must not contain credentials, queries, or fragments."
+    });
+  }
+});
+
 export const modelProviderConfigInputSchema = z.object({
   tenantId: z.string().min(1).default("tenant_demo"),
   provider: modelProviderSchema,
   enabled: z.boolean().default(false),
   displayName: z.string().min(1).optional(),
-  baseUrl: z.string().url().optional(),
+  baseUrl: outboundIntegrationUrlSchema.optional(),
   apiKeyEnvVar: secretEnvVarNameSchema.optional(),
   defaultModel: z.string().min(1).optional(),
   availableModels: z.array(z.string().min(1)).default([]),
@@ -1447,7 +1473,7 @@ export const authProviderConfigInputSchema = z.object({
   provider: externalAuthProviderSchema,
   enabled: z.boolean().default(false),
   displayName: z.string().min(1).optional(),
-  issuerUrl: z.string().url(),
+  issuerUrl: outboundIntegrationUrlSchema,
   clientId: z.string().min(1),
   clientSecretEnvVar: secretEnvVarNameSchema.optional(),
   redirectUri: z.string().url().optional(),
@@ -1501,7 +1527,7 @@ export const secretReferencePolicyInputSchema = z.object({
   tenantId: z.string().min(1).default("tenant_demo"),
   allowedEnvVarPrefixes: z.array(secretEnvVarPrefixSchema).max(100).optional(),
   allowedEnvVars: z.array(secretEnvVarNameSchema).max(200).optional(),
-  allowUnlistedEnvVars: z.boolean().optional()
+  allowUnlistedEnvVars: z.literal(false).optional()
 });
 
 export const secretReferencePolicySchema = z.object({

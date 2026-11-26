@@ -355,15 +355,16 @@ The OSS install needs local users and scoped API keys before enterprise OIDC exi
 
 - seed a default admin and password
 - require direct database setup for the first user
-- expose a bootstrap endpoint that works only before any tenant user exists
+- expose a deployment-token bootstrap endpoint that works only before installation bootstrap completes
 
 ### Decision And Rationale
 
-Use a bootstrap endpoint and CLI command that create the first local admin and return a one-time scoped API key secret. After a tenant has users, bootstrap returns a conflict and normal admin-scoped API keys must be used.
+Use a bootstrap endpoint and CLI command that create the first local admin and return a one-time scoped API key secret. Bootstrap is installation-scoped: it requires a high-entropy deployment token loaded from a protected file, creates the admin only in the deployment-fixed tenant, and commits a singleton completion record under a global transaction lock. After completion, bootstrap returns a conflict and normal admin-scoped API keys must be used.
 
 ### Consequences
 
 - No default password or committed secret is needed.
+- Callers cannot select a fresh tenant to reopen bootstrap, and bundled public proxies do not forward the route.
 - Operators must treat the returned bootstrap secret as sensitive because it cannot be read again.
 - Later auth work should add password login, key rotation/revocation, and OIDC without weakening the bootstrap invariant.
 
@@ -1554,7 +1555,9 @@ Provider and external auth configs already avoid storing provider API keys or OI
 
 ### Decision And Rationale
 
-Add a tenant-scoped `secret_reference_policies` table and expose admin controls across API, SDK, CLI, MCP, OpenAPI, and the operational web UI. The default policy allows common ForgetBase, OpenAI, Anthropic, OpenRouter, Entra, and OIDC prefixes while rejecting unrelated env vars. Admins can replace allowed prefixes, add exact env-var names, or explicitly allow all valid env-var names for unusual self-hosted deployments.
+Add a tenant-scoped `secret_reference_policies` table and expose admin controls across API, SDK, CLI, MCP, OpenAPI, and the operational web UI. The default policy allows common OpenAI, Anthropic, OpenRouter, Entra, and OIDC prefixes while rejecting unrelated env vars. Admins can replace allowed prefixes or add exact env-var names as a narrowing control.
+
+Security amendment: tenant policy no longer grants secret-forwarding authority. The deployment owns exact env-var/provider/origin bindings through built-in standard-provider entries and optional `FORGETBASE_PROVIDER_SECRET_BINDINGS` metadata. Unlisted names cannot be enabled, and host-control credential families are categorically reserved. Admission and every direct or mounted-file use recheck both the current tenant narrowing and deployment binding before reading secret data.
 
 Provider config `apiKeyEnvVar` and auth provider config `clientSecretEnvVar` writes are checked against the tenant policy before the config is saved. Policy updates are audited with actor attribution. Backup/restore verification includes the policy table.
 
@@ -1563,8 +1566,9 @@ This improves the existing env-var-only secret posture without prematurely addin
 ### Consequences
 
 - Accidental references to broad runtime env vars are rejected by default.
-- Existing documented examples using `OPENAI_API_KEY`, `ANTHROPIC_*`, `OPENROUTER_*`, `ENTRA_*`, `OIDC_*`, and `FORGETBASE_*` remain supported.
-- Self-hosted deployments with custom naming can add exact names or prefixes before saving provider/auth-provider config.
+- Existing documented standard-provider examples remain supported by exact built-in deployment bindings.
+- Self-hosted deployments with custom names or origins add an exact deployment binding before saving provider/auth-provider config.
+- Tenant policy can narrow deployment authority but cannot enable unlisted names or any `FORGETBASE_*` host credential.
 - The policy governs env-var names only; it does not store, validate, rotate, encrypt, mount, or broker secret values.
 - This is not yet a hosted secret manager, secret-file adapter, secret health scanner, automated rotation workflow, or per-provider credential vault.
 
@@ -1835,7 +1839,7 @@ This keeps the no-secret-values-in-config boundary intact, lets self-hosted oper
 - Provider-routed managed queries can use direct env vars or mounted secret files without changing provider config records.
 - OIDC token exchange can use direct env vars or mounted secret files for configured client secrets.
 - Provider readiness treats file-backed secrets as configured only when the file resolves successfully; secret values and file contents are never returned.
-- The configured base env-var name must still satisfy tenant secret-reference policy.
+- The configured base env-var name must satisfy current tenant narrowing and an exact deployment provider/origin binding.
 - This is not an external secret-manager adapter, secret rotation workflow, hosted secret store, or secret-file path policy surface.
 
 ### Follow-Ups / Review
@@ -3098,7 +3102,7 @@ Readers need files linked to governed pages, but storing file bodies in Postgres
 
 Store attachment ownership, lifecycle, filename, media type, byte size, SHA-256, and actor references in Postgres. Keep only an opaque validated storage key in the persistence record. The API returns a public projection without that key. Use a bounded local filesystem adapter for development and self-hosted Compose, with an S3-compatible implementation deferred behind the same `put/get/delete` contract.
 
-Authorize the parent governed asset before resolving attachment metadata. Carry the display filename and media type in dedicated request headers so routine access logs do not retain them in request URLs. Force downloads rather than previews. Delete in two phases: mark `deleting`, remove the blob, then tombstone metadata as `deleted`. A failed blob deletion leaves a non-readable state that a later delete can retry. If metadata persistence fails after a blob write, attempt immediate orphan cleanup and record only the cleanup result in audit metadata.
+Authorize the parent governed asset before resolving attachment metadata. Carry the display filename and media type in dedicated request headers so routine access logs do not retain them in request URLs. Force downloads rather than previews. Delete in two phases: mark `deleting`, remove the blob, then tombstone metadata as `deleted`. A failed blob deletion leaves a non-readable state that a later delete can retry. Uploads create non-readable `pending` metadata before publishing bytes, activate that reservation after storage succeeds, and retain it when storage state cannot be proven absent. Execute-mode reconciliation and upload publication share a deployment-wide database advisory lock; reconciliation tombstones stale pending reservations after directly confirming absence or verifying and removing the reserved bytes. Mismatched and unreadable objects are preserved.
 
 ### Consequences
 
@@ -3106,6 +3110,7 @@ Authorize the parent governed asset before resolving attachment metadata. Carry 
 - Upload and deletion require maintainer/admin role, `asset:write`, and parent write access.
 - Blob paths do not become part of the API contract.
 - Attachment display metadata does not become part of the request URL.
+- Reconciliation cannot inventory or delete storage while an upload is between reservation and activation.
 - Database and blob backups must be captured and restored as one recovery point.
 - Local files remain a self-hosted operational responsibility; hosted object storage is not implied.
 - Delete removes bytes immediately and retains tombstone metadata until a later explicit purge policy exists.
@@ -3160,7 +3165,7 @@ The first attachment slice enforced authorization, storage-key safety, byte limi
 
 Validate extension, declared media type, and supported content signatures before publication; reject macro-bearing OpenXML; and require a clean malware result when scanning is enabled. Compose runs a pinned internal-only ClamAV daemon and requires it for readiness, upload, and subsequent download eligibility. Bound resource use with file-size, tenant, uploader, rate, and concurrency limits. Publish local blobs atomically and preserve a blob when its metadata is committed even if the later audit write fails.
 
-Add tenant-scoped admin reconciliation that defaults to dry-run, exposes bounded counts without storage keys or global totals, and can resolve only the tenant's stale deletes. The scheduled operator job can delete proven orphan blobs only from a complete global metadata inventory. Replace the preferred two-command backup procedure with one stopped-writer directory and manifest; verification restores to temporary state and proves exact database-to-blob integrity.
+Add tenant-scoped admin reconciliation that defaults to dry-run, exposes bounded counts without storage keys or global totals, and can resolve the tenant's stale pending uploads and deletes. The scheduled operator job can delete proven orphan blobs only from a complete global metadata inventory. Replace the preferred two-command backup procedure with one stopped-writer directory and manifest; verification restores to temporary state and proves exact database-to-blob integrity.
 
 ### Consequences
 

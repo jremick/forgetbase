@@ -16,6 +16,7 @@ This runbook covers the pragmatic SMB self-hosting path for one Docker Compose d
 - A checked-out ForgetBase revision or release tag.
 - A target DNS/TLS/proxy layer if exposing beyond localhost, or real certificate and key files mounted into the Compose TLS overlay.
 - `FORGETBASE_OIDC_STATE_SECRET` set to a high-entropy random value if OIDC login is enabled.
+- A base64url bootstrap token generated from at least 32 random bytes, stored in a protected file outside version control. Set `FORGETBASE_BOOTSTRAP_TOKEN_PATH` to that host path and `FORGETBASE_BOOTSTRAP_TENANT_ID` to the installation tenant; Compose defaults to `work/bootstrap/token` and `tenant_demo`.
 - `FORGETBASE_LOGIN_SESSION_MAX_AGE_SECONDS` set to the intended maximum password/OIDC login lifetime. The Compose default is `43200`, or 12 hours.
 - `FORGETBASE_LOGIN_SESSION_IDLE_TIMEOUT_SECONDS` set to the intended rolling idle timeout for cookie-backed browser sessions. The Compose default is `14400`, or 4 hours. Use `0` only when explicitly disabling idle timeout.
 - `FORGETBASE_LOGIN_SESSION_ABSOLUTE_MAX_AGE_SECONDS` set to the intended hard browser-session lifetime from login time. The Compose default is `2592000`, or 30 days. Use `0` only when explicitly disabling the absolute cap.
@@ -59,9 +60,12 @@ npx -y pnpm@11.7.0 security:check-deployment-defaults
 Start Postgres, ClamAV, API, worker, and web:
 
 ```bash
+node scripts/create-bootstrap-token.mjs
 docker compose up -d postgres migrate clamav api worker web
 docker compose ps
 ```
+
+For an upgrade from beta.12, provision the token file before recreating the API container. Migration `045_installation_bootstrap` uses the previous bootstrap audit event or a surviving user to close first-admin setup. See the [upgrade recovery procedure](../VERSIONING_AND_UPGRADES.md) if both were erased. Existing keys and passwords continue to work. Migration `046_attachment_upload_reservations` retains existing attachment records. Take a coordinated database and attachment backup, then stop old API and worker processes before migrating so every writer uses the new attachment lifecycle lock. To roll back, stop the new writers and restore the pre-upgrade backup set with the previous release.
 
 The one-shot `migrate` service waits for healthy Postgres, runs `pnpm db:migrate`, exits successfully, and gates API/worker startup through `service_completed_successfully`. The API also waits for healthy ClamAV and its `/ready` route fails closed when required scanning is unavailable. ClamD has no host port mapping. This is the normal first-run and update path; rerunning Compose skips already-applied migrations through `schema_migrations`.
 
@@ -80,10 +84,10 @@ docker compose -f compose.yaml -f compose.same-origin.yaml -f compose.tls.yaml u
 
 Local generated certificates are written under `infra/docker/tls/` and ignored by git. Replace them with certificates from your DNS/TLS process before exposing the deployment beyond localhost.
 
-Bootstrap the first admin. Store the returned API key secret in your password manager or deployment secret store. It is returned only once.
+Bootstrap the first admin through the loopback-bound direct API. Store the returned API key secret in your password manager or deployment secret store. The deployment token authorizes only this globally one-time operation; the database completion record prevents reuse for another tenant. The bundled same-origin, TLS, and Railway public proxies return `404` for the bootstrap path.
 
 ```bash
-npx -y pnpm@11.7.0 --filter @forgetbase/cli start -- auth bootstrap --email admin@example.test --display-name "Admin"
+npx -y pnpm@11.7.0 --filter @forgetbase/cli start -- auth bootstrap --bootstrap-token-file work/bootstrap/token --email admin@example.test --display-name "Admin"
 ```
 
 Import the demo corpus only when you want the open-source sample content:
@@ -118,18 +122,17 @@ curl --insecure --silent --show-error --fail https://127.0.0.1:8443/
 Then run authenticated and permission checks:
 
 ```bash
-npx -y pnpm@11.7.0 smoke:compose
 npx -y pnpm@11.7.0 --filter @forgetbase/cli start -- auth me --api-url http://127.0.0.1:3000
 npx -y pnpm@11.7.0 --filter @forgetbase/cli start -- search --api-url http://127.0.0.1:3000 --query "PII redaction" --limit 3
 ```
 
-For a restricted-access smoke check, run:
+Run the fixture checks on a disposable installation of this revision. Export its user admin key as `FORGETBASE_API_KEY` and set `FORGETBASE_PROOF_TENANT_ID` to its tenant ID. The fixtures create synthetic records in that tenant.
 
 ```bash
 npx -y pnpm@11.7.0 security:verify-restricted-leakage
 ```
 
-If OIDC login is enabled, run:
+To exercise OIDC on that disposable installation, follow the [local OIDC fixture setup](../DEVELOPMENT.md) and run:
 
 ```bash
 npx -y pnpm@11.7.0 auth:verify-oidc-login
@@ -146,7 +149,11 @@ export OPENAI_API_KEY_FILE=/run/secrets/openai_api_key
 npx -y pnpm@11.7.0 --filter @forgetbase/cli start -- admin model-provider-set --provider openai --enabled true --api-key-env-var OPENAI_API_KEY --default-model gpt-5.1
 ```
 
-Use this for Docker secrets, Kubernetes-style mounts, or local mounted secret files. Do not commit the secret file, the secret value, or ad hoc `.env` files with secret values. The configured base env var name must still pass tenant secret-reference policy; the `_FILE` companion is deployment-local plumbing and is not stored in the config record.
+Use this for Docker secrets, Kubernetes-style mounts, or local mounted secret files. Do not commit the secret file, the secret value, or ad hoc `.env` files with secret values. The configured base env var name must pass tenant narrowing and an exact deployment-owned provider/origin binding; the `_FILE` companion is deployment-local plumbing and is not stored in the config record.
+
+Default bindings cover the documented OpenAI, Anthropic, OpenRouter, and Microsoft Entra env vars at their standard origins. For a custom provider or OIDC origin, set `FORGETBASE_PROVIDER_SECRET_BINDINGS` on the API service to a JSON array of `envVar`, `provider`, and `origin` objects. The binding contains metadata only, never the secret value. Unlisted references, direct `_FILE` names, `FORGETBASE_*`, database, session, signing, and cloud credential families are rejected before environment or file reads.
+
+For a confidential OIDC client with separate issuer and token hosts, set `origin` to the token endpoint origin and `issuerOrigin` to the discovery issuer origin in that same binding. Include the custom issuer, authorization, token and JWKS origins in `FORGETBASE_OUTBOUND_ALLOWED_ORIGINS` on the API service.
 
 ## Same-Origin Browser Proxy
 
@@ -204,7 +211,6 @@ Run smoke checks:
 
 ```bash
 curl --silent --show-error --fail http://127.0.0.1:3000/health
-npx -y pnpm@11.7.0 security:verify-restricted-leakage
 ```
 
 If you run only Postgres through Compose and start the API or worker directly on the host, run migrations manually before starting those local processes:
@@ -213,9 +219,10 @@ If you run only Postgres through Compose and start the API or worker directly on
 DATABASE_URL=postgres://forgetbase:forgetbase_dev@127.0.0.1:${FORGETBASE_POSTGRES_PORT:-5432}/forgetbase npx -y pnpm@11.7.0 db:migrate
 ```
 
-If OIDC login is enabled, also run:
+Repeat the restricted-leakage and OIDC fixture checks on a disposable upgraded installation with its admin key and `FORGETBASE_PROOF_TENANT_ID` set:
 
 ```bash
+npx -y pnpm@11.7.0 security:verify-restricted-leakage
 npx -y pnpm@11.7.0 auth:verify-oidc-login
 ```
 

@@ -6,6 +6,12 @@ This document defines how ForgetBase identifies releases, informs an operator, a
 
 The first supported self-update target is a managed Docker Compose installation. Source checkouts remain operator-managed. Hosted installations remain platform-managed.
 
+## Upgrading legacy bootstrap state
+
+Migration 045 closes installation-wide bootstrap using the earliest surviving successful `auth.bootstrap` audit event. Its target ID survives user deletion. If retention already removed the event, an existing user also closes bootstrap.
+
+If a previously initialized installation has lost all users and all successful bootstrap audit events, the database has the same bootstrap evidence as a fresh install. Keep the API stopped during migration. Recover the original tenant ID, admin UUID, and completion time from a verified backup or operator record, and use those values to populate the singleton row in `installation_bootstrap_state` before starting the API. Verify that the completion row exists.
+
 ## Delivery Phases 1-5
 
 ### Phase 1: Release Identity And Policy
@@ -116,7 +122,7 @@ The update boundary fails closed:
 - source and hosted installations cannot invoke managed host mutation
 - weak or missing updater bearer tokens are rejected
 - the API-to-updater token grants request/status access, never host approval
-- configurable model and OIDC secret references cannot select the reserved updater token or its file-backed variants, even under a permissive tenant policy
+- configurable model and OIDC secret references require deployment provider/origin bindings and cannot select any `FORGETBASE_*` host credential or file-backed variant
 - approval files, installation identity and CLI remain outside application-container mounts; no HTTP approval endpoint exists
 - an approval is consumed once before host mutation; changed, expired, cross-installation or replayed approvals fail closed
 - only one mutating update or rollback job can be active

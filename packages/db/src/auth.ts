@@ -419,18 +419,18 @@ export class PostgresAuthRepository implements AuthRepository {
 
     try {
       await client.query("BEGIN");
-      await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [`forgetbase-bootstrap:${input.tenantId}`]);
-      await ensureTenant(client, input.tenantId);
+      await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", ["forgetbase-installation-bootstrap"]);
 
-      const existing = await client.query<{ count: string }>(
-        "SELECT count(*)::text AS count FROM users WHERE tenant_id = $1",
-        [input.tenantId]
+      const existing = await client.query<{ completed: boolean }>(
+        "SELECT EXISTS (SELECT 1 FROM installation_bootstrap_state WHERE singleton = true) AS completed"
       );
 
-      if (Number.parseInt(existing.rows[0]?.count ?? "0", 10) > 0) {
+      if (existing.rows[0]?.completed) {
         await client.query("ROLLBACK");
         return null;
       }
+
+      await ensureTenant(client, input.tenantId);
 
       const userResult = await client.query<UserRow>(
         `
@@ -482,6 +482,13 @@ export class PostgresAuthRepository implements AuthRepository {
           VALUES ($1, $2::uuid, $3, 'auth.bootstrap', 'user', $2::text, 'success')
         `,
         [input.tenantId, user.id, apiKey.id]
+      );
+      await client.query(
+        `
+          INSERT INTO installation_bootstrap_state (singleton, tenant_id, admin_user_id)
+          VALUES (true, $1, $2::uuid)
+        `,
+        [input.tenantId, user.id]
       );
       await client.query("COMMIT");
 
@@ -2398,6 +2405,7 @@ export class InMemoryAuthRepository implements AuthRepository {
   private readonly policyMutationExecutor = new KeyedSerialExecutor();
   private sequence = 0;
   private localSyncRevision = 0;
+  private bootstrapCompleted = false;
 
   constructor(private readonly testHooks: AuthRepositoryTestHooks = {}) {}
 
@@ -2416,7 +2424,7 @@ export class InMemoryAuthRepository implements AuthRepository {
     this.bumpLocalSyncRevision();
     const passwordHash = input.password ? await hashPassword(input.password) : null;
 
-    if (Array.from(this.users.values()).some((user) => user.tenantId === input.tenantId)) {
+    if (this.bootstrapCompleted) {
       return null;
     }
 
@@ -2478,6 +2486,7 @@ export class InMemoryAuthRepository implements AuthRepository {
       secretHash: hashApiKeySecret(secret)
     });
     this.auditEvents.unshift(auditEvent);
+    this.bootstrapCompleted = true;
 
     return { user, apiKey, secret };
   }

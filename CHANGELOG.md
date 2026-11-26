@@ -4,6 +4,16 @@ Published tags are immutable. Beta releases support self-hosted trials, includin
 
 ## Unreleased
 
+## 0.1.0-beta.13 - 2026-11-26
+
+- Require the operator's token file for first-admin setup and record completion once per installation.
+- Bind model and OIDC secrets to approved destinations and connect only to validated outbound addresses. Provider secret validation handles chained file aliases in linear time.
+- Reserve attachment metadata before storing bytes and coordinate uploads with cleanup. Recovery checks cover unfinished uploads.
+- Write CLI OKF exports into a fresh private directory.
+- Update the MCP server's transitive Hono, Node adapter and query-string parser dependencies for security advisories.
+
+Before upgrading from beta.12, create the bootstrap token file, take a coordinated database and attachment backup, and stop old API and worker processes. Migrations `045` and `046` add the installation completion record and attachment upload reservations. See the [Compose upgrade instructions](docs/runbooks/DEPLOY_DOCKER_COMPOSE.md).
+
 ## 0.1.0-beta.12 - 2026-10-27
 
 - Update the pinned Node.js container and CI runtime to 26.12.1, retaining strict TLS checks and refreshed CA trust.

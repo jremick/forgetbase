@@ -54,6 +54,8 @@ Every concept file includes source asset metadata in YAML frontmatter:
 - `allowed_surfaces`
 - `allowed_exports`
 
+The CLI creates a fresh, private bundle directory and refuses existing output paths. On POSIX systems, choose a parent path owned by the operator or system and protected from directory replacement by other users.
+
 Existing generated bundles should be treated as immutable release artifacts. Do not rewrite a distributed OKF bundle in place when the source asset version or OKF spec version changes. Generate a new bundle and compare `projectionHash` plus file diffs.
 
 ## Update Process

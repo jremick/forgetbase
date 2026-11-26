@@ -413,7 +413,14 @@ function codeqlSteps(language) {
     {
       id: `codeql-${language}/database`,
       name: `Create the ${language} CodeQL database`,
-      run: async ({ exec }) => {
+      run: async ({ exec, phase }) => {
+        if (language === "swift") {
+          // Resolve Apple's native toolchain before CodeQL starts its build tracer under Rosetta.
+          const selected = await exec(["/usr/bin/xcrun", "--find", "swift"], { capture: true });
+          const swift = selected.stdout.trim();
+          if (selected.code !== 0 || !isAbsolute(swift)) return ["Could not locate the selected Swift toolchain"];
+          phase.env.PATH = dirname(swift) + ":" + process.env.PATH;
+        }
         const created = await exec([settings.codeqlBinary, "database", "create", database, `--language=${language}`, ...config.build,
           `--source-root=${sourceDir}`, `--working-dir=${sourceDir}`, "--threads=0"]);
         return created.code === 0 ? [] : [`codeql database create exited with ${created.code ?? created.signal}`];

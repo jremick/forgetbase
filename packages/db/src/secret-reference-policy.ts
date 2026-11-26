@@ -7,7 +7,7 @@ import {
 } from "@forgetbase/schema";
 
 export const DEFAULT_SECRET_REFERENCE_POLICY = {
-  allowedEnvVarPrefixes: ["FORGETBASE_", "OPENAI_", "ANTHROPIC_", "OPENROUTER_", "ENTRA_", "OIDC_"],
+  allowedEnvVarPrefixes: ["OPENAI_", "ANTHROPIC_", "OPENROUTER_", "ENTRA_", "OIDC_"],
   allowedEnvVars: [] as string[],
   allowUnlistedEnvVars: false
 };
@@ -46,7 +46,7 @@ export class PostgresSecretReferencePolicyRepository implements SecretReferenceP
       allowedEnvVars: parsed.allowedEnvVars === undefined
         ? current.allowedEnvVars
         : uniqueValues(parsed.allowedEnvVars),
-      allowUnlistedEnvVars: parsed.allowUnlistedEnvVars ?? current.allowUnlistedEnvVars
+      allowUnlistedEnvVars: false
     };
 
     await ensureTenant(this.pool, parsed.tenantId);
@@ -107,7 +107,7 @@ export class InMemorySecretReferencePolicyRepository implements SecretReferenceP
       allowedEnvVars: parsed.allowedEnvVars === undefined
         ? current.allowedEnvVars
         : uniqueValues(parsed.allowedEnvVars),
-      allowUnlistedEnvVars: parsed.allowUnlistedEnvVars ?? current.allowUnlistedEnvVars,
+      allowUnlistedEnvVars: false,
       source: "stored",
       updatedByUserId: input.updatedByUserId ?? null,
       updatedByServiceAccountId: input.updatedByServiceAccountId ?? null,
@@ -136,8 +136,25 @@ export function defaultSecretReferencePolicy(tenantId: string): SecretReferenceP
 
 /** Host control credentials are never part of tenant-configurable provider authority. */
 export function isReservedProviderSecretEnvVar(envVar: string | null | undefined): boolean {
-  // Cover the direct value, the file reference, and chained file-reference aliases.
-  return typeof envVar === "string" && /^FORGETBASE_UPDATER_API_TOKEN(?:_FILE)*$/.test(envVar);
+  if (typeof envVar !== "string") {
+    return false;
+  }
+
+  // Normalize the direct value, file-reference name, and chained file aliases.
+  const suffix = "_FILE";
+  let end = envVar.length;
+  while (envVar.endsWith(suffix, end)) {
+    end -= suffix.length;
+  }
+  const baseName = envVar.slice(0, end);
+
+  return (
+    baseName.startsWith("FORGETBASE_") ||
+    /^(?:DATABASE_URL|TEST_DATABASE_URL|PGHOST|PGPORT|PGDATABASE|PGUSER|PGPASSWORD|PGPASSFILE)$/.test(baseName) ||
+    /^(?:AWS|AZURE|GOOGLE|GITHUB|GITLAB|NPM|DOCKER)_/.test(baseName) ||
+    baseName === "KUBECONFIG" ||
+    /(?:^|_)(?:SESSION|COOKIE|CSRF|JWT|SIGNING|ENCRYPTION|PRIVATE_KEY|PASSWORD)(?:_|$)/.test(baseName)
+  );
 }
 
 export function assertProviderSecretReferenceAllowed(envVar: string | null | undefined): void {
@@ -151,7 +168,7 @@ export function isSecretEnvVarAllowed(policy: SecretReferencePolicy, envVar: str
     return false;
   }
 
-  if (!envVar || policy.allowUnlistedEnvVars) {
+  if (!envVar) {
     return true;
   }
 
@@ -167,7 +184,8 @@ function mapSecretReferencePolicyRow(row: SecretReferencePolicyRow): SecretRefer
     tenantId: row.tenant_id,
     allowedEnvVarPrefixes: row.allowed_env_var_prefixes,
     allowedEnvVars: row.allowed_env_vars,
-    allowUnlistedEnvVars: row.allow_unlisted_env_vars,
+    // Legacy rows may contain true, but unlisted references no longer grant authority.
+    allowUnlistedEnvVars: false,
     source: "stored",
     updatedByUserId: row.updated_by_user_id,
     updatedByServiceAccountId: row.updated_by_service_account_id,

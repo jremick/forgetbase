@@ -3,6 +3,8 @@ import { aiExportPackageSchema, okfExportPackageSchema } from "@forgetbase/schem
 import { InMemoryAuthRepository, InMemoryRegistryRepository, InMemoryRetrievalRepository } from "@forgetbase/db";
 import { buildServer } from "./server.js";
 
+const TEST_BOOTSTRAP_TOKEN = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcdef";
+
 describe("beta machine-consumer contract", () => {
   it("freezes the canonical API fetch, search, JSON export, OKF export, and OpenAPI path", async () => {
     const registryRepository = new InMemoryRegistryRepository();
@@ -12,7 +14,8 @@ describe("beta machine-consumer contract", () => {
       logger: false,
       registryRepository,
       authRepository,
-      retrievalRepository
+      retrievalRepository,
+      bootstrapToken: TEST_BOOTSTRAP_TOKEN
     });
 
     try {
@@ -20,6 +23,7 @@ describe("beta machine-consumer contract", () => {
         method: "POST",
         url: "/auth/bootstrap",
         payload: {
+          bootstrapToken: TEST_BOOTSTRAP_TOKEN,
           email: "admin@example.test",
           displayName: "Admin"
         }

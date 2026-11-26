@@ -45,9 +45,9 @@ docker compose -f compose.yaml -f compose.same-origin.yaml config --quiet
 docker compose -f compose.yaml -f compose.same-origin.yaml -f compose.tls.yaml config --quiet
 ```
 
-The deployment-default check inspects templates and resolved Compose configurations. It requires Docker Compose but does not require a running Docker daemon. It preserves local Compose bootstrap defaults, verifies the same-origin/TLS/Railway public template guardrails, and only enforces public-deployment env requirements when `FORGETBASE_PUBLIC_DEPLOYMENT=true`.
+The deployment-default check inspects templates and resolved Compose configurations. It requires Docker Compose but does not require a running Docker daemon. It preserves the loopback direct bootstrap channel and mounted-token configuration, verifies the same-origin/TLS/Railway public template guardrails, and only enforces public-deployment env requirements when `FORGETBASE_PUBLIC_DEPLOYMENT=true`.
 
-Run the Compose/API/export/leakage smoke gate against a running local stack after importing the demo corpus:
+Run the Compose/API/export/leakage smoke gate against a disposable local stack after importing the demo corpus. Export its user admin key as `FORGETBASE_API_KEY` and set `FORGETBASE_PROOF_TENANT_ID` to that key’s tenant. The fixture creates synthetic users and assets that are removed when the stack is discarded.
 
 ```bash
 npx -y pnpm@11.7.0 smoke:compose
@@ -55,13 +55,13 @@ npx -y pnpm@11.7.0 smoke:compose
 
 The smoke gate validates the base, same-origin, and TLS Compose configs, then checks `/health`, `/openapi.json`, JSON and OKF `demo-agent-pack` exports, and restricted leakage through the running API. It does not start or stop containers. If the API is not on `http://127.0.0.1:3000`, set `FORGETBASE_API_URL`. If export checks report 0 assets, import `corpus/demo/assets.json` into the running API first.
 
-With Docker Compose API running, run the restricted leakage smoke check:
+On the isolated Compose installation, export its user admin key as `FORGETBASE_API_KEY` for the smoke and restricted-leakage checks. Then run:
 
 ```bash
 npx -y pnpm@11.7.0 security:verify-restricted-leakage
 ```
 
-With Docker Compose API running and `FORGETBASE_OIDC_STATE_SECRET` set for the API service, run the local fake-provider OIDC smoke check:
+On a disposable installation, configure the fake OIDC provider as described below and export its user admin key as `FORGETBASE_API_KEY` before running:
 
 ```bash
 npx -y pnpm@11.7.0 auth:verify-oidc-login
@@ -125,13 +125,13 @@ DATABASE_URL=postgres://forgetbase:forgetbase_dev@127.0.0.1:${FORGETBASE_POSTGRE
 
 The migration runner holds a Postgres advisory lock while it creates `schema_migrations` and applies files. Concurrent host-run API, worker, test, or CLI processes should wait and then skip already-applied migrations instead of racing catalog changes.
 
-Bootstrap the first local admin user and API key:
+Before starting the API, create its token with the deployment runbook. Once it is ready, use that same token to create the first admin:
 
 ```bash
-npx -y pnpm@11.7.0 --filter @forgetbase/cli start -- auth bootstrap --email admin@example.test --display-name "Admin" --password local-dev-password
+npx -y pnpm@11.7.0 --filter @forgetbase/cli start -- auth bootstrap --bootstrap-token-file work/bootstrap/token --email admin@example.test --display-name "Admin" --password local-dev-password
 ```
 
-The bootstrap command returns the API key secret once. Set `FORGETBASE_API_KEY` for CLI commands; this avoids printing the raw key through package-manager script echo. The CLI also supports `--api-key ...` for controlled one-off use.
+The deployment reads the same token through `FORGETBASE_BOOTSTRAP_TOKEN_FILE`; Compose mounts `FORGETBASE_BOOTSTRAP_TOKEN_PATH` there and defaults that host path to `work/bootstrap/token`. Bootstrap creates the admin in the deployment-fixed `FORGETBASE_BOOTSTRAP_TENANT_ID`, defaults to `tenant_demo`, and is permanently closed by the database completion record after success. The command returns the API key secret once. Set `FORGETBASE_API_KEY` for CLI commands; this avoids printing the raw key through package-manager script echo. The CLI also supports `--api-key ...` for controlled one-off use.
 
 ```bash
 npx -y pnpm@11.7.0 --filter @forgetbase/cli start -- corpus import --api-url http://127.0.0.1:3000 --file corpus/demo/assets.json
@@ -320,7 +320,7 @@ npx -y pnpm@11.7.0 --filter @forgetbase/cli start -- agent action-execute --acti
 npx -y pnpm@11.7.0 --filter @forgetbase/cli start -- agent action-list
 npx -y pnpm@11.7.0 --filter @forgetbase/cli start -- agent action-decision --action-request-id <action-request-id> --decision approve --reason "Approved for internal task tracking"
 npx -y pnpm@11.7.0 --filter @forgetbase/cli start -- admin secret-reference-policy
-npx -y pnpm@11.7.0 --filter @forgetbase/cli start -- admin secret-reference-policy-set --allowed-prefixes FORGETBASE_,OPENAI_,ANTHROPIC_,OPENROUTER_,ENTRA_,OIDC_ --allowed-env-vars CUSTOM_PROVIDER_SECRET --allow-unlisted false
+npx -y pnpm@11.7.0 --filter @forgetbase/cli start -- admin secret-reference-policy-set --allowed-prefixes OPENAI_,ANTHROPIC_,OPENROUTER_,ENTRA_,OIDC_ --allowed-env-vars CUSTOM_PROVIDER_SECRET --allow-unlisted false
 npx -y pnpm@11.7.0 --filter @forgetbase/cli start -- admin pii-redaction-policy
 npx -y pnpm@11.7.0 --filter @forgetbase/cli start -- admin pii-redaction-policy-set --redaction-enabled true --enabled-rule-kinds api-key,bearer-token,credit-card,email,government-id,ip-address,jwt,phone,url-secret
 npx -y pnpm@11.7.0 --filter @forgetbase/cli start -- telemetry retention
@@ -342,7 +342,20 @@ Successful and failing eval reports are persisted to `managed_query_eval_runs` w
 
 The admin eval schedule policy stores replayable deterministic eval input inline so the worker can run due quality gates without a human admin API key. Use sanitized synthetic or approved eval prompts in the schedule policy; run history still redacts stored report query text with the tenant PII policy. The schedule is disabled by default and can be previewed with `--managed-query-evals-once`; add `--execute` only after reviewing due counts.
 
-Admin provider configuration can be managed without storing provider secrets. Store the actual provider secret in the deployment environment and reference only the env var name. The API first reads that env var directly; if it is unset, it reads an absolute mounted-secret path from the derived `<ENV_VAR>_FILE` env var, such as `OPENAI_API_KEY_FILE=/run/secrets/openai_api_key`. The tenant secret-reference policy defaults to allow common ForgetBase, OpenAI, Anthropic, OpenRouter, Entra, and OIDC prefixes while rejecting unrelated env vars such as `PATH`; admins can add exact env-var names, change allowed prefixes, or explicitly allow all valid env-var names for unusual self-hosted deployments.
+Admin provider configuration can be managed without storing provider secrets. Store the actual provider secret in the deployment environment and reference only the env var name. The API first reads that env var directly; if it is unset, it reads an absolute mounted-secret path from the derived `<ENV_VAR>_FILE` env var, such as `OPENAI_API_KEY_FILE=/run/secrets/openai_api_key`.
+
+The deployment, rather than a tenant admin, grants secret-forwarding authority. Built-in exact bindings cover `OPENAI_API_KEY` to `openai` at `https://api.openai.com`, `ANTHROPIC_API_KEY` to `anthropic` at `https://api.anthropic.com`, `OPENROUTER_API_KEY` to `openrouter` at `https://openrouter.ai`, and `ENTRA_CLIENT_SECRET` to `microsoft-entra` at `https://login.microsoftonline.com`. Add custom exact env-var/provider/origin bindings with `FORGETBASE_PROVIDER_SECRET_BINDINGS`; it is JSON metadata and must not contain secret values. For example:
+
+```bash
+export FORGETBASE_PROVIDER_SECRET_BINDINGS='[{"envVar":"OIDC_CORP_CLIENT_SECRET","provider":"oidc","origin":"https://tokens.example.com","issuerOrigin":"https://identity.example.com"}]'
+export FORGETBASE_OUTBOUND_ALLOWED_ORIGINS='https://identity.example.com,https://tokens.example.com'
+```
+
+Tenant secret-reference policy can narrow these deployment bindings but cannot enable unlisted names or authorize a different provider or origin. Every direct or `_FILE` resolution rechecks the current tenant policy and deployment binding before reading secret data. `FORGETBASE_*`, database, session, signing, cloud, and other host-control credential families remain categorically unavailable to providers.
+
+For OIDC, `origin` identifies the token endpoint that may receive the client secret. Set `issuerOrigin` when the discovery issuer uses a different origin. Omitting it uses the token origin for both checks. In the example, the client configuration uses an issuer URL at `identity.example.com` and the discovered token endpoint must be at `tokens.example.com`.
+
+Canonical OpenAI, Anthropic, OpenRouter, and Microsoft Entra origins are approved by default. Add exact custom provider, issuer, authorization, token, and JWKS origins to the API deployment's comma-separated `FORGETBASE_OUTBOUND_ALLOWED_ORIGINS`. Outbound connections require HTTPS and public A/AAAA results. Each request deadline includes DNS resolution, connection selection from validated addresses, and reading the response.
 
 ```bash
 npx -y pnpm@11.7.0 --filter @forgetbase/cli start -- admin model-provider-set --provider openai --enabled true --api-key-env-var OPENAI_API_KEY --default-model gpt-5.1 --models gpt-5.1 --max-output-tokens 700 --temperature 0.2 --timeout-ms 20000 --max-retries 1 --retry-backoff-ms 250 --input-cost-per-million-tokens 2 --output-cost-per-million-tokens 8 --max-estimated-total-tokens-per-query 3000 --max-estimated-cost-usd-per-query 0.05 --cache-enabled true --cache-ttl-seconds 3600
@@ -352,7 +365,7 @@ npx -y pnpm@11.7.0 --filter @forgetbase/cli start -- admin auth-provider-set --p
 npx -y pnpm@11.7.0 --filter @forgetbase/cli start -- admin auth-providers
 ```
 
-External auth provider config stores metadata and the client secret env var name only. Store actual client secrets in deployment environment variables, mounted secret files referenced by `<ENV_VAR>_FILE`, or a future secret manager, not in config metadata. Model provider `apiKeyEnvVar` and auth provider `clientSecretEnvVar` writes are rejected when the env-var name is not allowed by tenant secret-reference policy.
+External auth provider config stores metadata and the client secret env var name only. Store actual client secrets in deployment environment variables, mounted secret files referenced by `<ENV_VAR>_FILE`, or a future secret manager, not in config metadata. Model provider `apiKeyEnvVar` and auth provider `clientSecretEnvVar` writes require both tenant policy approval and an exact deployment provider/origin binding.
 
 OIDC login requires a state-signing secret in the API environment:
 
@@ -372,8 +385,15 @@ The callback validates signed state, nonce, PKCE verifier, issuer, audience, and
 To verify the OIDC path without external provider credentials, use the local fake-provider smoke check:
 
 ```bash
+export FORGETBASE_PROOF_TENANT_ID=tenant_demo  # disposable stack only
+export FORGETBASE_OUTBOUND_DEVELOPMENT_ALLOW_PRIVATE=true
+docker compose up -d api
 npx -y pnpm@11.7.0 auth:verify-oidc-login
+unset FORGETBASE_OUTBOUND_DEVELOPMENT_ALLOW_PRIVATE
+docker compose up -d api
 ```
+
+The private-network override is only for this operator-controlled local fixture; do not enable it in shared or production deployments.
 
 Stored retrieval telemetry, managed-query feedback text, and action request payload/metadata string fields redact common direct identifiers in persisted fields by default. Current deterministic rules cover API-key-like secrets, including common provider, cloud, repository, and chat-ops token prefixes, bearer/JWT tokens, URL secret parameters, email addresses, payment-card-like numbers, government-ID-like values, IP addresses, and phone-number-like values. Admins can disable redaction or select a subset of rule kinds through the tenant PII redaction policy; the same policy controls whether provider-routed generated-answer caching bypasses direct-identifier queries. Live search and managed-query responses still echo the user's query so clients can correlate the response they just received.
 

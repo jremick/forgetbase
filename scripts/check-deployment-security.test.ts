@@ -10,6 +10,7 @@ const temporaryRoots: string[] = [];
 const publicEnvironment = {
   FORGETBASE_REQUIRE_AUTHENTICATION: "true",
   FORGETBASE_SESSION_COOKIE_SECURE: "true",
+  FORGETBASE_OUTBOUND_DEVELOPMENT_ALLOW_PRIVATE: "false",
   FORGETBASE_CORS_ALLOWED_ORIGINS: "https://knowledge.example.test"
 };
 
@@ -20,7 +21,7 @@ afterEach(() => {
 });
 
 describe("resolved Compose security", () => {
-  it("keeps the loopback bootstrap defaults explicit", () => {
+  it("keeps the loopback token-authorized bootstrap channel explicit", () => {
     const configuration = resolveComposeConfiguration(["compose.yaml"], {});
     expect(validateComposeApiSecurity(configuration, {
       requireAuthentication: false,
@@ -52,7 +53,11 @@ describe("resolved Compose security", () => {
     })).toEqual([]);
   });
 
-  it.each(["FORGETBASE_REQUIRE_AUTHENTICATION", "FORGETBASE_SESSION_COOKIE_SECURE"])(
+  it.each([
+    "FORGETBASE_REQUIRE_AUTHENTICATION",
+    "FORGETBASE_SESSION_COOKIE_SECURE",
+    "FORGETBASE_OUTBOUND_DEVELOPMENT_ALLOW_PRIVATE"
+  ])(
     "rejects a template that drops %s even when the shell setting is true", (name) => {
       const root = mkdtempSync(path.join(tmpdir(), "forgetbase-compose-security-"));
       temporaryRoots.push(root);

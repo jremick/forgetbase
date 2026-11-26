@@ -54,6 +54,11 @@ describe("LocalFilesystemAttachmentStorage", () => {
     await expect(storage.get(STORAGE_KEY)).resolves.toEqual(Buffer.from("first"));
   });
 
+  it("treats a missing shard as an already absent object during deletion", async () => {
+    const storage = new LocalFilesystemAttachmentStorage(await temporaryRoot(), 16);
+    await expect(storage.delete(STORAGE_KEY)).resolves.toBe(false);
+  });
+
   it("publishes complete files atomically and inventories only opaque storage keys", async () => {
     const root = await temporaryRoot();
     const storage = new LocalFilesystemAttachmentStorage(root, 16);

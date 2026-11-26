@@ -1,4 +1,4 @@
-import { cp, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -1956,6 +1956,36 @@ describe("InMemoryAuthProviderConfigRepository", () => {
   });
 });
 
+it.skipIf(!process.env.TEST_DATABASE_URL)("backfills installation bootstrap from the legacy audit after the last user was deleted", async () => {
+  const pool = new Pool({ connectionString: process.env.TEST_DATABASE_URL });
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query(`
+      CREATE TEMP TABLE users (id uuid PRIMARY KEY, tenant_id text, created_at timestamptz DEFAULT now());
+      CREATE TEMP TABLE audit_events (
+        id uuid PRIMARY KEY, tenant_id text, actor_user_id uuid REFERENCES users(id) ON DELETE SET NULL,
+        action text, target_type text, target_id text, outcome text, created_at timestamptz DEFAULT now()
+      );
+      SET LOCAL search_path TO pg_temp;
+    `);
+    const userId = randomUUID();
+    await client.query("INSERT INTO users (id, tenant_id) VALUES ($1, 'original')", [userId]);
+    await client.query(`
+      INSERT INTO audit_events (id, tenant_id, actor_user_id, action, target_type, target_id, outcome)
+      VALUES ($1, 'original', $2::uuid, 'auth.bootstrap', 'user', $2::uuid::text, 'success')
+    `, [randomUUID(), userId]);
+    await client.query("DELETE FROM users");
+    await client.query(await readFile(new URL("../migrations/045_installation_bootstrap.sql", import.meta.url), "utf8"));
+    const result = await client.query("SELECT tenant_id, admin_user_id FROM installation_bootstrap_state");
+    expect(result.rows).toEqual([{ tenant_id: "original", admin_user_id: userId }]);
+  } finally {
+    await client.query("ROLLBACK");
+    client.release();
+    await pool.end();
+  }
+});
+
 describe.skipIf(!process.env.TEST_DATABASE_URL)("PostgresRegistryRepository", () => {
   let pool: Pool;
 
@@ -1992,7 +2022,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("PostgresRegistryRepository", ()
       }
     });
     const blobId = randomUUID();
-    const created = await attachmentRepository.createAttachment({
+    const pending = await attachmentRepository.reserveAttachment({
       tenantId,
       assetId: createdAsset.asset.id,
       filename: "restore-evidence.txt",
@@ -2003,6 +2033,18 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("PostgresRegistryRepository", ()
       uploadedByUserId: uploader.id,
       metadata: { fixture: true }
     });
+
+    expect(pending.lifecycleState).toBe("pending");
+    expect(await attachmentRepository.listAttachments({
+      tenantId,
+      assetId: createdAsset.asset.id
+    })).toEqual([]);
+    const created = await attachmentRepository.activateAttachment({
+      tenantId,
+      attachmentId: pending.id
+    });
+    expect(created?.lifecycleState).toBe("active");
+    if (!created) throw new Error("Attachment reservation was not activated");
 
     expect(await attachmentRepository.listAttachments({
       tenantId,
@@ -2439,9 +2481,9 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("PostgresRegistryRepository", ()
     expect(secondPage.map((asset) => asset.stableId)).toEqual([internalStableId]);
   });
 
-  it("atomically bootstraps one Postgres admin under concurrent attempts", async () => {
-    const authRepository = new PostgresAuthRepository(pool);
+  it("atomically bootstraps one installation admin under concurrent and cross-tenant attempts", async () => {
     const tenantId = `tenant_bootstrap_${Date.now()}_${Math.floor(Math.random() * 1_000_000)}`;
+    const alternateTenantId = `${tenantId}_alternate`;
     const input = {
       tenantId,
       email: "bootstrap-admin@example.test",
@@ -2449,20 +2491,34 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("PostgresRegistryRepository", ()
       password: "bootstrap-password-123",
       keyName: "bootstrap-admin"
     };
-    const results = await Promise.all([
-      authRepository.bootstrapAdmin(input),
-      authRepository.bootstrapAdmin(input)
-    ]);
-    const created = results.filter((result) => result !== null);
+    const schema = `bootstrap_test_${randomUUID().replaceAll("-", "")}`;
+    const isolated = new Pool({ connectionString: process.env.TEST_DATABASE_URL, options: `-c search_path=${schema},public` });
+    const authRepository = new PostgresAuthRepository(isolated);
+    await pool.query(`CREATE SCHEMA ${schema}`);
+    try {
+      await isolated.query("CREATE TABLE installation_bootstrap_state (LIKE public.installation_bootstrap_state INCLUDING ALL)");
+      const results = await Promise.all([
+        authRepository.bootstrapAdmin(input),
+        authRepository.bootstrapAdmin({ ...input, tenantId: alternateTenantId })
+      ]);
+      const created = results.filter((result) => result !== null);
 
-    expect(created).toHaveLength(1);
-    expect(await authRepository.countUsers(tenantId)).toBe(1);
-    expect(await authRepository.listApiKeys({ tenantId })).toHaveLength(1);
-    expect((await authRepository.listAuditEvents({ tenantId })).filter(
-      (event) => event.action === "auth.bootstrap"
-    )).toHaveLength(1);
-    expect(created[0]?.apiKey.allowedSurfaces).toEqual(["api", "cli", "mcp", "web", "export"]);
-    expect((await authRepository.authenticateApiKey(created[0]?.secret ?? ""))?.role).toBe("admin");
+      expect(created).toHaveLength(1);
+      expect(await authRepository.countUsers(tenantId) + await authRepository.countUsers(alternateTenantId)).toBe(1);
+      expect(await authRepository.bootstrapAdmin({ ...input, tenantId: `${tenantId}_third` })).toBeNull();
+      expect((await isolated.query("SELECT tenant_id, admin_user_id::text FROM installation_bootstrap_state WHERE singleton = true")).rows)
+        .toEqual([{ tenant_id: created[0]?.user.tenantId, admin_user_id: created[0]?.user.id }]);
+      expect(await authRepository.listApiKeys({ tenantId: created[0]?.user.tenantId })).toHaveLength(1);
+      expect((await authRepository.listAuditEvents({ tenantId: created[0]?.user.tenantId })).filter(
+        (event) => event.action === "auth.bootstrap"
+      )).toHaveLength(1);
+      expect(created[0]?.apiKey.allowedSurfaces).toEqual(["api", "cli", "mcp", "web", "export"]);
+      expect((await authRepository.authenticateApiKey(created[0]?.secret ?? ""))?.role).toBe("admin");
+    } finally {
+      await pool.query("DELETE FROM tenants WHERE id = ANY($1::text[])", [[tenantId, alternateTenantId, `${tenantId}_third`]]);
+      await isolated.end();
+      await pool.query(`DROP SCHEMA ${schema} CASCADE`);
+    }
   });
 
   it("persists users, scoped API keys, grants, and audit events", async () => {

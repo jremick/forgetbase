@@ -452,11 +452,11 @@ export function createMcpServer(options: CreateMcpServerOptions = {}): McpServer
     "update_secret_reference_policy",
     {
       title: "Update secret reference policy",
-      description: "Set exact env-var names, allowed prefixes, and the allow-unlisted escape hatch for provider and OIDC secret references. Requires an admin API key.",
+      description: "Narrow the env-var names provider and OIDC configs may reference. Deployment bindings remain authoritative. Requires an admin API key.",
       inputSchema: z.object({
         allowedEnvVarPrefixes: z.array(z.string().regex(/^[A-Z_][A-Z0-9_]*$/)).max(100).optional(),
         allowedEnvVars: z.array(z.string().regex(/^[A-Z_][A-Z0-9_]*$/)).max(200).optional(),
-        allowUnlistedEnvVars: z.boolean().optional()
+        allowUnlistedEnvVars: z.literal(false).optional()
       })
     },
     async (input) => ({

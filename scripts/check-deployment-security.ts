@@ -65,7 +65,8 @@ export function validateComposeApiSecurity(
   const required: Record<string, string> = {
     FORGETBASE_REQUIRE_AUTHENTICATION: String(expected.requireAuthentication),
     FORGETBASE_SESSION_COOKIE_SECURE: String(expected.secureCookies),
-    FORGETBASE_ATTACHMENT_SCAN_REQUIRED: "true"
+    FORGETBASE_ATTACHMENT_SCAN_REQUIRED: "true",
+    FORGETBASE_OUTBOUND_DEVELOPMENT_ALLOW_PRIVATE: "false"
   };
   if (expected.corsAllowedOrigins !== undefined) {
     required.FORGETBASE_CORS_ALLOWED_ORIGINS = expected.corsAllowedOrigins;
@@ -210,6 +211,7 @@ function checkTemplatePosture(): void {
   requireIncludes("compose.yaml", compose, "${FORGETBASE_WEB_PORT:-127.0.0.1:5175}:4173", "local Compose web preview defaults to loopback");
   requireIncludes("compose.yaml", compose, "clamav/clamav:1.5.4-debian13-slim@sha256:", "Compose pins the ClamAV image by digest");
   requireIncludes("compose.yaml", compose, "FORGETBASE_ATTACHMENT_SCAN_REQUIRED: \"true\"", "Compose requires attachment malware scanning");
+  requireIncludes("compose.yaml", compose, "FORGETBASE_OUTBOUND_DEVELOPMENT_ALLOW_PRIVATE:-false", "Compose disables private provider destinations by default");
   requireIncludes("compose.yaml", compose, "FORGETBASE_ATTACHMENT_RECONCILIATION_DRY_RUN: \"true\"", "scheduled attachment reconciliation defaults to dry-run");
   const clamavServiceMatch = compose.match(/\n  clamav:[\s\S]*?\n  api:/);
   record(
@@ -220,6 +222,9 @@ function checkTemplatePosture(): void {
   requireIncludes("compose.same-origin.yaml", composeSameOrigin, "proxy:", "same-origin proxy overlay exists");
   requireIncludes("compose.same-origin.yaml", composeSameOrigin, "${FORGETBASE_PROXY_PORT:-127.0.0.1:8080}:8080", "same-origin proxy defaults to loopback");
   requireIncludes("infra/docker/nginx.same-origin.conf", sameOriginNginx, "location /api/", "same-origin proxy routes API under /api");
+  requireIncludes("infra/docker/nginx.same-origin.conf", sameOriginNginx, "location = /api/auth/bootstrap", "same-origin proxy blocks public bootstrap");
+  requireIncludes("infra/docker/nginx.tls.conf", tlsNginx, "location = /api/auth/bootstrap", "TLS proxy blocks public bootstrap");
+  requireIncludes("compose.yaml", compose, "FORGETBASE_BOOTSTRAP_TOKEN_FILE: /run/secrets/forgetbase_bootstrap_token", "source Compose mounts the bootstrap token as a secret");
   requireIncludes("compose.tls.yaml", composeTls, "FORGETBASE_SESSION_COOKIE_SECURE: \"true\"", "TLS overlay enables secure browser cookies");
   requireIncludes("compose.managed.yaml", composeManaged, "FORGETBASE_API_IMAGE:?FORGETBASE_API_IMAGE is required", "managed API image is explicit and digest-ready");
   requireIncludes("compose.managed.yaml", composeManaged, "FORGETBASE_MIGRATE_IMAGE:?FORGETBASE_MIGRATE_IMAGE is required", "managed migration image is explicit and digest-ready");
@@ -228,6 +233,7 @@ function checkTemplatePosture(): void {
   requireIncludes("compose.managed.yaml", composeManaged, "FORGETBASE_SYSTEM_UPDATE_OWNER_EMAILS:?FORGETBASE_SYSTEM_UPDATE_OWNER_EMAILS is required", "managed update owner allowlist is required");
   requireIncludes("compose.managed.yaml", composeManaged, "FORGETBASE_UPDATER_ALLOW_INSECURE_HTTP:-true", "managed bridge HTTP requires an explicit override");
   requireIncludes("compose.managed.yaml", composeManaged, "FORGETBASE_ATTACHMENT_SCAN_REQUIRED: \"true\"", "managed installs require attachment malware scanning");
+  requireIncludes("compose.managed.yaml", composeManaged, "FORGETBASE_OUTBOUND_DEVELOPMENT_ALLOW_PRIVATE:-false", "managed installs disable private provider destinations by default");
   requireIncludes("compose.managed.yaml", composeManaged, "attachment-data:/var/lib/forgetbase/attachments", "managed installs persist attachment blobs");
   requireIncludes("compose.managed.yaml", composeManaged, "clamav/clamav:1.5.4-debian13-slim@sha256:", "managed installs pin the ClamAV image by digest");
   record(
@@ -272,9 +278,9 @@ function checkTemplatePosture(): void {
 
   const exposesBootstrap = publicAuthBlockMatch[0].includes("/auth/bootstrap");
   record(
-    exposesBootstrap ? "fail" : "pass",
-    "require-auth bootstrap behavior",
-    exposesBootstrap ? "/auth/bootstrap is exempt from global auth" : "/auth/bootstrap is not exempt from global require-auth"
+    exposesBootstrap ? "pass" : "fail",
+    "deployment-token bootstrap behavior",
+    exposesBootstrap ? "/auth/bootstrap uses its deployment-token authorization boundary" : "/auth/bootstrap cannot initialize an authentication-required installation"
   );
 }
 
@@ -285,7 +291,7 @@ function checkPublicEnvironment(): void {
     record(
       "pass",
       "public deployment mode",
-      "FORGETBASE_PUBLIC_DEPLOYMENT is not true; local OSS bootstrap defaults are allowed"
+      "FORGETBASE_PUBLIC_DEPLOYMENT is not true; loopback token-authorized bootstrap remains available"
     );
     return;
   }
@@ -293,6 +299,7 @@ function checkPublicEnvironment(): void {
   const requireAuthentication = parseStrictBoolean("FORGETBASE_REQUIRE_AUTHENTICATION");
   const secureCookies = parseStrictBoolean("FORGETBASE_SESSION_COOKIE_SECURE");
   const attachmentScanRequired = parseStrictBoolean("FORGETBASE_ATTACHMENT_SCAN_REQUIRED");
+  const developmentAllowPrivate = parseStrictBoolean("FORGETBASE_OUTBOUND_DEVELOPMENT_ALLOW_PRIVATE");
 
   record(
     requireAuthentication === true ? "pass" : "fail",
@@ -308,6 +315,11 @@ function checkPublicEnvironment(): void {
     attachmentScanRequired === true ? "pass" : "fail",
     "public attachment scanning requirement",
     "FORGETBASE_ATTACHMENT_SCAN_REQUIRED must be true for public deployment checks"
+  );
+  record(
+    developmentAllowPrivate !== true ? "pass" : "fail",
+    "public outbound destination requirement",
+    "FORGETBASE_OUTBOUND_DEVELOPMENT_ALLOW_PRIVATE must not be true for public deployment checks"
   );
 
   const publicEntrypoint = process.env.FORGETBASE_PUBLIC_ENTRYPOINT;

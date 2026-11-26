@@ -289,10 +289,28 @@ async function createFixture(adapter: Adapter) {
   const tenantId = adapter === "postgres" ? `tenant_import_plan_${randomUUID()}` : "tenant_demo";
   const registry = pool ? new PostgresRegistryRepository(pool) : new InMemoryRegistryRepository();
   const auth = pool ? new PostgresAuthRepository(pool) : new InMemoryAuthRepository();
-  const api = buildServer({ logger: false, registryRepository: registry, authRepository: auth });
+  const api = buildServer({
+    logger: false,
+    registryRepository: registry,
+    authRepository: auth
+  });
   const baseUrl = await api.listen({ host: "127.0.0.1", port: 0 });
   const directory = await mkdtemp(join(tmpdir(), "forgetbase-import-plan-"));
-  const bootstrap = await new ForgetBaseClient({ baseUrl }).bootstrapAuth({ tenantId, email: "planner-admin@example.test", displayName: "Planner admin" });
+  const bootstrapUser = await auth.createUser({
+    tenantId,
+    email: "planner-admin@example.test",
+    displayName: "Planner admin",
+    role: "admin"
+  });
+  const bootstrapKey = await auth.createApiKey({
+    tenantId,
+    userId: bootstrapUser.id,
+    name: "planner-admin",
+    scopes: ["admin", "asset:read", "asset:write", "permission:write"],
+    allowedSurfaces: ["api", "cli", "mcp", "web", "export"]
+  });
+  if (!bootstrapKey) throw new Error("Unable to create planner admin key");
+  const bootstrap = { user: bootstrapUser, secret: bootstrapKey.secret };
   const author = new ForgetBaseClient({ baseUrl, apiKey: bootstrap.secret });
   const details: AssetDetail[] = [];
   for (const sourceId of ["same", "changed", "missing"]) {
@@ -366,7 +384,10 @@ async function createFixture(adapter: Adapter) {
     },
     async close() {
       await api.close();
-      if (pool) { await pool.query("DELETE FROM tenants WHERE id = $1", [tenantId]); await pool.end(); }
+      if (pool) {
+        await pool.query("DELETE FROM tenants WHERE id = $1", [tenantId]);
+        await pool.end();
+      }
       await rm(directory, { recursive: true, force: true });
     }
   };

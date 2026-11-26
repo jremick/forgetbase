@@ -15,6 +15,7 @@ import {
 import { OpenAiEmbeddingProvider } from "../packages/db/src/embeddings.js";
 import { ForgetBaseClient } from "../packages/sdk/src/index.js";
 import { buildServer } from "../apps/api/src/server.js";
+import { createOutboundHttpClient, type OutboundHttpRequestInit } from "../apps/api/src/outbound-http.js";
 import { runApiKeyRotationReminderMaintenance } from "../apps/worker/src/index.js";
 
 const { generateKeyPair, exportJWK, SignJWT } = await import(createRequire(new URL("../apps/api/package.json", import.meta.url)).resolve("jose"));
@@ -40,9 +41,35 @@ async function httpFixture(handler: (request: IncomingMessage, response: ServerR
 }
 
 function api(options: Parameters<typeof buildServer>[0] = {}) {
-  const server = buildServer({ logger: false, ...options });
+  const server = buildServer({ logger: false, outboundHttpClient: testOutboundHttpClient(), ...options });
   cleanups.push(() => server.close());
   return server;
+}
+
+function testOutboundHttpClient() {
+  return createOutboundHttpClient({
+    allowedOrigins: [
+      "https://trusted.example.test",
+      "https://other.example.test",
+      "https://tokens.example.test",
+      "https://keys.example.test",
+      "https://idp.example.test",
+      "https://model.example.test"
+    ],
+    developmentAllowPrivateNetwork: true,
+    resolveHostname: async () => [{ address: "8.8.8.8", family: 4 }],
+    transport: async (destination, init) => fetch(destination.url, fetchInit(init))
+  });
+}
+
+function fetchInit(init: OutboundHttpRequestInit): RequestInit {
+  return {
+    method: init.method,
+    headers: init.headers,
+    body: init.body instanceof Uint8Array ? new Uint8Array(init.body) : init.body,
+    redirect: "error",
+    signal: AbortSignal.timeout(init.timeoutMs)
+  };
 }
 
 async function oidcFixture(issuerUrl: string) {
@@ -50,10 +77,10 @@ async function oidcFixture(issuerUrl: string) {
   await config.upsertAuthProviderConfig({
     provider: "oidc", enabled: true, issuerUrl, clientId: "synthetic-client",
     redirectUri: "http://localhost:5175/callback", autoProvisionUsers: true,
-    clientSecretEnvVar: "FORGETBASE_TEST_OIDC_SECRET"
+    clientSecretEnvVar: "OIDC_TEST_CLIENT_SECRET"
   });
-  vi.stubEnv("FORGETBASE_TEST_OIDC_SECRET", "synthetic-client-secret");
-  return api({ authProviderConfigRepository: config, authRepository: new InMemoryAuthRepository(), oidcStateSecret: "synthetic-state-signing-key" });
+  vi.stubEnv("OIDC_TEST_CLIENT_SECRET", "synthetic-client-secret");
+  return api({ providerSecretBindings: [{ envVar: "OIDC_TEST_CLIENT_SECRET", provider: "oidc", origin: new URL(issuerUrl).origin }], authProviderConfigRepository: config, authRepository: new InMemoryAuthRepository(), oidcStateSecret: "synthetic-state-signing-key" });
 }
 
 function discovery(issuer: string) {
@@ -121,12 +148,12 @@ describe("outbound credential boundaries", () => {
       instruction: { instructionKind: "policy", body: "Synthetic private outbound security guidance." }
     });
     await retrieval.indexAsset(asset);
-    vi.stubEnv("FORGETBASE_TEST_MODEL_SECRET", "synthetic-model-secret");
+    vi.stubEnv("ANTHROPIC_TEST_KEY", "synthetic-model-secret");
     await providers.upsertProviderConfig({
-      provider: "anthropic", enabled: true, apiKeyEnvVar: "FORGETBASE_TEST_MODEL_SECRET", baseUrl: source,
+      provider: "anthropic", enabled: true, apiKeyEnvVar: "ANTHROPIC_TEST_KEY", baseUrl: source,
       defaultModel: "synthetic-model", availableModels: ["synthetic-model"], metadata: { maxRetries: 0 }
     });
-    const server = api({ registryRepository: registry, retrievalRepository: retrieval, authRepository: auth, providerConfigRepository: providers });
+    const server = api({ providerSecretBindings: [{ envVar: "ANTHROPIC_TEST_KEY", provider: "anthropic", origin: source }], registryRepository: registry, retrievalRepository: retrieval, authRepository: auth, providerConfigRepository: providers });
     const response = await server.inject({ method: "POST", url: "/agent/query", headers: { authorization: `Bearer ${admin?.secret}` },
       payload: { query: "outbound security", mode: "provider-routed", provider: "anthropic" } });
     expect(response.statusCode).toBe(200);
@@ -157,7 +184,7 @@ describe("OIDC provider trust", () => {
     expect((await server.inject({ method: "POST", url: "/auth/oidc/authorize", payload: { provider: "oidc" } })).statusCode).toBe(502);
   });
 
-  it("allows a matching HTTPS issuer with separate HTTPS endpoint hosts", async () => {
+  it("allows a matching HTTPS issuer with deployment-approved endpoint hosts", async () => {
     const issuer = "https://trusted.example.test/tenant";
     const server = await oidcFixture(issuer);
     vi.stubGlobal("fetch", vi.fn(async () => Response.json({

@@ -119,7 +119,7 @@ The MVP is acceptable when:
 - maintainers/admins can upload only inspected, quota-compliant attachments; deleted or unverified files stop being readable
 - admins can compare 7, 30, and 90-day search quality, page activity, content health, and daily trends without a separate warehouse
 - provider prompt/response capture defaults to disabled or metadata-only rather than raw transcript storage
-- provider and OIDC config can reference only env-var names allowed by tenant secret-reference policy
+- provider and OIDC secrets require exact deployment-owned env-var/provider/origin bindings plus tenant narrowing
 - admins can preview and execute telemetry retention purges without direct database access
 - admins can set tenant service-account limits and default expiry for service-owned keys
 - users can list/revoke their own browser login sessions with device labels and admins can revoke tenant sessions

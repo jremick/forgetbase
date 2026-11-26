@@ -12,7 +12,7 @@ This document defines the machine-consumer surface ForgetBase will preserve duri
 
 The private beta contract is intentionally narrow. It covers the self-hosted first-run path and the agent-consumer distribution path:
 
-- bootstrap a local admin for a single tenant
+- bootstrap one installation admin in the deployment-fixed tenant
 - validate and import the synthetic demo corpus
 - fetch a governed asset by stable ID
 - search approved/visible assets with citations
@@ -45,7 +45,7 @@ Requires a release note and beta-recipient notice:
 | Method | Path | Purpose | Contract expectation |
 |---|---|---|---|
 | `GET` | `/health` | Local readiness check. | Returns JSON with service health. |
-| `POST` | `/auth/bootstrap` | First local admin and first API key. | Creates the first admin only when the tenant has no users; returns the one-time API key secret once. |
+| `POST` | `/auth/bootstrap` | Installation admin and first API key. | Requires the deployment bootstrap token, rejects caller-selected tenants, succeeds only before the installation completion record exists, and returns the API key secret once. |
 | `POST` | `/validation/assets` | Validate synthetic corpus before import. | Returns validation report counts and issues. |
 | `POST` | `/assets` | Import/create governed assets. | Accepts schema-valid synthetic assets and returns asset detail. |
 | `GET` | `/assets/{stableId}` | Fetch one visible governed asset. | Honors permission and surface visibility rules. |
@@ -131,7 +131,7 @@ Other SDK methods remain preview unless listed here in a later contract update.
 The private beta CLI compatibility target covers:
 
 - `forgetbase health --api-url ...`
-- `forgetbase auth bootstrap --email ... --display-name ... --tenant-id ... --password ... --api-url ...`
+- `forgetbase auth bootstrap --bootstrap-token-file ... --email ... --display-name ... --password ... --api-url ...`
 - `forgetbase validate --file corpus/demo/assets.json --as-of ... --fail-on-warnings`
 - `forgetbase corpus import --file corpus/demo/assets.json --api-url ... --api-key ...`
 - `forgetbase assets get <stable-id> --api-url ... --api-key ...`
@@ -168,7 +168,9 @@ Representative frozen error expectations:
 - `401` with `authentication_required` for protected routes without credentials when auth is required
 - `403` with `access_denied` or `forbidden` for unauthorized visible-surface attempts
 - `404` with `not_found` for missing or hidden assets
-- `409` with `bootstrap_already_completed` when bootstrap is repeated for a tenant
+- `403` with `access_denied` when the deployment bootstrap token is rejected
+- `409` with `bootstrap_already_completed` when installation bootstrap has already completed
+- `503` with `bootstrap_unavailable` when no deployment bootstrap token is configured
 
 ## Preview Surfaces
 
@@ -198,4 +200,4 @@ npx -y pnpm@11.7.0 security:verify-restricted-leakage
 npx -y pnpm@11.7.0 db:verify-backup-restore
 ```
 
-Run `npx -y pnpm@11.7.0 auth:verify-oidc-login` when OIDC is included in the private beta walkthrough or release note. Real-provider smoke remains secret-gated and must not be used as a public claim unless freshly recorded.
+Use a disposable stack for fixture checks. Export its user admin key as `FORGETBASE_API_KEY` and its matching tenant ID as `FORGETBASE_PROOF_TENANT_ID`. Run `npx -y pnpm@11.7.0 auth:verify-oidc-login` when OIDC is included in the private beta walkthrough or release note. Real-provider smoke remains secret-gated and must not be used as a public claim unless freshly recorded.
